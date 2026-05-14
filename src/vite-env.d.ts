@@ -1,0 +1,69 @@
+/// <reference types="vite/client" />
+
+import type {
+  CreateProjectInput,
+  EvidenceBasedResult,
+  LoopIteration,
+  RagContext,
+  ResearchArtifact,
+  ResearchProject,
+  ResearchSession,
+  AppSettings,
+  ResearchSnapshot
+} from "./core/types.js";
+
+export interface AetherOpsApi {
+  projects: {
+    create(input: CreateProjectInput): Promise<ResearchSnapshot>;
+    list(): Promise<ResearchProject[]>;
+  };
+  sessions: {
+    createForProject(projectId: string): Promise<ResearchSession[]>;
+  };
+  researchDb: {
+    create(projectId: string): Promise<ResearchSnapshot>;
+  };
+  research: {
+    seedQuestions(projectId: string): Promise<ResearchSnapshot>;
+  };
+  loop: {
+    start(projectId: string): Promise<ResearchSnapshot>;
+    pause(projectId: string): Promise<ResearchSnapshot>;
+    resume(projectId: string): Promise<ResearchSnapshot>;
+    abort(projectId: string): Promise<ResearchSnapshot>;
+  };
+  opencode: {
+    run(projectId: string): Promise<ResearchSnapshot>;
+  };
+  artifacts: {
+    store(projectId: string, artifact: Partial<ResearchArtifact>): Promise<ResearchSnapshot>;
+  };
+  rag: {
+    buildContext(projectId: string): Promise<RagContext>;
+  };
+  results: {
+    derive(projectId: string): Promise<EvidenceBasedResult>;
+  };
+  reports: {
+    finalize(projectId: string): Promise<ResearchSnapshot>;
+  };
+  llm: {
+    status(): Promise<{ provider: string; available: boolean }>;
+  };
+  settings: {
+    get(): Promise<AppSettings>;
+    save(settings: AppSettings): Promise<AppSettings>;
+  };
+  snapshots: {
+    get(projectId: string): Promise<ResearchSnapshot>;
+  };
+  events: {
+    onLoopIteration(callback: (iteration: LoopIteration) => void): () => void;
+  };
+}
+
+declare global {
+  interface Window {
+    aetherOps?: AetherOpsApi;
+  }
+}

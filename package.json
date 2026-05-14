@@ -1,0 +1,33 @@
+{
+  "name": "aetherops",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AetherOps autonomous research agent desktop app.",
+  "type": "module",
+  "main": "dist-electron/main/main.js",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5180 --strictPort",
+    "electron:build": "node scripts/clean-electron.mjs && tsc -p tsconfig.electron.json",
+    "electron:dev": "npm run electron:build && electron .",
+    "build": "tsc -p tsconfig.app.json && vite build && npm run electron:build",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "electron": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/react": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}

@@ -27,7 +27,8 @@ describe("AetherOpsOrchestrator", () => {
 
     expect(snapshot.project.currentStep).toBe(ResearchLoopStep.FinalizeResearchOutputs);
     expect(snapshot.project.status).toBe("completed");
-    expect(snapshot.sessions).toHaveLength(3);
+    expect(snapshot.sessions).toHaveLength(1);
+    expect(snapshot.sessions[0]?.title).toBe("채팅 세션 1");
     expect(snapshot.database).toBeDefined();
     expect(snapshot.questions.length).toBeGreaterThan(0);
     expect(snapshot.hypotheses.every((item) => item.status === "supported")).toBe(true);
@@ -49,5 +50,22 @@ describe("AetherOpsOrchestrator", () => {
     expect(categories.has("generated_artifact")).toBe(true);
     expect(categories.has("experiment_log")).toBe(true);
     expect(categories.has("conversation_memo")).toBe(true);
+  });
+
+  it("deletes chat sessions without removing project progress", async () => {
+    const orchestrator = new AetherOpsOrchestrator(new InMemoryResearchStore());
+    let snapshot = await orchestrator.createProject(input);
+    snapshot = await orchestrator.createSubSessions(snapshot.project.id);
+    const firstSessionId = snapshot.sessions[0]?.id;
+    snapshot = await orchestrator.createChatSession(snapshot.project.id);
+
+    expect(snapshot.sessions).toHaveLength(2);
+    expect(firstSessionId).toBeDefined();
+
+    snapshot = await orchestrator.deleteChatSession(snapshot.project.id, firstSessionId ?? "");
+
+    expect(snapshot.sessions).toHaveLength(1);
+    expect(snapshot.sessions[0]?.title).toBe("채팅 세션 2");
+    expect(snapshot.iterations.at(-1)?.message).toContain("삭제");
   });
 });

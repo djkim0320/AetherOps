@@ -19,6 +19,11 @@ export interface AetherOpsApi {
   };
   sessions: {
     createForProject(projectId: string): Promise<ResearchSession[]>;
+    create(projectId: string, title?: string, focus?: string): Promise<ResearchSnapshot>;
+    delete(projectId: string, sessionId: string): Promise<ResearchSnapshot>;
+  };
+  chat: {
+    send(projectId: string, sessionId: string, content: string): Promise<ResearchSnapshot>;
   };
   researchDb: {
     create(projectId: string): Promise<ResearchSnapshot>;
@@ -34,6 +39,8 @@ export interface AetherOpsApi {
   };
   opencode: {
     run(projectId: string): Promise<ResearchSnapshot>;
+    authLogin(provider?: string): Promise<{ ok: boolean; message: string; output?: string }>;
+    authList(): Promise<{ ok: boolean; message: string; output?: string }>;
   };
   artifacts: {
     store(projectId: string, artifact: Partial<ResearchArtifact>): Promise<ResearchSnapshot>;

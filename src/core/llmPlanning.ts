@@ -17,6 +17,13 @@ interface LlmSeedResponse {
     category?: EvidenceItem["category"];
     title: string;
     summary: string;
+    sourceUri?: string;
+    citation?: string;
+    quote?: string;
+    reliabilityScore?: number;
+    relevanceScore?: number;
+    evidenceStrength?: EvidenceItem["evidenceStrength"];
+    limitations?: string[];
     keywords?: string[];
     hypothesisIndexes?: number[];
   }>;
@@ -57,10 +64,14 @@ export async function generateSeedPlanWithLlm(
     system: "You are AetherOps, a Korean autonomous research planning agent. Return only valid JSON.",
     user: [
       "Create initial research questions, hypotheses, and seed evidence for this project.",
+      "Create 3 to 5 focused questions.",
+      "Hypotheses must be testable and tied to a question.",
+      "Seed evidence is only a planning memo unless it has citation/sourceUri. Do not pretend it is a paper or external source.",
+      "For uncertain claims, include limitations and low reliabilityScore.",
       "Return JSON with keys: questions, hypotheses, evidence.",
       "questions: array of { text }.",
       "hypotheses: array of { questionIndex, statement, confidence } using zero-based questionIndex.",
-      "evidence: array of { category, title, summary, keywords, hypothesisIndexes }.",
+      "evidence: array of { category, title, summary, sourceUri, citation, quote, reliabilityScore, relevanceScore, evidenceStrength, limitations, keywords, hypothesisIndexes }.",
       "Allowed categories: generated_artifact, paper_reference, web_source, experiment_log, conversation_memo.",
       "",
       `Goal: ${project.goal}`,
@@ -84,7 +95,7 @@ export async function generateSeedPlanWithLlm(
     }))
     .filter((question) => question.text.length > 0);
 
-  if (!questions.length) {
+  if (questions.length < 3) {
     return undefined;
   }
 
@@ -109,10 +120,17 @@ export async function generateSeedPlanWithLlm(
       category: normalizeCategory(item.category),
       title: cleanText(item.title) || "LLM seed evidence",
       summary: cleanText(item.summary),
+      sourceUri: cleanText(item.sourceUri) || undefined,
+      citation: cleanText(item.citation) || undefined,
+      quote: cleanText(item.quote) || undefined,
       keywords: normalizeArray(item.keywords).map(cleanText).filter(Boolean).slice(0, 8),
       linkedHypothesisIds: normalizeArray(item.hypothesisIndexes)
         .map((index) => hypotheses[index]?.id)
         .filter((id): id is string => Boolean(id)),
+      reliabilityScore: clampConfidence(item.reliabilityScore ?? (item.citation || item.sourceUri ? 0.55 : 0.25)),
+      relevanceScore: clampConfidence(item.relevanceScore ?? 0.5),
+      evidenceStrength: normalizeStrength(item.evidenceStrength),
+      limitations: normalizeArray(item.limitations).map(cleanText).filter(Boolean),
       createdAt
     }))
     .filter((item) => item.summary.length > 0);
@@ -139,6 +157,10 @@ export async function deriveResultWithLlm(
     system: "You are AetherOps, a Korean autonomous research agent. Return only valid JSON.",
     user: [
       "Derive an evidence-based research result from the current project state.",
+      "Use only evidence and RAG context. Treat evidence without citation/sourceUri/sourceId as low reliability.",
+      "Every hypothesis update must include a concrete rationale grounded in evidence or an explicit evidence_gap.",
+      "Separate quantitativeResults and qualitativeResults.",
+      "If this is the final iteration, do not force certainty; state limitations and additional research needs.",
       "Return JSON with keys: answer, hypothesisUpdates, quantitativeResults, qualitativeResults, nextQuestions, needsMoreEvidence, needsMoreAnalysis.",
       "hypothesisUpdates uses zero-based hypothesisIndex and status among supported, rejected, needs_more_evidence, untested.",
       forceStop ? "This is the final allowed iteration, so set needsMoreEvidence=false, needsMoreAnalysis=false, nextQuestions=[]." : "",
@@ -146,10 +168,13 @@ export async function deriveResultWithLlm(
       `Project: ${JSON.stringify(snapshot.project)}`,
       `Questions: ${JSON.stringify(snapshot.questions)}`,
       `Hypotheses: ${JSON.stringify(snapshot.hypotheses)}`,
-      `Evidence: ${JSON.stringify(snapshot.evidence.slice(-12))}`,
+      `Evidence: ${JSON.stringify(snapshot.evidence.slice(-18))}`,
       `Artifacts: ${JSON.stringify(snapshot.artifacts.slice(-8))}`,
       `RAG Context: ${JSON.stringify(snapshot.ragContexts.at(-1))}`,
-      `OpenCode Runs: ${JSON.stringify(snapshot.openCodeRuns.map((run) => ({ iteration: run.iteration, logs: run.logs, toolPlan: run.toolPlan })))}`
+      `Sources: ${JSON.stringify(snapshot.sources.slice(-12))}`,
+      `Chunks: ${JSON.stringify(snapshot.chunks.slice(-12).map((chunk) => ({ id: chunk.id, sourceId: chunk.sourceId, text: chunk.text.slice(0, 500) })))}`,
+      `OpenCode Runs: ${JSON.stringify(snapshot.openCodeRuns.map((run) => ({ iteration: run.iteration, logs: run.logs, toolPlan: run.toolPlan })))}`,
+      `Tool Runs: ${JSON.stringify(snapshot.toolRuns.slice(-12))}`
     ].join("\n"),
     timeoutMs: 180_000
   });
@@ -163,7 +188,7 @@ export async function deriveResultWithLlm(
             hypothesisId: hypothesis.id,
             status: normalizeStatus(update.status),
             confidence: clampConfidence(update.confidence),
-            rationale: cleanText(update.rationale) || "LLM derived update."
+            rationale: cleanText(update.rationale) || "LLM derived update without detailed rationale."
           }
         : undefined;
     })
@@ -173,7 +198,7 @@ export async function deriveResultWithLlm(
     id: createId("result"),
     projectId: snapshot.project.id,
     iteration,
-    answer: cleanText(response.answer) || "LLM이 결과를 생성했지만 요약 문장이 비어 있습니다.",
+    answer: cleanText(response.answer) || "LLM이 빈 답변을 반환했습니다. 확보된 근거와 RAG context를 기준으로 추가 검토가 필요합니다.",
     hypothesisUpdates,
     quantitativeResults: normalizeArray(response.quantitativeResults).map(cleanText).filter(Boolean),
     qualitativeResults: normalizeArray(response.qualitativeResults).map(cleanText).filter(Boolean),
@@ -206,6 +231,10 @@ function normalizeCategory(value: unknown): EvidenceItem["category"] {
     "conversation_memo"
   ];
   return allowed.includes(value as EvidenceItem["category"]) ? (value as EvidenceItem["category"]) : "conversation_memo";
+}
+
+function normalizeStrength(value: unknown): EvidenceItem["evidenceStrength"] {
+  return value === "medium" || value === "strong" || value === "weak" ? value : "weak";
 }
 
 function normalizeStatus(value: unknown): HypothesisStatus {

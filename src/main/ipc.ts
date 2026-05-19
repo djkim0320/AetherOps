@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain } from "electron";
 import type { AetherOpsOrchestrator } from "../core/orchestrator.js";
 import type { AppSettings, CreateProjectInput, ResearchArtifact } from "../core/types.js";
+import { launchOpenCodeAuthLogin, listOpenCodeAuth } from "./opencodeAuth.js";
 import type { AppSettingsStore } from "./settingsStore.js";
 
 export function registerAetherOpsIpc(orchestrator: AetherOpsOrchestrator, settingsStore: AppSettingsStore): void {
@@ -10,6 +11,15 @@ export function registerAetherOpsIpc(orchestrator: AetherOpsOrchestrator, settin
     const snapshot = await orchestrator.createSubSessions(projectId);
     return snapshot.sessions;
   });
+  ipcMain.handle("sessions.create", async (_event, projectId: string, title?: string, focus?: string) =>
+    orchestrator.createChatSession(projectId, title, focus)
+  );
+  ipcMain.handle("sessions.delete", async (_event, projectId: string, sessionId: string) =>
+    orchestrator.deleteChatSession(projectId, sessionId)
+  );
+  ipcMain.handle("chat.send", async (_event, projectId: string, sessionId: string, content: string) =>
+    orchestrator.sendChatMessage(projectId, sessionId, content)
+  );
   ipcMain.handle("researchDb.create", async (_event, projectId: string) => orchestrator.createResearchDb(projectId));
   ipcMain.handle("research.seedQuestions", async (_event, projectId: string) => orchestrator.seedQuestions(projectId));
   ipcMain.handle("loop.start", async (_event, projectId: string) => orchestrator.startLoop(projectId));
@@ -17,6 +27,10 @@ export function registerAetherOpsIpc(orchestrator: AetherOpsOrchestrator, settin
   ipcMain.handle("loop.resume", async (_event, projectId: string) => orchestrator.resume(projectId));
   ipcMain.handle("loop.abort", async (_event, projectId: string) => orchestrator.abort(projectId));
   ipcMain.handle("opencode.run", async (_event, projectId: string) => orchestrator.runOpenCode(projectId));
+  ipcMain.handle("opencode.authLogin", async (_event, provider?: string) =>
+    launchOpenCodeAuthLogin(await settingsStore.getRuntimeSettings(), provider)
+  );
+  ipcMain.handle("opencode.authList", async () => listOpenCodeAuth(await settingsStore.getRuntimeSettings()));
   ipcMain.handle("artifacts.store", async (_event, projectId: string, artifact: Partial<ResearchArtifact>) =>
     orchestrator.storeArtifact(projectId, artifact)
   );

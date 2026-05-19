@@ -27,6 +27,10 @@ export class SimpleRagEngine implements RagEngine {
       evidenceIds: selectedEvidence.map((item) => item.id),
       artifactIds: selectedArtifacts.map((item) => item.id),
       summary: this.summarize(selectedEvidence.map((item) => item.summary)),
+      chunkIds: [],
+      citations: selectedEvidence.map((item) => item.citation || item.sourceUri || item.title),
+      retrievalScores: Object.fromEntries(selectedEvidence.map((item, index) => [item.id, Number((1 / (index + 1)).toFixed(4))])),
+      contextText: selectedEvidence.map((item) => `${item.title}\n${item.summary}`).join("\n\n"),
       createdAt: nowIso()
     };
   }
@@ -46,7 +50,7 @@ export class SimpleRagEngine implements RagEngine {
 
   private summarize(summaries: string[]): string {
     if (!summaries.length) {
-      return "아직 검색 가능한 근거가 충분하지 않습니다. 다음 OpenCode 실행에서 자료 수집을 우선합니다.";
+      return "RAG 검색 가능한 근거가 아직 충분하지 않습니다. 다음 실행에서 자료 수집을 우선합니다.";
     }
     return summaries.slice(0, 3).join(" ");
   }

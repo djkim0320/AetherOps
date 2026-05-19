@@ -48,4 +48,35 @@ describe("SqliteResearchStore", () => {
     expect((await store.listProjects()).at(0)?.id).toBe(snapshot.project.id);
     store.close();
   });
+
+  it("persists chat sessions and session deletion across store reloads", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
+    const sqlitePath = join(tempDir, "aetherops.sqlite");
+    store = new SqliteResearchStore(sqlitePath);
+    let orchestrator = new AetherOpsOrchestrator(store, undefined, undefined, join(tempDir, "projects"));
+
+    let snapshot = await orchestrator.createProject(input);
+    snapshot = await orchestrator.createSubSessions(snapshot.project.id);
+    snapshot = await orchestrator.createChatSession(snapshot.project.id);
+    const projectId = snapshot.project.id;
+    const firstSessionId = snapshot.sessions[0]?.id ?? "";
+
+    expect(snapshot.sessions).toHaveLength(2);
+    store.close();
+
+    store = new SqliteResearchStore(sqlitePath);
+    let reloaded = await store.getSnapshot(projectId);
+    expect(reloaded.sessions).toHaveLength(2);
+
+    orchestrator = new AetherOpsOrchestrator(store, undefined, undefined, join(tempDir, "projects"));
+    reloaded = await orchestrator.deleteChatSession(projectId, firstSessionId);
+    expect(reloaded.sessions).toHaveLength(1);
+    expect(reloaded.sessions[0]?.title).toBe("채팅 세션 2");
+    store.close();
+
+    store = new SqliteResearchStore(sqlitePath);
+    reloaded = await store.getSnapshot(projectId);
+    expect(reloaded.sessions).toHaveLength(1);
+    expect(reloaded.sessions[0]?.title).toBe("채팅 세션 2");
+  });
 });

@@ -7,6 +7,7 @@ if /i "%~1"=="--silent" set SILENT=1
 
 if not exist ".aetherops" mkdir ".aetherops"
 set LOG_FILE=%CD%\.aetherops\launcher.log
+set AETHEROPS_DATA_DIR=%CD%\.aetherops
 
 echo.
 echo ========================================
@@ -14,6 +15,7 @@ echo  AetherOps launcher
 echo ========================================
 echo.
 echo [%DATE% %TIME%] Starting AetherOps launcher > "%LOG_FILE%"
+echo [INFO] Storage root: %AETHEROPS_DATA_DIR% >> "%LOG_FILE%"
 
 where node >nul 2>nul
 if errorlevel 1 (

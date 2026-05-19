@@ -1,17 +1,21 @@
 import type {
   EvidenceBasedResult,
   EvidenceItem,
+  AgentPlan,
   LoopIteration,
   OpenCodeRun,
   RagContext,
   ResearchArtifact,
+  ResearchChunk,
   ResearchDatabase,
   ResearchProject,
   ResearchQuestion,
   ResearchReport,
   ResearchSession,
+  ResearchSource,
   ResearchSnapshot,
-  ResearchStore
+  ResearchStore,
+  ToolRun
 } from "./types.js";
 
 export class InMemoryResearchStore implements ResearchStore {
@@ -22,6 +26,10 @@ export class InMemoryResearchStore implements ResearchStore {
   private hypotheses: import("./types.js").Hypothesis[] = [];
   private evidence: EvidenceItem[] = [];
   private artifacts: ResearchArtifact[] = [];
+  private sources: ResearchSource[] = [];
+  private chunks: ResearchChunk[] = [];
+  private toolRuns: ToolRun[] = [];
+  private agentPlans: AgentPlan[] = [];
   private openCodeRuns: OpenCodeRun[] = [];
   private ragContexts: RagContext[] = [];
   private results: EvidenceBasedResult[] = [];
@@ -48,6 +56,10 @@ export class InMemoryResearchStore implements ResearchStore {
     this.sessions = this.upsertMany(this.sessions, sessions);
   }
 
+  async deleteSession(projectId: string, sessionId: string): Promise<void> {
+    this.sessions = this.sessions.filter((session) => session.projectId !== projectId || session.id !== sessionId);
+  }
+
   async saveDatabase(database: ResearchDatabase): Promise<void> {
     this.databases.set(database.projectId, database);
   }
@@ -66,6 +78,22 @@ export class InMemoryResearchStore implements ResearchStore {
 
   async saveArtifacts(artifacts: ResearchArtifact[]): Promise<void> {
     this.artifacts = this.upsertMany(this.artifacts, artifacts);
+  }
+
+  async saveSources(sources: ResearchSource[]): Promise<void> {
+    this.sources = this.upsertMany(this.sources, sources);
+  }
+
+  async saveChunks(chunks: ResearchChunk[]): Promise<void> {
+    this.chunks = this.upsertMany(this.chunks, chunks);
+  }
+
+  async saveToolRuns(toolRuns: ToolRun[]): Promise<void> {
+    this.toolRuns = this.upsertMany(this.toolRuns, toolRuns);
+  }
+
+  async saveAgentPlan(plan: AgentPlan): Promise<void> {
+    this.agentPlans = this.upsertMany(this.agentPlans, [plan]);
   }
 
   async saveOpenCodeRun(run: OpenCodeRun): Promise<void> {
@@ -102,6 +130,10 @@ export class InMemoryResearchStore implements ResearchStore {
       hypotheses: this.hypotheses.filter((item) => item.projectId === projectId),
       evidence: this.evidence.filter((item) => item.projectId === projectId),
       artifacts: this.artifacts.filter((item) => item.projectId === projectId),
+      sources: this.sources.filter((item) => item.projectId === projectId),
+      chunks: this.chunks.filter((item) => item.projectId === projectId),
+      toolRuns: this.toolRuns.filter((item) => item.projectId === projectId),
+      agentPlans: this.agentPlans.filter((item) => item.projectId === projectId),
       openCodeRuns: this.openCodeRuns.filter((item) => item.projectId === projectId),
       ragContexts: this.ragContexts.filter((item) => item.projectId === projectId),
       results: this.results.filter((item) => item.projectId === projectId),

@@ -7,7 +7,7 @@ import { extractJsonObject, type LlmJsonRequest, type LlmProvider } from "../cor
 interface CodexOAuthLlmProviderOptions {
   codexHome?: string;
   cwd?: string;
-  model?: string;
+  model?: string | (() => string | undefined | Promise<string | undefined>);
   timeoutMs?: number;
 }
 
@@ -15,7 +15,7 @@ export class CodexOAuthLlmProvider implements LlmProvider {
   readonly name = "codex-oauth";
   private readonly codexHome: string;
   private readonly cwd: string;
-  private readonly model?: string;
+  private readonly model?: string | (() => string | undefined | Promise<string | undefined>);
   private readonly timeoutMs: number;
   private cachedAvailability?: boolean;
   private readonly activeChildren = new Set<ReturnType<typeof spawn>>();
@@ -28,7 +28,7 @@ export class CodexOAuthLlmProvider implements LlmProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    if (this.cachedAvailability !== undefined) {
+    if (this.cachedAvailability === true) {
       return this.cachedAvailability;
     }
     this.cachedAvailability = this.hasUsableCodexOAuth() && (await this.hasCodexCli());
@@ -111,10 +111,15 @@ export class CodexOAuthLlmProvider implements LlmProvider {
       outputPath,
       "-"
     ];
-    if (this.model) {
-      args.splice(1, 0, "--model", this.model);
+    const model = await this.resolveModel();
+    if (model) {
+      args.splice(1, 0, "--model", model);
     }
     return this.runCommand(args, prompt, timeoutMs);
+  }
+
+  private async resolveModel(): Promise<string | undefined> {
+    return typeof this.model === "function" ? this.model() : this.model;
   }
 
   private runCommand(args: string[], stdin: string, timeoutMs: number): Promise<string> {

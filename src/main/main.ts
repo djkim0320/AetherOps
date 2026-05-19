@@ -2,24 +2,53 @@ import { app, BrowserWindow, Menu } from "electron";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CompositeOpenCodeAdapter } from "../core/compositeOpenCodeAdapter.js";
+import { ApiEmbeddingProvider } from "../core/embeddingProvider.js";
+import { LocalResearchAdapter } from "../core/localResearchAdapter.js";
 import { MockOpenCodeAdapter } from "../core/mockOpenCodeAdapter.js";
 import { AetherOpsOrchestrator } from "../core/orchestrator.js";
+import { VectorRagEngine } from "../core/vectorRagEngine.js";
 import { CodexOAuthLlmProvider } from "./codexOAuthLlmProvider.js";
 import { registerAetherOpsIpc } from "./ipc.js";
+import { NodeProjectStorage } from "./projectResearchStore.js";
+import { RealOpenCodeAdapter } from "./realOpenCodeAdapter.js";
 import { JsonAppSettingsStore } from "./settingsStore.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const appRoot = app.isPackaged ? app.getAppPath() : process.cwd();
-const dataRoot = app.isPackaged ? app.getPath("userData") : process.cwd();
-const aetherRoot = join(dataRoot, ".aetherops");
+const aetherRoot = process.env.AETHEROPS_DATA_DIR ?? join(app.getPath("userData"), ".aetherops");
 mkdirSync(aetherRoot, { recursive: true });
+console.log(`[AetherOps] storage root: ${aetherRoot}`);
 
 const store = new SqliteResearchStore(join(aetherRoot, "aetherops.sqlite"));
 const settingsStore = new JsonAppSettingsStore(join(aetherRoot, "settings.json"));
-const llm = new CodexOAuthLlmProvider({ cwd: dataRoot });
-const openCode = new MockOpenCodeAdapter(() => settingsStore.getRuntimeSettings());
-const orchestrator = new AetherOpsOrchestrator(store, openCode, undefined, join(aetherRoot, "projects"), llm);
+const llm = new CodexOAuthLlmProvider({
+  cwd: aetherRoot,
+  model: async () => {
+    const runtimeSettings = await settingsStore.getRuntimeSettings();
+    return runtimeSettings.openCodeLlm.source === "codex-oauth" ? runtimeSettings.openCodeLlm.model : undefined;
+  }
+});
+const settings = () => settingsStore.getRuntimeSettings();
+const embeddingProvider = {
+  embed: async (text: string) => new ApiEmbeddingProvider((await settings()).embedding).embed(text)
+};
+const openCode = new CompositeOpenCodeAdapter([
+  new RealOpenCodeAdapter(settings),
+  new LocalResearchAdapter(settings, llm),
+  new MockOpenCodeAdapter(settings)
+]);
+const projectStorage = new NodeProjectStorage();
+const orchestrator = new AetherOpsOrchestrator(
+  store,
+  openCode,
+  new VectorRagEngine(embeddingProvider),
+  join(aetherRoot, "projects"),
+  llm,
+  projectStorage,
+  embeddingProvider
+);
 registerAetherOpsIpc(orchestrator, settingsStore);
 
 async function createWindow(): Promise<void> {
@@ -34,7 +63,8 @@ async function createWindow(): Promise<void> {
     webPreferences: {
       preload: join(__dirname, "preload.js"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: false
     }
   });
 

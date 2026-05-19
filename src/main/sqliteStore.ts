@@ -4,18 +4,22 @@ import { DatabaseSync } from "node:sqlite";
 import type {
   EvidenceBasedResult,
   EvidenceItem,
+  AgentPlan,
   Hypothesis,
   LoopIteration,
   OpenCodeRun,
   RagContext,
   ResearchArtifact,
+  ResearchChunk,
   ResearchDatabase,
   ResearchProject,
   ResearchQuestion,
   ResearchReport,
   ResearchSession,
+  ResearchSource,
   ResearchSnapshot,
-  ResearchStore
+  ResearchStore,
+  ToolRun
 } from "../core/types.js";
 
 type JsonRecord = { id: string; project_id?: string; created_at?: string; data: string };
@@ -54,6 +58,10 @@ export class SqliteResearchStore implements ResearchStore {
     this.upsertMany("sessions", sessions);
   }
 
+  async deleteSession(projectId: string, sessionId: string): Promise<void> {
+    this.db.prepare("delete from sessions where project_id = ? and id = ?").run(projectId, sessionId);
+  }
+
   async saveDatabase(database: ResearchDatabase): Promise<void> {
     this.upsertMany("research_databases", [database]);
   }
@@ -72,6 +80,22 @@ export class SqliteResearchStore implements ResearchStore {
 
   async saveArtifacts(artifacts: ResearchArtifact[]): Promise<void> {
     this.upsertMany("artifacts", artifacts);
+  }
+
+  async saveSources(sources: ResearchSource[]): Promise<void> {
+    this.upsertMany("sources", sources.map((source) => ({ ...source, createdAt: source.createdAt ?? source.retrievedAt })));
+  }
+
+  async saveChunks(chunks: ResearchChunk[]): Promise<void> {
+    this.upsertMany("chunks", chunks);
+  }
+
+  async saveToolRuns(toolRuns: ToolRun[]): Promise<void> {
+    this.upsertMany("tool_runs", toolRuns);
+  }
+
+  async saveAgentPlan(plan: AgentPlan): Promise<void> {
+    this.upsertMany("agent_plans", [plan]);
   }
 
   async saveOpenCodeRun(run: OpenCodeRun): Promise<void> {
@@ -108,6 +132,10 @@ export class SqliteResearchStore implements ResearchStore {
       hypotheses: this.byProject<Hypothesis>("hypotheses", projectId),
       evidence: this.byProject<EvidenceItem>("evidence", projectId),
       artifacts: this.byProject<ResearchArtifact>("artifacts", projectId),
+      sources: this.byProject<ResearchSource>("sources", projectId),
+      chunks: this.byProject<ResearchChunk>("chunks", projectId),
+      toolRuns: this.byProject<ToolRun>("tool_runs", projectId),
+      agentPlans: this.byProject<AgentPlan>("agent_plans", projectId),
       openCodeRuns: this.byProject<OpenCodeRun>("opencode_runs", projectId),
       ragContexts: this.byProject<RagContext>("rag_contexts", projectId),
       results: this.byProject<EvidenceBasedResult>("results", projectId),
@@ -133,6 +161,10 @@ export class SqliteResearchStore implements ResearchStore {
       "hypotheses",
       "evidence",
       "artifacts",
+      "sources",
+      "chunks",
+      "tool_runs",
+      "agent_plans",
       "opencode_runs",
       "rag_contexts",
       "results",

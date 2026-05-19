@@ -21,6 +21,10 @@ export type StorageCategory =
   | "experiment_log"
   | "conversation_memo";
 
+export type ResearchSourceKind = "web" | "paper" | "file" | "artifact" | "log" | "conversation";
+
+export type EvidenceStrength = "weak" | "medium" | "strong";
+
 export type HypothesisStatus = "untested" | "supported" | "rejected" | "needs_more_evidence";
 
 export interface AutonomyPolicy {
@@ -61,6 +65,10 @@ export interface ResearchDatabase {
   sqlitePath: string;
   vectorPath: string;
   artifactRoot: string;
+  sourceRoot?: string;
+  logRoot?: string;
+  reportRoot?: string;
+  knowledgeRoot?: string;
   createdAt: string;
 }
 
@@ -82,17 +90,73 @@ export interface Hypothesis {
   createdAt: string;
 }
 
+export interface ResearchSource {
+  id: string;
+  projectId: string;
+  kind: ResearchSourceKind;
+  title: string;
+  url?: string;
+  doi?: string;
+  authors?: string[];
+  publishedAt?: string;
+  retrievedAt: string;
+  rawPath?: string;
+  metadata: Record<string, unknown>;
+  createdAt?: string;
+}
+
+export interface ResearchChunk {
+  id: string;
+  projectId: string;
+  sourceId: string;
+  text: string;
+  chunkIndex: number;
+  embedding?: number[];
+  keywords: string[];
+  createdAt: string;
+}
+
+export interface ToolRun {
+  id: string;
+  projectId: string;
+  iteration: number;
+  toolName: string;
+  input: unknown;
+  output: unknown;
+  status: "completed" | "failed" | "skipped";
+  error?: string;
+  startedAt: string;
+  completedAt: string;
+}
+
+export interface AgentPlan {
+  id: string;
+  projectId: string;
+  iteration: number;
+  objective: string;
+  steps: string[];
+  requiredTools: string[];
+  expectedArtifacts: string[];
+  createdAt: string;
+}
+
 export interface EvidenceItem {
   id: string;
   projectId: string;
   category: StorageCategory;
   title: string;
   summary: string;
+  sourceId?: string;
   sourceUri?: string;
   citation?: string;
+  quote?: string;
   doi?: string;
   keywords: string[];
   linkedHypothesisIds: string[];
+  reliabilityScore?: number;
+  relevanceScore?: number;
+  evidenceStrength?: EvidenceStrength;
+  limitations?: string[];
   createdAt: string;
 }
 
@@ -104,6 +168,8 @@ export interface ResearchArtifact {
   relativePath: string;
   mimeType: string;
   summary: string;
+  content?: string;
+  rawPath?: string;
   createdAt: string;
 }
 
@@ -113,7 +179,7 @@ export interface OpenCodeRun {
   iteration: number;
   prompt: string;
   toolPlan: string[];
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "skipped";
   logs: string[];
   artifactIds: string[];
   evidenceIds: string[];
@@ -128,6 +194,10 @@ export interface RagContext {
   evidenceIds: string[];
   artifactIds: string[];
   summary: string;
+  chunkIds?: string[];
+  citations?: string[];
+  retrievalScores?: Record<string, number>;
+  contextText?: string;
   createdAt: string;
 }
 
@@ -168,6 +238,9 @@ export interface ResearchReport {
   quantitativeQualitativeResults: string;
   comprehensiveReport: string;
   reusableKnowledgeAsset: string;
+  markdown?: string;
+  reportPath?: string;
+  knowledgePath?: string;
   createdAt: string;
 }
 
@@ -179,6 +252,10 @@ export interface ResearchSnapshot {
   hypotheses: Hypothesis[];
   evidence: EvidenceItem[];
   artifacts: ResearchArtifact[];
+  sources: ResearchSource[];
+  chunks: ResearchChunk[];
+  toolRuns: ToolRun[];
+  agentPlans: AgentPlan[];
   openCodeRuns: OpenCodeRun[];
   ragContexts: RagContext[];
   results: EvidenceBasedResult[];
@@ -190,6 +267,8 @@ export interface OpenCodeRunInput {
   project: ResearchProject;
   questions: ResearchQuestion[];
   hypotheses: Hypothesis[];
+  evidence?: EvidenceItem[];
+  artifacts?: ResearchArtifact[];
   ragContext?: RagContext;
   iteration: number;
 }
@@ -198,7 +277,7 @@ export type OpenCodeLlmSource = "api" | "codex-oauth";
 
 export interface OpenCodeApiLlmSettings {
   source: "api";
-  provider: "openai" | "anthropic" | "openrouter" | "custom";
+  provider: "openai" | "anthropic" | "google" | "custom";
   model: string;
   baseUrl?: string;
   apiKey?: string;
@@ -212,8 +291,38 @@ export interface OpenCodeCodexOAuthLlmSettings {
 
 export type OpenCodeLlmSettings = OpenCodeApiLlmSettings | OpenCodeCodexOAuthLlmSettings;
 
+export interface OpenCodeCliSettings {
+  enabled: boolean;
+  command: string;
+  provider?: string;
+  model?: string;
+  timeoutMs: number;
+}
+
+export interface WebSearchSettings {
+  provider: "tavily" | "brave" | "custom" | "disabled";
+  apiKey?: string;
+  apiKeyConfigured?: boolean;
+  endpoint?: string;
+}
+
+export interface EmbeddingSettings {
+  provider: "openai" | "google" | "custom" | "local";
+  model?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  apiKeyConfigured?: boolean;
+  dimensions: number;
+}
+
 export interface AppSettings {
   openCodeLlm: OpenCodeLlmSettings;
+  openCode: OpenCodeCliSettings;
+  webSearch: WebSearchSettings;
+  embedding: EmbeddingSettings;
+  allowExternalSearch: boolean;
+  allowCodeExecution: boolean;
+  maxLoopIterations: number;
   updatedAt: string;
 }
 
@@ -221,6 +330,14 @@ export interface OpenCodeRunOutput {
   run: OpenCodeRun;
   artifacts: ResearchArtifact[];
   evidence: EvidenceItem[];
+  sources?: ResearchSource[];
+  chunks?: ResearchChunk[];
+  toolRuns?: ToolRun[];
+  agentPlan?: AgentPlan;
+  nextActions?: string[];
+  needsMoreEvidence?: boolean;
+  needsMoreAnalysis?: boolean;
+  fallbackRecommended?: boolean;
 }
 
 export interface OpenCodeAdapter {
@@ -236,11 +353,16 @@ export interface ResearchStore {
   listProjects(): Promise<ResearchProject[]>;
   getProject(projectId: string): Promise<ResearchProject | undefined>;
   saveSessions(sessions: ResearchSession[]): Promise<void>;
+  deleteSession(projectId: string, sessionId: string): Promise<void>;
   saveDatabase(database: ResearchDatabase): Promise<void>;
   saveQuestions(questions: ResearchQuestion[]): Promise<void>;
   saveHypotheses(hypotheses: Hypothesis[]): Promise<void>;
   saveEvidence(evidence: EvidenceItem[]): Promise<void>;
   saveArtifacts(artifacts: ResearchArtifact[]): Promise<void>;
+  saveSources(sources: ResearchSource[]): Promise<void>;
+  saveChunks(chunks: ResearchChunk[]): Promise<void>;
+  saveToolRuns(toolRuns: ToolRun[]): Promise<void>;
+  saveAgentPlan(plan: AgentPlan): Promise<void>;
   saveOpenCodeRun(run: OpenCodeRun): Promise<void>;
   saveRagContext(context: RagContext): Promise<void>;
   saveResult(result: EvidenceBasedResult): Promise<void>;

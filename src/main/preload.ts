@@ -7,7 +7,12 @@ const api: AetherOpsApi = {
     list: () => ipcRenderer.invoke("projects.list")
   },
   sessions: {
-    createForProject: (projectId) => ipcRenderer.invoke("sessions.createForProject", projectId)
+    createForProject: (projectId) => ipcRenderer.invoke("sessions.createForProject", projectId),
+    create: (projectId, title, focus) => ipcRenderer.invoke("sessions.create", projectId, title, focus),
+    delete: (projectId, sessionId) => ipcRenderer.invoke("sessions.delete", projectId, sessionId)
+  },
+  chat: {
+    send: (projectId, sessionId, content) => ipcRenderer.invoke("chat.send", projectId, sessionId, content)
   },
   researchDb: {
     create: (projectId) => ipcRenderer.invoke("researchDb.create", projectId)
@@ -22,7 +27,9 @@ const api: AetherOpsApi = {
     abort: (projectId) => ipcRenderer.invoke("loop.abort", projectId)
   },
   opencode: {
-    run: (projectId) => ipcRenderer.invoke("opencode.run", projectId)
+    run: (projectId) => ipcRenderer.invoke("opencode.run", projectId),
+    authLogin: (provider) => ipcRenderer.invoke("opencode.authLogin", provider),
+    authList: () => ipcRenderer.invoke("opencode.authList")
   },
   artifacts: {
     store: (projectId, artifact) => ipcRenderer.invoke("artifacts.store", projectId, artifact)

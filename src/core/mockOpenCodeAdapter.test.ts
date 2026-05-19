@@ -1,6 +1,28 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { MockOpenCodeAdapter } from "./mockOpenCodeAdapter.js";
 import { ResearchLoopStep, type AppSettings, type OpenCodeRunInput, type ResearchProject } from "./types.js";
+
+const baseSettings: Omit<AppSettings, "openCodeLlm"> = {
+  openCode: {
+    enabled: false,
+    command: "opencode",
+    provider: "openai",
+    model: "gpt-5.5",
+    timeoutMs: 180_000
+  },
+  webSearch: {
+    provider: "disabled"
+  },
+  embedding: {
+    provider: "local",
+    model: "local-hash",
+    dimensions: 96
+  },
+  allowExternalSearch: true,
+  allowCodeExecution: false,
+  maxLoopIterations: 2,
+  updatedAt: "2026-05-14T00:00:00.000Z"
+};
 
 const project: ResearchProject = {
   id: "project-test",
@@ -24,13 +46,13 @@ const project: ResearchProject = {
 describe("MockOpenCodeAdapter", () => {
   it("records the configured OpenCode API LLM source in execution logs", async () => {
     const settings: AppSettings = {
+      ...baseSettings,
       openCodeLlm: {
         source: "api",
         provider: "openai",
         model: "gpt-5.5",
         apiKeyConfigured: true
-      },
-      updatedAt: "2026-05-14T00:00:00.000Z"
+      }
     };
     const adapter = new MockOpenCodeAdapter(() => settings);
     const input: OpenCodeRunInput = {
@@ -47,11 +69,11 @@ describe("MockOpenCodeAdapter", () => {
 
   it("records Codex OAuth bridge settings in execution logs", async () => {
     const settings: AppSettings = {
+      ...baseSettings,
       openCodeLlm: {
         source: "codex-oauth",
         model: "gpt-5.5"
-      },
-      updatedAt: "2026-05-14T00:00:00.000Z"
+      }
     };
     const adapter = new MockOpenCodeAdapter(() => settings);
     const output = await adapter.run({ project, questions: [], hypotheses: [], iteration: 1 });

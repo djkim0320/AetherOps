@@ -89,8 +89,21 @@ export class LocalResearchAdapter implements OpenCodeAdapter {
         "부족한 근거는 evidence_gap으로 기록한다.",
         "반복 산출물과 다음 질문을 생성한다."
       ],
+      targetQuestions: input.questions.map((item) => item.id),
+      targetHypotheses: input.hypotheses.map((item) => item.id),
       requiredTools: this.tools.map((tool) => tool.name),
+      expectedSources: ["web", "paper", "artifact", "log"],
       expectedArtifacts: [`artifacts/iteration-${input.iteration}/research-note.md`],
+      executionSteps: [
+        "Review the current research plan and evidence gaps.",
+        "Run available tools and record unavailable tools explicitly.",
+        "Write iteration artifacts and evidence gap notes."
+      ],
+      stopCriteria: [
+        "All target hypotheses have enough cited evidence.",
+        "The maximum loop iteration is reached.",
+        "No new evidence, artifacts, or normalized records are produced."
+      ],
       createdAt
     };
 

@@ -46,6 +46,7 @@ const workspaceStateKey = "aetherops.workspaceState";
 type SidebarTab = "aetherops" | "new-chat" | "search" | "plugins" | "automation" | "settings";
 type ProjectView = "dashboard" | "chat";
 type IconComponent = typeof Target;
+type StepFlowClass = "main" | "data" | "agent" | "storage" | "knowledge" | "loop" | "output";
 type HomeModelSelection =
   | { source: "codex-oauth"; model: string }
   | { source: "api"; provider: OpenCodeApiLlmSettings["provider"]; model: string };
@@ -106,28 +107,34 @@ const embeddingModelOptions: Record<AppSettings["embedding"]["provider"], string
 const embeddingDimensionOptions = [64, 96, 128, 256, 512, 1024, 1536, 3072];
 const maxLoopIterationOptions = [1, 2, 3, 4, 5, 6, 8];
 
-const stepLabels: Record<ResearchLoopStep, { index: string; label: string; flow: "main" | "data" | "agent"; icon: IconComponent }> = {
-  [ResearchLoopStep.CreateProject]: { index: "1", label: "연구 프로젝트 생성", flow: "main", icon: FolderKanban },
-  [ResearchLoopStep.CreateSubSessions]: { index: "2", label: "하위 대화 세션", flow: "main", icon: MessageSquare },
-  [ResearchLoopStep.CreateResearchDb]: { index: "3", label: "연구 DB 생성", flow: "data", icon: Database },
-  [ResearchLoopStep.GenerateQuestionsHypothesesEvidence]: { index: "4", label: "질문/가설/근거", flow: "agent", icon: GitBranch },
-  [ResearchLoopStep.RunOpenCode]: { index: "5", label: "OpenCode 실행", flow: "agent", icon: Bot },
-  [ResearchLoopStep.StoreResults]: { index: "6", label: "결과/자료 저장", flow: "data", icon: Boxes },
-  [ResearchLoopStep.BuildRagContext]: { index: "7", label: "Vector RAG 구성", flow: "data", icon: Search },
-  [ResearchLoopStep.DeriveEvidenceBasedResult]: { index: "8", label: "근거 기반 결과", flow: "agent", icon: FlaskConical },
-  [ResearchLoopStep.FinalizeResearchOutputs]: { index: "완료", label: "최종 연구 성과", flow: "main", icon: CheckCircle2 }
+const stepLabels: Record<ResearchLoopStep, { index: string; label: string; flow: StepFlowClass; icon: IconComponent }> = {
+  [ResearchLoopStep.CreateResearchDb]: { index: "1", label: "연구 DB 생성", flow: "storage", icon: Database },
+  [ResearchLoopStep.InputResearchQuestionHypothesis]: { index: "2", label: "질문/가설 입력", flow: "main", icon: MessageSquare },
+  [ResearchLoopStep.BuildResearchSpecification]: { index: "3", label: "연구 명세 수립", flow: "agent", icon: GitBranch },
+  [ResearchLoopStep.PlanResearch]: { index: "4", label: "연구 계획 수립", flow: "agent", icon: FolderKanban },
+  [ResearchLoopStep.ExecuteTools]: { index: "5", label: "도구 실행", flow: "agent", icon: Bot },
+  [ResearchLoopStep.NormalizeData]: { index: "6", label: "데이터 정규화", flow: "storage", icon: Boxes },
+  [ResearchLoopStep.BuildVectorIndex]: { index: "7", label: "Vector Index", flow: "knowledge", icon: Search },
+  [ResearchLoopStep.BuildOntologyGraph]: { index: "8", label: "Ontology Graph", flow: "knowledge", icon: Workflow },
+  [ResearchLoopStep.ReasonAndValidate]: { index: "9", label: "추론/검증", flow: "agent", icon: FlaskConical },
+  [ResearchLoopStep.SynthesizeAndEvaluate]: { index: "10", label: "결과 합성", flow: "agent", icon: FileText },
+  [ResearchLoopStep.DecideContinuation]: { index: "11", label: "계속 연구?", flow: "loop", icon: Gauge },
+  [ResearchLoopStep.FinalizeOutputs]: { index: "12", label: "최종 결과", flow: "output", icon: CheckCircle2 }
 };
 
 const exactSteps = [
-  ResearchLoopStep.CreateProject,
-  ResearchLoopStep.CreateSubSessions,
   ResearchLoopStep.CreateResearchDb,
-  ResearchLoopStep.GenerateQuestionsHypothesesEvidence,
-  ResearchLoopStep.RunOpenCode,
-  ResearchLoopStep.StoreResults,
-  ResearchLoopStep.BuildRagContext,
-  ResearchLoopStep.DeriveEvidenceBasedResult,
-  ResearchLoopStep.FinalizeResearchOutputs
+  ResearchLoopStep.InputResearchQuestionHypothesis,
+  ResearchLoopStep.BuildResearchSpecification,
+  ResearchLoopStep.PlanResearch,
+  ResearchLoopStep.ExecuteTools,
+  ResearchLoopStep.NormalizeData,
+  ResearchLoopStep.BuildVectorIndex,
+  ResearchLoopStep.BuildOntologyGraph,
+  ResearchLoopStep.ReasonAndValidate,
+  ResearchLoopStep.SynthesizeAndEvaluate,
+  ResearchLoopStep.DecideContinuation,
+  ResearchLoopStep.FinalizeOutputs
 ];
 
 export function App(): ReactElement {
@@ -207,11 +214,12 @@ export function App(): ReactElement {
 
   const metrics = useMemo(
     () => [
-      { label: "반복", value: snapshot?.openCodeRuns.length ?? 0 },
+      { label: "반복", value: snapshot?.results.length ?? 0 },
       { label: "근거", value: snapshot?.evidence.length ?? 0 },
-      { label: "산출물", value: snapshot?.artifacts.length ?? 0 },
-      { label: "RAG chunk", value: snapshot?.chunks.length ?? 0 },
-      { label: "도구 로그", value: snapshot?.toolRuns.length ?? 0 }
+      { label: "정규화", value: snapshot?.normalizedRecords.length ?? 0 },
+      { label: "Vector chunk", value: snapshot?.chunks.length ?? 0 },
+      { label: "Graph", value: (snapshot?.ontologyEntities.length ?? 0) + (snapshot?.ontologyRelations.length ?? 0) },
+      { label: "검증", value: snapshot?.validationResults.length ?? 0 }
     ],
     [snapshot]
   );
@@ -1027,6 +1035,7 @@ function ProjectChatTab({
   const pendingForSession = session && pendingMessage?.sessionId === session.id ? pendingMessage : undefined;
   const [now, setNow] = useState(Date.now());
   const memoCount = messages.length;
+  const hasConversation = messages.length > 0 || Boolean(pendingForSession);
 
   useEffect(() => {
     if (!pendingForSession) {
@@ -1043,7 +1052,7 @@ function ProjectChatTab({
   }
 
   return (
-    <section className="codexHome projectChatHome">
+    <section className={`codexHome projectChatHome ${hasConversation ? "chatStarted" : ""}`}>
       <div className="homeCenter">
         <div className="projectChatHeading">
           <p>{snapshot.project.topic}</p>
@@ -1230,6 +1239,10 @@ function AetherOpsTab({
   const latestResult = snapshot.results.at(-1);
   const activeRun = snapshot.openCodeRuns.at(-1);
   const latestRag = snapshot.ragContexts.at(-1);
+  const latestHybrid = snapshot.hybridContexts.at(-1);
+  const latestPlan = snapshot.researchPlans.at(-1);
+  const latestSpec = snapshot.specifications.at(-1);
+  const latestDecision = snapshot.continuationDecisions.at(-1);
 
   return (
     <section className="codexContent">
@@ -1334,7 +1347,15 @@ function AetherOpsTab({
           </div>
           <div className="latestResult">
             <h3>근거 기반 결과</h3>
-            <p>{latestResult?.answer ?? "루프를 실행하면 RAG 근거와 citation 기반 결과가 표시됩니다."}</p>
+            <p>{latestResult?.answer ?? "루프를 실행하면 Hybrid Retrieval과 citation 기반 결과가 표시됩니다."}</p>
+          </div>
+          <div className="latestResult">
+            <h3>현재 연구 명세</h3>
+            <p>{latestSpec ? latestSpec.researchQuestions.slice(0, 3).join(" / ") : "아직 연구 명세가 없습니다."}</p>
+          </div>
+          <div className="latestResult">
+            <h3>현재 연구 계획</h3>
+            <p>{latestPlan ? latestPlan.objective : "아직 연구 계획이 없습니다."}</p>
           </div>
         </section>
 
@@ -1386,12 +1407,12 @@ function AetherOpsTab({
         <section className="panel">
           <div className="panelTitle">
             <Search size={17} />
-            <h2>RAG 근거 패널</h2>
+            <h2>Hybrid 근거 패널</h2>
           </div>
           <div className="ragBox">
-            <p>{latestRag?.summary ?? "아직 검색 컨텍스트가 구성되지 않았습니다."}</p>
+            <p>{latestHybrid?.contextText ?? latestRag?.summary ?? "아직 검색 컨텍스트가 구성되지 않았습니다."}</p>
             <span>
-              chunk {latestRag?.chunkIds?.length ?? 0} / citation {latestRag?.citations?.length ?? 0}
+              chunk {latestHybrid?.vectorChunkIds.length ?? latestRag?.chunkIds?.length ?? 0} / citation {latestHybrid?.citations.length ?? latestRag?.citations?.length ?? 0}
             </span>
           </div>
         </section>
@@ -1402,11 +1423,12 @@ function AetherOpsTab({
             <h2>최종 연구 성과</h2>
           </div>
           <div className="finalGrid">
-            <FinalItem title="질문에 대한 답변" value={snapshot.report?.answer} />
-            <FinalItem title="가설 검증 결과" value={snapshot.report?.hypothesisVerification} />
-            <FinalItem title="정량/정성 결과" value={snapshot.report?.quantitativeQualitativeResults} />
-            <FinalItem title="종합 보고서" value={snapshot.report?.comprehensiveReport} />
-            <FinalItem title="재사용 지식" value={snapshot.report?.reusableKnowledgeAsset} />
+            <FinalItem title="Answer" value={snapshot.report?.answer} />
+            <FinalItem title="Hypothesis verification" value={snapshot.report?.hypothesisVerification} />
+            <FinalItem title="Quantitative / qualitative" value={snapshot.report?.quantitativeQualitativeResults} />
+            <FinalItem title="Continuation decision" value={latestDecision ? (latestDecision.shouldContinue ? "Continue - " : "Finalize - ") + latestDecision.reason : undefined} />
+            <FinalItem title="Comprehensive report" value={snapshot.report?.comprehensiveReport} />
+            <FinalItem title="Reusable knowledge" value={snapshot.report?.reusableKnowledgeAsset} />
           </div>
         </section>
       </div>
@@ -1683,8 +1705,12 @@ function SettingsTab({
             </label>
           </div>
           <label>
-            현재 embedding 모델
-            <input readOnly value={settingsDraft.embedding.model ?? embeddingModelOptions[settingsDraft.embedding.provider][0]} />
+            임베딩 모델
+            <StringSelect
+              value={settingsDraft.embedding.model ?? embeddingModelOptions[settingsDraft.embedding.provider][0]}
+              options={embeddingModelOptions[settingsDraft.embedding.provider]}
+              onChange={(model) => onSettingsDraftChange({ ...settingsDraft, embedding: { ...settingsDraft.embedding, model } })}
+            />
           </label>
           <label>
             API key
@@ -1724,6 +1750,42 @@ function SettingsTab({
             <label>
               저장 상태
               <input readOnly value={settingsStatus(appSettings)} />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              Ontology extraction
+              <select
+                value={settingsDraft.ontologyExtractionMode ?? "rule_based"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    ontologyExtractionMode: event.target.value as NonNullable<AppSettings["ontologyExtractionMode"]>
+                  })
+                }
+              >
+                <option value="rule_based">rule_based</option>
+                <option value="hybrid">hybrid</option>
+                <option value="llm">llm</option>
+              </select>
+            </label>
+            <label>
+              Final exports
+              <select
+                value={settingsDraft.finalOutputExport?.artifactPackage === false ? "report-only" : "full"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    finalOutputExport:
+                      event.target.value === "full"
+                        ? { markdown: true, json: true, ontologyGraph: true, artifactPackage: true }
+                        : { markdown: true, json: true, ontologyGraph: false, artifactPackage: false }
+                  })
+                }
+              >
+                <option value="full">full package</option>
+                <option value="report-only">report only</option>
+              </select>
             </label>
           </div>
         </section>
@@ -1779,11 +1841,13 @@ function AgentDuty({ icon: Icon, label }: { icon: IconComponent; label: string }
 
 function StorageList({ snapshot }: { snapshot: ResearchSnapshot }): ReactElement {
   const rows = [
-    { icon: Boxes, label: "생성된 산출물", value: snapshot.artifacts.filter((item) => item.category === "generated_artifact").length },
-    { icon: FileText, label: "참고 문헌/논문", value: snapshot.evidence.filter((item) => item.category === "paper_reference").length },
-    { icon: Globe2, label: "웹 자료", value: snapshot.evidence.filter((item) => item.category === "web_source").length },
-    { icon: Gauge, label: "실험/분석 로그", value: snapshot.evidence.filter((item) => item.category === "experiment_log").length },
-    { icon: MessageSquare, label: "대화/메모", value: snapshot.evidence.filter((item) => item.category === "conversation_memo").length }
+    { icon: FileText, label: "Raw Sources", value: snapshot.sources.length },
+    { icon: Boxes, label: "Artifacts", value: snapshot.artifacts.length },
+    { icon: Gauge, label: "Tool Logs", value: snapshot.toolRuns.length },
+    { icon: MessageSquare, label: "Evidence Ledger", value: snapshot.evidence.length },
+    { icon: Search, label: "Vector DB", value: snapshot.chunks.length },
+    { icon: Workflow, label: "Ontology Graph DB", value: snapshot.ontologyEntities.length + snapshot.ontologyRelations.length },
+    { icon: Database, label: "Projects & Reports", value: snapshot.finalOutputs.length || (snapshot.report ? 1 : 0) }
   ];
 
   return (

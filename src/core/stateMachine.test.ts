@@ -1,25 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { nextResearchLoopStep, RESEARCH_LOOP_SEQUENCE } from "./stateMachine.js";
+import { nextResearchLoopStep, RESEARCH_EXECUTION_SEQUENCE, RESEARCH_LOOP_SEQUENCE } from "./stateMachine.js";
 import { ResearchLoopStep } from "./types.js";
 
 describe("research loop state machine", () => {
-  it("keeps the exact 5 -> 6 -> 7 -> 8 -> 5 loop when more work is needed", () => {
-    expect(RESEARCH_LOOP_SEQUENCE).toEqual([
-      ResearchLoopStep.RunOpenCode,
-      ResearchLoopStep.StoreResults,
-      ResearchLoopStep.BuildRagContext,
-      ResearchLoopStep.DeriveEvidenceBasedResult
+  it("keeps the 12-step loop and returns from decision to planning when more work is needed", () => {
+    expect(RESEARCH_EXECUTION_SEQUENCE).toEqual([
+      ResearchLoopStep.ExecuteTools,
+      ResearchLoopStep.NormalizeData,
+      ResearchLoopStep.BuildVectorIndex,
+      ResearchLoopStep.BuildOntologyGraph,
+      ResearchLoopStep.ReasonAndValidate,
+      ResearchLoopStep.SynthesizeAndEvaluate,
+      ResearchLoopStep.DecideContinuation
     ]);
-
-    expect(nextResearchLoopStep(ResearchLoopStep.RunOpenCode, true)).toBe(ResearchLoopStep.StoreResults);
-    expect(nextResearchLoopStep(ResearchLoopStep.StoreResults, true)).toBe(ResearchLoopStep.BuildRagContext);
-    expect(nextResearchLoopStep(ResearchLoopStep.BuildRagContext, true)).toBe(ResearchLoopStep.DeriveEvidenceBasedResult);
-    expect(nextResearchLoopStep(ResearchLoopStep.DeriveEvidenceBasedResult, true)).toBe(ResearchLoopStep.RunOpenCode);
+    expect(RESEARCH_LOOP_SEQUENCE[0]).toBe(ResearchLoopStep.PlanResearch);
+    expect(nextResearchLoopStep(ResearchLoopStep.PlanResearch, true)).toBe(ResearchLoopStep.ExecuteTools);
+    expect(nextResearchLoopStep(ResearchLoopStep.DecideContinuation, true)).toBe(ResearchLoopStep.PlanResearch);
   });
 
-  it("finalizes from step 8 when no extra evidence or analysis is needed", () => {
-    expect(nextResearchLoopStep(ResearchLoopStep.DeriveEvidenceBasedResult, false)).toBe(
-      ResearchLoopStep.FinalizeResearchOutputs
-    );
+  it("finalizes from step 11 when no extra research is needed", () => {
+    expect(nextResearchLoopStep(ResearchLoopStep.DecideContinuation, false)).toBe(ResearchLoopStep.FinalizeOutputs);
   });
 });

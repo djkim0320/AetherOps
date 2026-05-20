@@ -5,6 +5,13 @@ export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
 }
 
+export class EmbeddingProviderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmbeddingProviderError";
+  }
+}
+
 export class LocalHashEmbeddingProvider implements EmbeddingProvider {
   constructor(private readonly dimensions = 96) {}
 
@@ -27,15 +34,20 @@ export class ApiEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
-    if (!this.settings.apiKey || this.settings.provider === "local") {
+    if (this.settings.provider === "local") {
       return this.fallback.embed(text);
+    }
+
+    if (!this.settings.apiKey) {
+      throw new EmbeddingProviderError(`${this.settings.provider} embedding API key is not configured.`);
     }
 
     try {
       if (this.settings.provider === "google") {
         return this.embedWithGoogle(text);
       }
-      const response = await fetch(this.endpoint(), {
+      const endpoint = this.endpoint();
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -43,22 +55,34 @@ export class ApiEmbeddingProvider implements EmbeddingProvider {
         },
         body: JSON.stringify({
           model: this.settings.model || "text-embedding-3-small",
-          input: text.slice(0, 8000)
+          input: text.slice(0, 8000),
+          ...(this.settings.dimensions ? { dimensions: this.settings.dimensions } : {})
         })
       });
       if (!response.ok) {
-        return this.fallback.embed(text);
+        throw new EmbeddingProviderError(
+          `${this.settings.provider} embedding request failed (${response.status} ${response.statusText}) at ${endpoint}: ${await response.text()}`
+        );
       }
       const parsed = (await response.json()) as { data?: Array<{ embedding?: number[] }> };
-      return parsed.data?.[0]?.embedding?.length ? normalize(parsed.data[0].embedding) : this.fallback.embed(text);
-    } catch {
-      return this.fallback.embed(text);
+      if (!parsed.data?.[0]?.embedding?.length) {
+        throw new EmbeddingProviderError(`${this.settings.provider} embedding response did not include an embedding vector.`);
+      }
+      return normalize(parsed.data[0].embedding);
+    } catch (error) {
+      if (error instanceof EmbeddingProviderError) {
+        throw error;
+      }
+      throw new EmbeddingProviderError(`${this.settings.provider} embedding request failed: ${formatError(error)}`);
     }
   }
 
   private endpoint(): string {
     if (this.settings.baseUrl) {
       return `${this.settings.baseUrl.replace(/\/$/, "")}/embeddings`;
+    }
+    if (this.settings.provider === "custom") {
+      throw new EmbeddingProviderError("custom embedding provider requires baseUrl.");
     }
     return "https://api.openai.com/v1/embeddings";
   }
@@ -83,10 +107,13 @@ export class ApiEmbeddingProvider implements EmbeddingProvider {
       })
     });
     if (!response.ok) {
-      return this.fallback.embed(text);
+      throw new EmbeddingProviderError(`google embedding request failed (${response.status} ${response.statusText}) at ${endpoint}: ${await response.text()}`);
     }
     const parsed = (await response.json()) as { embedding?: { values?: number[] } };
-    return parsed.embedding?.values?.length ? normalize(parsed.embedding.values) : this.fallback.embed(text);
+    if (!parsed.embedding?.values?.length) {
+      throw new EmbeddingProviderError("google embedding response did not include an embedding vector.");
+    }
+    return normalize(parsed.embedding.values);
   }
 }
 
@@ -121,4 +148,8 @@ function normalize(vector: number[]): number[] {
     return vector;
   }
   return vector.map((value) => Number((value / norm).toFixed(8)));
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

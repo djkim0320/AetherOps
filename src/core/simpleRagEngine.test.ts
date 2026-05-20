@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryResearchStore } from "./memoryStore.js";
+import { MockOpenCodeAdapter } from "./mockOpenCodeAdapter.js";
 import { AetherOpsOrchestrator } from "./orchestrator.js";
 import { SimpleRagEngine } from "./simpleRagEngine.js";
 import type { CreateProjectInput } from "./types.js";
@@ -20,7 +21,7 @@ const input: CreateProjectInput = {
 describe("SimpleRagEngine", () => {
   it("connects stored evidence and artifacts to the next context", async () => {
     const store = new InMemoryResearchStore();
-    const orchestrator = new AetherOpsOrchestrator(store, undefined, new SimpleRagEngine());
+    const orchestrator = new AetherOpsOrchestrator(store, new MockOpenCodeAdapter(), new SimpleRagEngine());
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 

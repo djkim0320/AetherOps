@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import type { AppSettings } from "../core/types.js";
+import type { AppSettings } from "../../core/types.js";
+import { isWindowsShellCommand, resolveOpenCodeCommand } from "./opencodeResolver.js";
 
 export interface OpenCodeAuthResult {
   ok: boolean;
@@ -8,7 +9,8 @@ export interface OpenCodeAuthResult {
 }
 
 export async function launchOpenCodeAuthLogin(settings: AppSettings, provider?: string): Promise<OpenCodeAuthResult> {
-  const command = settings.openCode.command || "opencode";
+  const resolution = resolveOpenCodeCommand(settings.openCode.command);
+  const command = resolution.command;
   const args = ["auth", "login", ...(provider ? [provider] : [])];
 
   if (process.platform === "win32") {
@@ -38,13 +40,17 @@ export async function launchOpenCodeAuthLogin(settings: AppSettings, provider?: 
 }
 
 export function listOpenCodeAuth(settings: AppSettings): Promise<OpenCodeAuthResult> {
-  const command = settings.openCode.command || "opencode";
-  return runCapture(command, ["auth", "list"], settings.openCode.timeoutMs || 30_000);
+  const resolution = resolveOpenCodeCommand(settings.openCode.command);
+  return runCapture(resolution.command, ["auth", "list"], settings.openCode.timeoutMs || 30_000);
 }
 
 function runCapture(command: string, args: string[], timeoutMs: number): Promise<OpenCodeAuthResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { windowsHide: true });
+    const child = spawn(command, args, {
+      windowsHide: true,
+      shell: isWindowsShellCommand(command),
+      stdio: ["ignore", "pipe", "pipe"]
+    });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {

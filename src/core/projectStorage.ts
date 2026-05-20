@@ -1,9 +1,13 @@
 import { createId, nowIso } from "./ids.js";
 import type {
   OpenCodeRun,
+  OntologyConstraint,
+  OntologyEntity,
+  OntologyRelation,
   ResearchArtifact,
   ResearchChunk,
   ResearchDatabase,
+  FinalResearchOutput,
   ResearchProject,
   ResearchReport,
   ResearchSnapshot,
@@ -28,6 +32,16 @@ export interface ProjectStorage {
   ): Promise<ResearchSource | undefined>;
   writeSources(project: ResearchProject, database: ResearchDatabase, sources: ResearchSource[]): Promise<ResearchSource[]>;
   writeChunks(project: ResearchProject, database: ResearchDatabase, chunks: ResearchChunk[]): Promise<void>;
+  writeOntologyGraph(
+    project: ResearchProject,
+    database: ResearchDatabase,
+    graph: {
+      entities: OntologyEntity[];
+      relations: OntologyRelation[];
+      constraints: OntologyConstraint[];
+      exportedAt: string;
+    }
+  ): Promise<{ ontologyExportPath: string; ontologyNtPath: string }>;
   writeReportFiles(
     project: ResearchProject,
     database: ResearchDatabase,
@@ -35,6 +49,15 @@ export interface ProjectStorage {
     markdown: string,
     reusableKnowledge: string
   ): Promise<{ reportPath: string; knowledgePath: string }>;
+  writeFinalOutputFiles?(
+    project: ResearchProject,
+    database: ResearchDatabase,
+    output: FinalResearchOutput,
+    graphExport: unknown,
+    artifactPackage: unknown,
+    evidenceCitations: unknown,
+    hypothesisVerification: unknown
+  ): Promise<{ reportPath: string; knowledgePath: string; ontologyExportPath: string; artifactPackagePath: string }>;
   writeProjectState(snapshot: ResearchSnapshot): Promise<void>;
 }
 
@@ -45,11 +68,15 @@ export class NoopProjectStorage implements ProjectStorage {
       projectId: project.id,
       sqlitePath: `${project.projectRoot}/research.sqlite`,
       vectorPath: `${project.projectRoot}/vector.sqlite`,
+      ontologyPath: `${project.projectRoot}/ontology.sqlite`,
       artifactRoot: `${project.projectRoot}/artifacts`,
       sourceRoot: `${project.projectRoot}/sources`,
       logRoot: `${project.projectRoot}/logs`,
       reportRoot: `${project.projectRoot}/reports`,
       knowledgeRoot: `${project.projectRoot}/knowledge`,
+      ontologyRoot: `${project.projectRoot}/ontology`,
+      exportsRoot: `${project.projectRoot}/exports`,
+      statePath: `${project.projectRoot}/state.json`,
       createdAt: nowIso()
     };
   }
@@ -93,8 +120,16 @@ export class NoopProjectStorage implements ProjectStorage {
     return;
   }
 
+  async writeOntologyGraph(): Promise<{ ontologyExportPath: string; ontologyNtPath: string }> {
+    return { ontologyExportPath: "", ontologyNtPath: "" };
+  }
+
   async writeReportFiles(): Promise<{ reportPath: string; knowledgePath: string }> {
     return { reportPath: "", knowledgePath: "" };
+  }
+
+  async writeFinalOutputFiles(): Promise<{ reportPath: string; knowledgePath: string; ontologyExportPath: string; artifactPackagePath: string }> {
+    return { reportPath: "", knowledgePath: "", ontologyExportPath: "", artifactPackagePath: "" };
   }
 
   async writeProjectState(): Promise<void> {

@@ -180,6 +180,10 @@ export async function deriveResultWithLlm(
   });
 
   const createdAt = nowIso();
+  const answer = cleanText(response.answer);
+  if (!answer) {
+    return undefined;
+  }
   const hypothesisUpdates = normalizeArray(response.hypothesisUpdates)
     .map((update) => {
       const hypothesis = snapshot.hypotheses[update.hypothesisIndex];
@@ -198,7 +202,7 @@ export async function deriveResultWithLlm(
     id: createId("result"),
     projectId: snapshot.project.id,
     iteration,
-    answer: cleanText(response.answer) || "LLM이 빈 답변을 반환했습니다. 확보된 근거와 RAG context를 기준으로 추가 검토가 필요합니다.",
+    answer,
     hypothesisUpdates,
     quantitativeResults: normalizeArray(response.quantitativeResults).map(cleanText).filter(Boolean),
     qualitativeResults: normalizeArray(response.qualitativeResults).map(cleanText).filter(Boolean),

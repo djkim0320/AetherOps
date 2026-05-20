@@ -1,41 +1,48 @@
 import { ResearchLoopStep } from "./types.js";
 
-export const INITIALIZATION_SEQUENCE: ResearchLoopStep[] = [
-  ResearchLoopStep.CreateProject,
-  ResearchLoopStep.CreateSubSessions,
+export const RESEARCH_DESIGN_SEQUENCE: ResearchLoopStep[] = [
   ResearchLoopStep.CreateResearchDb,
-  ResearchLoopStep.GenerateQuestionsHypothesesEvidence
+  ResearchLoopStep.InputResearchQuestionHypothesis,
+  ResearchLoopStep.BuildResearchSpecification,
+  ResearchLoopStep.PlanResearch
+];
+
+export const RESEARCH_EXECUTION_SEQUENCE: ResearchLoopStep[] = [
+  ResearchLoopStep.ExecuteTools,
+  ResearchLoopStep.NormalizeData,
+  ResearchLoopStep.BuildVectorIndex,
+  ResearchLoopStep.BuildOntologyGraph,
+  ResearchLoopStep.ReasonAndValidate,
+  ResearchLoopStep.SynthesizeAndEvaluate,
+  ResearchLoopStep.DecideContinuation
 ];
 
 export const RESEARCH_LOOP_SEQUENCE: ResearchLoopStep[] = [
-  ResearchLoopStep.RunOpenCode,
-  ResearchLoopStep.StoreResults,
-  ResearchLoopStep.BuildRagContext,
-  ResearchLoopStep.DeriveEvidenceBasedResult
+  ResearchLoopStep.PlanResearch,
+  ...RESEARCH_EXECUTION_SEQUENCE
 ];
 
-export function nextInitializationStep(step: ResearchLoopStep): ResearchLoopStep {
-  const index = INITIALIZATION_SEQUENCE.indexOf(step);
-  if (index === -1 || index === INITIALIZATION_SEQUENCE.length - 1) {
-    return ResearchLoopStep.RunOpenCode;
-  }
-  return INITIALIZATION_SEQUENCE[index + 1];
-}
+export const RESEARCH_OUTPUT_SEQUENCE: ResearchLoopStep[] = [ResearchLoopStep.FinalizeOutputs];
 
 export function nextResearchLoopStep(
   step: ResearchLoopStep,
   shouldContinue: boolean
 ): ResearchLoopStep {
-  if (step === ResearchLoopStep.DeriveEvidenceBasedResult) {
-    return shouldContinue ? ResearchLoopStep.RunOpenCode : ResearchLoopStep.FinalizeResearchOutputs;
+  if (step === ResearchLoopStep.DecideContinuation) {
+    return shouldContinue ? ResearchLoopStep.PlanResearch : ResearchLoopStep.FinalizeOutputs;
   }
 
-  const index = RESEARCH_LOOP_SEQUENCE.indexOf(step);
-  if (index === -1) {
-    return ResearchLoopStep.RunOpenCode;
+  const designIndex = RESEARCH_DESIGN_SEQUENCE.indexOf(step);
+  if (designIndex >= 0) {
+    return RESEARCH_DESIGN_SEQUENCE[designIndex + 1] ?? ResearchLoopStep.ExecuteTools;
   }
 
-  return RESEARCH_LOOP_SEQUENCE[index + 1] ?? ResearchLoopStep.DeriveEvidenceBasedResult;
+  const executionIndex = RESEARCH_EXECUTION_SEQUENCE.indexOf(step);
+  if (executionIndex >= 0) {
+    return RESEARCH_EXECUTION_SEQUENCE[executionIndex + 1] ?? ResearchLoopStep.DecideContinuation;
+  }
+
+  return ResearchLoopStep.CreateResearchDb;
 }
 
 export function isResearchLoopStep(step: ResearchLoopStep): boolean {
@@ -43,5 +50,5 @@ export function isResearchLoopStep(step: ResearchLoopStep): boolean {
 }
 
 export function isTerminalStep(step: ResearchLoopStep): boolean {
-  return step === ResearchLoopStep.FinalizeResearchOutputs;
+  return step === ResearchLoopStep.FinalizeOutputs;
 }

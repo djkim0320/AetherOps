@@ -1,12 +1,11 @@
-﻿import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createId, nowIso } from "../core/ids.js";
-import { LocalResearchAdapter } from "../core/localResearchAdapter.js";
-import { InMemoryResearchStore } from "../core/memoryStore.js";
-import { AetherOpsOrchestrator } from "../core/orchestrator.js";
-import { ResearchLoopStep, type AppSettings, type CreateProjectInput, type OpenCodeAdapter, type OpenCodeRunInput, type OpenCodeRunOutput } from "../core/types.js";
+import { createId, nowIso } from "../../core/ids.js";
+import { InMemoryResearchStore } from "../../core/memoryStore.js";
+import { AetherOpsOrchestrator } from "../../core/orchestrator.js";
+import { ResearchLoopStep, type AppSettings, type CreateProjectInput, type OpenCodeAdapter, type OpenCodeRunInput, type OpenCodeRunOutput } from "../../core/types.js";
 import { NodeProjectStorage } from "./projectResearchStore.js";
 
 let tempDir: string | undefined;
@@ -57,7 +56,7 @@ afterEach(() => {
   }
 });
 
-describe("AetherOps fallback loop", () => {
+describe("AetherOps strict execution loop", () => {
   it("seeds questions, hypotheses, and evidence", async () => {
     const orchestrator = new AetherOpsOrchestrator(new InMemoryResearchStore());
     let snapshot = await orchestrator.createProject(input);
@@ -69,11 +68,34 @@ describe("AetherOps fallback loop", () => {
     expect(snapshot.evidence.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("runs maxLoopIterations with LocalResearchAdapter and writes outputs", async () => {
+  it("fails clearly instead of running a fallback adapter when OpenCode is unavailable", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-loop-"));
+    const failingAdapter: OpenCodeAdapter = {
+      run: async (runInput: OpenCodeRunInput): Promise<OpenCodeRunOutput> => {
+        const createdAt = nowIso();
+        return {
+          run: {
+            id: createId("opencode"),
+            projectId: runInput.project.id,
+            iteration: runInput.iteration,
+            prompt: "strict-opencode-required",
+            toolPlan: ["opencode-cli"],
+            status: "failed",
+            logs: ["OpenCode CLI is unavailable."],
+            artifactIds: [],
+            evidenceIds: [],
+            startedAt: createdAt,
+            completedAt: createdAt
+          },
+          artifacts: [],
+          evidence: [],
+          fatalError: "OpenCode CLI is unavailable."
+        };
+      }
+    };
     const orchestrator = new AetherOpsOrchestrator(
       new InMemoryResearchStore(),
-      new LocalResearchAdapter(() => settings),
+      failingAdapter,
       undefined,
       join(tempDir, "projects"),
       undefined,
@@ -83,18 +105,13 @@ describe("AetherOps fallback loop", () => {
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
-    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.FinalizeResearchOutputs);
-    expect(snapshot.project.status).toBe("completed");
-    expect(snapshot.openCodeRuns).toHaveLength(2);
-    expect(snapshot.toolRuns.length).toBeGreaterThan(0);
-    expect(snapshot.artifacts.length).toBeGreaterThanOrEqual(2);
-    expect(snapshot.ragContexts.length).toBeGreaterThan(0);
-    expect(snapshot.results.length).toBeGreaterThan(0);
-    expect(snapshot.report).toBeDefined();
-    expect(existsSync(join(snapshot.project.projectRoot, "artifacts", "iteration-1"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "artifacts", "iteration-2"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "knowledge", "reusable-knowledge.md"))).toBe(true);
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.ExecuteTools);
+    expect(snapshot.project.status).toBe("failed");
+    expect(snapshot.openCodeRuns).toHaveLength(1);
+    expect(snapshot.openCodeRuns[0]?.status).toBe("failed");
+    expect(snapshot.report).toBeUndefined();
+    expect(snapshot.finalOutputs).toHaveLength(0);
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
   });
 
   it("does not finalize when paused or aborted during a loop", async () => {
@@ -119,7 +136,7 @@ describe("AetherOps fallback loop", () => {
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
     expect(snapshot.project.status).toBe("paused");
-    expect(snapshot.project.currentStep).not.toBe(ResearchLoopStep.FinalizeResearchOutputs);
+    expect(snapshot.project.currentStep).not.toBe(ResearchLoopStep.FinalizeOutputs);
     expect(snapshot.report).toBeUndefined();
 
     let abortingOrchestrator: AetherOpsOrchestrator;

@@ -30,6 +30,9 @@ export interface AetherOpsApi {
   };
   research: {
     seedQuestions(projectId: string): Promise<ResearchSnapshot>;
+    inputResearchQuestionHypothesis(projectId: string): Promise<ResearchSnapshot>;
+    buildSpecification(projectId: string): Promise<ResearchSnapshot>;
+    plan(projectId: string): Promise<ResearchSnapshot>;
   };
   loop: {
     start(projectId: string): Promise<ResearchSnapshot>;

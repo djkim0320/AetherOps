@@ -1,16 +1,48 @@
 export enum ResearchLoopStep {
-  CreateProject = "CREATE_PROJECT",
-  CreateSubSessions = "CREATE_SUB_SESSIONS",
   CreateResearchDb = "CREATE_RESEARCH_DB",
-  GenerateQuestionsHypothesesEvidence = "GENERATE_QUESTIONS_HYPOTHESES_EVIDENCE",
-  RunOpenCode = "RUN_OPENCODE",
-  StoreResults = "STORE_RESULTS",
-  BuildRagContext = "BUILD_RAG_CONTEXT",
-  DeriveEvidenceBasedResult = "DERIVE_EVIDENCE_BASED_RESULT",
-  FinalizeResearchOutputs = "FINALIZE_RESEARCH_OUTPUTS"
+  InputResearchQuestionHypothesis = "INPUT_RESEARCH_QUESTION_HYPOTHESIS",
+  BuildResearchSpecification = "BUILD_RESEARCH_SPECIFICATION",
+  PlanResearch = "PLAN_RESEARCH",
+  ExecuteTools = "EXECUTE_TOOLS",
+  NormalizeData = "NORMALIZE_DATA",
+  BuildVectorIndex = "BUILD_VECTOR_INDEX",
+  BuildOntologyGraph = "BUILD_ONTOLOGY_GRAPH",
+  ReasonAndValidate = "REASON_AND_VALIDATE",
+  SynthesizeAndEvaluate = "SYNTHESIZE_AND_EVALUATE",
+  DecideContinuation = "DECIDE_CONTINUATION",
+  FinalizeOutputs = "FINALIZE_OUTPUTS"
 }
 
-export type FlowKind = "Main Flow" | "Data Flow" | "Agent Control";
+export const legacyResearchLoopStepMap: Record<string, ResearchLoopStep> = {
+  CREATE_PROJECT: ResearchLoopStep.CreateResearchDb,
+  CREATE_SUB_SESSIONS: ResearchLoopStep.CreateResearchDb,
+  CREATE_RESEARCH_DB: ResearchLoopStep.CreateResearchDb,
+  GENERATE_QUESTIONS_HYPOTHESES_EVIDENCE: ResearchLoopStep.BuildResearchSpecification,
+  RUN_OPENCODE: ResearchLoopStep.ExecuteTools,
+  STORE_RESULTS: ResearchLoopStep.NormalizeData,
+  BUILD_RAG_CONTEXT: ResearchLoopStep.BuildVectorIndex,
+  DERIVE_EVIDENCE_BASED_RESULT: ResearchLoopStep.SynthesizeAndEvaluate,
+  FINALIZE_RESEARCH_OUTPUTS: ResearchLoopStep.FinalizeOutputs
+};
+
+export function normalizeResearchLoopStep(value: unknown): ResearchLoopStep {
+  if (typeof value !== "string") {
+    return ResearchLoopStep.CreateResearchDb;
+  }
+  if (Object.values(ResearchLoopStep).includes(value as ResearchLoopStep)) {
+    return value as ResearchLoopStep;
+  }
+  return legacyResearchLoopStepMap[value] ?? ResearchLoopStep.CreateResearchDb;
+}
+
+export type FlowKind =
+  | "Main Flow"
+  | "Data Flow"
+  | "Agent Control"
+  | "Storage Flow"
+  | "Knowledge Flow"
+  | "Loop Back"
+  | "Output Flow";
 
 export type LoopStatus = "idle" | "running" | "paused" | "aborted" | "completed" | "failed";
 
@@ -22,10 +54,44 @@ export type StorageCategory =
   | "conversation_memo";
 
 export type ResearchSourceKind = "web" | "paper" | "file" | "artifact" | "log" | "conversation";
-
 export type EvidenceStrength = "weak" | "medium" | "strong";
-
 export type HypothesisStatus = "untested" | "supported" | "rejected" | "needs_more_evidence";
+export type NormalizedRecordKind = "source" | "artifact" | "claim" | "evidence" | "observation" | "citation";
+export type OntologyEntityType =
+  | "ResearchQuestion"
+  | "Hypothesis"
+  | "Claim"
+  | "Evidence"
+  | "Source"
+  | "Artifact"
+  | "Method"
+  | "Tool"
+  | "Dataset"
+  | "Metric"
+  | "Concept"
+  | "Parameter"
+  | "Unit"
+  | "Constraint"
+  | "Assumption"
+  | "Limitation"
+  | "Result";
+export type OntologyRelationType =
+  | "answers"
+  | "supports"
+  | "contradicts"
+  | "refines"
+  | "derivedFrom"
+  | "generatedBy"
+  | "cites"
+  | "mentions"
+  | "dependsOn"
+  | "hasParameter"
+  | "measuredIn"
+  | "partOf"
+  | "isA"
+  | "affects"
+  | "requires"
+  | "hasLimitation";
 
 export interface AutonomyPolicy {
   toolApproval: "manual" | "suggested" | "automatic";
@@ -64,11 +130,15 @@ export interface ResearchDatabase {
   projectId: string;
   sqlitePath: string;
   vectorPath: string;
+  ontologyPath?: string;
   artifactRoot: string;
   sourceRoot?: string;
   logRoot?: string;
   reportRoot?: string;
   knowledgeRoot?: string;
+  ontologyRoot?: string;
+  exportsRoot?: string;
+  statePath?: string;
   createdAt: string;
 }
 
@@ -89,6 +159,40 @@ export interface Hypothesis {
   confidence: number;
   createdAt: string;
 }
+
+export interface ResearchSpecification {
+  id: string;
+  projectId: string;
+  researchQuestions: string[];
+  initialHypotheses: string[];
+  refinedHypotheses: string[];
+  scope: string;
+  assumptions: string[];
+  constraints: string[];
+  successCriteria: string[];
+  requiredEvidenceTypes: string[];
+  competencyQuestions: string[];
+  evaluationMetrics: string[];
+  createdAt: string;
+}
+
+export interface ResearchPlan {
+  id: string;
+  projectId: string;
+  iteration: number;
+  objective: string;
+  targetQuestions: string[];
+  targetHypotheses: string[];
+  requiredTools: string[];
+  expectedSources: string[];
+  expectedArtifacts: string[];
+  executionSteps: string[];
+  stopCriteria: string[];
+  createdAt: string;
+  steps?: string[];
+}
+
+export type AgentPlan = ResearchPlan;
 
 export interface ResearchSource {
   id: string;
@@ -113,6 +217,12 @@ export interface ResearchChunk {
   chunkIndex: number;
   embedding?: number[];
   keywords: string[];
+  recordId?: string;
+  evidenceId?: string;
+  citation?: string;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingDimensions?: number;
   createdAt: string;
 }
 
@@ -127,17 +237,6 @@ export interface ToolRun {
   error?: string;
   startedAt: string;
   completedAt: string;
-}
-
-export interface AgentPlan {
-  id: string;
-  projectId: string;
-  iteration: number;
-  objective: string;
-  steps: string[];
-  requiredTools: string[];
-  expectedArtifacts: string[];
-  createdAt: string;
 }
 
 export interface EvidenceItem {
@@ -173,6 +272,60 @@ export interface ResearchArtifact {
   createdAt: string;
 }
 
+export interface NormalizedResearchRecord {
+  id: string;
+  projectId: string;
+  iteration: number;
+  kind: NormalizedRecordKind;
+  title: string;
+  content: string;
+  sourceId?: string;
+  artifactId?: string;
+  evidenceId?: string;
+  citation?: string;
+  sourceUri?: string;
+  metadata: Record<string, unknown>;
+  confidence?: number;
+  createdAt: string;
+}
+
+export interface OntologyEntity {
+  id: string;
+  projectId: string;
+  label: string;
+  type: OntologyEntityType;
+  description?: string;
+  sourceRecordId?: string;
+  sourceEvidenceId?: string;
+  confidence: number;
+  createdAt: string;
+}
+
+export interface OntologyRelation {
+  id: string;
+  projectId: string;
+  subjectId: string;
+  predicate: OntologyRelationType;
+  objectId: string;
+  sourceRecordId?: string;
+  sourceEvidenceId?: string;
+  confidence: number;
+  createdAt: string;
+}
+
+export interface OntologyConstraint {
+  id: string;
+  projectId: string;
+  label: string;
+  description: string;
+  appliesToEntityType?: OntologyEntityType;
+  ruleType: "unit" | "consistency" | "hierarchy" | "hypothesis_evidence" | "custom";
+  rule: Record<string, unknown>;
+  sourceRecordId?: string;
+  confidence: number;
+  createdAt: string;
+}
+
 export interface OpenCodeRun {
   id: string;
   projectId: string;
@@ -201,6 +354,41 @@ export interface RagContext {
   createdAt: string;
 }
 
+export interface HybridContext {
+  id: string;
+  projectId: string;
+  iteration: number;
+  query: string;
+  vectorChunkIds: string[];
+  ontologyEntityIds: string[];
+  ontologyRelationIds: string[];
+  evidenceIds: string[];
+  artifactIds: string[];
+  citations: string[];
+  vectorSummary: string;
+  graphSummary: string;
+  contextText: string;
+  retrievalScores: Record<string, number>;
+  createdAt: string;
+}
+
+export interface ValidationResult {
+  id: string;
+  projectId: string;
+  iteration: number;
+  hypothesisId?: string;
+  status: "supported" | "partially_supported" | "contradicted" | "inconclusive" | "not_tested";
+  confidence: number;
+  supportingEvidenceIds: string[];
+  contradictingEvidenceIds: string[];
+  relatedEntityIds: string[];
+  relatedRelationIds: string[];
+  reasoningSummary: string;
+  limitations: string[];
+  evidenceGaps: string[];
+  createdAt: string;
+}
+
 export interface EvidenceBasedResult {
   id: string;
   projectId: string;
@@ -217,6 +405,21 @@ export interface EvidenceBasedResult {
   nextQuestions: string[];
   needsMoreEvidence: boolean;
   needsMoreAnalysis: boolean;
+  validationResultIds?: string[];
+  hybridContextId?: string;
+  createdAt: string;
+}
+
+export interface ContinuationDecision {
+  id: string;
+  projectId: string;
+  iteration: number;
+  shouldContinue: boolean;
+  reason: string;
+  nextObjective?: string;
+  nextQuestions: string[];
+  evidenceGaps: string[];
+  planRevisionHints: string[];
   createdAt: string;
 }
 
@@ -244,6 +447,20 @@ export interface ResearchReport {
   createdAt: string;
 }
 
+export interface FinalResearchOutput {
+  id: string;
+  projectId: string;
+  finalAnswer: string;
+  reportPath?: string;
+  markdownReport: string;
+  hypothesisSummary: string;
+  evidenceCitationList: string[];
+  reusableKnowledgeAsset: string;
+  ontologyExportPath?: string;
+  artifactPackagePath?: string;
+  createdAt: string;
+}
+
 export interface ResearchSnapshot {
   project: ResearchProject;
   sessions: ResearchSession[];
@@ -256,6 +473,16 @@ export interface ResearchSnapshot {
   chunks: ResearchChunk[];
   toolRuns: ToolRun[];
   agentPlans: AgentPlan[];
+  researchPlans: ResearchPlan[];
+  specifications: ResearchSpecification[];
+  normalizedRecords: NormalizedResearchRecord[];
+  ontologyEntities: OntologyEntity[];
+  ontologyRelations: OntologyRelation[];
+  ontologyConstraints: OntologyConstraint[];
+  hybridContexts: HybridContext[];
+  validationResults: ValidationResult[];
+  continuationDecisions: ContinuationDecision[];
+  finalOutputs: FinalResearchOutput[];
   openCodeRuns: OpenCodeRun[];
   ragContexts: RagContext[];
   results: EvidenceBasedResult[];
@@ -270,6 +497,9 @@ export interface OpenCodeRunInput {
   evidence?: EvidenceItem[];
   artifacts?: ResearchArtifact[];
   ragContext?: RagContext;
+  hybridContext?: HybridContext;
+  specification?: ResearchSpecification;
+  researchPlan?: ResearchPlan;
   iteration: number;
 }
 
@@ -323,6 +553,13 @@ export interface AppSettings {
   allowExternalSearch: boolean;
   allowCodeExecution: boolean;
   maxLoopIterations: number;
+  ontologyExtractionMode?: "llm" | "rule_based" | "hybrid";
+  finalOutputExport?: {
+    markdown: boolean;
+    json: boolean;
+    ontologyGraph: boolean;
+    artifactPackage: boolean;
+  };
   updatedAt: string;
 }
 
@@ -338,9 +575,11 @@ export interface OpenCodeRunOutput {
   needsMoreEvidence?: boolean;
   needsMoreAnalysis?: boolean;
   fallbackRecommended?: boolean;
+  fatalError?: string;
 }
 
 export interface OpenCodeAdapter {
+  preflight?(): Promise<void>;
   run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput>;
 }
 
@@ -363,6 +602,16 @@ export interface ResearchStore {
   saveChunks(chunks: ResearchChunk[]): Promise<void>;
   saveToolRuns(toolRuns: ToolRun[]): Promise<void>;
   saveAgentPlan(plan: AgentPlan): Promise<void>;
+  saveResearchSpecification(specification: ResearchSpecification): Promise<void>;
+  saveResearchPlan(plan: ResearchPlan): Promise<void>;
+  saveNormalizedRecords(records: NormalizedResearchRecord[]): Promise<void>;
+  saveOntologyEntities(entities: OntologyEntity[]): Promise<void>;
+  saveOntologyRelations(relations: OntologyRelation[]): Promise<void>;
+  saveOntologyConstraints(constraints: OntologyConstraint[]): Promise<void>;
+  saveHybridContext(context: HybridContext): Promise<void>;
+  saveValidationResults(results: ValidationResult[]): Promise<void>;
+  saveContinuationDecision(decision: ContinuationDecision): Promise<void>;
+  saveFinalResearchOutput(output: FinalResearchOutput): Promise<void>;
   saveOpenCodeRun(run: OpenCodeRun): Promise<void>;
   saveRagContext(context: RagContext): Promise<void>;
   saveResult(result: EvidenceBasedResult): Promise<void>;

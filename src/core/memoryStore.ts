@@ -2,16 +2,25 @@ import type {
   EvidenceBasedResult,
   EvidenceItem,
   AgentPlan,
+  ContinuationDecision,
+  FinalResearchOutput,
+  HybridContext,
   LoopIteration,
+  NormalizedResearchRecord,
   OpenCodeRun,
+  OntologyConstraint,
+  OntologyEntity,
+  OntologyRelation,
   RagContext,
   ResearchArtifact,
   ResearchChunk,
   ResearchDatabase,
+  ResearchPlan,
   ResearchProject,
   ResearchQuestion,
   ResearchReport,
   ResearchSession,
+  ResearchSpecification,
   ResearchSource,
   ResearchSnapshot,
   ResearchStore,
@@ -30,6 +39,16 @@ export class InMemoryResearchStore implements ResearchStore {
   private chunks: ResearchChunk[] = [];
   private toolRuns: ToolRun[] = [];
   private agentPlans: AgentPlan[] = [];
+  private researchPlans: ResearchPlan[] = [];
+  private specifications: ResearchSpecification[] = [];
+  private normalizedRecords: NormalizedResearchRecord[] = [];
+  private ontologyEntities: OntologyEntity[] = [];
+  private ontologyRelations: OntologyRelation[] = [];
+  private ontologyConstraints: OntologyConstraint[] = [];
+  private hybridContexts: HybridContext[] = [];
+  private validationResults: import("./types.js").ValidationResult[] = [];
+  private continuationDecisions: ContinuationDecision[] = [];
+  private finalOutputs: FinalResearchOutput[] = [];
   private openCodeRuns: OpenCodeRun[] = [];
   private ragContexts: RagContext[] = [];
   private results: EvidenceBasedResult[] = [];
@@ -96,6 +115,47 @@ export class InMemoryResearchStore implements ResearchStore {
     this.agentPlans = this.upsertMany(this.agentPlans, [plan]);
   }
 
+  async saveResearchSpecification(specification: ResearchSpecification): Promise<void> {
+    this.specifications = this.upsertMany(this.specifications, [specification]);
+  }
+
+  async saveResearchPlan(plan: ResearchPlan): Promise<void> {
+    this.researchPlans = this.upsertMany(this.researchPlans, [plan]);
+    this.agentPlans = this.upsertMany(this.agentPlans, [plan]);
+  }
+
+  async saveNormalizedRecords(records: NormalizedResearchRecord[]): Promise<void> {
+    this.normalizedRecords = this.upsertMany(this.normalizedRecords, records);
+  }
+
+  async saveOntologyEntities(entities: OntologyEntity[]): Promise<void> {
+    this.ontologyEntities = this.upsertMany(this.ontologyEntities, entities);
+  }
+
+  async saveOntologyRelations(relations: OntologyRelation[]): Promise<void> {
+    this.ontologyRelations = this.upsertMany(this.ontologyRelations, relations);
+  }
+
+  async saveOntologyConstraints(constraints: OntologyConstraint[]): Promise<void> {
+    this.ontologyConstraints = this.upsertMany(this.ontologyConstraints, constraints);
+  }
+
+  async saveHybridContext(context: HybridContext): Promise<void> {
+    this.hybridContexts = this.upsertMany(this.hybridContexts, [context]);
+  }
+
+  async saveValidationResults(results: import("./types.js").ValidationResult[]): Promise<void> {
+    this.validationResults = this.upsertMany(this.validationResults, results);
+  }
+
+  async saveContinuationDecision(decision: ContinuationDecision): Promise<void> {
+    this.continuationDecisions = this.upsertMany(this.continuationDecisions, [decision]);
+  }
+
+  async saveFinalResearchOutput(output: FinalResearchOutput): Promise<void> {
+    this.finalOutputs = this.upsertMany(this.finalOutputs, [output]);
+  }
+
   async saveOpenCodeRun(run: OpenCodeRun): Promise<void> {
     this.openCodeRuns = this.upsertMany(this.openCodeRuns, [run]);
   }
@@ -134,6 +194,16 @@ export class InMemoryResearchStore implements ResearchStore {
       chunks: this.chunks.filter((item) => item.projectId === projectId),
       toolRuns: this.toolRuns.filter((item) => item.projectId === projectId),
       agentPlans: this.agentPlans.filter((item) => item.projectId === projectId),
+      researchPlans: this.researchPlans.filter((item) => item.projectId === projectId),
+      specifications: this.specifications.filter((item) => item.projectId === projectId),
+      normalizedRecords: this.normalizedRecords.filter((item) => item.projectId === projectId),
+      ontologyEntities: this.ontologyEntities.filter((item) => item.projectId === projectId),
+      ontologyRelations: this.ontologyRelations.filter((item) => item.projectId === projectId),
+      ontologyConstraints: this.ontologyConstraints.filter((item) => item.projectId === projectId),
+      hybridContexts: this.hybridContexts.filter((item) => item.projectId === projectId),
+      validationResults: this.validationResults.filter((item) => item.projectId === projectId),
+      continuationDecisions: this.continuationDecisions.filter((item) => item.projectId === projectId),
+      finalOutputs: this.finalOutputs.filter((item) => item.projectId === projectId),
       openCodeRuns: this.openCodeRuns.filter((item) => item.projectId === projectId),
       ragContexts: this.ragContexts.filter((item) => item.projectId === projectId),
       results: this.results.filter((item) => item.projectId === projectId),

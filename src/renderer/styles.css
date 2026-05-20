@@ -10,12 +10,47 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 163 184 / 72%) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 44px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgb(148 163 184 / 70%);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(100 116 139 / 86%);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
   background: #111111;
 }
 
@@ -71,7 +106,9 @@ label {
 }
 
 .codexShell {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
   background: #111111;
@@ -120,7 +157,9 @@ label {
 }
 
 .codexSidebar {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   background: #1f1f1f;
   border-right: 1px solid #2e2e2e;
   color: #d9d9d9;
@@ -128,6 +167,7 @@ label {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  scrollbar-color: rgb(122 122 122 / 70%) transparent;
 }
 
 .codexChrome {
@@ -290,8 +330,11 @@ label {
 
 .projectSection {
   min-height: 0;
-  flex: 1;
-  align-content: start;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: stretch;
+  overflow: hidden;
 }
 
 .projectCreateButton {
@@ -314,13 +357,14 @@ label {
 
 .projectList {
   min-height: 0;
-  max-height: calc(100vh - 430px);
+  max-height: none;
   overflow: auto;
   display: grid;
   gap: 6px;
   align-content: start;
   padding-right: 2px;
   margin-top: 4px;
+  scrollbar-gutter: stable;
 }
 
 .projectGroup {
@@ -402,18 +446,24 @@ label {
 
 .codexContent {
   min-width: 0;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   background: #f2f5f9;
   padding: 28px 32px;
   display: grid;
   align-content: start;
   gap: 18px;
+  scrollbar-gutter: stable;
 }
 
 .codexHome {
   min-width: 0;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
   display: grid;
   place-items: center;
   background:
@@ -692,6 +742,39 @@ label {
   width: min(1080px, 100%);
 }
 
+.projectChatHome.chatStarted {
+  place-items: start center;
+  align-content: start;
+  padding-bottom: 220px;
+}
+
+.projectChatHome.chatStarted .homeCenter {
+  align-content: start;
+  gap: 18px;
+}
+
+.projectChatHome.chatStarted .homePromptCard {
+  position: fixed;
+  left: calc(300px + (100vw - 300px - min(1080px, calc(100vw - 364px))) / 2);
+  bottom: 20px;
+  z-index: 30;
+  width: min(1080px, calc(100vw - 364px));
+  box-shadow: 0 24px 90px rgb(0 0 0 / 44%);
+}
+
+.projectChatHome.chatStarted .chatSessionCards {
+  display: none;
+}
+
+.projectChatHome.chatStarted .homeContextBar {
+  display: none;
+}
+
+.projectChatHome.chatStarted .chatTranscript {
+  min-height: 0;
+  padding-bottom: 18px;
+}
+
 .projectChatHeading {
   display: grid;
   gap: 6px;
@@ -813,7 +896,10 @@ label {
 
 .codexPlaceholder {
   min-width: 0;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
   display: grid;
   place-items: center;
   background: #141414;
@@ -998,15 +1084,20 @@ label {
 
 .flowBoard {
   display: grid;
-  grid-template-columns: repeat(9, minmax(92px, 1fr));
-  gap: 10px;
-  min-height: 118px;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  grid-auto-rows: minmax(108px, auto);
+  gap: 12px;
+  align-items: stretch;
 }
 
 .stepTile {
+  --step-accent: #64748b;
   position: relative;
+  isolation: isolate;
+  min-width: 0;
   min-height: 108px;
   border: 1px solid #d9e0eb;
+  border-top: 4px solid var(--step-accent);
   border-radius: 8px;
   background: #ffffff;
   padding: 12px 10px;
@@ -1025,24 +1116,49 @@ label {
 }
 
 .stepTile.main {
-  border-top: 4px solid #15803d;
+  --step-accent: #15803d;
 }
 
 .stepTile.data {
-  border-top: 4px solid #2563eb;
+  --step-accent: #2563eb;
 }
 
 .stepTile.agent {
-  border-top: 4px solid #a16207;
+  --step-accent: #a16207;
+}
+
+.stepTile.storage {
+  --step-accent: #0f766e;
+}
+
+.stepTile.knowledge {
+  --step-accent: #2563eb;
+}
+
+.stepTile.loop {
+  --step-accent: #7c3aed;
+}
+
+.stepTile.output {
+  --step-accent: #15803d;
 }
 
 .stepTile.active {
+  border-color: var(--step-accent);
   outline: 3px solid #facc15;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.18), 0 0 24px rgba(15, 23, 42, 0.12);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   color: #172033;
 }
 
 .stepTile.visited {
   background: #fbfdff;
+}
+
+.stepTile.active .stepIndex {
+  background: var(--step-accent);
+  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.22);
 }
 
 .stepIndex {
@@ -1062,8 +1178,8 @@ label {
 
 .metricStrip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
 }
 
 .metricItem {
@@ -1344,10 +1460,13 @@ label {
 @media (max-width: 1180px) {
   .codexShell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .codexSidebar {
-    min-height: auto;
+    height: auto;
+    max-height: 42vh;
+    min-height: 0;
     border-right: 0;
     border-bottom: 1px solid #2e2e2e;
   }
@@ -1373,6 +1492,12 @@ label {
   .finalGrid,
   .homeCards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .projectChatHome.chatStarted .homePromptCard {
+    left: 18px;
+    right: 18px;
+    width: auto;
   }
 }
 

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { extractJsonObject, type LlmJsonRequest, type LlmProvider } from "../core/llm.js";
+import { extractJsonObject, type LlmJsonRequest, type LlmProvider } from "../../core/llm.js";
 
 interface CodexOAuthLlmProviderOptions {
   codexHome?: string;

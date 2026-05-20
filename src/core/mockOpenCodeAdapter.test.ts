@@ -38,7 +38,7 @@ const project: ResearchProject = {
   },
   createdAt: "2026-05-14T00:00:00.000Z",
   updatedAt: "2026-05-14T00:00:00.000Z",
-  currentStep: ResearchLoopStep.RunOpenCode,
+  currentStep: ResearchLoopStep.ExecuteTools,
   status: "running",
   projectRoot: ".aetherops/test"
 };

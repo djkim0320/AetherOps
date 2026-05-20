@@ -1,78 +1,85 @@
 import type { AetherOpsApi } from "../vite-env.js";
 
 const missingApiMessage =
-  "AetherOps Electron API가 연결되지 않았습니다. run-aetherops.bat 또는 AetherOps.vbs로 실행해 주세요. 브라우저/Vite 화면에서는 연구 데이터가 저장되지 않습니다.";
+  "AetherOps 웹 백엔드가 연결되지 않았습니다. `npm run dev`로 웹앱을 실행하거나, 빌드 후 `npm run start`를 실행해 주세요.";
 
 export function isAetherOpsApiAvailable(): boolean {
-  return Boolean(window.aetherOps);
+  return typeof window.fetch === "function";
 }
 
 export async function waitForAetherOpsApi(timeoutMs = 2_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    if (isAetherOpsApiAvailable()) {
-      return true;
+    try {
+      const response = await fetch(`${getHttpApiBaseUrl()}/api/health`, { cache: "no-store" });
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
     }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
   }
-  return isAetherOpsApiAvailable();
+  return false;
 }
 
 export function getAetherOpsApi(): AetherOpsApi {
   return {
     projects: {
-      create: (input) => call((api) => api.projects.create(input)),
-      list: () => call((api) => api.projects.list())
+      create: (input) => rpc("projects.create", input),
+      list: () => rpc("projects.list")
     },
     sessions: {
-      createForProject: (projectId) => call((api) => api.sessions.createForProject(projectId)),
-      create: (projectId, title, focus) => call((api) => api.sessions.create(projectId, title, focus)),
-      delete: (projectId, sessionId) => call((api) => api.sessions.delete(projectId, sessionId))
+      createForProject: (projectId) => rpc("sessions.createForProject", projectId),
+      create: (projectId, title, focus) => rpc("sessions.create", projectId, title, focus),
+      delete: (projectId, sessionId) => rpc("sessions.delete", projectId, sessionId)
     },
     chat: {
-      send: (projectId, sessionId, content) => call((api) => api.chat.send(projectId, sessionId, content))
+      send: (projectId, sessionId, content) => rpc("chat.send", projectId, sessionId, content)
     },
     researchDb: {
-      create: (projectId) => call((api) => api.researchDb.create(projectId))
+      create: (projectId) => rpc("researchDb.create", projectId)
     },
     research: {
-      seedQuestions: (projectId) => call((api) => api.research.seedQuestions(projectId))
+      seedQuestions: (projectId) => rpc("research.seedQuestions", projectId),
+      inputResearchQuestionHypothesis: (projectId) => rpc("research.inputResearchQuestionHypothesis", projectId),
+      buildSpecification: (projectId) => rpc("research.buildSpecification", projectId),
+      plan: (projectId) => rpc("research.plan", projectId)
     },
     loop: {
-      start: (projectId) => call((api) => api.loop.start(projectId)),
-      pause: (projectId) => call((api) => api.loop.pause(projectId)),
-      resume: (projectId) => call((api) => api.loop.resume(projectId)),
-      abort: (projectId) => call((api) => api.loop.abort(projectId))
+      start: (projectId) => rpc("loop.start", projectId),
+      pause: (projectId) => rpc("loop.pause", projectId),
+      resume: (projectId) => rpc("loop.resume", projectId),
+      abort: (projectId) => rpc("loop.abort", projectId)
     },
     opencode: {
-      run: (projectId) => call((api) => api.opencode.run(projectId)),
-      authLogin: (provider) => call((api) => api.opencode.authLogin(provider)),
-      authList: () => call((api) => api.opencode.authList())
+      run: (projectId) => rpc("opencode.run", projectId),
+      authLogin: (provider) => rpc("opencode.authLogin", provider),
+      authList: () => rpc("opencode.authList")
     },
     artifacts: {
-      store: (projectId, artifact) => call((api) => api.artifacts.store(projectId, artifact))
+      store: (projectId, artifact) => rpc("artifacts.store", projectId, artifact)
     },
     rag: {
-      buildContext: (projectId) => call((api) => api.rag.buildContext(projectId))
+      buildContext: (projectId) => rpc("rag.buildContext", projectId)
     },
     results: {
-      derive: (projectId) => call((api) => api.results.derive(projectId))
+      derive: (projectId) => rpc("results.derive", projectId)
     },
     reports: {
-      finalize: (projectId) => call((api) => api.reports.finalize(projectId))
+      finalize: (projectId) => rpc("reports.finalize", projectId)
     },
     llm: {
-      status: () => call((api) => api.llm.status())
+      status: () => rpc("llm.status")
     },
     settings: {
-      get: () => call((api) => api.settings.get()),
-      save: (settings) => call((api) => api.settings.save(settings))
+      get: () => rpc("settings.get"),
+      save: (settings) => rpc("settings.save", settings)
     },
     snapshots: {
-      get: (projectId) => call((api) => api.snapshots.get(projectId))
+      get: (projectId) => rpc("snapshots.get", projectId)
     },
     events: {
-      onLoopIteration: (callback) => requireAetherOpsApi().events.onLoopIteration(callback)
+      onLoopIteration: () => () => undefined
     }
   };
 }
@@ -81,17 +88,26 @@ export function getMissingAetherOpsApiMessage(): string {
   return missingApiMessage;
 }
 
-function requireAetherOpsApi(): AetherOpsApi {
-  if (!window.aetherOps) {
-    throw new Error(missingApiMessage);
+async function rpc<T>(method: string, ...args: unknown[]): Promise<T> {
+  const response = await fetch(`${getHttpApiBaseUrl()}/api/rpc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ method, args })
+  });
+  const payload = (await response.json()) as { ok?: boolean; result?: T; error?: string };
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error || missingApiMessage);
   }
-  return window.aetherOps;
+  return payload.result as T;
 }
 
-function call<T>(operation: (api: AetherOpsApi) => Promise<T>): Promise<T> {
-  try {
-    return operation(requireAetherOpsApi());
-  } catch (error) {
-    return Promise.reject(error);
+function getHttpApiBaseUrl(): string {
+  const configured = import.meta.env.VITE_AETHEROPS_API_URL;
+  if (configured) {
+    return configured.replace(/\/$/, "");
   }
+  if (window.location.port === "5180") {
+    return "http://127.0.0.1:5179";
+  }
+  return window.location.origin;
 }

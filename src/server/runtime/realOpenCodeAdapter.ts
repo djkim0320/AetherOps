@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createId, nowIso } from "../core/ids.js";
+import { createId, nowIso } from "../../core/ids.js";
 import type {
   AppSettings,
   EvidenceItem,
@@ -7,12 +7,32 @@ import type {
   OpenCodeRunInput,
   OpenCodeRunOutput,
   ResearchArtifact
-} from "../core/types.js";
+} from "../../core/types.js";
+import { isWindowsShellCommand, resolveOpenCodeCommand, type OpenCodeCommandOptions } from "./opencodeResolver.js";
 
 type SettingsGetter = () => AppSettings | Promise<AppSettings>;
 
 export class RealOpenCodeAdapter implements OpenCodeAdapter {
-  constructor(private readonly getSettings: SettingsGetter) {}
+  constructor(
+    private readonly getSettings: SettingsGetter,
+    private readonly commandOptions: OpenCodeCommandOptions = {}
+  ) {}
+
+  async preflight(): Promise<void> {
+    const settings = await this.getSettings();
+    if (!settings.openCode.enabled) {
+      throw new Error("OpenCode execution engine is disabled in settings.");
+    }
+    const resolution = resolveOpenCodeCommand(settings.openCode.command, this.commandOptions);
+    const raw = await runCommand(resolution.command, ["--version"], Math.min(settings.openCode.timeoutMs, 10_000));
+    if (raw.exitCode !== 0) {
+      throw new Error(
+        `OpenCode CLI preflight failed with code ${raw.exitCode} using ${describeResolution(resolution)}: ${
+          raw.stderr || raw.stdout || "no output"
+        }`
+      );
+    }
+  }
 
   async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
     const settings = await this.getSettings();
@@ -22,8 +42,9 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     }
 
     try {
+      const resolution = resolveOpenCodeCommand(settings.openCode.command, this.commandOptions);
       const raw = await runCommand(
-        settings.openCode.command || "opencode",
+        resolution.command,
         this.buildArgs(input, settings),
         settings.openCode.timeoutMs
       );
@@ -31,6 +52,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
       const parsed = parseOpenCodeJson(raw.stdout);
       if (!parsed) {
         const artifact = this.rawArtifact(input, raw.stdout || raw.stderr || "OpenCode produced no output.", completedAt);
+        const reason = "OpenCode output JSON parsing failed. Fix the OpenCode CLI output before continuing.";
         return {
           run: {
             id: createId("opencode"),
@@ -38,11 +60,12 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
             iteration: input.iteration,
             prompt: this.buildPrompt(input),
             toolPlan: ["opencode-cli"],
-            status: raw.exitCode === 0 ? "completed" : "failed",
+            status: "failed",
             logs: [
               `OpenCode CLI exited with code ${raw.exitCode}.`,
+              `OpenCode command: ${describeResolution(resolution)}.`,
               raw.stderr ? `stderr: ${raw.stderr.slice(0, 2000)}` : "stderr: empty",
-              "JSON schema parsing failed; raw output was stored as an artifact."
+              reason
             ],
             artifactIds: [artifact.id],
             evidenceIds: [],
@@ -50,10 +73,8 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
             completedAt
           },
           artifacts: [artifact],
-          evidence: [
-            this.gapEvidence(input, completedAt, "OpenCode output JSON 파싱에 실패해 raw log만 저장했습니다.", "opencode_parse_failed")
-          ],
-          fallbackRecommended: true
+          evidence: [],
+          fatalError: reason
         };
       }
 
@@ -130,6 +151,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
         status: "completed",
         logs: [
           parsed.summary || "OpenCode CLI execution completed.",
+          "OpenCode CLI was resolved from AetherOps bundled dependencies when available.",
           stderr ? `stderr: ${stderr.slice(0, 2000)}` : "stderr: empty"
         ],
         artifactIds: artifacts.map((item) => item.id),
@@ -147,7 +169,6 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
 
   private unavailable(input: OpenCodeRunInput, startedAt: string, reason: string): OpenCodeRunOutput {
     const completedAt = nowIso();
-    const evidence = this.gapEvidence(input, completedAt, reason, "tool_unavailable");
     return {
       run: {
         id: createId("opencode"),
@@ -155,16 +176,16 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
         iteration: input.iteration,
         prompt: this.buildPrompt(input),
         toolPlan: ["opencode-cli"],
-        status: "skipped",
-        logs: [reason, "LocalResearchAdapter fallback이 이어서 실행됩니다."],
+        status: "failed",
+        logs: [reason, "Fallback execution is disabled. Configure OpenCode or fix the CLI error, then run again."],
         artifactIds: [],
-        evidenceIds: [evidence.id],
+        evidenceIds: [],
         startedAt,
         completedAt
       },
       artifacts: [],
-      evidence: [evidence],
-      fallbackRecommended: true
+      evidence: [],
+      fatalError: reason
     };
   }
 
@@ -218,7 +239,11 @@ interface OpenCodeSchema {
 
 function runCommand(command: string, args: string[], timeoutMs: number): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { windowsHide: true, shell: false });
+    const child = spawn(command, args, {
+      windowsHide: true,
+      shell: isWindowsShellCommand(command),
+      stdio: ["ignore", "pipe", "pipe"]
+    });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
@@ -242,47 +267,70 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
   });
 }
 
+function describeResolution(resolution: ReturnType<typeof resolveOpenCodeCommand>): string {
+  if (resolution.source === "bundled") {
+    return `bundled OpenCode (${resolution.command})`;
+  }
+  if (resolution.source === "configured") {
+    return `configured OpenCode (${resolution.command})`;
+  }
+  const checked = resolution.checkedPaths.length ? `; checked bundled paths: ${resolution.checkedPaths.join(", ")}` : "";
+  return `system OpenCode (${resolution.command})${checked}`;
+}
+
 function parseOpenCodeJson(stdout: string): OpenCodeSchema | undefined {
   const trimmed = stdout.trim();
   if (!trimmed) {
     return undefined;
   }
   try {
-    return JSON.parse(trimmed) as OpenCodeSchema;
+    return schemaFromParsed(JSON.parse(trimmed));
   } catch {
     const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     for (const line of [...lines].reverse()) {
       try {
-        const parsed = JSON.parse(line) as OpenCodeSchema | { message?: { content?: string } };
-        if ("summary" in parsed || "artifacts" in parsed || "evidence" in parsed) {
-          return parsed as OpenCodeSchema;
-        }
-        const content = (parsed as { message?: { content?: string } }).message?.content;
-        if (content) {
-          const extracted = extractJsonObject(content);
-          if (extracted) {
-            return extracted;
-          }
+        const schema = schemaFromParsed(JSON.parse(line));
+        if (schema) {
+          return schema;
         }
       } catch {
         const extracted = extractJsonObject(line);
-        if (extracted) {
-          return extracted;
+        const schema = schemaFromParsed(extracted);
+        if (schema) {
+          return schema;
         }
       }
     }
-    return extractJsonObject(trimmed);
+    return schemaFromParsed(extractJsonObject(trimmed));
   }
 }
 
-function extractJsonObject(text: string): OpenCodeSchema | undefined {
+function schemaFromParsed(parsed: unknown): OpenCodeSchema | undefined {
+  if (!parsed || typeof parsed !== "object") {
+    return undefined;
+  }
+  if ("summary" in parsed || "artifacts" in parsed || "evidence" in parsed) {
+    return parsed as OpenCodeSchema;
+  }
+  const content = (parsed as { message?: { content?: string } }).message?.content;
+  if (content) {
+    return schemaFromParsed(extractJsonObject(content));
+  }
+  const textEvent = (parsed as { part?: { text?: string } }).part?.text;
+  if (textEvent) {
+    return schemaFromParsed(extractJsonObject(textEvent));
+  }
+  return undefined;
+}
+
+function extractJsonObject(text: string): unknown {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end <= start) {
     return undefined;
   }
   try {
-    return JSON.parse(text.slice(start, end + 1)) as OpenCodeSchema;
+    return JSON.parse(text.slice(start, end + 1));
   } catch {
     return undefined;
   }

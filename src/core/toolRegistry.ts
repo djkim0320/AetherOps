@@ -317,8 +317,102 @@ export class ArtifactWriterTool implements ResearchTool {
   }
 }
 
+export class PdfIngestionTool implements ResearchTool {
+  name = "PdfIngestionTool";
+
+  async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
+    const startedAt = nowIso();
+    const completedAt = nowIso();
+    return {
+      toolRun: {
+        id: createId("tool"),
+        projectId: input.project.id,
+        iteration: input.iteration,
+        toolName: this.name,
+        input: { projectRoot: input.project.projectRoot },
+        output: { reason: "No PDF files were explicitly attached for ingestion in this MVP pass." },
+        status: "skipped",
+        error: "tool_unavailable",
+        startedAt,
+        completedAt
+      },
+      evidence: [
+        {
+          id: createId("evidence"),
+          projectId: input.project.id,
+          category: "paper_reference",
+          title: "PDF ingestion evidence_gap",
+          summary: "PDF ingestion was requested as a supported research layer, but no PDF attachment/path was available.",
+          keywords: ["pdf", "evidence_gap", "tool_unavailable"],
+          linkedHypothesisIds: input.hypotheses.map((item) => item.id),
+          reliabilityScore: 0.12,
+          relevanceScore: 0.25,
+          evidenceStrength: "weak",
+          limitations: ["This is a gap log, not paper evidence."],
+          createdAt: completedAt
+        }
+      ],
+      artifacts: [],
+      sources: []
+    };
+  }
+}
+
+export class DataAnalysisTool implements ResearchTool {
+  name = "DataAnalysisTool";
+
+  async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
+    const startedAt = nowIso();
+    const completedAt = nowIso();
+    const output = {
+      evidenceCount: input.evidence?.length ?? 0,
+      artifactCount: input.artifacts?.length ?? 0,
+      hypothesisCount: input.hypotheses.length
+    };
+    return {
+      toolRun: {
+        id: createId("tool"),
+        projectId: input.project.id,
+        iteration: input.iteration,
+        toolName: this.name,
+        input: { iteration: input.iteration },
+        output,
+        status: "completed",
+        startedAt,
+        completedAt
+      },
+      evidence: [
+        {
+          id: createId("evidence"),
+          projectId: input.project.id,
+          category: "experiment_log",
+          title: `Iteration ${input.iteration} data coverage observation`,
+          summary: `현재 evidence=${output.evidenceCount}, artifacts=${output.artifactCount}, hypotheses=${output.hypothesisCount}로 집계되었습니다.`,
+          keywords: ["observation", "data_coverage", "analysis"],
+          linkedHypothesisIds: input.hypotheses.map((item) => item.id),
+          reliabilityScore: 0.6,
+          relevanceScore: 0.55,
+          evidenceStrength: "medium",
+          limitations: ["This is a coverage observation, not an external source."],
+          createdAt: completedAt
+        }
+      ],
+      artifacts: [],
+      sources: []
+    };
+  }
+}
+
 export function createDefaultResearchTools(): ResearchTool[] {
-  return [new WebSearchTool(), new WebFetchTool(), new PaperMetadataTool(), new CodeExecutionTool(), new ArtifactWriterTool()];
+  return [
+    new WebSearchTool(),
+    new WebFetchTool(),
+    new PaperMetadataTool(),
+    new PdfIngestionTool(),
+    new CodeExecutionTool(),
+    new ArtifactWriterTool(),
+    new DataAnalysisTool()
+  ];
 }
 
 function normalizeSearchResults(items: Array<{ title?: string; url?: string; snippet?: string }> | undefined): Array<{ title: string; url: string; snippet: string }> {

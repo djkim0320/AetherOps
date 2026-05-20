@@ -1,10 +1,14 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { createId, nowIso } from "../core/ids.js";
-import type { ProjectStorage } from "../core/projectStorage.js";
-import { ResearchLoopStep } from "../core/types.js";
+import { createId, nowIso } from "../../core/ids.js";
+import type { ProjectStorage } from "../../core/projectStorage.js";
+import { ResearchLoopStep } from "../../core/types.js";
 import type {
+  FinalResearchOutput,
+  OntologyConstraint,
+  OntologyEntity,
+  OntologyRelation,
   OpenCodeRun,
   ResearchArtifact,
   ResearchChunk,
@@ -14,7 +18,7 @@ import type {
   ResearchSnapshot,
   ResearchSource,
   ToolRun
-} from "../core/types.js";
+} from "../../core/types.js";
 
 export class NodeProjectStorage implements ProjectStorage {
   async ensureResearchDb(project: ResearchProject): Promise<ResearchDatabase> {
@@ -22,11 +26,15 @@ export class NodeProjectStorage implements ProjectStorage {
     const paths = {
       sqlitePath: join(root, "research.sqlite"),
       vectorPath: join(root, "vector.sqlite"),
+      ontologyPath: join(root, "ontology.sqlite"),
       artifactRoot: join(root, "artifacts"),
       sourceRoot: join(root, "sources"),
       logRoot: join(root, "logs"),
       reportRoot: join(root, "reports"),
-      knowledgeRoot: join(root, "knowledge")
+      knowledgeRoot: join(root, "knowledge"),
+      ontologyRoot: join(root, "ontology"),
+      exportsRoot: join(root, "exports"),
+      statePath: join(root, "state.json")
     };
 
     for (const directory of [
@@ -37,14 +45,18 @@ export class NodeProjectStorage implements ProjectStorage {
       join(paths.sourceRoot, "files"),
       paths.logRoot,
       paths.reportRoot,
-      paths.knowledgeRoot
+      paths.knowledgeRoot,
+      paths.ontologyRoot,
+      paths.exportsRoot
     ]) {
       mkdirSync(directory, { recursive: true });
     }
 
     migrateResearchDb(paths.sqlitePath);
     migrateVectorDb(paths.vectorPath);
+    migrateOntologyDb(paths.ontologyPath);
     writeProjectManifest(root, project);
+    writeFileSync(paths.statePath, `${JSON.stringify({ project, updatedAt: nowIso() }, null, 2)}\n`, "utf8");
 
     return {
       id: createId("db"),
@@ -120,6 +132,35 @@ export class NodeProjectStorage implements ProjectStorage {
     }
   }
 
+  async writeOntologyGraph(
+    project: ResearchProject,
+    database: ResearchDatabase,
+    graph: {
+      entities: OntologyEntity[];
+      relations: OntologyRelation[];
+      constraints: OntologyConstraint[];
+      exportedAt: string;
+    }
+  ): Promise<{ ontologyExportPath: string; ontologyNtPath: string }> {
+    const ontologyExportPath = safeJoin(project.projectRoot, "ontology/project-graph.json");
+    const ontologyNtPath = safeJoin(project.projectRoot, "ontology/project-graph.nt");
+    const ontologyPath = database.ontologyPath ?? safeJoin(project.projectRoot, "ontology.sqlite");
+    writeFileSync(ontologyExportPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+    writeFileSync(ontologyNtPath, toNTriples(graph), "utf8");
+
+    for (const entity of graph.entities) {
+      upsertJson(ontologyPath, "ontology_entities", entity.id, project.id, entity.createdAt, entity);
+    }
+    for (const relation of graph.relations) {
+      upsertJson(ontologyPath, "ontology_relations", relation.id, project.id, relation.createdAt, relation);
+    }
+    for (const constraint of graph.constraints) {
+      upsertJson(ontologyPath, "ontology_constraints", constraint.id, project.id, constraint.createdAt, constraint);
+    }
+
+    return { ontologyExportPath, ontologyNtPath };
+  }
+
   async writeReportFiles(
     project: ResearchProject,
     database: ResearchDatabase,
@@ -137,20 +178,49 @@ export class NodeProjectStorage implements ProjectStorage {
     return { reportPath, knowledgePath };
   }
 
+  async writeFinalOutputFiles(
+    project: ResearchProject,
+    database: ResearchDatabase,
+    output: FinalResearchOutput,
+    graphExport: unknown,
+    artifactPackage: unknown,
+    evidenceCitations: unknown,
+    hypothesisVerification: unknown
+  ): Promise<{ reportPath: string; knowledgePath: string; ontologyExportPath: string; artifactPackagePath: string }> {
+    const reportPath = safeJoin(project.projectRoot, "reports/final-report.md");
+    const knowledgePath = safeJoin(project.projectRoot, "knowledge/reusable-knowledge.md");
+    const citationsPath = safeJoin(project.projectRoot, "reports/evidence-citations.json");
+    const verificationPath = safeJoin(project.projectRoot, "reports/hypothesis-verification.json");
+    const ontologyExportPath = safeJoin(project.projectRoot, "ontology/project-graph.json");
+    const ontologyNtPath = safeJoin(project.projectRoot, "ontology/project-graph.nt");
+    const artifactPackagePath = safeJoin(project.projectRoot, "exports/artifact-package.json");
+
+    writeFileSync(reportPath, output.markdownReport, "utf8");
+    writeFileSync(knowledgePath, output.reusableKnowledgeAsset, "utf8");
+    writeFileSync(citationsPath, `${JSON.stringify(evidenceCitations, null, 2)}\n`, "utf8");
+    writeFileSync(verificationPath, `${JSON.stringify(hypothesisVerification, null, 2)}\n`, "utf8");
+    writeFileSync(ontologyExportPath, `${JSON.stringify(graphExport, null, 2)}\n`, "utf8");
+    writeFileSync(ontologyNtPath, toNTriples(graphExport), "utf8");
+    writeFileSync(artifactPackagePath, `${JSON.stringify(artifactPackage, null, 2)}\n`, "utf8");
+
+    const saved = { ...output, reportPath, ontologyExportPath, artifactPackagePath };
+    upsertJson(database.sqlitePath, "final_outputs", output.id, project.id, output.createdAt, saved);
+    return { reportPath, knowledgePath, ontologyExportPath, artifactPackagePath };
+  }
+
   async writeProjectState(snapshot: ResearchSnapshot): Promise<void> {
     const root = normalize(snapshot.project.projectRoot);
     mkdirSync(root, { recursive: true });
     writeProjectManifest(root, snapshot.project);
     writeLoopSpec(root, snapshot);
+    writeFileSync(join(root, "state.json"), `${JSON.stringify(buildLoopSpec(snapshot), null, 2)}\n`, "utf8");
   }
 }
 
 function writeProjectManifest(root: string, project: ResearchProject): void {
-  const projectJsonPath = join(root, "project.json");
-  const projectMarkdownPath = join(root, "project.md");
-  writeFileSync(projectJsonPath, `${JSON.stringify(project, null, 2)}\n`, "utf8");
+  writeFileSync(join(root, "project.json"), `${JSON.stringify(project, null, 2)}\n`, "utf8");
   writeFileSync(
-    projectMarkdownPath,
+    join(root, "project.md"),
     [
       `# ${project.topic}`,
       "",
@@ -167,38 +237,27 @@ function writeProjectManifest(root: string, project: ResearchProject): void {
       project.scope,
       "",
       "## Budget / Constraints",
-      project.budget,
-      "",
-      "## Autonomy Policy",
-      `- Tool approval: ${project.autonomyPolicy.toolApproval}`,
-      `- Max loop iterations: ${project.autonomyPolicy.maxLoopIterations}`,
-      `- External search: ${project.autonomyPolicy.allowExternalSearch ? "allowed" : "blocked"}`,
-      `- Code execution: ${project.autonomyPolicy.allowCodeExecution ? "allowed" : "blocked"}`,
-      ""
+      project.budget
     ].join("\n"),
     "utf8"
   );
 }
 
 function writeLoopSpec(root: string, snapshot: ResearchSnapshot): void {
-  const loopJsonPath = join(root, "aetherops-loop.json");
-  const loopMarkdownPath = join(root, "aetherops-loop.md");
   const spec = buildLoopSpec(snapshot);
-  writeFileSync(loopJsonPath, `${JSON.stringify(spec, null, 2)}\n`, "utf8");
-  writeFileSync(loopMarkdownPath, renderLoopMarkdown(spec), "utf8");
+  writeFileSync(join(root, "aetherops-loop.json"), `${JSON.stringify(spec, null, 2)}\n`, "utf8");
+  writeFileSync(join(root, "aetherops-loop.md"), renderLoopMarkdown(spec), "utf8");
 }
 
 function buildLoopSpec(snapshot: ResearchSnapshot): Record<string, unknown> {
   const project = snapshot.project;
   const visited = new Set(snapshot.iterations.map((iteration) => iteration.step));
   return {
-    schema: "aetherops.research-loop.v1",
+    schema: "aetherops.research-loop.v2",
     project: {
       id: project.id,
       topic: project.topic,
       goal: project.goal,
-      scope: project.scope,
-      budget: project.budget,
       status: project.status,
       currentStep: project.currentStep,
       projectRoot: project.projectRoot,
@@ -206,57 +265,39 @@ function buildLoopSpec(snapshot: ResearchSnapshot): Record<string, unknown> {
       updatedAt: project.updatedAt
     },
     exactFlow: [
-      "1. CREATE_PROJECT",
-      "2. CREATE_SUB_SESSIONS",
-      "3. CREATE_RESEARCH_DB",
-      "4. GENERATE_QUESTIONS_HYPOTHESES_EVIDENCE",
-      "5. RUN_OPENCODE",
-      "6. STORE_RESULTS",
-      "7. BUILD_RAG_CONTEXT",
-      "8. DERIVE_EVIDENCE_BASED_RESULT",
-      "repeat 5 -> 6 -> 7 -> 8 until convergence or maxLoopIterations",
-      "FINALIZE_RESEARCH_OUTPUTS"
+      "1. CREATE_RESEARCH_DB",
+      "2. INPUT_RESEARCH_QUESTION_HYPOTHESIS",
+      "3. BUILD_RESEARCH_SPECIFICATION",
+      "4. PLAN_RESEARCH",
+      "5. EXECUTE_TOOLS",
+      "6. NORMALIZE_DATA",
+      "7. BUILD_VECTOR_INDEX",
+      "8. BUILD_ONTOLOGY_GRAPH",
+      "9. REASON_AND_VALIDATE",
+      "10. SYNTHESIZE_AND_EVALUATE",
+      "11. DECIDE_CONTINUATION",
+      "12. FINALIZE_OUTPUTS"
     ],
     stages: loopStages.map((stage) => ({
       ...stage,
       state: project.currentStep === stage.step ? "active" : visited.has(stage.step) ? "completed" : "pending"
     })),
-    repeatLoop: {
-      sequence: [
-        ResearchLoopStep.RunOpenCode,
-        ResearchLoopStep.StoreResults,
-        ResearchLoopStep.BuildRagContext,
-        ResearchLoopStep.DeriveEvidenceBasedResult
-      ],
-      returnTo: ResearchLoopStep.RunOpenCode,
-      repeatWhen: [
-        "needsMoreEvidence is true",
-        "needsMoreAnalysis is true",
-        "nextQuestions is not empty",
-        "hypothesis verification still needs more evidence"
-      ],
-      stopWhen: [
-        "maxLoopIterations reached",
-        "needsMoreEvidence=false and needsMoreAnalysis=false and no nextQuestions",
-        "new evidence/artifacts are near zero compared with previous iteration",
-        "project status is paused or aborted"
-      ]
+    loopBack: {
+      from: ResearchLoopStep.DecideContinuation,
+      to: ResearchLoopStep.PlanResearch,
+      condition: "shouldContinue=true"
     },
-    agentControl: [
-      "계획 및 의사결정",
-      "도구 선택 및 실행 지시",
-      "결과 해석 및 요약",
-      "질문/가설 업데이트",
-      "다음 단계 제안"
-    ],
-    storageModel: {
-      sqlite: snapshot.database?.sqlitePath ?? "research.sqlite",
-      vectorDb: snapshot.database?.vectorPath ?? "vector.sqlite",
-      artifacts: snapshot.database?.artifactRoot ?? "artifacts/",
-      sources: snapshot.database?.sourceRoot ?? "sources/",
-      logs: snapshot.database?.logRoot ?? "logs/",
-      reports: snapshot.database?.reportRoot ?? "reports/",
-      knowledge: snapshot.database?.knowledgeRoot ?? "knowledge/"
+    persistentResearchMemory: {
+      rawSources: snapshot.sources.length,
+      artifacts: snapshot.artifacts.length,
+      toolLogs: snapshot.toolRuns.length,
+      evidenceLedger: snapshot.evidence.length,
+      vectorDb: snapshot.chunks.length,
+      ontologyGraphDb: {
+        entities: snapshot.ontologyEntities.length,
+        relations: snapshot.ontologyRelations.length
+      },
+      projectsAndReports: snapshot.finalOutputs.length || (snapshot.report ? 1 : 0)
     },
     counts: {
       sessions: snapshot.sessions.length,
@@ -264,159 +305,86 @@ function buildLoopSpec(snapshot: ResearchSnapshot): Record<string, unknown> {
       hypotheses: snapshot.hypotheses.length,
       evidence: snapshot.evidence.length,
       artifacts: snapshot.artifacts.length,
-      sources: snapshot.sources.length,
+      normalizedRecords: snapshot.normalizedRecords.length,
       chunks: snapshot.chunks.length,
-      openCodeRuns: snapshot.openCodeRuns.length,
-      toolRuns: snapshot.toolRuns.length,
+      ontologyEntities: snapshot.ontologyEntities.length,
+      ontologyRelations: snapshot.ontologyRelations.length,
+      validationResults: snapshot.validationResults.length,
+      continuationDecisions: snapshot.continuationDecisions.length,
       results: snapshot.results.length,
       events: snapshot.iterations.length
     },
-    sessions: snapshot.sessions.map((session) => ({
-      id: session.id,
-      title: session.title,
-      focus: session.focus,
-      createdAt: session.createdAt
-    })),
-    finalOutputs: {
-      answer: snapshot.report?.answer ?? null,
-      hypothesisVerification: snapshot.report?.hypothesisVerification ?? null,
-      quantitativeQualitativeResults: snapshot.report?.quantitativeQualitativeResults ?? null,
-      comprehensiveReport: snapshot.report?.reportPath ?? "reports/final-report.md",
-      reusableKnowledgeAsset: snapshot.report?.knowledgePath ?? "knowledge/reusable-knowledge.md"
-    },
-    recentEvents: snapshot.iterations.slice(-20).map((iteration) => ({
-      step: iteration.step,
-      flowKind: iteration.flowKind,
-      message: iteration.message,
-      createdAt: iteration.createdAt
-    }))
+    latestSpecification: snapshot.specifications.at(-1),
+    latestPlan: snapshot.researchPlans.at(-1),
+    latestContinuationDecision: snapshot.continuationDecisions.at(-1),
+    finalOutput: snapshot.finalOutputs.at(-1),
+    recentEvents: snapshot.iterations.slice(-20)
   };
 }
 
 function renderLoopMarkdown(spec: Record<string, unknown>): string {
   const project = spec.project as Record<string, unknown>;
-  const counts = spec.counts as Record<string, number>;
   const stages = spec.stages as Array<Record<string, string>>;
-  const sessions = spec.sessions as Array<Record<string, string>>;
-  const recentEvents = spec.recentEvents as Array<Record<string, string>>;
+  const counts = spec.counts as Record<string, number>;
   return [
-    `# AetherOps Research Loop - ${project.topic}`,
+    `# AetherOps 12-Step Research Loop - ${project.topic}`,
     "",
     "## Current State",
     `- Status: ${project.status}`,
     `- Current step: ${project.currentStep}`,
     `- Project root: ${project.projectRoot}`,
     "",
-    "## Exact Research Flow",
+    "## Flow",
     ...stages.map((stage) => `- ${stage.index}. ${stage.title} (${stage.step}) - ${stage.state} / ${stage.flowKind}`),
     "",
-    "## Repeat Loop",
-    "- RUN_OPENCODE -> STORE_RESULTS -> BUILD_RAG_CONTEXT -> DERIVE_EVIDENCE_BASED_RESULT",
-    "- If more evidence, analysis, or next questions are needed, return to RUN_OPENCODE.",
-    "- Otherwise create final research outputs.",
+    "## Loop Rule",
+    "- Step 11 returns to Step 4 when shouldContinue=true.",
+    "- Step 11 goes to Step 12 when evidence is sufficient or limits are reached.",
     "",
-    "## Agent Control",
-    "- 계획 및 의사결정",
-    "- 도구 선택 및 실행 지시",
-    "- 결과 해석 및 요약",
-    "- 질문/가설 업데이트",
-    "- 다음 단계 제안",
-    "",
-    "## Storage Counts",
-    `- Sessions: ${counts.sessions}`,
-    `- Questions: ${counts.questions}`,
-    `- Hypotheses: ${counts.hypotheses}`,
-    `- Evidence: ${counts.evidence}`,
-    `- Artifacts: ${counts.artifacts}`,
-    `- Sources: ${counts.sources}`,
-    `- RAG chunks: ${counts.chunks}`,
-    `- OpenCode runs: ${counts.openCodeRuns}`,
-    `- Tool runs: ${counts.toolRuns}`,
-    `- Results: ${counts.results}`,
-    "",
-    "## Sessions",
-    ...(sessions.length ? sessions.map((session) => `- ${session.title}: ${session.focus}`) : ["- No chat sessions yet."]),
-    "",
-    "## Recent Events",
-    ...(recentEvents.length
-      ? recentEvents.map((event) => `- [${event.flowKind}] ${event.step}: ${event.message}`)
-      : ["- No events yet."]),
+    "## Counts",
+    ...Object.entries(counts).map(([key, value]) => `- ${key}: ${value}`),
     ""
   ].join("\n");
 }
 
 const loopStages = [
-  {
-    index: 1,
-    step: ResearchLoopStep.CreateProject,
-    title: "연구 프로젝트 생성",
-    flowKind: "Main Flow",
-    description: "연구 목표, 주제, 범위, 예산, 자율성 정책을 저장한다."
-  },
-  {
-    index: 2,
-    step: ResearchLoopStep.CreateSubSessions,
-    title: "하위 대화 세션 생성",
-    flowKind: "Main Flow",
-    description: "프로젝트 안에 주제별 연구 세션을 만든다."
-  },
-  {
-    index: 3,
-    step: ResearchLoopStep.CreateResearchDb,
-    title: "연구 DB 생성",
-    flowKind: "Data Flow",
-    description: "프로젝트별 독립 SQLite, Vector DB, 파일 저장소를 생성한다."
-  },
-  {
-    index: 4,
-    step: ResearchLoopStep.GenerateQuestionsHypothesesEvidence,
-    title: "연구 질문/가설/증거 생성",
-    flowKind: "Agent Control",
-    description: "초기 연구 질문, 검증 가능한 가설, seed evidence를 만든다."
-  },
-  {
-    index: 5,
-    step: ResearchLoopStep.RunOpenCode,
-    title: "OpenCode 실행",
-    flowKind: "Agent Control",
-    description: "OpenCode 또는 fallback 어댑터로 분석, 모델링, 시뮬레이션, 스크립트 실행을 수행한다."
-  },
-  {
-    index: 6,
-    step: ResearchLoopStep.StoreResults,
-    title: "결과물/자료 저장",
-    flowKind: "Data Flow",
-    description: "생성물, 분석 결과, 로그, 이미지, 논문, URL, 대화 기록을 DB와 파일 저장소에 저장한다."
-  },
-  {
-    index: 7,
-    step: ResearchLoopStep.BuildRagContext,
-    title: "RAG 기반 자료 검색 및 컨텍스트 구성",
-    flowKind: "Data Flow",
-    description: "Vector DB에서 관련 자료를 검색하고 다음 실행에 필요한 context를 구성한다."
-  },
-  {
-    index: 8,
-    step: ResearchLoopStep.DeriveEvidenceBasedResult,
-    title: "근거 기반 결과 도출",
-    flowKind: "Agent Control",
-    description: "RAG 근거로 질문/가설을 검증하고 다음 질문 또는 종료 판단을 생성한다."
-  },
-  {
-    index: 9,
-    step: ResearchLoopStep.FinalizeResearchOutputs,
-    title: "최종 연구 성과",
-    flowKind: "Main Flow",
-    description: "답변, 가설 검증, 정량/정성 결과, 종합 보고서, 재사용 지식 자산을 생성한다."
-  }
+  { index: 1, step: ResearchLoopStep.CreateResearchDb, title: "연구 DB 생성", flowKind: "Storage Flow" },
+  { index: 2, step: ResearchLoopStep.InputResearchQuestionHypothesis, title: "연구 질문 및 가설 입력", flowKind: "Main Flow" },
+  { index: 3, step: ResearchLoopStep.BuildResearchSpecification, title: "연구 명세 수립", flowKind: "Agent Control" },
+  { index: 4, step: ResearchLoopStep.PlanResearch, title: "연구 계획 수립", flowKind: "Agent Control" },
+  { index: 5, step: ResearchLoopStep.ExecuteTools, title: "도구 실행 및 연구 수행", flowKind: "Agent Control" },
+  { index: 6, step: ResearchLoopStep.NormalizeData, title: "데이터 수집 및 정규화", flowKind: "Storage Flow" },
+  { index: 7, step: ResearchLoopStep.BuildVectorIndex, title: "임베딩 및 벡터 구조화", flowKind: "Knowledge Flow" },
+  { index: 8, step: ResearchLoopStep.BuildOntologyGraph, title: "온톨로지 기반 구조화", flowKind: "Knowledge Flow" },
+  { index: 9, step: ResearchLoopStep.ReasonAndValidate, title: "추론 및 검증", flowKind: "Agent Control" },
+  { index: 10, step: ResearchLoopStep.SynthesizeAndEvaluate, title: "결과 합성 및 가설 평가", flowKind: "Agent Control" },
+  { index: 11, step: ResearchLoopStep.DecideContinuation, title: "계속 연구?", flowKind: "Loop Back" },
+  { index: 12, step: ResearchLoopStep.FinalizeOutputs, title: "최종 결과 도출", flowKind: "Output Flow" }
 ] as const;
 
 function migrateResearchDb(path: string): void {
-  migrateJsonDb(path, ["sources", "artifacts", "tool_runs", "agent_plans", "reports"]);
+  migrateJsonDb(path, [
+    "sources",
+    "artifacts",
+    "tool_runs",
+    "agent_plans",
+    "research_specifications",
+    "research_plans",
+    "normalized_records",
+    "hybrid_contexts",
+    "validation_results",
+    "continuation_decisions",
+    "final_outputs",
+    "reports"
+  ]);
 }
 
 function migrateVectorDb(path: string): void {
   migrateJsonDb(path, ["chunks"]);
+}
+
+function migrateOntologyDb(path: string): void {
+  migrateJsonDb(path, ["ontology_entities", "ontology_relations", "ontology_constraints"]);
 }
 
 function migrateJsonDb(path: string, tables: string[]): void {
@@ -467,13 +435,19 @@ function safeJoin(root: string, target: string): string {
   if (distance.startsWith("..") || isAbsolute(distance)) {
     throw new Error(`Path escapes project root: ${target}`);
   }
-  if (!existsSync(dirname(resolved))) {
-    mkdirSync(dirname(resolved), { recursive: true });
-  }
+  mkdirSync(dirname(resolved), { recursive: true });
   return resolved;
 }
 
 function sanitizeFilename(value: string): string {
   const sanitized = value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 64);
   return sanitized || "artifact";
+}
+
+function toNTriples(graphExport: unknown): string {
+  const graph = graphExport as { entities?: Array<{ id: string; label: string }>; relations?: Array<{ subjectId: string; predicate: string; objectId: string }> };
+  const labels = new Map((graph.entities ?? []).map((entity) => [entity.id, entity.label]));
+  return (graph.relations ?? [])
+    .map((relation) => `<urn:aetherops:${relation.subjectId}> <urn:aetherops:${relation.predicate}> <urn:aetherops:${relation.objectId}> . # ${labels.get(relation.subjectId) ?? relation.subjectId} -> ${labels.get(relation.objectId) ?? relation.objectId}`)
+    .join("\n");
 }

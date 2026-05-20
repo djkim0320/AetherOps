@@ -11,9 +11,14 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "rootDir": "src",
-    "outDir": "dist-electron",
+    "outDir": "dist-server",
+    "tsBuildInfoFile": "dist-server/tsconfig.server.tsbuildinfo",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/core", "src/main", "src/vite-env.d.ts"],
+  "include": [
+    "src/core",
+    "src/server",
+    "src/vite-env.d.ts"
+  ],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

@@ -2,8 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AetherOpsOrchestrator } from "../core/orchestrator.js";
-import type { CreateProjectInput } from "../core/types.js";
+import { MockOpenCodeAdapter } from "../../core/mockOpenCodeAdapter.js";
+import { AetherOpsOrchestrator } from "../../core/orchestrator.js";
+import type { CreateProjectInput } from "../../core/types.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
 
 let tempDir: string | undefined;
@@ -35,7 +36,7 @@ describe("SqliteResearchStore", () => {
   it("persists project snapshots with DB, runs, RAG contexts, and final report", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
     store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
-    const orchestrator = new AetherOpsOrchestrator(store, undefined, undefined, join(tempDir, "projects"));
+    const orchestrator = new AetherOpsOrchestrator(store, new MockOpenCodeAdapter(), undefined, join(tempDir, "projects"));
 
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);

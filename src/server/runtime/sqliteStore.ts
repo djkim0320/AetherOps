@@ -1,26 +1,37 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type {
-  EvidenceBasedResult,
-  EvidenceItem,
-  AgentPlan,
-  Hypothesis,
-  LoopIteration,
-  OpenCodeRun,
-  RagContext,
-  ResearchArtifact,
-  ResearchChunk,
-  ResearchDatabase,
-  ResearchProject,
-  ResearchQuestion,
-  ResearchReport,
-  ResearchSession,
-  ResearchSource,
-  ResearchSnapshot,
-  ResearchStore,
-  ToolRun
-} from "../core/types.js";
+import {
+  normalizeResearchLoopStep,
+  type EvidenceBasedResult,
+  type EvidenceItem,
+  type AgentPlan,
+  type ContinuationDecision,
+  type FinalResearchOutput,
+  type HybridContext,
+  type Hypothesis,
+  type LoopIteration,
+  type NormalizedResearchRecord,
+  type OpenCodeRun,
+  type OntologyConstraint,
+  type OntologyEntity,
+  type OntologyRelation,
+  type RagContext,
+  type ResearchArtifact,
+  type ResearchChunk,
+  type ResearchDatabase,
+  type ResearchPlan,
+  type ResearchProject,
+  type ResearchQuestion,
+  type ResearchReport,
+  type ResearchSession,
+  type ResearchSpecification,
+  type ResearchSource,
+  type ResearchSnapshot,
+  type ResearchStore,
+  type ToolRun,
+  type ValidationResult
+} from "../../core/types.js";
 
 type JsonRecord = { id: string; project_id?: string; created_at?: string; data: string };
 
@@ -98,6 +109,47 @@ export class SqliteResearchStore implements ResearchStore {
     this.upsertMany("agent_plans", [plan]);
   }
 
+  async saveResearchSpecification(specification: ResearchSpecification): Promise<void> {
+    this.upsertMany("research_specifications", [specification]);
+  }
+
+  async saveResearchPlan(plan: ResearchPlan): Promise<void> {
+    this.upsertMany("research_plans", [plan]);
+    this.upsertMany("agent_plans", [plan]);
+  }
+
+  async saveNormalizedRecords(records: NormalizedResearchRecord[]): Promise<void> {
+    this.upsertMany("normalized_records", records);
+  }
+
+  async saveOntologyEntities(entities: OntologyEntity[]): Promise<void> {
+    this.upsertMany("ontology_entities", entities);
+  }
+
+  async saveOntologyRelations(relations: OntologyRelation[]): Promise<void> {
+    this.upsertMany("ontology_relations", relations);
+  }
+
+  async saveOntologyConstraints(constraints: OntologyConstraint[]): Promise<void> {
+    this.upsertMany("ontology_constraints", constraints);
+  }
+
+  async saveHybridContext(context: HybridContext): Promise<void> {
+    this.upsertMany("hybrid_contexts", [context]);
+  }
+
+  async saveValidationResults(results: ValidationResult[]): Promise<void> {
+    this.upsertMany("validation_results", results);
+  }
+
+  async saveContinuationDecision(decision: ContinuationDecision): Promise<void> {
+    this.upsertMany("continuation_decisions", [decision]);
+  }
+
+  async saveFinalResearchOutput(output: FinalResearchOutput): Promise<void> {
+    this.upsertMany("final_outputs", [output]);
+  }
+
   async saveOpenCodeRun(run: OpenCodeRun): Promise<void> {
     this.upsertMany("opencode_runs", [run]);
   }
@@ -136,6 +188,16 @@ export class SqliteResearchStore implements ResearchStore {
       chunks: this.byProject<ResearchChunk>("chunks", projectId),
       toolRuns: this.byProject<ToolRun>("tool_runs", projectId),
       agentPlans: this.byProject<AgentPlan>("agent_plans", projectId),
+      researchPlans: this.byProject<ResearchPlan>("research_plans", projectId),
+      specifications: this.byProject<ResearchSpecification>("research_specifications", projectId),
+      normalizedRecords: this.byProject<NormalizedResearchRecord>("normalized_records", projectId),
+      ontologyEntities: this.byProject<OntologyEntity>("ontology_entities", projectId),
+      ontologyRelations: this.byProject<OntologyRelation>("ontology_relations", projectId),
+      ontologyConstraints: this.byProject<OntologyConstraint>("ontology_constraints", projectId),
+      hybridContexts: this.byProject<HybridContext>("hybrid_contexts", projectId),
+      validationResults: this.byProject<ValidationResult>("validation_results", projectId),
+      continuationDecisions: this.byProject<ContinuationDecision>("continuation_decisions", projectId),
+      finalOutputs: this.byProject<FinalResearchOutput>("final_outputs", projectId),
       openCodeRuns: this.byProject<OpenCodeRun>("opencode_runs", projectId),
       ragContexts: this.byProject<RagContext>("rag_contexts", projectId),
       results: this.byProject<EvidenceBasedResult>("results", projectId),
@@ -165,6 +227,16 @@ export class SqliteResearchStore implements ResearchStore {
       "chunks",
       "tool_runs",
       "agent_plans",
+      "research_specifications",
+      "research_plans",
+      "normalized_records",
+      "ontology_entities",
+      "ontology_relations",
+      "ontology_constraints",
+      "hybrid_contexts",
+      "validation_results",
+      "continuation_decisions",
+      "final_outputs",
       "opencode_runs",
       "rag_contexts",
       "results",
@@ -219,6 +291,13 @@ export class SqliteResearchStore implements ResearchStore {
   }
 
   private parse<T>(row: JsonRecord): T {
-    return JSON.parse(row.data) as T;
+    const parsed = JSON.parse(row.data) as Record<string, unknown>;
+    if ("currentStep" in parsed) {
+      parsed.currentStep = normalizeResearchLoopStep(parsed.currentStep);
+    }
+    if ("step" in parsed) {
+      parsed.step = normalizeResearchLoopStep(parsed.step);
+    }
+    return parsed as T;
   }
 }

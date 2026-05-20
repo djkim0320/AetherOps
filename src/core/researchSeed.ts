@@ -44,7 +44,7 @@ export function seedResearchPlan(project: ResearchProject): {
     {
       id: createId("question"),
       projectId: project.id,
-      text: `근거가 부족한 경우 어떤 evidence_gap과 추가 연구 질문을 남겨야 과장 없는 결론을 만들 수 있는가?`,
+      text: "근거가 부족한 경우 어떤 evidence_gap과 추가 연구 질문을 남겨야 과장 없는 결론을 만들 수 있는가?",
       status: "open",
       createdAt
     }

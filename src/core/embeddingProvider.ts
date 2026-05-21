@@ -27,15 +27,15 @@ export class LocalHashEmbeddingProvider implements EmbeddingProvider {
 }
 
 export class ApiEmbeddingProvider implements EmbeddingProvider {
-  private readonly fallback: LocalHashEmbeddingProvider;
+  private readonly localProvider: LocalHashEmbeddingProvider;
 
   constructor(private readonly settings: EmbeddingSettings) {
-    this.fallback = new LocalHashEmbeddingProvider(settings.dimensions);
+    this.localProvider = new LocalHashEmbeddingProvider(settings.dimensions);
   }
 
   async embed(text: string): Promise<number[]> {
     if (this.settings.provider === "local") {
-      return this.fallback.embed(text);
+      return this.localProvider.embed(text);
     }
 
     if (!this.settings.apiKey) {

@@ -1,4 +1,4 @@
-import {
+﻿import {
   Bot,
   Boxes,
   CheckCircle2,
@@ -32,7 +32,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent,
 import {
   ResearchLoopStep,
   type AppSettings,
-  type CreateProjectInput,
+  type ResearchProjectInput,
   type LoopIteration,
   type OpenCodeApiLlmSettings,
   type ResearchProject,
@@ -57,10 +57,10 @@ interface PendingChatMessage {
   startedAt: number;
 }
 
-const defaultInput: CreateProjectInput = {
+const defaultInput: ResearchProjectInput = {
   goal: "근거 기반 반복 연구 루프가 질문, 가설, 자료, 산출물을 스스로 개선하는지 검증한다.",
   topic: "AetherOps 자율 연구 루프",
-  scope: "OpenCode 실행, 로컬 RAG, 산출물 저장, evidence gap 기록을 포함한 MVP 검증",
+  scope: "도구 실행, 로컬 Vector Index, Ontology Graph, 산출물 저장, evidence gap 기록을 포함한 MVP 검증",
   budget: "로컬 MVP 예산",
   autonomyPolicy: {
     toolApproval: "suggested",
@@ -112,34 +112,37 @@ const stepLabels: Record<ResearchLoopStep, { index: string; label: string; flow:
   [ResearchLoopStep.InputResearchQuestionHypothesis]: { index: "2", label: "질문/가설 입력", flow: "main", icon: MessageSquare },
   [ResearchLoopStep.BuildResearchSpecification]: { index: "3", label: "연구 명세 수립", flow: "agent", icon: GitBranch },
   [ResearchLoopStep.PlanResearch]: { index: "4", label: "연구 계획 수립", flow: "agent", icon: FolderKanban },
-  [ResearchLoopStep.ExecuteTools]: { index: "5", label: "도구 실행", flow: "agent", icon: Bot },
-  [ResearchLoopStep.NormalizeData]: { index: "6", label: "데이터 정규화", flow: "storage", icon: Boxes },
+  [ResearchLoopStep.ExecuteTools]: { index: "5", label: "도구 실행 및 연구 수행", flow: "agent", icon: Bot },
+  [ResearchLoopStep.NormalizeData]: { index: "6", label: "데이터 수집 및 정규화", flow: "storage", icon: Boxes },
   [ResearchLoopStep.BuildVectorIndex]: { index: "7", label: "Vector Index", flow: "knowledge", icon: Search },
   [ResearchLoopStep.BuildOntologyGraph]: { index: "8", label: "Ontology Graph", flow: "knowledge", icon: Workflow },
-  [ResearchLoopStep.ReasonAndValidate]: { index: "9", label: "추론/검증", flow: "agent", icon: FlaskConical },
-  [ResearchLoopStep.SynthesizeAndEvaluate]: { index: "10", label: "결과 합성", flow: "agent", icon: FileText },
+  [ResearchLoopStep.ReasonAndValidate]: { index: "9", label: "추론 및 검증", flow: "agent", icon: FlaskConical },
+  [ResearchLoopStep.SynthesizeAndEvaluate]: { index: "10", label: "결과 합성 및 가설 평가", flow: "agent", icon: FileText },
   [ResearchLoopStep.DecideContinuation]: { index: "11", label: "계속 연구?", flow: "loop", icon: Gauge },
-  [ResearchLoopStep.FinalizeOutputs]: { index: "12", label: "최종 결과", flow: "output", icon: CheckCircle2 }
+  [ResearchLoopStep.FinalizeOutputs]: { index: "12", label: "최종 결과 도출", flow: "output", icon: CheckCircle2 }
 };
 
-const exactSteps = [
+const designSteps = [
   ResearchLoopStep.CreateResearchDb,
   ResearchLoopStep.InputResearchQuestionHypothesis,
   ResearchLoopStep.BuildResearchSpecification,
-  ResearchLoopStep.PlanResearch,
+  ResearchLoopStep.PlanResearch
+];
+
+const loopSteps = [
   ResearchLoopStep.ExecuteTools,
   ResearchLoopStep.NormalizeData,
   ResearchLoopStep.BuildVectorIndex,
   ResearchLoopStep.BuildOntologyGraph,
   ResearchLoopStep.ReasonAndValidate,
-  ResearchLoopStep.SynthesizeAndEvaluate,
-  ResearchLoopStep.DecideContinuation,
-  ResearchLoopStep.FinalizeOutputs
+  ResearchLoopStep.SynthesizeAndEvaluate
 ];
+
+const decisionSteps = [ResearchLoopStep.DecideContinuation, ResearchLoopStep.FinalizeOutputs];
 
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<SidebarTab>("aetherops");
-  const [input, setInput] = useState<CreateProjectInput>(defaultInput);
+  const [input, setInput] = useState<ResearchProjectInput>(defaultInput);
   const [projects, setProjects] = useState<ResearchProject[]>([]);
   const [snapshot, setSnapshot] = useState<ResearchSnapshot | undefined>();
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
@@ -265,7 +268,7 @@ export function App(): ReactElement {
     return chatSessionsFor(nextSnapshot)[0]?.id;
   }
 
-  async function createWorkflow(projectInput: CreateProjectInput): Promise<ResearchSnapshot> {
+  async function createWorkflow(projectInput: ResearchProjectInput): Promise<ResearchSnapshot> {
     setBusy(true);
     try {
       let next = await api.projects.create(projectInput);
@@ -687,7 +690,7 @@ export function App(): ReactElement {
         onSessionTitleChange={setSessionTitle}
         onCreateChatSession={createChatSession}
         onDeleteSession={deleteChatSession}
-        onCreateProject={createBlankProject}
+        onCreateResearchProject={createBlankProject}
         onNewChat={openNewChatHome}
       />
 
@@ -778,7 +781,7 @@ function CodexSidebar({
   onSessionTitleChange,
   onCreateChatSession,
   onDeleteSession,
-  onCreateProject,
+  onCreateResearchProject,
   onNewChat
 }: {
   activeTab: SidebarTab;
@@ -795,7 +798,7 @@ function CodexSidebar({
   onSessionTitleChange: (value: string) => void;
   onCreateChatSession: () => Promise<void>;
   onDeleteSession: (sessionId: string) => Promise<void>;
-  onCreateProject: () => Promise<void>;
+  onCreateResearchProject: () => Promise<void>;
   onNewChat: () => void;
 }): ReactElement {
   return (
@@ -815,7 +818,7 @@ function CodexSidebar({
 
       <section className="codexSection projectSection">
         <div className="codexSectionTitle">프로젝트</div>
-        <button className="projectCreateButton" type="button" onClick={() => void onCreateProject()} disabled={busy}>
+        <button className="projectCreateButton" type="button" onClick={() => void onCreateResearchProject()} disabled={busy}>
           {busy ? <Loader2 className="spin" size={15} /> : <Plus size={15} />}
           새 연구 프로젝트
         </button>
@@ -995,7 +998,7 @@ function CodexHome({
         </div>
 
         <div className="homeCards">
-          <HomeCard icon={FolderKanban} title="연구 프로젝트 생성" copy="목표, 범위, 예산, 자율성 정책을 한 번에 설정" />
+          <HomeCard icon={FolderKanban} title="연구 DB 준비" copy="목표, 범위, 예산, 자율성 정책을 한 번에 설정" />
           <HomeCard icon={MessageSquare} title="채팅 세션 생성" copy="프로젝트 안에서 주제별 대화 세션 구성" />
           <HomeCard icon={Database} title="자료 연결" copy="결과, 조사, 계획을 DB와 RAG에 저장" />
         </div>
@@ -1221,10 +1224,11 @@ function AetherOpsTab({
   events,
   metrics,
   busy,
-  onCreate
+  onCreate,
+  onStart
 }: {
-  input: CreateProjectInput;
-  setInput: (input: CreateProjectInput) => void;
+  input: ResearchProjectInput;
+  setInput: (input: ResearchProjectInput) => void;
   snapshot: ResearchSnapshot;
   events: LoopIteration[];
   metrics: Array<{ label: string; value: number }>;
@@ -1243,12 +1247,34 @@ function AetherOpsTab({
   const latestPlan = snapshot.researchPlans.at(-1);
   const latestSpec = snapshot.specifications.at(-1);
   const latestDecision = snapshot.continuationDecisions.at(-1);
+  const memoryItems = [
+    { label: "Raw Sources", value: snapshot.sources.length },
+    { label: "Artifacts", value: snapshot.artifacts.length },
+    { label: "Tool Logs", value: snapshot.toolRuns.length + snapshot.openCodeRuns.length },
+    { label: "Evidence Ledger", value: snapshot.evidence.length + snapshot.normalizedRecords.filter((record) => record.kind === "evidence").length },
+    { label: "Vector DB", value: snapshot.chunks.length },
+    { label: "Ontology Graph DB", value: snapshot.ontologyEntities.length + snapshot.ontologyRelations.length },
+    { label: "Projects & Reports", value: snapshot.finalOutputs.length + (snapshot.report ? 1 : 0) }
+  ];
+  const renderStepTile = (step: ResearchLoopStep): ReactElement => {
+    const meta = stepLabels[step];
+    const Icon = meta.icon;
+    const active = currentStep === step;
+    const visited = snapshot.iterations.some((iteration) => iteration.step === step);
+    return (
+      <div key={step} className={`stepTile ${meta.flow} ${active ? "active" : ""} ${visited ? "visited" : ""}`}>
+        <div className="stepIndex">{meta.index}</div>
+        <Icon size={21} />
+        <span>{meta.label}</span>
+      </div>
+    );
+  };
 
   return (
     <section className="codexContent">
       <header className="codexTopbar">
         <div>
-          <p className="eyebrow">Main Flow / Data Flow / Agent Control</p>
+          <p className="eyebrow">Main Flow / Data Flow / Agent Control / Knowledge Flow</p>
           <h1>{snapshot.project.topic}</h1>
         </div>
         <div className={`statusPill ${snapshot.project.status}`}>{statusLabel(snapshot.project.status)}</div>
@@ -1291,7 +1317,7 @@ function AetherOpsTab({
               onChange={(event) =>
                 setInput({
                   ...input,
-                  autonomyPolicy: { ...input.autonomyPolicy, toolApproval: event.target.value as CreateProjectInput["autonomyPolicy"]["toolApproval"] }
+                  autonomyPolicy: { ...input.autonomyPolicy, toolApproval: event.target.value as ResearchProjectInput["autonomyPolicy"]["toolApproval"] }
                 })
               }
             >
@@ -1300,27 +1326,43 @@ function AetherOpsTab({
               <option value="automatic">자동</option>
             </select>
           </label>
-          <button className="primaryButton" onClick={onCreate} disabled={busy} type="button">
+          <button className="primaryButton" onClick={onStart} disabled={busy} type="button">
             {busy ? <Loader2 className="spin" size={17} /> : <FolderKanban size={17} />}
-            새 연구 루프 생성
+            연구 루프 시작
           </button>
         </div>
       </section>
 
-      <section className="flowBoard">
-        {exactSteps.map((step) => {
-          const meta = stepLabels[step];
-          const Icon = meta.icon;
-          const active = currentStep === step;
-          const visited = snapshot.iterations.some((iteration) => iteration.step === step);
-          return (
-            <div key={step} className={`stepTile ${meta.flow} ${active ? "active" : ""} ${visited ? "visited" : ""}`}>
-              <div className="stepIndex">{meta.index}</div>
-              <Icon size={21} />
-              <span>{meta.label}</span>
-            </div>
-          );
-        })}
+      <section className="flowBoard flowBoardStructured">
+        <div className="flowGroup design">
+          <h2>연구 설계</h2>
+          <div className="flowGroupGrid">{designSteps.map(renderStepTile)}</div>
+        </div>
+        <div className="flowGroup loop">
+          <div className="flowGroupHeader">
+            <h2>연구 실행 및 분석 반복 루프</h2>
+            <span>11에서 계속이면 4번 연구 계획 수립으로 복귀</span>
+          </div>
+          <div className="flowGroupGrid loopGrid">{loopSteps.map(renderStepTile)}</div>
+        </div>
+        <div className="flowGroup decision">
+          <h2>루프 판단 및 최종 산출</h2>
+          <div className="flowGroupGrid decisionGrid">{decisionSteps.map(renderStepTile)}</div>
+        </div>
+        <div className="memoryLayer">
+          <div>
+            <h2>Persistent Research Memory</h2>
+            <p>NormalizeData 이후 Vector Index와 Ontology Graph를 병렬 지식화 계층으로 보관합니다.</p>
+          </div>
+          <div className="memoryGrid">
+            {memoryItems.map((item) => (
+              <div key={item.label} className="memoryItem">
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       <section className="metricStrip">
@@ -1420,7 +1462,7 @@ function AetherOpsTab({
         <section className="panel wide">
           <div className="panelTitle">
             <CheckCircle2 size={17} />
-            <h2>최종 연구 성과</h2>
+            <h2>최종 결과 도출</h2>
           </div>
           <div className="finalGrid">
             <FinalItem title="Answer" value={snapshot.report?.answer} />
@@ -1546,7 +1588,7 @@ function SettingsTab({
         <section className="settingsGroup">
           <div className="panelTitle">
             <Workflow size={17} />
-            <h3>OpenCode 실행 엔진</h3>
+            <h3>OpenCode 도구 엔진</h3>
           </div>
           <div className="fieldGrid">
             <label>

@@ -44,7 +44,7 @@ export class LoopDecisionEngine {
       planRevisionHints: shouldContinue
         ? [
             "Return to Step 4 and revise the research plan before executing tools again.",
-            "Prioritize traceable sources over additional seed or mock artifacts.",
+            "Prioritize traceable sources over additional seed or untraceable artifacts.",
             growth.evidence <= 0 ? "Previous iteration produced little or no new evidence; change tool/source strategy." : "Use new evidence to narrow validation targets."
           ]
         : [],

@@ -1,4 +1,4 @@
-import { buildSourceText, chunkResearchSource } from "./chunking.js";
+﻿import { buildSourceText, chunkResearchSource } from "./chunking.js";
 import { LocalHashEmbeddingProvider, type EmbeddingProvider } from "./embeddingProvider.js";
 import { EvidenceNormalizer } from "./evidenceNormalizer.js";
 import { FinalOutputWriter } from "./finalOutputWriter.js";
@@ -15,6 +15,7 @@ import { ResearchPlanner } from "./researchPlanner.js";
 import { createDefaultSessions, seedResearchPlan } from "./researchSeed.js";
 import { ResearchSpecificationBuilder } from "./researchSpecification.js";
 import { ResultSynthesizer } from "./resultSynthesizer.js";
+import { ToolRunner } from "./toolRunner.js";
 import { ValidationEngine } from "./validationEngine.js";
 import { VectorIndexEngine } from "./vectorIndexEngine.js";
 import { VectorRagEngine } from "./vectorRagEngine.js";
@@ -22,7 +23,7 @@ import {
   ResearchLoopStep,
   type AppSettings,
   type ContinuationDecision,
-  type CreateProjectInput,
+  type ResearchProjectInput,
   type EvidenceBasedResult,
   type EvidenceItem,
   type FlowKind,
@@ -52,11 +53,12 @@ interface ChatReplyResponse {
   nextActions?: string[];
 }
 
-const fallbackSettings: AppSettings = {
+const defaultSettings: AppSettings = {
   openCodeLlm: { source: "codex-oauth", model: "gpt-5.5" },
   openCode: { enabled: false, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled" },
   embedding: { provider: "local", model: "local-hash", dimensions: 96 },
+  browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
   allowExternalSearch: false,
   allowCodeExecution: false,
   maxLoopIterations: 2,
@@ -89,7 +91,8 @@ export class AetherOpsOrchestrator {
     private readonly llm: LlmProvider = new NoopLlmProvider(),
     private readonly projectStorage: ProjectStorage = new NoopProjectStorage(),
     private readonly embeddingProvider: EmbeddingProvider = new LocalHashEmbeddingProvider(),
-    private readonly getSettings: SettingsGetter = () => fallbackSettings
+    private readonly getSettings: SettingsGetter = () => defaultSettings,
+    private readonly toolRunner?: ToolRunner
   ) {
     this.specificationBuilder = new ResearchSpecificationBuilder(llm);
     this.planner = new ResearchPlanner(llm);
@@ -110,7 +113,7 @@ export class AetherOpsOrchestrator {
     };
   }
 
-  async createProject(input: CreateProjectInput): Promise<ResearchSnapshot> {
+  async createProject(input: ResearchProjectInput): Promise<ResearchSnapshot> {
     const createdAt = nowIso();
     const project: ResearchProject = {
       ...input,
@@ -273,19 +276,21 @@ export class AetherOpsOrchestrator {
   }
 
   async startLoop(projectId: string): Promise<ResearchSnapshot> {
-    await this.setStatus(projectId, "running");
-
     try {
-      await this.preflightExecutionEngine(projectId);
-      await this.ensureInitialized(projectId);
+      await this.ensureResearchDb(projectId);
+      await this.ensureResearchInput(projectId);
+      await this.ensureResearchSpecification(projectId);
+      await this.ensureResearchPlan(projectId);
+      await this.setStatus(projectId, "running");
       const settings = await this.getSettings();
       const initialSnapshot = await this.store.getSnapshot(projectId);
       const maxIterations = Math.max(1, initialSnapshot.project.autonomyPolicy.maxLoopIterations || settings.maxLoopIterations || 1);
-      for (let iteration = nextIteration(await this.store.getSnapshot(projectId)); iteration <= maxIterations; iteration += 1) {
+      const firstIteration = Math.max(initialSnapshot.results.length, initialSnapshot.openCodeRuns.length) + 1;
+      for (let iteration = firstIteration; iteration <= maxIterations; iteration += 1) {
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
         const beforeCounts = counts(await this.store.getSnapshot(projectId));
 
-        await this.planResearch(projectId, iteration);
+        await this.ensureResearchPlan(projectId, iteration);
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
         await this.executeTools(projectId, iteration);
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
@@ -302,6 +307,8 @@ export class AetherOpsOrchestrator {
         if (!decision.shouldContinue) {
           break;
         }
+        if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
+        await this.planResearch(projectId, iteration + 1, decision);
       }
 
       if ((await this.checkAbortOrPause(projectId)) !== "running") {
@@ -341,7 +348,7 @@ export class AetherOpsOrchestrator {
   async executeTools(projectId: string, iteration?: number): Promise<ResearchSnapshot> {
     const snapshot = await this.store.getSnapshot(projectId);
     const activeIteration = iteration ?? nextIteration(snapshot);
-    const output = await this.openCode.run({
+    const runInput = {
       project: snapshot.project,
       questions: snapshot.questions,
       hypotheses: snapshot.hypotheses,
@@ -352,18 +359,28 @@ export class AetherOpsOrchestrator {
       specification: snapshot.specifications.at(-1),
       researchPlan: snapshot.researchPlans.at(-1),
       iteration: activeIteration
-    });
+    };
+    const output = await this.openCode.run(runInput);
+    const settings = await this.getSettings();
+    const toolResults = this.toolRunner ? await this.toolRunner.runAll(runInput, settings) : [];
+    const toolResultArtifacts = toolResults.flatMap((result) => result.artifacts);
+    const toolResultEvidence = toolResults.flatMap((result) => result.evidence);
+    const toolResultSources = toolResults.flatMap((result) => result.sources);
 
     const database = await this.requireDatabase(projectId);
-    const artifacts = await this.projectStorage.writeArtifacts(snapshot.project, database, activeIteration, output.artifacts);
-    const toolRuns = output.toolRuns ?? [];
+    const artifacts = await this.projectStorage.writeArtifacts(snapshot.project, database, activeIteration, [
+      ...output.artifacts,
+      ...toolResultArtifacts
+    ]);
+    const toolRuns = [...(output.toolRuns ?? []), ...toolResults.map((result) => result.toolRun)];
     const logSource = await this.projectStorage.writeRunLog(snapshot.project, database, activeIteration, output.run, toolRuns);
 
     await this.store.saveOpenCodeRun(output.run);
     await this.store.saveArtifacts(artifacts);
-    await this.store.saveEvidence(output.evidence);
-    if (output.sources?.length) {
-      await this.store.saveSources(await this.projectStorage.writeSources(snapshot.project, database, output.sources));
+    await this.store.saveEvidence([...output.evidence, ...toolResultEvidence]);
+    const sources = [...(output.sources ?? []), ...toolResultSources];
+    if (sources.length) {
+      await this.store.saveSources(await this.projectStorage.writeSources(snapshot.project, database, sources));
     }
     if (logSource) await this.store.saveSources([logSource]);
     if (toolRuns.length) await this.store.saveToolRuns(toolRuns);
@@ -376,7 +393,7 @@ export class AetherOpsOrchestrator {
     if (output.fatalError || output.run.status === "failed") {
       const reason = output.fatalError ?? output.run.logs.at(-1) ?? "OpenCode execution failed.";
       await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
-      await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", `OpenCode 실행 실패: ${reason}`);
+      await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", `OpenCode 도구 실패: ${reason}`);
       throw new Error(reason);
     }
     await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
@@ -561,12 +578,30 @@ export class AetherOpsOrchestrator {
     return this.store.getSnapshot(projectId);
   }
 
-  private async ensureInitialized(projectId: string): Promise<void> {
+  private async ensureResearchDb(projectId: string): Promise<ResearchSnapshot> {
     let snapshot = await this.store.getSnapshot(projectId);
     if (!snapshot.database) snapshot = await this.createResearchDb(projectId);
     if (!snapshot.sessions.length) snapshot = await this.createSubSessions(projectId);
+    return snapshot;
+  }
+
+  private async ensureResearchInput(projectId: string): Promise<ResearchSnapshot> {
+    let snapshot = await this.store.getSnapshot(projectId);
     if (!snapshot.questions.length || !snapshot.hypotheses.length) snapshot = await this.inputResearchQuestionHypothesis(projectId);
-    if (!snapshot.specifications.length) await this.buildResearchSpecification(projectId);
+    return snapshot;
+  }
+
+  private async ensureResearchSpecification(projectId: string): Promise<ResearchSnapshot> {
+    let snapshot = await this.store.getSnapshot(projectId);
+    if (!snapshot.specifications.length) snapshot = await this.buildResearchSpecification(projectId);
+    return snapshot;
+  }
+
+  private async ensureResearchPlan(projectId: string, iteration?: number): Promise<ResearchSnapshot> {
+    const snapshot = await this.store.getSnapshot(projectId);
+    const activeIteration = iteration ?? nextIteration(snapshot);
+    const plan = snapshot.researchPlans.find((item) => item.iteration === activeIteration);
+    return plan ? snapshot : this.planResearch(projectId, activeIteration);
   }
 
   private async ensureSpecification(projectId: string): Promise<ResearchSpecification> {

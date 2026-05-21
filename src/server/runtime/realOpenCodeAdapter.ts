@@ -43,11 +43,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
 
     try {
       const resolution = resolveOpenCodeCommand(settings.openCode.command, this.commandOptions);
-      const raw = await runCommand(
-        resolution.command,
-        this.buildArgs(input, settings),
-        settings.openCode.timeoutMs
-      );
+      const raw = await runCommand(resolution.command, this.buildArgs(input, settings), settings.openCode.timeoutMs);
       const completedAt = nowIso();
       const parsed = parseOpenCodeJson(raw.stdout);
       if (!parsed) {
@@ -169,6 +165,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
 
   private unavailable(input: OpenCodeRunInput, startedAt: string, reason: string): OpenCodeRunOutput {
     const completedAt = nowIso();
+    const gap = this.gapEvidence(input, completedAt, reason, "tool_unavailable");
     return {
       run: {
         id: createId("opencode"),
@@ -177,14 +174,14 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
         prompt: this.buildPrompt(input),
         toolPlan: ["opencode-cli"],
         status: "failed",
-        logs: [reason, "Fallback execution is disabled. Configure OpenCode or fix the CLI error, then run again."],
+        logs: [reason, "대체 실행 경로는 비활성화되어 있습니다. OpenCode 설정을 수정한 뒤 다시 실행하세요."],
         artifactIds: [],
-        evidenceIds: [],
+        evidenceIds: [gap.id],
         startedAt,
         completedAt
       },
       artifacts: [],
-      evidence: [],
+      evidence: [gap],
       fatalError: reason
     };
   }
@@ -215,7 +212,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
       reliabilityScore: 0.2,
       relevanceScore: 0.45,
       evidenceStrength: "weak",
-      limitations: ["OpenCode 실행 결과를 실제 근거로 사용할 수 없습니다."],
+      limitations: ["OpenCode 도구 결과를 실제 근거로 사용할 수 없습니다."],
       createdAt
     };
   }

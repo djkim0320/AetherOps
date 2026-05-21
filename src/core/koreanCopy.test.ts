@@ -17,7 +17,7 @@ describe("Korean user-facing copy", () => {
     expect(text).not.toMatch(forbiddenMojibake);
   });
 
-  it("keeps generated report headings and fallback copy readable", () => {
+  it("keeps generated report headings and error copy readable", () => {
     const report = buildResearchReport(snapshot);
 
     expect(report.comprehensiveReport).toContain("# 연구 요약");

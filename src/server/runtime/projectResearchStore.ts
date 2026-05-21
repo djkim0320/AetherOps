@@ -189,8 +189,8 @@ export class NodeProjectStorage implements ProjectStorage {
   ): Promise<{ reportPath: string; knowledgePath: string; ontologyExportPath: string; artifactPackagePath: string }> {
     const reportPath = safeJoin(project.projectRoot, "reports/final-report.md");
     const knowledgePath = safeJoin(project.projectRoot, "knowledge/reusable-knowledge.md");
-    const citationsPath = safeJoin(project.projectRoot, "reports/evidence-citations.json");
-    const verificationPath = safeJoin(project.projectRoot, "reports/hypothesis-verification.json");
+    const citationsPath = safeJoin(project.projectRoot, "exports/evidence-citations.json");
+    const verificationPath = safeJoin(project.projectRoot, "exports/hypothesis-verification.json");
     const ontologyExportPath = safeJoin(project.projectRoot, "ontology/project-graph.json");
     const ontologyNtPath = safeJoin(project.projectRoot, "ontology/project-graph.nt");
     const artifactPackagePath = safeJoin(project.projectRoot, "exports/artifact-package.json");
@@ -422,8 +422,8 @@ async function writeSourceText(project: ResearchProject, source: ResearchSource)
 }
 
 function normalizeArtifactPath(relativePath: string, iteration: number, title: string): string {
-  const fallback = `artifacts/iteration-${iteration}/${sanitizeFilename(title)}.md`;
-  const candidate = relativePath.trim() || fallback;
+  const defaultRelativePath = `artifacts/iteration-${iteration}/${sanitizeFilename(title)}.md`;
+  const candidate = relativePath.trim() || defaultRelativePath;
   return candidate.startsWith("artifacts/") ? candidate : `artifacts/iteration-${iteration}/${candidate.replace(/^\/+/, "")}`;
 }
 

@@ -100,7 +100,7 @@ export interface AutonomyPolicy {
   allowCodeExecution: boolean;
 }
 
-export interface CreateProjectInput {
+export interface ResearchProjectInput {
   goal: string;
   topic: string;
   scope: string;
@@ -108,7 +108,7 @@ export interface CreateProjectInput {
   autonomyPolicy: AutonomyPolicy;
 }
 
-export interface ResearchProject extends CreateProjectInput {
+export interface ResearchProject extends ResearchProjectInput {
   id: string;
   createdAt: string;
   updatedAt: string;
@@ -545,11 +545,20 @@ export interface EmbeddingSettings {
   dimensions: number;
 }
 
+export interface BrowserUseSettings {
+  enabled: boolean;
+  mode: "background" | "visible";
+  maxPages: number;
+  timeoutMs: number;
+  captureScreenshots: boolean;
+}
+
 export interface AppSettings {
   openCodeLlm: OpenCodeLlmSettings;
   openCode: OpenCodeCliSettings;
   webSearch: WebSearchSettings;
   embedding: EmbeddingSettings;
+  browserUse: BrowserUseSettings;
   allowExternalSearch: boolean;
   allowCodeExecution: boolean;
   maxLoopIterations: number;
@@ -574,7 +583,6 @@ export interface OpenCodeRunOutput {
   nextActions?: string[];
   needsMoreEvidence?: boolean;
   needsMoreAnalysis?: boolean;
-  fallbackRecommended?: boolean;
   fatalError?: string;
 }
 

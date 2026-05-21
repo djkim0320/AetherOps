@@ -1,16 +1,16 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+﻿import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AetherOpsOrchestrator } from "../../core/orchestrator.js";
-import type { CreateProjectInput, OntologyEntity, OntologyRelation } from "../../core/types.js";
+import type { ResearchProjectInput, OntologyEntity, OntologyRelation } from "../../core/types.js";
 import { NodeProjectStorage } from "./projectResearchStore.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
 
 let tempDir: string | undefined;
 let store: SqliteResearchStore | undefined;
 
-const input: CreateProjectInput = {
+const input: ResearchProjectInput = {
   goal: "프로젝트별 독립 저장소 생성 검증",
   topic: "project storage",
   scope: "research.sqlite, vector.sqlite, artifacts, reports, knowledge 생성",

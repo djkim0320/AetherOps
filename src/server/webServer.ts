@@ -5,8 +5,11 @@ import { extname, join, normalize, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ApiEmbeddingProvider } from "../core/embeddingProvider.js";
 import { AetherOpsOrchestrator } from "../core/orchestrator.js";
+import { ToolRunner } from "../core/toolRunner.js";
 import { VectorRagEngine } from "../core/vectorRagEngine.js";
-import type { AppSettings, CreateProjectInput, ResearchArtifact } from "../core/types.js";
+import type { AppSettings, ResearchProjectInput, ResearchArtifact } from "../core/types.js";
+import { BackgroundBrowserRuntime } from "./runtime/backgroundBrowserRuntime.js";
+import { BrowserResearchTool } from "./runtime/browserResearchTool.js";
 import { CodexOAuthLlmProvider } from "./runtime/codexOAuthLlmProvider.js";
 import { launchOpenCodeAuthLogin, listOpenCodeAuth } from "./runtime/opencodeAuth.js";
 import { NodeProjectStorage } from "./runtime/projectResearchStore.js";
@@ -49,6 +52,8 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
     }
   });
   const openCode = new RealOpenCodeAdapter(settings, { searchRoots: [appRoot, process.cwd()] });
+  const browserRuntime = new BackgroundBrowserRuntime(dataRoot);
+  const toolRunner = new ToolRunner([new BrowserResearchTool(browserRuntime)]);
   const orchestrator = new AetherOpsOrchestrator(
     store,
     openCode,
@@ -57,7 +62,8 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
     llm,
     new NodeProjectStorage(),
     embeddingProvider,
-    settings
+    settings,
+    toolRunner
   );
 
   const server = createServer(async (request, response) => {
@@ -114,7 +120,7 @@ async function handleRpc(
 
   switch (method) {
     case "projects.create":
-      return orchestrator.createProject(args[0] as CreateProjectInput);
+      return orchestrator.createProject(args[0] as ResearchProjectInput);
     case "projects.list":
       return orchestrator.listProjects();
     case "sessions.createForProject": {

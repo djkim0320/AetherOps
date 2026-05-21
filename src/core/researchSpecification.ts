@@ -29,9 +29,9 @@ export class ResearchSpecificationBuilder {
     hypotheses: Hypothesis[];
     evidence: EvidenceItem[];
   }): Promise<ResearchSpecification> {
-    const fallback = this.buildFallback(input);
+    const defaultSpecification = this.buildDefaultSpecification(input);
     if (!this.llm || !(await this.llm.isAvailable())) {
-      return fallback;
+      return defaultSpecification;
     }
 
     try {
@@ -60,22 +60,22 @@ export class ResearchSpecificationBuilder {
       });
 
       return {
-        ...fallback,
-        researchQuestions: take(response.researchQuestions, fallback.researchQuestions, 5, 3),
-        refinedHypotheses: take(response.refinedHypotheses, fallback.refinedHypotheses, 5, 2),
-        assumptions: take(response.assumptions, fallback.assumptions, 8, 1),
-        constraints: take(response.constraints, fallback.constraints, 8, 1),
-        successCriteria: take(response.successCriteria, fallback.successCriteria, 8, 2),
-        requiredEvidenceTypes: take(response.requiredEvidenceTypes, fallback.requiredEvidenceTypes, 8, 2),
-        competencyQuestions: take(response.competencyQuestions, fallback.competencyQuestions, 8, 2),
-        evaluationMetrics: take(response.evaluationMetrics, fallback.evaluationMetrics, 8, 2)
+        ...defaultSpecification,
+        researchQuestions: take(response.researchQuestions, defaultSpecification.researchQuestions, 5, 3),
+        refinedHypotheses: take(response.refinedHypotheses, defaultSpecification.refinedHypotheses, 5, 2),
+        assumptions: take(response.assumptions, defaultSpecification.assumptions, 8, 1),
+        constraints: take(response.constraints, defaultSpecification.constraints, 8, 1),
+        successCriteria: take(response.successCriteria, defaultSpecification.successCriteria, 8, 2),
+        requiredEvidenceTypes: take(response.requiredEvidenceTypes, defaultSpecification.requiredEvidenceTypes, 8, 2),
+        competencyQuestions: take(response.competencyQuestions, defaultSpecification.competencyQuestions, 8, 2),
+        evaluationMetrics: take(response.evaluationMetrics, defaultSpecification.evaluationMetrics, 8, 2)
       };
     } catch {
-      return fallback;
+      return defaultSpecification;
     }
   }
 
-  private buildFallback(input: {
+  private buildDefaultSpecification(input: {
     project: ResearchProject;
     questions: ResearchQuestion[];
     hypotheses: Hypothesis[];
@@ -92,7 +92,7 @@ export class ResearchSpecificationBuilder {
       researchQuestions: ensureMinimum(
         questions.map((item) => item.text),
         [
-          `${input.project.topic}에서 핵심 비교 또는 검증 기준은 무엇인가?`,
+          `${input.project.topic}에서 핵심 비교 기준 또는 검증 기준은 무엇인가?`,
           `${input.project.scope} 범위에서 추적 가능한 근거는 무엇인가?`,
           `근거가 부족할 때 어떤 추가 연구 계획으로 보완할 수 있는가?`
         ],
@@ -110,18 +110,18 @@ export class ResearchSpecificationBuilder {
       scope: input.project.scope,
       assumptions: [
         "현재 프로젝트 입력은 연구 설계의 출발점이며 외부 출처를 대체하지 않는다.",
-        evidenceGaps.length ? "일부 도구 또는 외부 검색이 사용 불가할 수 있다." : "수집된 자료는 citation/sourceUri로 추적 가능해야 한다."
+        evidenceGaps.length ? "일부 도구 또는 외부 검색이 사용 불가능할 수 있다." : "수집된 자료는 citation/sourceUri로 추적 가능해야 한다."
       ],
       constraints: [input.project.budget, `maxLoopIterations=${input.project.autonomyPolicy.maxLoopIterations}`].filter(Boolean),
       successCriteria: [
-        "질문별로 추적 가능한 evidence/citation이 연결된다.",
-        "가설별 supported/contradicted/inconclusive 판단과 한계가 기록된다.",
-        "최종 보고서와 재사용 가능한 지식 자산이 파일로 생성된다."
+        "질문별로 추적 가능한 evidence/citation을 연결한다.",
+        "가설별 supported/contradicted/inconclusive 판단과 한계를 기록한다.",
+        "최종 보고서와 재사용 가능한 지식 자산을 파일로 생성한다."
       ],
       requiredEvidenceTypes: ["raw source", "artifact", "tool log", "citation", "observation"],
       competencyQuestions: [
         "어떤 evidence가 어떤 hypothesis를 지지하거나 반박하는가?",
-        "citation이 없는 claim은 어느 정도의 낮은 신뢰도로 처리되는가?",
+        "citation이 없는 claim은 어느 정도의 낮은 신뢰도로 처리하는가?",
         "다음 iteration에서 보완해야 할 evidence gap은 무엇인가?"
       ],
       evaluationMetrics: ["citation coverage", "evidence reliability", "hypothesis confidence", "artifact completeness"],
@@ -130,15 +130,15 @@ export class ResearchSpecificationBuilder {
   }
 }
 
-function take(value: unknown, fallback: string[], max: number, min: number): string[] {
+function take(value: unknown, defaultValue: string[], max: number, min: number): string[] {
   return ensureMinimum(
     Array.isArray(value) ? value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean) : [],
-    fallback,
+    defaultValue,
     min
   ).slice(0, max);
 }
 
-function ensureMinimum(value: string[], fallback: string[], min: number): string[] {
-  const merged = [...value, ...fallback].filter(Boolean);
+function ensureMinimum(value: string[], defaultValue: string[], min: number): string[] {
+  const merged = [...value, ...defaultValue].filter(Boolean);
   return [...new Set(merged)].slice(0, Math.max(min, merged.length));
 }

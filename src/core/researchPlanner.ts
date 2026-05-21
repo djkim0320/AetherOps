@@ -29,9 +29,9 @@ export class ResearchPlanner {
     settings: AppSettings;
     continuationDecision?: ContinuationDecision;
   }): Promise<ResearchPlan> {
-    const fallback = this.fallback(input);
+    const defaultPlan = this.buildDefaultPlan(input);
     if (!this.llm || !(await this.llm.isAvailable())) {
-      return fallback;
+      return defaultPlan;
     }
 
     try {
@@ -58,23 +58,23 @@ export class ResearchPlanner {
       });
 
       return {
-        ...fallback,
-        objective: clean(response.objective) || fallback.objective,
-        targetQuestions: selectIdsOrText(response.targetQuestions, fallback.targetQuestions),
-        targetHypotheses: selectIdsOrText(response.targetHypotheses, fallback.targetHypotheses),
-        requiredTools: strings(response.requiredTools, fallback.requiredTools),
-        expectedSources: strings(response.expectedSources, fallback.expectedSources),
-        expectedArtifacts: strings(response.expectedArtifacts, fallback.expectedArtifacts),
-        executionSteps: strings(response.executionSteps, fallback.executionSteps),
-        steps: strings(response.executionSteps, fallback.executionSteps),
-        stopCriteria: strings(response.stopCriteria, fallback.stopCriteria)
+        ...defaultPlan,
+        objective: clean(response.objective) || defaultPlan.objective,
+        targetQuestions: selectIdsOrText(response.targetQuestions, defaultPlan.targetQuestions),
+        targetHypotheses: selectIdsOrText(response.targetHypotheses, defaultPlan.targetHypotheses),
+        requiredTools: strings(response.requiredTools, defaultPlan.requiredTools),
+        expectedSources: strings(response.expectedSources, defaultPlan.expectedSources),
+        expectedArtifacts: strings(response.expectedArtifacts, defaultPlan.expectedArtifacts),
+        executionSteps: strings(response.executionSteps, defaultPlan.executionSteps),
+        steps: strings(response.executionSteps, defaultPlan.executionSteps),
+        stopCriteria: strings(response.stopCriteria, defaultPlan.stopCriteria)
       };
     } catch {
-      return fallback;
+      return defaultPlan;
     }
   }
 
-  private fallback(input: {
+  private buildDefaultPlan(input: {
     snapshot: ResearchSnapshot;
     specification: ResearchSpecification;
     iteration: number;
@@ -134,11 +134,11 @@ function clean(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function strings(value: unknown, fallback: string[]): string[] {
+function strings(value: unknown, defaultValue: string[]): string[] {
   const normalized = Array.isArray(value) ? value.map(clean).filter(Boolean) : [];
-  return normalized.length ? normalized.slice(0, 12) : fallback;
+  return normalized.length ? normalized.slice(0, 12) : defaultValue;
 }
 
-function selectIdsOrText(value: unknown, fallback: string[]): string[] {
-  return strings(value, fallback);
+function selectIdsOrText(value: unknown, defaultValue: string[]): string[] {
+  return strings(value, defaultValue);
 }

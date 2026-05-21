@@ -81,6 +81,13 @@ function settings(command: string): AppSettings {
       model: "local-hash",
       dimensions: 96
     },
+    browserUse: {
+      enabled: false,
+      mode: "background",
+      maxPages: 2,
+      timeoutMs: 30_000,
+      captureScreenshots: false
+    },
     allowExternalSearch: true,
     allowCodeExecution: false,
     maxLoopIterations: 2,

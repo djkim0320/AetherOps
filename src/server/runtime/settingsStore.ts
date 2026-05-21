@@ -14,6 +14,7 @@ interface PersistedSettings {
   openCode?: AppSettings["openCode"];
   webSearch?: Omit<WebSearchSettings, "apiKey" | "apiKeyConfigured">;
   embedding?: Omit<EmbeddingSettings, "apiKey" | "apiKeyConfigured">;
+  browserUse?: AppSettings["browserUse"];
   allowExternalSearch?: boolean;
   allowCodeExecution?: boolean;
   maxLoopIterations?: number;
@@ -50,6 +51,13 @@ export const defaultSettings: AppSettings = {
     provider: "local",
     model: "local-hash",
     dimensions: 96
+  },
+  browserUse: {
+    enabled: true,
+    mode: "background",
+    maxPages: 2,
+    timeoutMs: 30_000,
+    captureScreenshots: true
   },
   allowExternalSearch: true,
   allowCodeExecution: false,
@@ -124,6 +132,7 @@ export class JsonAppSettingsStore implements AppSettingsStore {
         baseUrl: settings.embedding.baseUrl,
         dimensions: settings.embedding.dimensions
       },
+      browserUse: normalizeBrowserUse(settings.browserUse),
       allowExternalSearch: settings.allowExternalSearch,
       allowCodeExecution: settings.allowCodeExecution,
       maxLoopIterations: settings.maxLoopIterations,
@@ -185,6 +194,7 @@ export class JsonAppSettingsStore implements AppSettingsStore {
         baseUrl: settings.embedding.baseUrl,
         dimensions: settings.embedding.dimensions
       },
+      browserUse: normalizeBrowserUse(settings.browserUse),
       allowExternalSearch: settings.allowExternalSearch,
       allowCodeExecution: settings.allowCodeExecution,
       maxLoopIterations: settings.maxLoopIterations,
@@ -216,6 +226,7 @@ export class JsonAppSettingsStore implements AppSettingsStore {
         ...(normalized.embedding ?? defaultSettings.embedding),
         apiKeyConfigured: this.isEncryptedKeyUsable(normalized.encryptedEmbeddingKey)
       },
+      browserUse: normalizeBrowserUse(normalized.browserUse),
       allowExternalSearch: normalized.allowExternalSearch ?? defaultSettings.allowExternalSearch,
       allowCodeExecution: normalized.allowCodeExecution ?? defaultSettings.allowCodeExecution,
       maxLoopIterations: normalized.maxLoopIterations ?? defaultSettings.maxLoopIterations,
@@ -275,6 +286,7 @@ function normalizePersisted(settings: PersistedSettings): PersistedSettings {
       ...(settings.webSearch ?? {})
     },
     embedding,
+    browserUse: normalizeBrowserUse(settings.browserUse),
     allowExternalSearch: settings.allowExternalSearch ?? defaultSettings.allowExternalSearch,
     allowCodeExecution: settings.allowCodeExecution ?? defaultSettings.allowCodeExecution,
     maxLoopIterations: settings.maxLoopIterations ?? defaultSettings.maxLoopIterations,
@@ -290,6 +302,21 @@ function normalizePersisted(settings: PersistedSettings): PersistedSettings {
     },
     updatedAt: settings.updatedAt ?? nowIso()
   };
+}
+
+function normalizeBrowserUse(settings: unknown): AppSettings["browserUse"] {
+  const input = settings && typeof settings === "object" ? (settings as Partial<AppSettings["browserUse"]>) : {};
+  return {
+    enabled: input.enabled ?? defaultSettings.browserUse.enabled,
+    mode: input.mode === "visible" ? "visible" : "background",
+    maxPages: clampNumber(input.maxPages, 1, 5, defaultSettings.browserUse.maxPages),
+    timeoutMs: clampNumber(input.timeoutMs, 5_000, 120_000, defaultSettings.browserUse.timeoutMs),
+    captureScreenshots: input.captureScreenshots ?? defaultSettings.browserUse.captureScreenshots
+  };
+}
+
+function clampNumber(value: unknown, min: number, max: number, defaultValue: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : defaultValue;
 }
 
 function normalizeApiProvider(provider: unknown): OpenCodeApiLlmSettings["provider"] {

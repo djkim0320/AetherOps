@@ -1,7 +1,7 @@
-/// <reference types="vite/client" />
+﻿/// <reference types="vite/client" />
 
 import type {
-  CreateProjectInput,
+  ResearchProjectInput,
   EvidenceBasedResult,
   LoopIteration,
   RagContext,
@@ -14,7 +14,7 @@ import type {
 
 export interface AetherOpsApi {
   projects: {
-    create(input: CreateProjectInput): Promise<ResearchSnapshot>;
+    create(input: ResearchProjectInput): Promise<ResearchSnapshot>;
     list(): Promise<ResearchProject[]>;
   };
   sessions: {

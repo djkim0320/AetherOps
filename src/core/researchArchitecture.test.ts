@@ -18,6 +18,7 @@ const settings: AppSettings = {
   openCode: { enabled: false, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled" },
   embedding: { provider: "local", model: "local-hash", dimensions: 64 },
+  browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
   allowExternalSearch: false,
   allowCodeExecution: false,
   maxLoopIterations: 2,

@@ -267,7 +267,7 @@ export class ArtifactWriterTool implements ResearchTool {
       input.ragContext?.summary ?? "아직 구성된 RAG context가 없습니다.",
       "",
       "## 한계",
-      "- 자동 검색 또는 OpenCode 실행이 불가능하면 이 산출물은 계획과 gap 정리에 집중합니다.",
+      "- 자동 검색 또는 OpenCode 도구 호출이 불가능하면 이 산출물은 계획과 gap 정리에 집중합니다.",
       "- 실제 출처가 없는 내용은 논문 근거로 간주하지 않습니다."
     ].join("\n");
     const artifact: ResearchArtifact = {

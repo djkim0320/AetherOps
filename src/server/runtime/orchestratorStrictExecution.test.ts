@@ -6,8 +6,10 @@ import { nowIso } from "../../core/ids.js";
 import {
   createInputProject,
   createStrictTestOrchestrator,
+  DeterministicLlmProvider,
   strictTestSettings
 } from "../../core/orchestratorTestHarness.test.js";
+import type { LlmJsonRequest } from "../../core/llm.js";
 import { ResearchLoopStep, type OpenCodeAdapter, type OpenCodeRunInput, type OpenCodeRunOutput, type ResearchProjectInput } from "../../core/types.js";
 import { NodeProjectStorage } from "./projectResearchStore.js";
 
@@ -71,6 +73,29 @@ describe("AetherOps strict execution loop", () => {
     expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
   });
 
+  it("blocks at PlanResearch when the LLM requests an unregistered tool", async () => {
+    const orchestrator = createStrictTestOrchestrator({ llm: new UnregisteredToolPlanner() });
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.PlanResearch);
+    expect(snapshot.project.status).toBe("blocked");
+    expect(snapshot.runtimeBlockers.some((blocker) => blocker.requirementKey === "tool.registered")).toBe(true);
+    expect(snapshot.openCodeRuns).toHaveLength(0);
+    expect(snapshot.finalOutputs).toHaveLength(0);
+  });
+
+  it("records ExecuteTools as the failed step when a configured execution tool fails", async () => {
+    const orchestrator = createStrictTestOrchestrator({ openCode: failingAdapter() });
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.ExecuteTools);
+    expect(snapshot.project.status).toBe("failed");
+    expect(snapshot.stepErrors.at(-1)?.step).toBe(ResearchLoopStep.ExecuteTools);
+    expect(snapshot.finalOutputs).toHaveLength(0);
+  });
+
   it("does not finalize when paused or aborted during a loop", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-control-"));
     let orchestrator = createStrictTestOrchestrator({
@@ -97,6 +122,32 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.report).toBeUndefined();
   });
 });
+
+class UnregisteredToolPlanner extends DeterministicLlmProvider {
+  override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
+    if (request.schemaName === "AetherOpsResearchPlan") {
+      return {
+        objective: "Request an unavailable tool.",
+        targetQuestions: ["q1"],
+        targetHypotheses: ["h1"],
+        requiredTools: ["OpenCodeTool", "UnavailableTool"],
+        expectedSources: ["tool log"],
+        expectedArtifacts: ["research-note.md"],
+        executionSteps: ["Run unavailable tool"],
+        stopCriteria: ["blocked when unavailable"]
+      } as T;
+    }
+    return super.completeJson<T>(request);
+  }
+}
+
+function failingAdapter(): OpenCodeAdapter {
+  return {
+    run: async () => {
+      throw new Error("configured OpenCode execution failed");
+    }
+  };
+}
 
 function pausingAdapter(orchestrator: () => { pause(projectId: string): Promise<unknown> }): OpenCodeAdapter {
   return {

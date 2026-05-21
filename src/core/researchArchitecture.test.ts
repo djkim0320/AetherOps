@@ -101,12 +101,53 @@ function snapshot(): ResearchSnapshot {
     sources: [
       { id: "s1", projectId: "project-1", kind: "web", title: "Study break observation", url: "https://example.com/study-breaks", retrievedAt: createdAt, metadata: {}, createdAt }
     ],
-    researchInputs: [],
+    researchInputs: [
+      {
+        id: "input-1",
+        projectId: "project-1",
+        researchQuestion: "Which Pomodoro pattern is better for a two-hour study session?",
+        initialHypotheses: ["25/5 may reduce fatigue.", "50/10 may improve deep work."],
+        constraints: ["No live experiment."],
+        expectedOutputs: ["final report"],
+        createdAt
+      }
+    ],
     chunks: [],
     toolRuns: [],
     agentPlans: [],
-    researchPlans: [],
-    specifications: [],
+    researchPlans: [
+      {
+        id: "plan-1",
+        projectId: "project-1",
+        iteration: 1,
+        objective: "Compare cited study-break evidence.",
+        targetQuestions: ["q1", "q2"],
+        targetHypotheses: ["h1", "h2"],
+        requiredTools: ["OpenCodeTool"],
+        expectedSources: ["web source"],
+        expectedArtifacts: ["comparison note"],
+        executionSteps: ["Collect sources", "Normalize evidence"],
+        stopCriteria: ["Cited evidence covers hypotheses"],
+        createdAt
+      }
+    ],
+    specifications: [
+      {
+        id: "spec-1",
+        projectId: "project-1",
+        researchQuestions: ["Which method sustains focus better?", "Which method reduces fatigue?", "Which method improves task completion?"],
+        initialHypotheses: ["25/5 may reduce fatigue.", "50/10 may improve deep work."],
+        refinedHypotheses: ["25/5 reduces fatigue better than 50/10.", "50/10 improves deep-work completion better than 25/5."],
+        scope: "Two-hour study session.",
+        assumptions: ["No live experiment."],
+        constraints: ["Avoid medical certainty."],
+        successCriteria: ["Cited evidence and clear limitations."],
+        requiredEvidenceTypes: ["web source", "citation"],
+        competencyQuestions: ["Which hypothesis has cited support?"],
+        evaluationMetrics: ["focus", "fatigue", "completion"],
+        createdAt
+      }
+    ],
     normalizedRecords: [],
     ontologyEntities: [],
     ontologyRelations: [],
@@ -140,7 +181,13 @@ describe("12-step research architecture modules", () => {
     expect(spec.requiredEvidenceTypes.length).toBeGreaterThan(0);
     expect(spec.successCriteria.length).toBeGreaterThan(0);
 
-    const plan = await new ResearchPlanner(llm).plan({ snapshot: base, specification: spec, iteration: 1, settings });
+    const plan = await new ResearchPlanner(llm).plan({
+      snapshot: base,
+      specification: spec,
+      iteration: 1,
+      settings,
+      availableTools: ["WebSearchTool", "WebFetchTool", "PaperMetadataTool", "PdfIngestionTool", "CodeExecutionTool", "ArtifactWriterTool", "DataAnalysisTool", "BackgroundBrowserTool"]
+    });
     expect(plan.iteration).toBe(1);
     expect(plan.objective).toBeTruthy();
     expect(plan.requiredTools.length).toBeGreaterThan(0);
@@ -152,12 +199,17 @@ describe("12-step research architecture modules", () => {
     const base = snapshot();
     const records = new EvidenceNormalizer().normalize(base, 1);
     expect(records.map((record) => record.kind)).toEqual(expect.arrayContaining(["source", "artifact", "claim", "evidence", "citation"]));
+    expect(records.some((record) => record.sourceUri?.startsWith("project://research-input/") && record.metadata.traceabilityKind === "project_provenance")).toBe(true);
+    expect(records.some((record) => record.sourceUri?.startsWith("project://research-specification/") && record.metadata.canSupportHypothesis === false)).toBe(true);
+    expect(records.some((record) => record.kind === "artifact" && record.metadata.traceabilityKind === "internal_artifact")).toBe(true);
     expect(records.find((record) => record.evidenceId === "gap1")?.confidence).toBeLessThan(0.5);
 
     const provider = new DeterministicEmbeddingProvider(64);
     const chunks = await new VectorIndexEngine(provider).buildIndex({ snapshot: base, records, settings });
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks[0]?.embedding?.length).toBe(64);
+    expect(chunks.some((chunk) => records.find((record) => record.id === chunk.recordId)?.kind === "error")).toBe(false);
+    expect(chunks.every((chunk) => chunk.recordKind && chunk.traceabilityKind && typeof chunk.canSupportHypothesis === "boolean")).toBe(true);
 
     const withIndex = { ...base, normalizedRecords: records, chunks };
     const graph = new OntologyGraphEngine().build({ snapshot: withIndex, records });

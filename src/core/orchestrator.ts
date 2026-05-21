@@ -260,21 +260,30 @@ export class AetherOpsOrchestrator {
   }
 
   async planResearch(projectId: string, iteration?: number, decision?: ContinuationDecision): Promise<ResearchSnapshot> {
-    await this.assertStepReady(projectId, ResearchLoopStep.PlanResearch);
-    const snapshot = await this.store.getSnapshot(projectId);
-    const specification = await this.ensureSpecification(projectId);
-    const settings = await this.getSettings();
-    const plan = await this.planner.plan({
-      snapshot: await this.store.getSnapshot(projectId),
-      specification,
-      iteration: iteration ?? nextIteration(snapshot),
-      settings,
-      continuationDecision: decision ?? snapshot.continuationDecisions.at(-1)
-    });
-    await this.store.saveResearchPlan(plan);
-    await this.moveProject(projectId, ResearchLoopStep.PlanResearch);
-    await this.record(projectId, ResearchLoopStep.PlanResearch, "Agent Control", `Iteration ${plan.iteration} 연구 계획이 수립되었습니다.`);
-    return this.store.getSnapshot(projectId);
+    try {
+      await this.assertStepReady(projectId, ResearchLoopStep.PlanResearch);
+      const snapshot = await this.store.getSnapshot(projectId);
+      const specification = await this.ensureSpecification(projectId);
+      const settings = await this.getSettings();
+      const plan = await this.planner.plan({
+        snapshot: await this.store.getSnapshot(projectId),
+        specification,
+        iteration: iteration ?? nextIteration(snapshot),
+        settings,
+        availableTools: this.registeredToolNames(),
+        continuationDecision: decision ?? snapshot.continuationDecisions.at(-1)
+      });
+      this.assertPlanToolsRegistered(plan);
+      await this.store.saveResearchPlan(plan);
+      await this.moveProject(projectId, ResearchLoopStep.PlanResearch);
+      await this.record(projectId, ResearchLoopStep.PlanResearch, "Agent Control", `Iteration ${plan.iteration} 연구 계획이 수립되었습니다.`);
+      return this.store.getSnapshot(projectId);
+    } catch (error) {
+      if (error instanceof RuntimeRequirementError) {
+        return this.blockProject(projectId, error);
+      }
+      throw error;
+    }
   }
 
   async seedQuestions(projectId: string): Promise<ResearchSnapshot> {
@@ -290,8 +299,10 @@ export class AetherOpsOrchestrator {
       await this.ensureResearchDb(projectId);
       const inputSnapshot = await this.ensureResearchInput(projectId);
       if (inputSnapshot.project.status === "blocked") return inputSnapshot;
-      await this.ensureResearchSpecification(projectId);
-      await this.ensureResearchPlan(projectId);
+      const specificationSnapshot = await this.ensureResearchSpecification(projectId);
+      if (specificationSnapshot.project.status === "blocked" || specificationSnapshot.project.status === "failed") return specificationSnapshot;
+      const planSnapshot = await this.ensureResearchPlan(projectId);
+      if (planSnapshot.project.status === "blocked" || planSnapshot.project.status === "failed") return planSnapshot;
       await this.setStatus(projectId, "running");
       const settings = await this.getSettings();
       const initialSnapshot = await this.store.getSnapshot(projectId);
@@ -362,6 +373,8 @@ export class AetherOpsOrchestrator {
     await this.assertStepReady(projectId, ResearchLoopStep.ExecuteTools, { checkOpenCodePreflight: true });
     const snapshot = await this.store.getSnapshot(projectId);
     const activeIteration = iteration ?? nextIteration(snapshot);
+    await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
+    await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", `Iteration ${activeIteration} 도구 실행 및 연구 수행을 시작합니다.`);
     const runInput = {
       project: snapshot.project,
       questions: snapshot.questions,
@@ -374,51 +387,47 @@ export class AetherOpsOrchestrator {
       researchPlan: snapshot.researchPlans.at(-1),
       iteration: activeIteration
     };
-    let output: OpenCodeRunOutput;
     try {
-      output = await this.openCode.run(runInput);
+      const output = await this.openCode.run(runInput);
+      if (output.fatalError || output.run.status === "failed") {
+        const reason = output.fatalError ?? output.run.logs.at(-1) ?? "OpenCode execution failed.";
+        await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", `OpenCode 도구 실패: ${reason}`);
+        throw new Error(reason);
+      }
+      const settings = await this.getSettings();
+      const toolResults = this.toolRunner ? await this.toolRunner.runAll(runInput, settings) : [];
+      const toolResultArtifacts = toolResults.flatMap((result) => result.artifacts);
+      const toolResultEvidence = toolResults.flatMap((result) => result.evidence);
+      const toolResultSources = toolResults.flatMap((result) => result.sources);
+
+      const database = await this.requireDatabase(projectId);
+      const artifacts = await this.projectStorage.writeArtifacts(snapshot.project, database, activeIteration, [
+        ...output.artifacts,
+        ...toolResultArtifacts
+      ]);
+      const toolRuns = [...(output.toolRuns ?? []), ...toolResults.map((result) => result.toolRun)];
+      const logSource = await this.projectStorage.writeRunLog(snapshot.project, database, activeIteration, output.run, toolRuns);
+
+      await this.store.saveOpenCodeRun(output.run);
+      await this.store.saveArtifacts(artifacts);
+      await this.store.saveEvidence([...output.evidence, ...toolResultEvidence]);
+      const sources = [...(output.sources ?? []), ...toolResultSources];
+      if (sources.length) {
+        await this.store.saveSources(await this.projectStorage.writeSources(snapshot.project, database, sources));
+      }
+      if (logSource) await this.store.saveSources([logSource]);
+      if (toolRuns.length) await this.store.saveToolRuns(toolRuns);
+      if (output.agentPlan) await this.store.saveResearchPlan(output.agentPlan);
+      if (output.chunks?.length) {
+        await this.projectStorage.writeChunks(snapshot.project, database, output.chunks);
+        await this.store.saveChunks(output.chunks);
+      }
+      await this.ingestSources(projectId);
+      await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", "도구 실행 및 연구 수행 단계가 완료되었습니다.");
     } catch (error) {
-      await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
       await this.failProject(projectId, ResearchLoopStep.ExecuteTools, error);
       return this.store.getSnapshot(projectId);
     }
-    const settings = await this.getSettings();
-    const toolResults = this.toolRunner ? await this.toolRunner.runAll(runInput, settings) : [];
-    const toolResultArtifacts = toolResults.flatMap((result) => result.artifacts);
-    const toolResultEvidence = toolResults.flatMap((result) => result.evidence);
-    const toolResultSources = toolResults.flatMap((result) => result.sources);
-
-    const database = await this.requireDatabase(projectId);
-    const artifacts = await this.projectStorage.writeArtifacts(snapshot.project, database, activeIteration, [
-      ...output.artifacts,
-      ...toolResultArtifacts
-    ]);
-    const toolRuns = [...(output.toolRuns ?? []), ...toolResults.map((result) => result.toolRun)];
-    const logSource = await this.projectStorage.writeRunLog(snapshot.project, database, activeIteration, output.run, toolRuns);
-
-    await this.store.saveOpenCodeRun(output.run);
-    await this.store.saveArtifacts(artifacts);
-    await this.store.saveEvidence([...output.evidence, ...toolResultEvidence]);
-    const sources = [...(output.sources ?? []), ...toolResultSources];
-    if (sources.length) {
-      await this.store.saveSources(await this.projectStorage.writeSources(snapshot.project, database, sources));
-    }
-    if (logSource) await this.store.saveSources([logSource]);
-    if (toolRuns.length) await this.store.saveToolRuns(toolRuns);
-    if (output.agentPlan) await this.store.saveResearchPlan(output.agentPlan);
-    if (output.chunks?.length) {
-      await this.projectStorage.writeChunks(snapshot.project, database, output.chunks);
-      await this.store.saveChunks(output.chunks);
-    }
-    await this.ingestSources(projectId);
-    if (output.fatalError || output.run.status === "failed") {
-      const reason = output.fatalError ?? output.run.logs.at(-1) ?? "OpenCode execution failed.";
-      await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
-      await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", `OpenCode 도구 실패: ${reason}`);
-      throw new Error(reason);
-    }
-    await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
-    await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", "도구 실행 및 연구 수행 단계가 완료되었습니다.");
     return this.store.getSnapshot(projectId);
   }
 
@@ -713,8 +722,28 @@ export class AetherOpsOrchestrator {
       settings: await this.getSettings(),
       llmAvailable: this.llm ? await this.llm.isAvailable() : false,
       openCodeReady,
-      storageWritable: options.storageWritable
+      storageWritable: options.storageWritable,
+      registeredToolNames: this.registeredToolNames()
     });
+  }
+
+  private registeredToolNames(): string[] {
+    return this.toolRunner?.listToolNames() ?? [];
+  }
+
+  private assertPlanToolsRegistered(plan: ResearchPlan): void {
+    const registered = new Set(this.registeredToolNames().map(normalizeToolNameForPlan));
+    const missing = plan.requiredTools.filter((tool) => normalizeToolNameForPlan(tool) !== "opencodetool" && !registered.has(normalizeToolNameForPlan(tool)));
+    if (!missing.length) {
+      return;
+    }
+    throw new RuntimeRequirementError(ResearchLoopStep.PlanResearch, missing.map((tool) => ({
+      key: "tool.registered",
+      label: "Registered research tool",
+      requiredForSteps: [ResearchLoopStep.PlanResearch],
+      isSatisfied: false,
+      message: `Research plan requires an unregistered tool: ${tool}`
+    })));
   }
 
   private async blockProject(projectId: string, error: RuntimeRequirementError): Promise<ResearchSnapshot> {
@@ -1063,4 +1092,8 @@ function summarize(value: string): string {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeToolNameForPlan(value: string): string {
+  return value.replace(/\(.*?\)/g, "").replace(/\s+/g, "").trim().toLowerCase();
 }

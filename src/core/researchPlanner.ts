@@ -27,6 +27,7 @@ export class ResearchPlanner {
     specification: ResearchSpecification;
     iteration: number;
     settings: AppSettings;
+    availableTools: string[];
     continuationDecision?: ContinuationDecision;
   }): Promise<ResearchPlan> {
     const defaultPlan = this.buildDefaultPlan(input);
@@ -49,7 +50,8 @@ export class ResearchPlanner {
           allowExternalSearch: input.settings.allowExternalSearch,
           allowCodeExecution: input.settings.allowCodeExecution,
           webSearchProvider: input.settings.webSearch.provider,
-          openCodeEnabled: input.settings.openCode.enabled
+          openCodeEnabled: input.settings.openCode.enabled,
+          availableTools: input.availableTools
         })}`,
         "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria."
       ].join("\n\n"),
@@ -75,9 +77,11 @@ export class ResearchPlanner {
     specification: ResearchSpecification;
     iteration: number;
     settings: AppSettings;
+    availableTools: string[];
     continuationDecision?: ContinuationDecision;
   }): ResearchPlan {
-    const tools = [
+    const available = new Set(input.availableTools.map(normalizeToolName));
+    const candidateTools = [
       "OpenCodeTool",
       ...(input.settings.allowExternalSearch && input.settings.webSearch.provider !== "disabled" ? ["WebSearchTool"] : []),
       ...(input.settings.browserUse.enabled && input.settings.allowExternalSearch ? ["BackgroundBrowserTool"] : []),
@@ -85,6 +89,7 @@ export class ResearchPlanner {
       "ArtifactWriterTool",
       "DataAnalysisTool"
     ];
+    const tools = candidateTools.filter((tool) => tool === "OpenCodeTool" || available.has(normalizeToolName(tool)));
     const nextObjective = input.continuationDecision?.nextObjective;
     return {
       id: createId("plan"),
@@ -136,4 +141,8 @@ function strings(value: unknown, defaultValue: string[]): string[] {
 
 function selectIdsOrText(value: unknown, defaultValue: string[]): string[] {
   return strings(value, defaultValue);
+}
+
+function normalizeToolName(value: string): string {
+  return value.replace(/\(.*?\)/g, "").replace(/\s+/g, "").trim().toLowerCase();
 }

@@ -62,6 +62,7 @@ export type ResearchSourceKind = "web" | "paper" | "file" | "artifact" | "log" |
 export type EvidenceStrength = "weak" | "medium" | "strong";
 export type HypothesisStatus = "untested" | "supported" | "rejected" | "needs_more_evidence";
 export type NormalizedRecordKind = "source" | "artifact" | "claim" | "evidence" | "observation" | "citation" | "error";
+export type TraceabilityKind = "internal_artifact" | "external_source" | "tool_observation" | "project_provenance" | "error";
 export type OntologyEntityType =
   | "ResearchQuestion"
   | "Hypothesis"
@@ -239,6 +240,9 @@ export interface ResearchChunk {
   recordId?: string;
   evidenceId?: string;
   citation?: string;
+  recordKind?: NormalizedRecordKind;
+  traceabilityKind?: TraceabilityKind;
+  canSupportHypothesis?: boolean;
   embeddingProvider?: string;
   embeddingModel?: string;
   embeddingDimensions?: number;

@@ -27,62 +27,48 @@ export class WebSearchTool implements ResearchTool {
     const startedAt = nowIso();
     const query = input.project.topic;
     if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
-      throw new Error("외부 검색이 프로젝트 또는 앱 설정에서 비활성화되어 있습니다.");
+      throw new Error("External search is disabled by project autonomy or app settings.");
     }
     if (settings.webSearch.provider === "disabled" || !settings.webSearch.apiKey) {
-      throw new Error("검색 provider와 API key가 설정되어 있지 않습니다.");
+      throw new Error("Web search provider and API key are required.");
     }
 
-    try {
-      const results = await this.search(settings, query);
-      const completedAt = nowIso();
-      const sources = results.map((result) => ({
-        id: createId("source"),
-        projectId: input.project.id,
-        kind: "web" as const,
-        title: result.title,
-        url: result.url,
-        retrievedAt: completedAt,
-        metadata: { snippet: result.snippet, provider: settings.webSearch.provider },
-        createdAt: completedAt
-      }));
-      const evidence = results.slice(0, 5).map((result, index) => ({
-        id: createId("evidence"),
-        projectId: input.project.id,
-        category: "web_source" as const,
-        title: result.title,
-        summary: result.snippet || "검색 결과 snippet이 제공되지 않았습니다.",
-        sourceId: sources[index]?.id,
-        sourceUri: result.url,
-        citation: `${result.title} - ${result.url}`,
-        keywords: ["web", "search", ...input.project.topic.split(/\s+/).slice(0, 4)],
-        linkedHypothesisIds: input.hypotheses.map((item) => item.id),
-        reliabilityScore: 0.55,
-        relevanceScore: 0.65,
-        evidenceStrength: "medium" as const,
-        limitations: ["검색 결과 snippet 기반이므로 원문 확인이 필요합니다."],
-        createdAt: completedAt
-      }));
+    const results = await this.search(settings, query);
+    const completedAt = nowIso();
+    const sources = results.map((result) => ({
+      id: createId("source"),
+      projectId: input.project.id,
+      kind: "web" as const,
+      title: result.title,
+      url: result.url,
+      retrievedAt: completedAt,
+      metadata: { snippet: result.snippet, provider: settings.webSearch.provider },
+      createdAt: completedAt
+    }));
+    const evidence = results.slice(0, 5).map((result, index) => ({
+      id: createId("evidence"),
+      projectId: input.project.id,
+      category: "web_source" as const,
+      title: result.title,
+      summary: result.snippet || "Search result did not include a snippet.",
+      sourceId: sources[index]?.id,
+      sourceUri: result.url,
+      citation: `${result.title} - ${result.url}`,
+      keywords: ["web", "search", ...input.project.topic.split(/\s+/).slice(0, 4)],
+      linkedHypothesisIds: input.hypotheses.map((item) => item.id),
+      reliabilityScore: 0.55,
+      relevanceScore: 0.65,
+      evidenceStrength: "medium" as const,
+      limitations: ["Search result snippets should be verified against the fetched source page."],
+      createdAt: completedAt
+    }));
 
-      return {
-        toolRun: {
-          id: createId("tool"),
-          projectId: input.project.id,
-          iteration: input.iteration,
-          toolName: this.name,
-          input: { query, provider: settings.webSearch.provider },
-          output: { resultCount: results.length },
-          status: "completed",
-          startedAt,
-          completedAt
-        },
-        evidence,
-        artifacts: [],
-        sources
-      };
-    } catch (error) {
-      throw new Error(`검색 실패: ${formatError(error)}`);
-    }
+    return {
+      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { query, provider: settings.webSearch.provider }, { resultCount: results.length }),
+      evidence,
+      artifacts: [],
+      sources
+    };
   }
 
   private async search(settings: AppSettings, query: string): Promise<Array<{ title: string; url: string; snippet: string }>> {
@@ -118,26 +104,64 @@ export class WebFetchTool implements ResearchTool {
 
   async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
     const startedAt = nowIso();
-    const urls = (input.evidence ?? []).map((item) => item.sourceUri).filter((url): url is string => Boolean(url)).slice(0, 3);
+    const urls = (input.evidence ?? [])
+      .map((item) => item.sourceUri)
+      .filter((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
+      .slice(0, 3);
     if (!urls.length) {
-      throw new Error("WebFetchTool requires at least one source URL from previous evidence.");
+      throw new Error("WebFetchTool requires at least one external source URL from previous evidence.");
     }
+    const pages = await Promise.all(urls.map((url) => fetchPage(url)));
     const completedAt = nowIso();
-    return {
-      toolRun: {
-        id: createId("tool"),
-        projectId: input.project.id,
-        iteration: input.iteration,
-        toolName: this.name,
-        input: { urls },
-        output: { reason: "URL fetch placeholder completed for configured source URLs.", urls },
-        status: "completed",
-        startedAt,
-        completedAt
+    const sources: ResearchSource[] = pages.map((page) => ({
+      id: createId("source"),
+      projectId: input.project.id,
+      kind: "web",
+      title: page.title,
+      url: page.url,
+      retrievedAt: completedAt,
+      metadata: {
+        contentType: page.contentType,
+        status: page.status,
+        excerpt: page.text.slice(0, 1_000),
+        characterCount: page.text.length
       },
-      evidence: [],
-      artifacts: [],
-      sources: []
+      createdAt: completedAt
+    }));
+    const artifacts: ResearchArtifact[] = pages.map((page, index) => ({
+      id: createId("artifact"),
+      projectId: input.project.id,
+      category: "web_source",
+      title: `Fetched web source ${index + 1}: ${page.title}`,
+      relativePath: `artifacts/iteration-${input.iteration}/web-fetch/source-${index + 1}.md`,
+      mimeType: "text/markdown",
+      summary: page.text.slice(0, 400) || `Fetched ${page.url}`,
+      content: [`# ${page.title}`, "", `URL: ${page.url}`, "", page.text].join("\n"),
+      createdAt: completedAt
+    }));
+    const evidence: EvidenceItem[] = pages.map((page, index) => ({
+      id: createId("evidence"),
+      projectId: input.project.id,
+      category: "web_source",
+      title: page.title,
+      summary: page.text.slice(0, 800) || `Fetched ${page.url}`,
+      sourceId: sources[index]?.id,
+      sourceUri: page.url,
+      citation: `${page.title} - ${page.url}`,
+      quote: page.text.slice(0, 500),
+      keywords: ["web_fetch", ...input.project.topic.split(/\s+/).slice(0, 5)],
+      linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
+      reliabilityScore: 0.62,
+      relevanceScore: 0.68,
+      evidenceStrength: "medium",
+      limitations: ["Fetched web page text was extracted automatically and should be checked against the original page."],
+      createdAt: completedAt
+    }));
+    return {
+      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { urls }, { urls, fetchedPages: pages.length }),
+      evidence,
+      artifacts,
+      sources
     };
   }
 }
@@ -145,8 +169,7 @@ export class WebFetchTool implements ResearchTool {
 export class PaperMetadataTool implements ResearchTool {
   name = "PaperMetadataTool";
 
-  async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
-    void input;
+  async run(): Promise<ResearchToolResult> {
     throw new Error("PaperMetadataTool requires a configured paper metadata provider; none is configured.");
   }
 }
@@ -159,20 +182,10 @@ export class CodeExecutionTool implements ResearchTool {
     const completedAt = nowIso();
     const allowed = input.project.autonomyPolicy.allowCodeExecution && settings.allowCodeExecution;
     if (!allowed) {
-      throw new Error("코드 실행이 프로젝트 또는 앱 설정에서 비활성화되어 있습니다.");
+      throw new Error("Code execution is disabled by project autonomy or app settings.");
     }
     return {
-      toolRun: {
-        id: createId("tool"),
-        projectId: input.project.id,
-        iteration: input.iteration,
-        toolName: this.name,
-        input: { allowCodeExecution: allowed },
-        output: { reason: "No explicit script was provided; CodeExecutionTool completed without running arbitrary code." },
-        status: "completed",
-        startedAt,
-        completedAt
-      },
+      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { allowCodeExecution: allowed }, { reason: "No explicit script was provided; CodeExecutionTool did not run arbitrary code." }),
       evidence: [],
       artifacts: [],
       sources: []
@@ -187,23 +200,23 @@ export class ArtifactWriterTool implements ResearchTool {
     const startedAt = nowIso();
     const completedAt = nowIso();
     const content = [
-      `# Iteration ${input.iteration} 연구 노트`,
+      `# Iteration ${input.iteration} Research Note`,
       "",
-      "## 목표",
+      "## Objective",
       input.project.goal,
       "",
-      "## 현재 질문",
+      "## Current Questions",
       ...input.questions.map((item) => `- ${item.text}`),
       "",
-      "## 검증 가설",
+      "## Hypotheses",
       ...input.hypotheses.map((item) => `- ${item.statement} (${item.status}, confidence=${item.confidence})`),
       "",
-      "## RAG 요약",
-      input.ragContext?.summary ?? "아직 구성된 RAG context가 없습니다.",
+      "## RAG Summary",
+      input.ragContext?.summary ?? "No RAG context has been built yet.",
       "",
-      "## 한계",
-      "- 자동 검색 또는 OpenCode 도구 호출이 불가능하면 산출물은 결론이 아니라 계획과 gap 정리에 집중합니다.",
-      "- 실제 출처가 없는 내용은 사실 근거로 간주하지 않습니다."
+      "## Traceability",
+      "- This note is an internal artifact generated by AetherOps.",
+      "- It must not be treated as external evidence for hypothesis support."
     ].join("\n");
     const artifact: ResearchArtifact = {
       id: createId("artifact"),
@@ -212,40 +225,13 @@ export class ArtifactWriterTool implements ResearchTool {
       title: `Iteration ${input.iteration} research note`,
       relativePath: `artifacts/iteration-${input.iteration}/research-note.md`,
       mimeType: "text/markdown",
-      summary: "현재 질문, 가설, RAG 요약, 한계를 정리한 반복 연구 노트입니다.",
+      summary: "Internal iteration note summarizing questions, hypotheses, RAG context, and limitations.",
       content,
       createdAt: completedAt
     };
     return {
-      toolRun: {
-        id: createId("tool"),
-        projectId: input.project.id,
-        iteration: input.iteration,
-        toolName: this.name,
-        input: { relativePath: artifact.relativePath },
-        output: { artifactId: artifact.id },
-        status: "completed",
-        startedAt,
-        completedAt
-      },
-      evidence: [
-        {
-          id: createId("evidence"),
-          projectId: input.project.id,
-          category: "generated_artifact",
-          title: artifact.title,
-          summary: artifact.summary,
-          sourceUri: artifact.relativePath,
-          citation: artifact.relativePath,
-          keywords: ["artifact", "iteration", "research_note"],
-          linkedHypothesisIds: input.hypotheses.map((item) => item.id),
-          reliabilityScore: 0.45,
-          relevanceScore: 0.7,
-          evidenceStrength: "medium",
-          limitations: ["도구가 생성한 산출물이며 외부 원천 근거가 아닙니다."],
-          createdAt: completedAt
-        }
-      ],
+      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { relativePath: artifact.relativePath }, { artifactId: artifact.id }),
+      evidence: [],
       artifacts: [artifact],
       sources: []
     };
@@ -255,8 +241,7 @@ export class ArtifactWriterTool implements ResearchTool {
 export class PdfIngestionTool implements ResearchTool {
   name = "PdfIngestionTool";
 
-  async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
-    void input;
+  async run(): Promise<ResearchToolResult> {
     throw new Error("PdfIngestionTool requires explicit PDF file paths; none were provided.");
   }
 }
@@ -273,17 +258,7 @@ export class DataAnalysisTool implements ResearchTool {
       hypothesisCount: input.hypotheses.length
     };
     return {
-      toolRun: {
-        id: createId("tool"),
-        projectId: input.project.id,
-        iteration: input.iteration,
-        toolName: this.name,
-        input: { iteration: input.iteration },
-        output,
-        status: "completed",
-        startedAt,
-        completedAt
-      },
+      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { iteration: input.iteration }, output),
       evidence: [],
       artifacts: [],
       sources: []
@@ -303,6 +278,20 @@ export function createDefaultResearchTools(): ResearchTool[] {
   ];
 }
 
+function completedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown): ToolRun {
+  return {
+    id: createId("tool"),
+    projectId: input.project.id,
+    iteration: input.iteration,
+    toolName,
+    input: toolInput,
+    output,
+    status: "completed",
+    startedAt,
+    completedAt
+  };
+}
+
 function normalizeSearchResults(items: Array<{ title?: string; url?: string; snippet?: string }> | undefined): Array<{ title: string; url: string; snippet: string }> {
   return (items ?? [])
     .map((item) => ({
@@ -314,6 +303,42 @@ function normalizeSearchResults(items: Array<{ title?: string; url?: string; sni
     .slice(0, 5);
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+async function fetchPage(url: string): Promise<{ url: string; title: string; text: string; contentType: string; status: number }> {
+  const response = await fetch(url, { headers: { accept: "text/html,text/plain,application/xhtml+xml" } });
+  if (!response.ok) {
+    throw new Error(`fetch failed for ${url}: ${response.status} ${response.statusText}`);
+  }
+  const contentType = response.headers.get("content-type") ?? "unknown";
+  const raw = await response.text();
+  const title = extractTitle(raw) || url;
+  const text = normalizePageText(raw);
+  if (!text) {
+    throw new Error(`fetch produced no readable text for ${url}`);
+  }
+  return { url: response.url || url, title, text, contentType, status: response.status };
+}
+
+function extractTitle(raw: string): string {
+  return decodeEntities(raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
+}
+
+function normalizePageText(raw: string): string {
+  return decodeEntities(
+    raw
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  ).slice(0, 20_000);
+}
+
+function decodeEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
 }

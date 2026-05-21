@@ -3,6 +3,7 @@ import type { EmbeddingProvider } from "./embeddingProvider.js";
 import type { LlmJsonRequest, LlmProvider } from "./llm.js";
 import { InMemoryResearchStore } from "./memoryStore.js";
 import { AetherOpsOrchestrator } from "./orchestrator.js";
+import { ToolRunner } from "./toolRunner.js";
 import { createId, nowIso } from "./ids.js";
 import type { ProjectStorage } from "./projectStorage.js";
 import { VectorRagEngine } from "./vectorRagEngine.js";
@@ -54,6 +55,7 @@ export function createStrictTestOrchestrator(options: {
   settings?: AppSettings;
   storage?: ProjectStorage;
   projectRootBase?: string;
+  toolRunner?: ToolRunner;
 } = {}): AetherOpsOrchestrator {
   const embeddingProvider = options.embeddingProvider ?? new DeterministicEmbeddingProvider(strictTestSettings.embedding.dimensions ?? 64);
   return new AetherOpsOrchestrator(
@@ -64,7 +66,8 @@ export function createStrictTestOrchestrator(options: {
     options.llm ?? new DeterministicLlmProvider(),
     options.storage ?? new TestProjectStorage(),
     embeddingProvider,
-    () => options.settings ?? strictTestSettings
+    () => options.settings ?? strictTestSettings,
+    options.toolRunner ?? new ToolRunner()
   );
 }
 
@@ -121,7 +124,7 @@ export class DeterministicLlmProvider implements LlmProvider {
         objective: secondIteration ? "Iteration 2: resolve remaining validation gaps." : "Iteration 1: gather traceable execution evidence.",
         targetQuestions: ["q1"],
         targetHypotheses: ["h1"],
-        requiredTools: ["OpenCodeTool"],
+        requiredTools: ["OpenCodeTool", "ArtifactWriterTool", "DataAnalysisTool"],
         expectedSources: ["tool log", "artifact"],
         expectedArtifacts: ["research-note.md"],
         executionSteps: ["Run OpenCodeTool", "Normalize outputs", "Validate hypotheses"],

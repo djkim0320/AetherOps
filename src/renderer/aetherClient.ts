@@ -52,21 +52,11 @@ export function getAetherOpsApi(): AetherOpsApi {
       abort: (projectId) => rpc("loop.abort", projectId)
     },
     opencode: {
-      run: (projectId) => rpc("opencode.run", projectId),
       authLogin: (provider) => rpc("opencode.authLogin", provider),
       authList: () => rpc("opencode.authList")
     },
     artifacts: {
       store: (projectId, artifact) => rpc("artifacts.store", projectId, artifact)
-    },
-    rag: {
-      buildContext: (projectId) => rpc("rag.buildContext", projectId)
-    },
-    results: {
-      derive: (projectId) => rpc("results.derive", projectId)
-    },
-    reports: {
-      finalize: (projectId) => rpc("reports.finalize", projectId)
     },
     llm: {
       status: () => rpc("llm.status")

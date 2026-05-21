@@ -4,9 +4,21 @@ import type { ReasoningSummary } from "./reasoningEngine.js";
 
 export class ValidationEngine {
   validate(snapshot: ResearchSnapshot, hybridContext: HybridContext, reasoning: ReasoningSummary[]): ValidationResult[] {
+    const supportEligibleEvidenceIds = new Set(
+      snapshot.normalizedRecords
+        .filter((record) =>
+          record.kind === "evidence" &&
+          record.evidenceId &&
+          record.metadata.canSupportHypothesis === true &&
+          (record.metadata.traceabilityKind === "external_source" || record.metadata.traceabilityKind === "tool_observation")
+        )
+        .map((record) => record.evidenceId as string)
+    );
     return reasoning.map((item) => {
+      const supportingEvidenceIds = item.supportingEvidenceIds.filter((id) => supportEligibleEvidenceIds.has(id));
+      const contradictingEvidenceIds = item.contradictingEvidenceIds.filter((id) => supportEligibleEvidenceIds.has(id));
       const evidence = snapshot.evidence.filter((entry) =>
-        item.supportingEvidenceIds.includes(entry.id) || item.contradictingEvidenceIds.includes(entry.id)
+        supportingEvidenceIds.includes(entry.id) || contradictingEvidenceIds.includes(entry.id)
       );
       const citedEvidence = evidence.filter((entry) => entry.citation || entry.sourceUri || entry.sourceId);
       const citationCoverage = evidence.length ? citedEvidence.length / evidence.length : 0;
@@ -25,15 +37,15 @@ export class ValidationEngine {
         iteration: hybridContext.iteration,
         hypothesisId: item.hypothesisId,
         status: statusFor({
-          supporting: item.supportingEvidenceIds.length,
-          contradicting: item.contradictingEvidenceIds.length,
+          supporting: supportingEvidenceIds.length,
+          contradicting: contradictingEvidenceIds.length,
           strong: strongEvidence.length,
           gaps: gaps.length,
           citationCoverage
         }),
         confidence: confidenceFor(evidence, citationCoverage, gaps.length),
-        supportingEvidenceIds: item.supportingEvidenceIds,
-        contradictingEvidenceIds: item.contradictingEvidenceIds,
+        supportingEvidenceIds,
+        contradictingEvidenceIds,
         relatedEntityIds: hybridContext.ontologyEntityIds,
         relatedRelationIds: hybridContext.ontologyRelationIds,
         reasoningSummary: item.summary,

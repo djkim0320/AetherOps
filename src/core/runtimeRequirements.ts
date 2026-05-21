@@ -1,4 +1,5 @@
 import { ResearchLoopStep, type AppSettings, type ResearchProject, type ResearchSnapshot, type RuntimeRequirement } from "./types.js";
+import { normalizeToolName } from "./toolRunner.js";
 
 export class RuntimeRequirementError extends Error {
   readonly step: ResearchLoopStep;
@@ -18,6 +19,7 @@ export interface RuntimeRequirementContext {
   llmAvailable: boolean;
   openCodeReady?: boolean;
   storageWritable?: boolean;
+  registeredToolNames?: string[];
 }
 
 export class RuntimeRequirementChecker {
@@ -40,7 +42,7 @@ export class RuntimeRequirementChecker {
       if (context.openCodeReady !== undefined) {
         requirements.push(requirement("opencode.preflight", "OpenCode CLI 준비 상태", step, context.openCodeReady, "OpenCode CLI를 실행할 수 없습니다."));
       }
-      requirements.push(...requiredToolRequirements(step, project, settings, context.snapshot.researchPlans.at(-1)?.requiredTools ?? []));
+      requirements.push(...requiredToolRequirements(step, project, settings, context.snapshot.researchPlans.at(-1)?.requiredTools ?? [], context.registeredToolNames ?? []));
     }
 
     if (step === ResearchLoopStep.BuildVectorIndex) {
@@ -105,10 +107,17 @@ function requiredToolRequirements(
   step: ResearchLoopStep,
   project: ResearchProject,
   settings: AppSettings,
-  requiredTools: string[]
+  requiredTools: string[],
+  registeredToolNames: string[]
 ): RuntimeRequirement[] {
   const requirements: RuntimeRequirement[] = [];
   const normalizedTools = new Set(requiredTools.map(normalizeToolName));
+  const registered = new Set(registeredToolNames.map(normalizeToolName));
+  const missingTools = [...normalizedTools].filter((tool) => tool && tool !== "opencodetool" && !registered.has(tool));
+
+  for (const missing of missingTools) {
+    requirements.push(requirement("tool.registered", "Registered research tool", step, false, `Research plan requires an unregistered tool: ${missing}`));
+  }
 
   if (normalizedTools.has("websearchtool") || normalizedTools.has("backgroundbrowsertool")) {
     requirements.push(requirement("webSearch.allowed", "외부 검색 허용", step, project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch, "연구 계획이 외부 검색을 요구하지만 외부 검색이 비활성화되어 있습니다."));
@@ -126,8 +135,4 @@ function requiredToolRequirements(
   }
 
   return requirements;
-}
-
-function normalizeToolName(value: string): string {
-  return value.replace(/\(.*?\)/g, "").replace(/\s+/g, "").trim().toLowerCase();
 }

@@ -2,9 +2,7 @@
 
 import type {
   ResearchProjectInput,
-  EvidenceBasedResult,
   LoopIteration,
-  RagContext,
   ResearchArtifact,
   ResearchProject,
   ResearchSession,
@@ -49,21 +47,11 @@ export interface AetherOpsApi {
     abort(projectId: string): Promise<ResearchSnapshot>;
   };
   opencode: {
-    run(projectId: string): Promise<ResearchSnapshot>;
     authLogin(provider?: string): Promise<{ ok: boolean; message: string; output?: string }>;
     authList(): Promise<{ ok: boolean; message: string; output?: string }>;
   };
   artifacts: {
     store(projectId: string, artifact: Partial<ResearchArtifact>): Promise<ResearchSnapshot>;
-  };
-  rag: {
-    buildContext(projectId: string): Promise<RagContext>;
-  };
-  results: {
-    derive(projectId: string): Promise<EvidenceBasedResult>;
-  };
-  reports: {
-    finalize(projectId: string): Promise<ResearchSnapshot>;
   };
   llm: {
     status(): Promise<{ provider: string; available: boolean }>;

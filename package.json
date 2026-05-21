@@ -7,10 +7,11 @@
   "main": "dist-server/server/webServer.js",
   "scripts": {
     "dev": "node scripts/dev-web.mjs",
+    "clean": "node -e \"const fs=require('fs'); for (const p of ['dist','dist-server','dist-electron']) fs.rmSync(p,{recursive:true,force:true});\"",
     "server:build": "tsc -p tsconfig.server.json",
     "start": "node dist-server/server/webServer.js",
     "web:dev": "node scripts/dev-web.mjs",
-    "web:build": "tsc -p tsconfig.app.json && vite build && npm run server:build",
+    "web:build": "npm run clean && tsc -p tsconfig.app.json && vite build && npm run server:build",
     "build": "npm run web:build",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "vitest run"

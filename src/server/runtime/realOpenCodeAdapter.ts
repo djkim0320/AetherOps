@@ -273,6 +273,7 @@ function normalizeEvidence(input: OpenCodeRunInput, parsed: OpenCodeSchema, crea
   return (parsed.evidence ?? [])
     .slice(0, 24)
     .filter((item) => cleanString(item.sourceUri) || cleanString(item.citation))
+    .filter((item) => normalizeCategory(item.category) !== "generated_artifact")
     .map((item) => ({
       id: createId("evidence"),
       projectId: input.project.id,

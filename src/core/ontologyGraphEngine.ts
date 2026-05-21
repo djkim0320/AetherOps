@@ -50,12 +50,13 @@ export class OntologyGraphEngine {
   }): OntologyGraphBuildResult {
     const builder = new GraphBuilder(input.snapshot.project.id);
     const specification = input.specification ?? input.snapshot.specifications.at(-1);
+    const provenance = provenanceIndex(input.records);
 
     for (const question of input.snapshot.questions) {
-      this.addQuestion(builder, question);
+      this.addQuestion(builder, question, provenance.forText(question.text));
     }
     for (const hypothesis of input.snapshot.hypotheses) {
-      this.addHypothesis(builder, hypothesis);
+      this.addHypothesis(builder, hypothesis, provenance.forText(hypothesis.statement));
     }
     for (const source of input.snapshot.sources) {
       this.addSource(builder, source);
@@ -73,31 +74,33 @@ export class OntologyGraphEngine {
       this.addRecord(builder, record, input.snapshot);
     }
     if (specification) {
-      this.addSpecification(builder, specification);
+      this.addSpecification(builder, specification, provenance.specificationRecordId);
     }
 
     return builder.result();
   }
 
-  private addQuestion(builder: GraphBuilder, question: ResearchQuestion): void {
+  private addQuestion(builder: GraphBuilder, question: ResearchQuestion, sourceRecordId?: string): void {
     const questionId = builder.entity({
       type: "ResearchQuestion",
       label: question.text,
       key: question.id,
       description: `Research question status: ${question.status}`,
+      sourceRecordId,
       confidence: 0.86
     });
     for (const conceptId of builder.conceptsFrom(question.text, questionId, 0.62)) {
-      builder.relation({ subjectId: questionId, predicate: "mentions", objectId: conceptId, confidence: 0.58 });
+      builder.relation({ subjectId: questionId, predicate: "mentions", objectId: conceptId, sourceRecordId, confidence: 0.58 });
     }
   }
 
-  private addHypothesis(builder: GraphBuilder, hypothesis: Hypothesis): void {
+  private addHypothesis(builder: GraphBuilder, hypothesis: Hypothesis, sourceRecordId?: string): void {
     const hypothesisId = builder.entity({
       type: "Hypothesis",
       label: hypothesis.statement,
       key: hypothesis.id,
       description: `Hypothesis status: ${hypothesis.status}`,
+      sourceRecordId,
       sourceEvidenceId: undefined,
       confidence: hypothesis.confidence
     });
@@ -106,11 +109,12 @@ export class OntologyGraphEngine {
         subjectId: hypothesisId,
         predicate: "refines",
         objectId: builder.entityId("ResearchQuestion", hypothesis.questionId),
+        sourceRecordId,
         confidence: 0.72
       });
     }
     for (const conceptId of builder.conceptsFrom(hypothesis.statement, hypothesisId, 0.58)) {
-      builder.relation({ subjectId: hypothesisId, predicate: "mentions", objectId: conceptId, confidence: 0.54 });
+      builder.relation({ subjectId: hypothesisId, predicate: "mentions", objectId: conceptId, sourceRecordId, confidence: 0.54 });
     }
   }
 
@@ -362,18 +366,19 @@ export class OntologyGraphEngine {
     this.addParameters(builder, recordEntityId, record.content, record.id, record.evidenceId);
   }
 
-  private addSpecification(builder: GraphBuilder, specification: ResearchSpecification): void {
+  private addSpecification(builder: GraphBuilder, specification: ResearchSpecification, sourceRecordId?: string): void {
     for (const metric of specification.evaluationMetrics) {
       const metricId = builder.entity({
         type: "Metric",
         label: metric,
         key: `metric:${metric}`,
         description: "Evaluation metric from the research specification.",
+        sourceRecordId,
         confidence: 0.78
       });
       for (const hypothesis of specification.refinedHypotheses) {
         const conceptId = builder.concept(hypothesis, 0.5);
-        builder.relation({ subjectId: conceptId, predicate: "requires", objectId: metricId, confidence: 0.42 });
+        builder.relation({ subjectId: conceptId, predicate: "requires", objectId: metricId, sourceRecordId, confidence: 0.42 });
       }
     }
     for (const evidenceType of specification.requiredEvidenceTypes) {
@@ -382,6 +387,7 @@ export class OntologyGraphEngine {
         label: `Required evidence: ${evidenceType}`,
         key: `method:required-evidence:${evidenceType}`,
         description: "Evidence collection method required by the research specification.",
+        sourceRecordId,
         confidence: 0.7
       });
       for (const hypothesis of specification.refinedHypotheses.length ? specification.refinedHypotheses : specification.initialHypotheses) {
@@ -390,12 +396,14 @@ export class OntologyGraphEngine {
           label: hypothesis,
           key: `spec-hypothesis:${hypothesis}`,
           description: "Hypothesis from the research specification.",
+          sourceRecordId,
           confidence: 0.55
         });
         builder.relation({
           subjectId: hypothesisId,
           predicate: "requires",
           objectId: methodId,
+          sourceRecordId,
           confidence: 0.5
         });
       }
@@ -406,6 +414,7 @@ export class OntologyGraphEngine {
         label: assumption,
         key: `assumption:${assumption}`,
         description: assumption,
+        sourceRecordId,
         confidence: 0.62
       });
     }
@@ -415,6 +424,7 @@ export class OntologyGraphEngine {
         label: constraint,
         key: `constraint:${constraint}`,
         description: constraint,
+        sourceRecordId,
         confidence: 0.72
       });
       builder.constraint({
@@ -423,6 +433,7 @@ export class OntologyGraphEngine {
         appliesToEntityType: "Hypothesis",
         ruleType: "custom",
         rule: { source: "research_specification", constraintEntityId: constraintId },
+        sourceRecordId,
         confidence: 0.72
       });
     }
@@ -432,6 +443,7 @@ export class OntologyGraphEngine {
         label: question,
         key: `competency:${question}`,
         description: "Competency question used to test whether the ontology can answer the research need.",
+        sourceRecordId,
         confidence: 0.68
       });
     }
@@ -690,6 +702,21 @@ function mergeEntity(current: OntologyEntity, next: OntologyEntity): OntologyEnt
     sourceRecordId: current.sourceRecordId ?? next.sourceRecordId,
     sourceEvidenceId: current.sourceEvidenceId ?? next.sourceEvidenceId,
     confidence: Math.max(current.confidence, next.confidence)
+  };
+}
+
+function provenanceIndex(records: NormalizedResearchRecord[]): {
+  specificationRecordId?: string;
+  forText(text: string): string | undefined;
+} {
+  const provenanceRecords = records.filter((record) => record.metadata.traceabilityKind === "project_provenance");
+  const specificationRecordId = provenanceRecords.find((record) => record.sourceUri?.startsWith("project://research-specification/"))?.id;
+  return {
+    specificationRecordId,
+    forText(text: string): string | undefined {
+      const normalized = normalizeConcept(text);
+      return provenanceRecords.find((record) => normalizeConcept(record.content).includes(normalized))?.id ?? specificationRecordId ?? provenanceRecords[0]?.id;
+    }
   };
 }
 

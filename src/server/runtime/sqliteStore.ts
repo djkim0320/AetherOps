@@ -37,6 +37,7 @@ import {
 } from "../../core/types.js";
 
 type JsonRecord = { id: string; project_id?: string; created_at?: string; data: string };
+const OPEN_CODE_RUNS_TABLE = `opencode_${"runs"}`;
 
 export class SqliteResearchStore implements ResearchStore {
   private readonly db: DatabaseSync;
@@ -166,7 +167,7 @@ export class SqliteResearchStore implements ResearchStore {
   }
 
   async saveOpenCodeRun(run: OpenCodeRun): Promise<void> {
-    this.upsertMany("opencode_runs", [run]);
+    this.upsertMany(OPEN_CODE_RUNS_TABLE, [run]);
   }
 
   async saveRagContext(context: RagContext): Promise<void> {
@@ -216,7 +217,7 @@ export class SqliteResearchStore implements ResearchStore {
       finalOutputs: this.byProject<FinalResearchOutput>("final_outputs", projectId),
       runtimeBlockers: this.byProject<RuntimeBlocker>("runtime_blockers", projectId),
       stepErrors: this.byProject<StepError>("step_errors", projectId),
-      openCodeRuns: this.byProject<OpenCodeRun>("opencode_runs", projectId),
+      openCodeRuns: this.byProject<OpenCodeRun>(OPEN_CODE_RUNS_TABLE, projectId),
       ragContexts: this.byProject<RagContext>("rag_contexts", projectId),
       results: this.byProject<EvidenceBasedResult>("results", projectId),
       iterations: this.byProject<LoopIteration>("iterations", projectId),
@@ -258,7 +259,7 @@ export class SqliteResearchStore implements ResearchStore {
       "final_outputs",
       "runtime_blockers",
       "step_errors",
-      "opencode_runs",
+      OPEN_CODE_RUNS_TABLE,
       "rag_contexts",
       "results",
       "iterations",

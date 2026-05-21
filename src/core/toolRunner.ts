@@ -4,6 +4,15 @@ import { createDefaultResearchTools, type ResearchToolResult, type ResearchTool 
 export class ToolRunner {
   constructor(private readonly tools: ResearchTool[] = createDefaultResearchTools()) {}
 
+  listToolNames(): string[] {
+    return [...new Set(this.tools.map((tool) => tool.name))];
+  }
+
+  hasTool(name: string): boolean {
+    const normalized = normalizeToolName(name);
+    return this.tools.some((tool) => normalizeToolName(tool.name) === normalized);
+  }
+
   async runAll(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult[]> {
     const results: ResearchToolResult[] = [];
     const toolMap = new Map(this.tools.map((tool) => [normalizeToolName(tool.name), tool]));
@@ -26,6 +35,14 @@ export class ToolRunner {
   }
 }
 
-function normalizeToolName(value: string): string {
+export function normalizeToolName(value: string): string {
   return value.replace(/\(.*?\)/g, "").replace(/\s+/g, "").trim().toLowerCase();
+}
+
+export function dedupeResearchTools(tools: ResearchTool[]): ResearchTool[] {
+  const map = new Map<string, ResearchTool>();
+  for (const tool of tools) {
+    map.set(normalizeToolName(tool.name), tool);
+  }
+  return [...map.values()];
 }

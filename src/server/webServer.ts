@@ -5,7 +5,8 @@ import { extname, join, normalize, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ApiEmbeddingProvider } from "../core/embeddingProvider.js";
 import { AetherOpsOrchestrator } from "../core/orchestrator.js";
-import { ToolRunner } from "../core/toolRunner.js";
+import { createDefaultResearchTools } from "../core/toolRegistry.js";
+import { dedupeResearchTools, ToolRunner } from "../core/toolRunner.js";
 import { VectorRagEngine } from "../core/vectorRagEngine.js";
 import type { AppSettings, ResearchProjectInput, ResearchArtifact } from "../core/types.js";
 import { BackgroundBrowserRuntime } from "./runtime/backgroundBrowserRuntime.js";
@@ -53,7 +54,7 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   });
   const openCode = new RealOpenCodeAdapter(settings, { searchRoots: [appRoot, process.cwd()] });
   const browserRuntime = new BackgroundBrowserRuntime(dataRoot);
-  const toolRunner = new ToolRunner([new BrowserResearchTool(browserRuntime)]);
+  const toolRunner = new ToolRunner(dedupeResearchTools([...createDefaultResearchTools(), new BrowserResearchTool(browserRuntime)]));
   const orchestrator = new AetherOpsOrchestrator(
     store,
     openCode,
@@ -160,6 +161,7 @@ async function handleRpc(
     case "aetherops:abort":
       return orchestrator.abort(String(args[0]));
     case "opencode.run":
+      requireLegacyRpc(method);
       return orchestrator.runOpenCode(String(args[0]));
     case "opencode.authLogin":
       return launchOpenCodeAuthLogin(await settingsStore.getRuntimeSettings(), optionalString(args[0]));
@@ -168,10 +170,13 @@ async function handleRpc(
     case "artifacts.store":
       return orchestrator.storeArtifact(String(args[0]), args[1] as Partial<ResearchArtifact>);
     case "rag.buildContext":
+      requireLegacyRpc(method);
       return orchestrator.buildRagContext(String(args[0]));
     case "results.derive":
+      requireLegacyRpc(method);
       return orchestrator.deriveResult(String(args[0]));
     case "reports.finalize":
+      requireLegacyRpc(method);
       return orchestrator.finalizeReport(String(args[0]));
     case "llm.status":
       return orchestrator.getLlmStatus();
@@ -187,6 +192,13 @@ async function handleRpc(
     default:
       throw new Error(`Unknown RPC method: ${method}`);
   }
+}
+
+function requireLegacyRpc(method: string): void {
+  if (process.env.AETHEROPS_ENABLE_LEGACY_RPC !== "true") {
+    throw new Error(`Legacy RPC method ${method} is disabled. Use the 12-step AetherOps RPC methods instead.`);
+  }
+  console.warn(`[AetherOps] Legacy RPC method ${method} was called. Set AETHEROPS_ENABLE_LEGACY_RPC=false to block old clients.`);
 }
 
 function optionalString(value: unknown): string | undefined {

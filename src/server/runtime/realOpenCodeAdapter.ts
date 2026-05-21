@@ -38,46 +38,21 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     const settings = await this.getSettings();
     const startedAt = nowIso();
     if (!settings.openCode.enabled) {
-      return this.unavailable(input, startedAt, "OpenCode CLI가 설정에서 비활성화되어 있습니다.");
+      throw new Error("OpenCode execution engine is disabled in settings.");
     }
 
-    try {
-      const resolution = resolveOpenCodeCommand(settings.openCode.command, this.commandOptions);
-      const raw = await runCommand(resolution.command, this.buildArgs(input, settings), settings.openCode.timeoutMs);
-      const completedAt = nowIso();
-      const parsed = parseOpenCodeJson(raw.stdout);
-      if (!parsed) {
-        const artifact = this.rawArtifact(input, raw.stdout || raw.stderr || "OpenCode produced no output.", completedAt);
-        const reason = "OpenCode output JSON parsing failed. Fix the OpenCode CLI output before continuing.";
-        return {
-          run: {
-            id: createId("opencode"),
-            projectId: input.project.id,
-            iteration: input.iteration,
-            prompt: this.buildPrompt(input),
-            toolPlan: ["opencode-cli"],
-            status: "failed",
-            logs: [
-              `OpenCode CLI exited with code ${raw.exitCode}.`,
-              `OpenCode command: ${describeResolution(resolution)}.`,
-              raw.stderr ? `stderr: ${raw.stderr.slice(0, 2000)}` : "stderr: empty",
-              reason
-            ],
-            artifactIds: [artifact.id],
-            evidenceIds: [],
-            startedAt,
-            completedAt
-          },
-          artifacts: [artifact],
-          evidence: [],
-          fatalError: reason
-        };
-      }
-
-      return this.fromParsed(input, parsed, startedAt, completedAt, raw.stderr);
-    } catch (error) {
-      return this.unavailable(input, startedAt, `OpenCode CLI 실행 실패: ${formatError(error)}`);
+    const resolution = resolveOpenCodeCommand(settings.openCode.command, this.commandOptions);
+    const raw = await runCommand(resolution.command, this.buildArgs(input, settings), settings.openCode.timeoutMs);
+    const completedAt = nowIso();
+    if (raw.exitCode !== 0) {
+      throw new Error(`OpenCode CLI exited with code ${raw.exitCode} using ${describeResolution(resolution)}: ${raw.stderr || raw.stdout || "no output"}`);
     }
+    const parsed = parseOpenCodeJson(raw.stdout);
+    if (!parsed) {
+      throw new Error(`OpenCode output JSON parsing failed using ${describeResolution(resolution)}: ${(raw.stdout || raw.stderr || "no output").slice(0, 2000)}`);
+    }
+
+    return this.fromParsed(input, parsed, startedAt, completedAt, raw.stderr);
   }
 
   private buildArgs(input: OpenCodeRunInput, settings: AppSettings): string[] {
@@ -118,7 +93,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
         needsMoreEvidence: true,
         needsMoreAnalysis: true
       }),
-      "Never invent paper citations or URLs. If a tool/source is unavailable, create an evidence_gap item.",
+      "Never invent paper citations or URLs. If a tool/source is unavailable, report the problem in the summary and do not present it as evidence.",
       "",
       `Project: ${JSON.stringify(input.project)}`,
       `Questions: ${JSON.stringify(input.questions)}`,
@@ -163,59 +138,6 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     };
   }
 
-  private unavailable(input: OpenCodeRunInput, startedAt: string, reason: string): OpenCodeRunOutput {
-    const completedAt = nowIso();
-    const gap = this.gapEvidence(input, completedAt, reason, "tool_unavailable");
-    return {
-      run: {
-        id: createId("opencode"),
-        projectId: input.project.id,
-        iteration: input.iteration,
-        prompt: this.buildPrompt(input),
-        toolPlan: ["opencode-cli"],
-        status: "failed",
-        logs: [reason, "대체 실행 경로는 비활성화되어 있습니다. OpenCode 설정을 수정한 뒤 다시 실행하세요."],
-        artifactIds: [],
-        evidenceIds: [gap.id],
-        startedAt,
-        completedAt
-      },
-      artifacts: [],
-      evidence: [gap],
-      fatalError: reason
-    };
-  }
-
-  private rawArtifact(input: OpenCodeRunInput, content: string, createdAt: string): ResearchArtifact {
-    return {
-      id: createId("artifact"),
-      projectId: input.project.id,
-      category: "experiment_log",
-      title: `OpenCode raw output iteration ${input.iteration}`,
-      relativePath: `artifacts/iteration-${input.iteration}/opencode-raw-output.txt`,
-      mimeType: "text/plain",
-      summary: "JSON schema로 파싱되지 않은 OpenCode raw output입니다.",
-      content,
-      createdAt
-    };
-  }
-
-  private gapEvidence(input: OpenCodeRunInput, createdAt: string, reason: string, keyword: string): EvidenceItem {
-    return {
-      id: createId("evidence"),
-      projectId: input.project.id,
-      category: "experiment_log",
-      title: "OpenCode execution evidence_gap",
-      summary: reason,
-      keywords: ["opencode", "evidence_gap", keyword],
-      linkedHypothesisIds: input.hypotheses.map((item) => item.id),
-      reliabilityScore: 0.2,
-      relevanceScore: 0.45,
-      evidenceStrength: "weak",
-      limitations: ["OpenCode 도구 결과를 실제 근거로 사용할 수 없습니다."],
-      createdAt
-    };
-  }
 }
 
 interface CommandResult {
@@ -348,23 +270,26 @@ function normalizeArtifacts(input: OpenCodeRunInput, parsed: OpenCodeSchema, cre
 }
 
 function normalizeEvidence(input: OpenCodeRunInput, parsed: OpenCodeSchema, createdAt: string): EvidenceItem[] {
-  return (parsed.evidence ?? []).slice(0, 24).map((item) => ({
-    id: createId("evidence"),
-    projectId: input.project.id,
-    category: normalizeCategory(item.category),
-    title: cleanString(item.title) || "OpenCode evidence",
-    summary: cleanString(item.summary),
-    sourceUri: cleanString(item.sourceUri) || undefined,
-    citation: cleanString(item.citation) || undefined,
-    quote: cleanString(item.quote) || undefined,
-    keywords: normalizeStringArray(item.keywords),
-    linkedHypothesisIds: normalizeStringArray(item.linkedHypothesisIds).filter((id) => input.hypotheses.some((hypothesis) => hypothesis.id === id)),
-    reliabilityScore: normalizeScore(item.reliabilityScore),
-    relevanceScore: normalizeScore(item.relevanceScore),
-    evidenceStrength: normalizeStrength(item.evidenceStrength),
-    limitations: normalizeStringArray(item.limitations),
-    createdAt
-  }));
+  return (parsed.evidence ?? [])
+    .slice(0, 24)
+    .filter((item) => cleanString(item.sourceUri) || cleanString(item.citation))
+    .map((item) => ({
+      id: createId("evidence"),
+      projectId: input.project.id,
+      category: normalizeCategory(item.category),
+      title: cleanString(item.title) || "OpenCode evidence",
+      summary: cleanString(item.summary),
+      sourceUri: cleanString(item.sourceUri) || undefined,
+      citation: cleanString(item.citation) || undefined,
+      quote: cleanString(item.quote) || undefined,
+      keywords: normalizeStringArray(item.keywords),
+      linkedHypothesisIds: normalizeStringArray(item.linkedHypothesisIds).filter((id) => input.hypotheses.some((hypothesis) => hypothesis.id === id)),
+      reliabilityScore: normalizeScore(item.reliabilityScore),
+      relevanceScore: normalizeScore(item.relevanceScore),
+      evidenceStrength: normalizeStrength(item.evidenceStrength),
+      limitations: normalizeStringArray(item.limitations),
+      createdAt
+    }));
 }
 
 function formatOpenCodeModel(settings: AppSettings): string | undefined {

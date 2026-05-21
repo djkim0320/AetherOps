@@ -77,9 +77,11 @@ function settings(command: string): AppSettings {
       provider: "disabled"
     },
     embedding: {
-      provider: "local",
-      model: "local-hash",
-      dimensions: 96
+      provider: "openai",
+      model: "text-embedding-3-small",
+      dimensions: 1536,
+      apiKey: "test-key",
+      apiKeyConfigured: true
     },
     browserUse: {
       enabled: false,

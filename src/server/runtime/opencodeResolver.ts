@@ -18,9 +18,8 @@ export function resolveOpenCodeCommand(
   const command = (configuredCommand ?? "").trim();
   const checkedPaths: string[] = [];
   const roots = uniquePaths([...(options.searchRoots ?? []), ...defaultOpenCodeSearchRoots()]);
-  const shouldUseBundled = !command || /^opencode(?:\.(?:cmd|exe|ps1))?$/i.test(command);
 
-  if (shouldUseBundled) {
+  if (!command) {
     const bundled = findBundledOpenCode(roots, checkedPaths);
     if (bundled) {
       return {
@@ -29,11 +28,7 @@ export function resolveOpenCodeCommand(
         checkedPaths
       };
     }
-    return {
-      command: command || "opencode",
-      source: "system",
-      checkedPaths
-    };
+    throw new Error(`OpenCode command/path is not configured and bundled OpenCode was not found. Checked: ${checkedPaths.join(", ")}`);
   }
 
   const resolvedConfigured = resolveConfiguredCommand(command, roots, checkedPaths);

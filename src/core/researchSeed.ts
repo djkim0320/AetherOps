@@ -30,21 +30,21 @@ export function seedResearchPlan(project: ResearchProject): {
     {
       id: createId("question"),
       projectId: project.id,
-      text: `${project.topic}에서 최종 목표를 답하기 위해 가장 먼저 검증해야 할 핵심 비교 기준은 무엇인가?`,
+      text: `${project.topic}에서 최종 목표를 달성하기 위해 가장 먼저 검증해야 할 핵심 질문은 무엇인가?`,
       status: "open",
       createdAt
     },
     {
       id: createId("question"),
       projectId: project.id,
-      text: `${project.scope} 범위 안에서 신뢰할 수 있는 공개 근거 또는 산출물은 어떤 형태로 확보할 수 있는가?`,
+      text: `${project.scope} 범위 안에서 추적 가능한 공개 근거 또는 산출물은 어떤 형태로 확보할 수 있는가?`,
       status: "open",
       createdAt
     },
     {
       id: createId("question"),
       projectId: project.id,
-      text: "근거가 부족한 경우 어떤 evidence_gap과 추가 연구 질문을 남겨야 과장 없는 결론을 만들 수 있는가?",
+      text: "근거가 부족한 경우 어떤 evidence gap과 추가 연구 질문을 남겨야 과장 없는 결론을 만들 수 있는가?",
       status: "open",
       createdAt
     }
@@ -55,7 +55,7 @@ export function seedResearchPlan(project: ResearchProject): {
       id: createId("hypothesis"),
       projectId: project.id,
       questionId: questions[0].id,
-      statement: "초기 자료 수집과 실행 로그를 결합하면 가설 검증에 필요한 최소 근거 세트를 식별할 수 있다.",
+      statement: "초기 자료 수집과 실행 로그를 결합하면 가설 검증에 필요한 최소 근거 집합을 정의할 수 있다.",
       status: "untested",
       confidence: 0.35,
       createdAt
@@ -83,13 +83,13 @@ export function seedResearchPlan(project: ResearchProject): {
       reliabilityScore: 0.4,
       relevanceScore: 0.8,
       evidenceStrength: "weak",
-      limitations: ["사용자 입력 기반 seed evidence이며 외부 검증 근거가 아닙니다."],
+      limitations: ["사용자 입력 기반 계획 메모이며 외부 검증 근거가 아닙니다."],
       createdAt
     },
     {
       id: createId("evidence"),
       projectId: project.id,
-      category: "experiment_log",
+      category: "conversation_memo",
       title: "자율성 정책",
       summary: `도구 승인: ${project.autonomyPolicy.toolApproval}, 최대 반복: ${project.autonomyPolicy.maxLoopIterations}, 외부 검색: ${project.autonomyPolicy.allowExternalSearch}, 코드 실행: ${project.autonomyPolicy.allowCodeExecution}`,
       keywords: ["autonomy", "policy", "loop"],
@@ -97,7 +97,7 @@ export function seedResearchPlan(project: ResearchProject): {
       reliabilityScore: 0.6,
       relevanceScore: 0.65,
       evidenceStrength: "medium",
-      limitations: ["정책 기록이며 연구 결론을 직접 지지하는 외부 근거는 아닙니다."],
+      limitations: ["정책 기록이며 연구 결론을 직접 지지하는 외부 근거가 아닙니다."],
       createdAt
     }
   ];

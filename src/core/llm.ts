@@ -11,18 +11,6 @@ export interface LlmProvider {
   completeJson<T>(request: LlmJsonRequest): Promise<T>;
 }
 
-export class NoopLlmProvider implements LlmProvider {
-  readonly name = "noop";
-
-  async isAvailable(): Promise<boolean> {
-    return false;
-  }
-
-  async completeJson<T>(): Promise<T> {
-    throw new Error("No LLM provider configured.");
-  }
-}
-
 export function extractJsonObject(text: string): unknown {
   const trimmed = text.trim();
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {

@@ -2,9 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createId, nowIso } from "../../core/ids.js";
-import { AetherOpsOrchestrator } from "../../core/orchestrator.js";
-import type { OpenCodeAdapter, OpenCodeRunInput, OpenCodeRunOutput, ResearchProjectInput } from "../../core/types.js";
+import { createInputProject, createStrictTestOrchestrator } from "../../core/orchestratorTestHarness.test.js";
+import type { ResearchProjectInput } from "../../core/types.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
 
 let tempDir: string | undefined;
@@ -36,9 +35,9 @@ describe("SqliteResearchStore", () => {
   it("persists project snapshots with DB, runs, RAG contexts, and final report", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
     store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
-    const orchestrator = new AetherOpsOrchestrator(store, new DeterministicOpenCodeAdapter(), undefined, join(tempDir, "projects"));
+    const orchestrator = createStrictTestOrchestrator({ store, projectRootBase: join(tempDir, "projects") });
 
-    let snapshot = await orchestrator.createProject(input);
+    let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
     const reloaded = await store.getSnapshot(snapshot.project.id);
@@ -54,7 +53,7 @@ describe("SqliteResearchStore", () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
     const sqlitePath = join(tempDir, "aetherops.sqlite");
     store = new SqliteResearchStore(sqlitePath);
-    let orchestrator = new AetherOpsOrchestrator(store, undefined, undefined, join(tempDir, "projects"));
+    let orchestrator = createStrictTestOrchestrator({ store, projectRootBase: join(tempDir, "projects") });
 
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.createSubSessions(snapshot.project.id);
@@ -69,7 +68,7 @@ describe("SqliteResearchStore", () => {
     let reloaded = await store.getSnapshot(projectId);
     expect(reloaded.sessions).toHaveLength(2);
 
-    orchestrator = new AetherOpsOrchestrator(store, undefined, undefined, join(tempDir, "projects"));
+    orchestrator = createStrictTestOrchestrator({ store, projectRootBase: join(tempDir, "projects") });
     reloaded = await orchestrator.deleteChatSession(projectId, firstSessionId);
     expect(reloaded.sessions).toHaveLength(1);
     expect(reloaded.sessions[0]?.title).toBe("채팅 세션 2");
@@ -81,47 +80,3 @@ describe("SqliteResearchStore", () => {
     expect(reloaded.sessions[0]?.title).toBe("채팅 세션 2");
   });
 });
-
-class DeterministicOpenCodeAdapter implements OpenCodeAdapter {
-  async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
-    const createdAt = nowIso();
-    const artifact = {
-      id: createId("artifact"),
-      projectId: input.project.id,
-      category: "generated_artifact" as const,
-      title: "SQLite deterministic artifact",
-      relativePath: `artifacts/iteration-${input.iteration}/sqlite.md`,
-      mimeType: "text/markdown",
-      summary: "SQLite deterministic artifact",
-      content: "SQLite deterministic artifact.",
-      createdAt
-    };
-    const evidence = {
-      id: createId("evidence"),
-      projectId: input.project.id,
-      category: "experiment_log" as const,
-      title: "SQLite deterministic evidence",
-      summary: "SQLite deterministic evidence.",
-      keywords: ["sqlite", "persistence"],
-      linkedHypothesisIds: input.hypotheses.map((item) => item.id),
-      createdAt
-    };
-    return {
-      run: {
-        id: createId("opencode"),
-        projectId: input.project.id,
-        iteration: input.iteration,
-        prompt: "deterministic sqlite run",
-        toolPlan: ["deterministic-sqlite"],
-        status: "completed",
-        logs: ["deterministic sqlite run"],
-        artifactIds: [artifact.id],
-        evidenceIds: [evidence.id],
-        startedAt: createdAt,
-        completedAt: createdAt
-      },
-      artifacts: [artifact],
-      evidence: [evidence]
-    };
-  }
-}

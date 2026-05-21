@@ -15,6 +15,7 @@ import type {
   ResearchArtifact,
   ResearchChunk,
   ResearchDatabase,
+  ResearchInput,
   ResearchPlan,
   ResearchProject,
   ResearchQuestion,
@@ -24,6 +25,8 @@ import type {
   ResearchSource,
   ResearchSnapshot,
   ResearchStore,
+  RuntimeBlocker,
+  StepError,
   ToolRun
 } from "./types.js";
 
@@ -31,6 +34,7 @@ export class InMemoryResearchStore implements ResearchStore {
   private projects = new Map<string, ResearchProject>();
   private databases = new Map<string, ResearchDatabase>();
   private sessions: ResearchSession[] = [];
+  private researchInputs: ResearchInput[] = [];
   private questions: ResearchQuestion[] = [];
   private hypotheses: import("./types.js").Hypothesis[] = [];
   private evidence: EvidenceItem[] = [];
@@ -49,6 +53,8 @@ export class InMemoryResearchStore implements ResearchStore {
   private validationResults: import("./types.js").ValidationResult[] = [];
   private continuationDecisions: ContinuationDecision[] = [];
   private finalOutputs: FinalResearchOutput[] = [];
+  private runtimeBlockers: RuntimeBlocker[] = [];
+  private stepErrors: StepError[] = [];
   private openCodeRuns: OpenCodeRun[] = [];
   private ragContexts: RagContext[] = [];
   private results: EvidenceBasedResult[] = [];
@@ -81,6 +87,10 @@ export class InMemoryResearchStore implements ResearchStore {
 
   async saveDatabase(database: ResearchDatabase): Promise<void> {
     this.databases.set(database.projectId, database);
+  }
+
+  async saveResearchInput(input: ResearchInput): Promise<void> {
+    this.researchInputs = this.upsertMany(this.researchInputs, [input]);
   }
 
   async saveQuestions(questions: ResearchQuestion[]): Promise<void> {
@@ -156,6 +166,14 @@ export class InMemoryResearchStore implements ResearchStore {
     this.finalOutputs = this.upsertMany(this.finalOutputs, [output]);
   }
 
+  async saveRuntimeBlocker(blocker: RuntimeBlocker): Promise<void> {
+    this.runtimeBlockers = this.upsertMany(this.runtimeBlockers, [blocker]);
+  }
+
+  async saveStepError(error: StepError): Promise<void> {
+    this.stepErrors = this.upsertMany(this.stepErrors, [error]);
+  }
+
   async saveOpenCodeRun(run: OpenCodeRun): Promise<void> {
     this.openCodeRuns = this.upsertMany(this.openCodeRuns, [run]);
   }
@@ -186,6 +204,7 @@ export class InMemoryResearchStore implements ResearchStore {
       project,
       sessions: this.sessions.filter((item) => item.projectId === projectId),
       database: this.databases.get(projectId),
+      researchInputs: this.researchInputs.filter((item) => item.projectId === projectId),
       questions: this.questions.filter((item) => item.projectId === projectId),
       hypotheses: this.hypotheses.filter((item) => item.projectId === projectId),
       evidence: this.evidence.filter((item) => item.projectId === projectId),
@@ -204,6 +223,8 @@ export class InMemoryResearchStore implements ResearchStore {
       validationResults: this.validationResults.filter((item) => item.projectId === projectId),
       continuationDecisions: this.continuationDecisions.filter((item) => item.projectId === projectId),
       finalOutputs: this.finalOutputs.filter((item) => item.projectId === projectId),
+      runtimeBlockers: this.runtimeBlockers.filter((item) => item.projectId === projectId),
+      stepErrors: this.stepErrors.filter((item) => item.projectId === projectId),
       openCodeRuns: this.openCodeRuns.filter((item) => item.projectId === projectId),
       ragContexts: this.ragContexts.filter((item) => item.projectId === projectId),
       results: this.results.filter((item) => item.projectId === projectId),

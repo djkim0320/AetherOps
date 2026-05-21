@@ -562,11 +562,36 @@ class GraphBuilder {
   }
 
   result(): OntologyGraphBuildResult {
+    for (const relation of this.relations.values()) {
+      if (!relation.sourceRecordId && !relation.sourceEvidenceId) {
+        continue;
+      }
+      this.attachRelationSource(relation.subjectId, relation);
+      this.attachRelationSource(relation.objectId, relation);
+    }
+    const entities = [...this.entities.values()].filter((entity) => entity.sourceRecordId || entity.sourceEvidenceId);
+    const entityIds = new Set(entities.map((entity) => entity.id));
+    const relations = [...this.relations.values()].filter(
+      (relation) => (relation.sourceRecordId || relation.sourceEvidenceId) && entityIds.has(relation.subjectId) && entityIds.has(relation.objectId)
+    );
     return {
-      entities: [...this.entities.values()],
-      relations: [...this.relations.values()],
-      constraints: [...this.constraints.values()]
+      entities,
+      relations,
+      constraints: [...this.constraints.values()].filter((constraint) => constraint.sourceRecordId)
     };
+  }
+
+  private attachRelationSource(entityId: string, relation: OntologyRelation): void {
+    const entity = this.entities.get(entityId);
+    if (!entity || entity.sourceRecordId || entity.sourceEvidenceId) {
+      return;
+    }
+    this.entities.set(entityId, {
+      ...entity,
+      sourceRecordId: relation.sourceRecordId,
+      sourceEvidenceId: relation.sourceEvidenceId,
+      confidence: Math.min(entity.confidence, relation.confidence)
+    });
   }
 }
 

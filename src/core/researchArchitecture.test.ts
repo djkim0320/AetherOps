@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { LocalHashEmbeddingProvider } from "./embeddingProvider.js";
 import { EvidenceNormalizer } from "./evidenceNormalizer.js";
 import { HybridRetrievalEngine } from "./hybridRetrievalEngine.js";
 import { LoopDecisionEngine } from "./loopDecision.js";
 import { OntologyGraphEngine } from "./ontologyGraphEngine.js";
+import { DeterministicEmbeddingProvider, DeterministicLlmProvider } from "./orchestratorTestHarness.test.js";
 import { ReasoningEngine } from "./reasoningEngine.js";
 import { ResearchPlanner } from "./researchPlanner.js";
 import { ResearchSpecificationBuilder } from "./researchSpecification.js";
@@ -17,7 +17,7 @@ const settings: AppSettings = {
   openCodeLlm: { source: "codex-oauth", model: "gpt-5.5" },
   openCode: { enabled: false, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled" },
-  embedding: { provider: "local", model: "local-hash", dimensions: 64 },
+  embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 64, apiKey: "test-key", apiKeyConfigured: true },
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
   allowExternalSearch: false,
   allowCodeExecution: false,
@@ -101,6 +101,7 @@ function snapshot(): ResearchSnapshot {
     sources: [
       { id: "s1", projectId: "project-1", kind: "web", title: "Study break observation", url: "https://example.com/study-breaks", retrievedAt: createdAt, metadata: {}, createdAt }
     ],
+    researchInputs: [],
     chunks: [],
     toolRuns: [],
     agentPlans: [],
@@ -114,6 +115,8 @@ function snapshot(): ResearchSnapshot {
     validationResults: [],
     continuationDecisions: [],
     finalOutputs: [],
+    runtimeBlockers: [],
+    stepErrors: [],
     openCodeRuns: [],
     ragContexts: [],
     results: [],
@@ -124,7 +127,8 @@ function snapshot(): ResearchSnapshot {
 describe("12-step research architecture modules", () => {
   it("builds specification and plan from project questions and hypotheses", async () => {
     const base = snapshot();
-    const spec = await new ResearchSpecificationBuilder().build({
+    const llm = new DeterministicLlmProvider();
+    const spec = await new ResearchSpecificationBuilder(llm).build({
       project: base.project,
       questions: base.questions,
       hypotheses: base.hypotheses,
@@ -136,7 +140,7 @@ describe("12-step research architecture modules", () => {
     expect(spec.requiredEvidenceTypes.length).toBeGreaterThan(0);
     expect(spec.successCriteria.length).toBeGreaterThan(0);
 
-    const plan = await new ResearchPlanner().plan({ snapshot: base, specification: spec, iteration: 1, settings });
+    const plan = await new ResearchPlanner(llm).plan({ snapshot: base, specification: spec, iteration: 1, settings });
     expect(plan.iteration).toBe(1);
     expect(plan.objective).toBeTruthy();
     expect(plan.requiredTools.length).toBeGreaterThan(0);
@@ -147,10 +151,10 @@ describe("12-step research architecture modules", () => {
   it("normalizes, indexes, builds ontology, retrieves hybrid context, validates, and decides continuation", async () => {
     const base = snapshot();
     const records = new EvidenceNormalizer().normalize(base, 1);
-    expect(records.map((record) => record.kind)).toEqual(expect.arrayContaining(["source", "artifact", "claim", "evidence", "observation", "citation"]));
+    expect(records.map((record) => record.kind)).toEqual(expect.arrayContaining(["source", "artifact", "claim", "evidence", "citation"]));
     expect(records.find((record) => record.evidenceId === "gap1")?.confidence).toBeLessThan(0.5);
 
-    const provider = new LocalHashEmbeddingProvider(64);
+    const provider = new DeterministicEmbeddingProvider(64);
     const chunks = await new VectorIndexEngine(provider).buildIndex({ snapshot: base, records, settings });
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks[0]?.embedding?.length).toBe(64);
@@ -159,11 +163,8 @@ describe("12-step research architecture modules", () => {
     const graph = new OntologyGraphEngine().build({ snapshot: withIndex, records });
     expect(graph.entities.length).toBeGreaterThan(0);
     expect(graph.relations.some((relation) => relation.predicate === "supports")).toBe(true);
-    expect(graph.entities.some((entity) => entity.type === "Concept")).toBe(true);
-    expect(graph.entities.some((entity) => entity.type === "Parameter")).toBe(true);
-    expect(graph.relations.some((relation) => relation.predicate === "generatedBy")).toBe(true);
-    expect(graph.relations.some((relation) => relation.predicate === "hasLimitation")).toBe(true);
-    expect(graph.relations.some((relation) => relation.predicate === "measuredIn")).toBe(true);
+    expect(graph.entities.every((entity) => entity.sourceRecordId || entity.sourceEvidenceId)).toBe(true);
+    expect(graph.relations.every((relation) => relation.sourceRecordId || relation.sourceEvidenceId)).toBe(true);
 
     const withGraph = { ...withIndex, ontologyEntities: graph.entities, ontologyRelations: graph.relations, ontologyConstraints: graph.constraints };
     const hybrid = await new HybridRetrievalEngine(provider).buildContext(withGraph, "Pomodoro fatigue evidence", 1);

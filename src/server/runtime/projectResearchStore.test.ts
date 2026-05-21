@@ -2,7 +2,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AetherOpsOrchestrator } from "../../core/orchestrator.js";
+import { createStrictTestOrchestrator } from "../../core/orchestratorTestHarness.test.js";
 import type { ResearchProjectInput, OntologyEntity, OntologyRelation } from "../../core/types.js";
 import { NodeProjectStorage } from "./projectResearchStore.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
@@ -36,14 +36,7 @@ describe("NodeProjectStorage", () => {
   it("creates project-isolated research and vector storage", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-storage-"));
     store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
-    const orchestrator = new AetherOpsOrchestrator(
-      store,
-      undefined,
-      undefined,
-      join(tempDir, "projects"),
-      undefined,
-      new NodeProjectStorage()
-    );
+    const orchestrator = createStrictTestOrchestrator({ store, storage: new NodeProjectStorage(), projectRootBase: join(tempDir, "projects") });
 
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.createSubSessions(snapshot.project.id);
@@ -61,6 +54,7 @@ describe("NodeProjectStorage", () => {
     expect(existsSync(join(snapshot.project.projectRoot, "knowledge"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "ontology"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "exports"))).toBe(true);
+    expect(existsSync(join(snapshot.project.projectRoot, "errors"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "state.json"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "project.json"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "project.md"))).toBe(true);
@@ -72,14 +66,7 @@ describe("NodeProjectStorage", () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-storage-"));
     store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
     const projectStorage = new NodeProjectStorage();
-    const orchestrator = new AetherOpsOrchestrator(
-      store,
-      undefined,
-      undefined,
-      join(tempDir, "projects"),
-      undefined,
-      projectStorage
-    );
+    const orchestrator = createStrictTestOrchestrator({ store, storage: projectStorage, projectRootBase: join(tempDir, "projects") });
 
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.createResearchDb(snapshot.project.id);

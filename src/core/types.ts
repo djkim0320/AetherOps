@@ -27,12 +27,16 @@ export const legacyResearchLoopStepMap: Record<string, ResearchLoopStep> = {
 
 export function normalizeResearchLoopStep(value: unknown): ResearchLoopStep {
   if (typeof value !== "string") {
-    return ResearchLoopStep.CreateResearchDb;
+    throw new Error(`Unknown research loop step: ${String(value)}`);
   }
   if (Object.values(ResearchLoopStep).includes(value as ResearchLoopStep)) {
     return value as ResearchLoopStep;
   }
-  return legacyResearchLoopStepMap[value] ?? ResearchLoopStep.CreateResearchDb;
+  const legacyStep = legacyResearchLoopStepMap[value];
+  if (legacyStep) {
+    return legacyStep;
+  }
+  throw new Error(`Unknown research loop step: ${value}`);
 }
 
 export type FlowKind =
@@ -42,9 +46,10 @@ export type FlowKind =
   | "Storage Flow"
   | "Knowledge Flow"
   | "Loop Back"
-  | "Output Flow";
+  | "Output Flow"
+  | "Error Flow";
 
-export type LoopStatus = "idle" | "running" | "paused" | "aborted" | "completed" | "failed";
+export type LoopStatus = "idle" | "running" | "paused" | "aborted" | "completed" | "failed" | "blocked";
 
 export type StorageCategory =
   | "generated_artifact"
@@ -56,7 +61,7 @@ export type StorageCategory =
 export type ResearchSourceKind = "web" | "paper" | "file" | "artifact" | "log" | "conversation";
 export type EvidenceStrength = "weak" | "medium" | "strong";
 export type HypothesisStatus = "untested" | "supported" | "rejected" | "needs_more_evidence";
-export type NormalizedRecordKind = "source" | "artifact" | "claim" | "evidence" | "observation" | "citation";
+export type NormalizedRecordKind = "source" | "artifact" | "claim" | "evidence" | "observation" | "citation" | "error";
 export type OntologyEntityType =
   | "ResearchQuestion"
   | "Hypothesis"
@@ -74,7 +79,8 @@ export type OntologyEntityType =
   | "Constraint"
   | "Assumption"
   | "Limitation"
-  | "Result";
+  | "Result"
+  | "Error";
 export type OntologyRelationType =
   | "answers"
   | "supports"
@@ -91,7 +97,9 @@ export type OntologyRelationType =
   | "isA"
   | "affects"
   | "requires"
-  | "hasLimitation";
+  | "hasLimitation"
+  | "blockedBy"
+  | "failedAt";
 
 export interface AutonomyPolicy {
   toolApproval: "manual" | "suggested" | "automatic";
@@ -117,6 +125,16 @@ export interface ResearchProject extends ResearchProjectInput {
   projectRoot: string;
 }
 
+export interface ResearchInput {
+  id: string;
+  projectId: string;
+  researchQuestion: string;
+  initialHypotheses: string[];
+  constraints: string[];
+  expectedOutputs: string[];
+  createdAt: string;
+}
+
 export interface ResearchSession {
   id: string;
   projectId: string;
@@ -138,6 +156,7 @@ export interface ResearchDatabase {
   knowledgeRoot?: string;
   ontologyRoot?: string;
   exportsRoot?: string;
+  errorsRoot?: string;
   statePath?: string;
   createdAt: string;
 }
@@ -319,10 +338,37 @@ export interface OntologyConstraint {
   label: string;
   description: string;
   appliesToEntityType?: OntologyEntityType;
-  ruleType: "unit" | "consistency" | "hierarchy" | "hypothesis_evidence" | "custom";
+  ruleType: "unit" | "consistency" | "hierarchy" | "hypothesis_evidence" | "runtime_requirement" | "custom";
   rule: Record<string, unknown>;
   sourceRecordId?: string;
   confidence: number;
+  createdAt: string;
+}
+
+export interface RuntimeRequirement {
+  key: string;
+  label: string;
+  requiredForSteps: ResearchLoopStep[];
+  isSatisfied: boolean;
+  message?: string;
+}
+
+export interface RuntimeBlocker {
+  id: string;
+  projectId: string;
+  step: ResearchLoopStep;
+  requirementKey: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface StepError {
+  id: string;
+  projectId: string;
+  step: ResearchLoopStep;
+  message: string;
+  cause?: string;
+  metadata: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -420,6 +466,7 @@ export interface ContinuationDecision {
   nextQuestions: string[];
   evidenceGaps: string[];
   planRevisionHints: string[];
+  forceStop?: boolean;
   createdAt: string;
 }
 
@@ -465,6 +512,7 @@ export interface ResearchSnapshot {
   project: ResearchProject;
   sessions: ResearchSession[];
   database?: ResearchDatabase;
+  researchInputs: ResearchInput[];
   questions: ResearchQuestion[];
   hypotheses: Hypothesis[];
   evidence: EvidenceItem[];
@@ -483,6 +531,8 @@ export interface ResearchSnapshot {
   validationResults: ValidationResult[];
   continuationDecisions: ContinuationDecision[];
   finalOutputs: FinalResearchOutput[];
+  runtimeBlockers: RuntimeBlocker[];
+  stepErrors: StepError[];
   openCodeRuns: OpenCodeRun[];
   ragContexts: RagContext[];
   results: EvidenceBasedResult[];
@@ -602,6 +652,7 @@ export interface ResearchStore {
   saveSessions(sessions: ResearchSession[]): Promise<void>;
   deleteSession(projectId: string, sessionId: string): Promise<void>;
   saveDatabase(database: ResearchDatabase): Promise<void>;
+  saveResearchInput(input: ResearchInput): Promise<void>;
   saveQuestions(questions: ResearchQuestion[]): Promise<void>;
   saveHypotheses(hypotheses: Hypothesis[]): Promise<void>;
   saveEvidence(evidence: EvidenceItem[]): Promise<void>;
@@ -620,6 +671,8 @@ export interface ResearchStore {
   saveValidationResults(results: ValidationResult[]): Promise<void>;
   saveContinuationDecision(decision: ContinuationDecision): Promise<void>;
   saveFinalResearchOutput(output: FinalResearchOutput): Promise<void>;
+  saveRuntimeBlocker(blocker: RuntimeBlocker): Promise<void>;
+  saveStepError(error: StepError): Promise<void>;
   saveOpenCodeRun(run: OpenCodeRun): Promise<void>;
   saveRagContext(context: RagContext): Promise<void>;
   saveResult(result: EvidenceBasedResult): Promise<void>;

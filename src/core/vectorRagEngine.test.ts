@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { chunkResearchSource } from "./chunking.js";
-import { LocalHashEmbeddingProvider } from "./embeddingProvider.js";
+import { DeterministicEmbeddingProvider } from "./orchestratorTestHarness.test.js";
 import { VectorRagEngine } from "./vectorRagEngine.js";
 import { ResearchLoopStep, type ResearchSnapshot, type ResearchSource } from "./types.js";
 
 describe("VectorRagEngine", () => {
   it("retrieves related chunks with citations", async () => {
-    const provider = new LocalHashEmbeddingProvider(64);
+    const provider = new DeterministicEmbeddingProvider(64);
     const source: ResearchSource = {
       id: "source-pomodoro",
       projectId: "project-1",
@@ -48,6 +48,7 @@ describe("VectorRagEngine", () => {
       evidence: [],
       artifacts: [],
       sources: [source],
+      researchInputs: [],
       chunks,
       toolRuns: [],
       agentPlans: [],
@@ -61,6 +62,8 @@ describe("VectorRagEngine", () => {
       validationResults: [],
       continuationDecisions: [],
       finalOutputs: [],
+      runtimeBlockers: [],
+      stepErrors: [],
       openCodeRuns: [],
       ragContexts: [],
       results: [],

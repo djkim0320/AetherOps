@@ -48,9 +48,9 @@ export const defaultSettings: AppSettings = {
     provider: "disabled"
   },
   embedding: {
-    provider: "local",
-    model: "local-hash",
-    dimensions: 96
+    provider: "openai",
+    model: "text-embedding-3-small",
+    dimensions: 1536
   },
   browserUse: {
     enabled: true,
@@ -328,10 +328,10 @@ function normalizeRuntimeProvider(provider: unknown): string {
 }
 
 function normalizeEmbeddingProvider(provider: unknown): EmbeddingSettings["provider"] {
-  if (provider === "openai" || provider === "google" || provider === "custom" || provider === "local") {
+  if (provider === "openai" || provider === "google" || provider === "custom") {
     return provider;
   }
-  return provider === "openrouter" ? "google" : "local";
+  return provider === "openrouter" ? "google" : "openai";
 }
 
 function updateEncryptedKey(

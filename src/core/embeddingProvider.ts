@@ -1,4 +1,3 @@
-import { tokenize } from "./chunking.js";
 import type { EmbeddingSettings } from "./types.js";
 
 export interface EmbeddingProvider {
@@ -12,30 +11,12 @@ export class EmbeddingProviderError extends Error {
   }
 }
 
-export class LocalHashEmbeddingProvider implements EmbeddingProvider {
-  constructor(private readonly dimensions = 96) {}
-
-  async embed(text: string): Promise<number[]> {
-    const vector = new Array(this.dimensions).fill(0);
-    for (const token of tokenize(text)) {
-      const hash = hashToken(token);
-      const index = hash % this.dimensions;
-      vector[index] += 1 + (token.length % 7) / 10;
-    }
-    return normalize(vector);
-  }
-}
-
 export class ApiEmbeddingProvider implements EmbeddingProvider {
-  private readonly localProvider: LocalHashEmbeddingProvider;
-
-  constructor(private readonly settings: EmbeddingSettings) {
-    this.localProvider = new LocalHashEmbeddingProvider(settings.dimensions);
-  }
+  constructor(private readonly settings: EmbeddingSettings) {}
 
   async embed(text: string): Promise<number[]> {
     if (this.settings.provider === "local") {
-      return this.localProvider.embed(text);
+      throw new EmbeddingProviderError("local embedding provider is not allowed in production indexing. Configure OpenAI, Google, or a custom embedding provider.");
     }
 
     if (!this.settings.apiKey) {
@@ -131,15 +112,6 @@ export function cosineSimilarity(left: number[], right: number[]): number {
     return 0;
   }
   return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
-}
-
-function hashToken(token: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < token.length; index += 1) {
-    hash ^= token.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
 }
 
 function normalize(vector: number[]): number[] {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { ApiEmbeddingProvider, EmbeddingProviderError, LocalHashEmbeddingProvider } from "./embeddingProvider.js";
+import { ApiEmbeddingProvider, EmbeddingProviderError } from "./embeddingProvider.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -8,11 +8,14 @@ describe("EmbeddingProvider", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("uses local hash only when local provider is explicitly selected", async () => {
-    const embedding = await new LocalHashEmbeddingProvider(12).embed("urban heat island mitigation");
+  it("rejects local embedding provider in production indexing", async () => {
+    const provider = new ApiEmbeddingProvider({
+      provider: "local",
+      model: "legacy-local-model",
+      dimensions: 12
+    });
 
-    expect(embedding).toHaveLength(12);
-    expect(embedding.some((value) => value > 0)).toBe(true);
+    await expect(provider.embed("urban heat island mitigation")).rejects.toThrow("local embedding provider is not allowed");
   });
 
   it("throws when an API embedding provider has no key", async () => {

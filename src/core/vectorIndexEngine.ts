@@ -1,5 +1,5 @@
 import { chunkResearchSource } from "./chunking.js";
-import { LocalHashEmbeddingProvider, type EmbeddingProvider } from "./embeddingProvider.js";
+import type { EmbeddingProvider } from "./embeddingProvider.js";
 import { createStableId, nowIso } from "./ids.js";
 import type {
   AppSettings,
@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 
 export class VectorIndexEngine {
-  constructor(private readonly embeddingProvider: EmbeddingProvider = new LocalHashEmbeddingProvider()) {}
+  constructor(private readonly embeddingProvider: EmbeddingProvider) {}
 
   async buildIndex(input: {
     snapshot: ResearchSnapshot;
@@ -35,7 +35,7 @@ export class VectorIndexEngine {
           citation: record.citation ?? record.sourceUri,
           embedding,
           embeddingProvider: providerName(input.settings),
-          embeddingModel: input.settings?.embedding.model ?? "local-hash",
+          embeddingModel: input.settings?.embedding.model ?? "configured-embedding-model",
           embeddingDimensions: embedding.length,
           createdAt: nowIso()
         });
@@ -60,10 +60,10 @@ function sourceFromRecord(record: NormalizedResearchRecord): ResearchSource {
 
 function providerName(settings?: AppSettings): string {
   if (!settings) {
-    return "local_hash";
+    return "configured";
   }
   if (settings.embedding.provider === "local") {
-    return "local_hash";
+    return "blocked_local_embedding";
   }
   return settings.embedding.provider;
 }

@@ -1,6 +1,6 @@
 import { createId, nowIso } from "../../core/ids.js";
 import type { ResearchTool, ResearchToolResult } from "../../core/toolRegistry.js";
-import type { AppSettings, EvidenceItem, OpenCodeRunInput, ResearchArtifact, ResearchSource, ToolRun } from "../../core/types.js";
+import type { AppSettings, EvidenceItem, OpenCodeRunInput, ResearchArtifact, ResearchSource } from "../../core/types.js";
 import type { BrowserCollectedPage, BrowserPageCollector } from "./backgroundBrowserRuntime.js";
 
 export class BrowserResearchTool implements ResearchTool {
@@ -11,10 +11,10 @@ export class BrowserResearchTool implements ResearchTool {
   async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
     const startedAt = nowIso();
     if (!settings.browserUse.enabled) {
-      return skipped(input, startedAt, this.name, "AetherOps background browser is disabled in settings.");
+      throw new Error("AetherOps background browser is disabled in settings.");
     }
     if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
-      return skipped(input, startedAt, this.name, "External browsing is disabled by project autonomy or app settings.");
+      throw new Error("External browsing is disabled by project autonomy or app settings.");
     }
 
     const query = buildQuery(input);
@@ -29,7 +29,7 @@ export class BrowserResearchTool implements ResearchTool {
       });
       return completed(input, startedAt, this.name, query, pages, settings);
     } catch (error) {
-      return failed(input, startedAt, this.name, query, error);
+      throw new Error(`Background browser failed for query "${query}": ${formatError(error)}`);
     }
   }
 }
@@ -132,67 +132,6 @@ function completed(
     evidence,
     artifacts,
     sources
-  };
-}
-
-function skipped(input: OpenCodeRunInput, startedAt: string, toolName: string, reason: string): ResearchToolResult {
-  const completedAt = nowIso();
-  return {
-    toolRun: makeToolRun(input, toolName, startedAt, completedAt, "skipped", reason, "tool_unavailable"),
-    evidence: [gapEvidence(input, completedAt, reason)],
-    artifacts: [],
-    sources: []
-  };
-}
-
-function failed(input: OpenCodeRunInput, startedAt: string, toolName: string, query: string, error: unknown): ResearchToolResult {
-  const completedAt = nowIso();
-  const reason = `Background browser failed for query "${query}": ${formatError(error)}`;
-  return {
-    toolRun: makeToolRun(input, toolName, startedAt, completedAt, "failed", reason, "tool_failed"),
-    evidence: [gapEvidence(input, completedAt, reason)],
-    artifacts: [],
-    sources: []
-  };
-}
-
-function makeToolRun(
-  input: OpenCodeRunInput,
-  toolName: string,
-  startedAt: string,
-  completedAt: string,
-  status: ToolRun["status"],
-  reason: string,
-  error?: string
-): ToolRun {
-  return {
-    id: createId("tool"),
-    projectId: input.project.id,
-    iteration: input.iteration,
-    toolName,
-    input: { topic: input.project.topic },
-    output: { reason },
-    status,
-    error,
-    startedAt,
-    completedAt
-  };
-}
-
-function gapEvidence(input: OpenCodeRunInput, createdAt: string, reason: string): EvidenceItem {
-  return {
-    id: createId("evidence"),
-    projectId: input.project.id,
-    category: "experiment_log",
-    title: "Background browser evidence_gap",
-    summary: reason,
-    keywords: ["background_browser", "tool_unavailable", "evidence_gap"],
-    linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
-    reliabilityScore: 0.12,
-    relevanceScore: 0.35,
-    evidenceStrength: "weak",
-    limitations: ["This records browser unavailability and is not substantive research evidence."],
-    createdAt
   };
 }
 

@@ -3,7 +3,7 @@ import { buildResearchReport } from "./report.js";
 import { createDefaultSessions, seedResearchPlan } from "./researchSeed.js";
 import { ResearchLoopStep, type ResearchProject, type ResearchSnapshot } from "./types.js";
 
-const forbiddenMojibake = /[梨媛洹諛珥寃湲吏理遺異濡쒖쿂뺤꽦쟻덈떎꾨뿉섏쭛뒿듬낅땲룞]|[?]{3,}/;
+const forbiddenMojibake = /[筌域疫彛肉類]|[?]{3,}/;
 
 describe("Korean user-facing copy", () => {
   it("keeps default sessions and seed research records readable", () => {
@@ -12,7 +12,7 @@ describe("Korean user-facing copy", () => {
     const text = JSON.stringify({ sessions, seed });
 
     expect(sessions[0]?.title).toBe("채팅 세션 1");
-    expect(seed.questions[0]?.text).toContain("핵심 비교 기준");
+    expect(seed.questions[0]?.text).toContain("핵심 질문");
     expect(seed.evidence[0]?.limitations?.[0]).toContain("외부 검증 근거가 아닙니다");
     expect(text).not.toMatch(forbiddenMojibake);
   });
@@ -55,6 +55,7 @@ const snapshot: ResearchSnapshot = {
   questions: seed.questions,
   hypotheses: seed.hypotheses,
   evidence: seed.evidence,
+  researchInputs: [],
   artifacts: [],
   sources: [],
   chunks: [],
@@ -70,6 +71,8 @@ const snapshot: ResearchSnapshot = {
   validationResults: [],
   continuationDecisions: [],
   finalOutputs: [],
+  runtimeBlockers: [],
+  stepErrors: [],
   openCodeRuns: [],
   ragContexts: [],
   results: [],

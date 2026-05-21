@@ -20,6 +20,7 @@ import {
   type ResearchArtifact,
   type ResearchChunk,
   type ResearchDatabase,
+  type ResearchInput,
   type ResearchPlan,
   type ResearchProject,
   type ResearchQuestion,
@@ -29,6 +30,8 @@ import {
   type ResearchSource,
   type ResearchSnapshot,
   type ResearchStore,
+  type RuntimeBlocker,
+  type StepError,
   type ToolRun,
   type ValidationResult
 } from "../../core/types.js";
@@ -75,6 +78,10 @@ export class SqliteResearchStore implements ResearchStore {
 
   async saveDatabase(database: ResearchDatabase): Promise<void> {
     this.upsertMany("research_databases", [database]);
+  }
+
+  async saveResearchInput(input: ResearchInput): Promise<void> {
+    this.upsertMany("research_inputs", [input]);
   }
 
   async saveQuestions(questions: ResearchQuestion[]): Promise<void> {
@@ -150,6 +157,14 @@ export class SqliteResearchStore implements ResearchStore {
     this.upsertMany("final_outputs", [output]);
   }
 
+  async saveRuntimeBlocker(blocker: RuntimeBlocker): Promise<void> {
+    this.upsertMany("runtime_blockers", [blocker]);
+  }
+
+  async saveStepError(error: StepError): Promise<void> {
+    this.upsertMany("step_errors", [error]);
+  }
+
   async saveOpenCodeRun(run: OpenCodeRun): Promise<void> {
     this.upsertMany("opencode_runs", [run]);
   }
@@ -180,6 +195,7 @@ export class SqliteResearchStore implements ResearchStore {
       project,
       sessions: this.byProject<ResearchSession>("sessions", projectId),
       database: this.byProject<ResearchDatabase>("research_databases", projectId).at(-1),
+      researchInputs: this.byProject<ResearchInput>("research_inputs", projectId),
       questions: this.byProject<ResearchQuestion>("questions", projectId),
       hypotheses: this.byProject<Hypothesis>("hypotheses", projectId),
       evidence: this.byProject<EvidenceItem>("evidence", projectId),
@@ -198,6 +214,8 @@ export class SqliteResearchStore implements ResearchStore {
       validationResults: this.byProject<ValidationResult>("validation_results", projectId),
       continuationDecisions: this.byProject<ContinuationDecision>("continuation_decisions", projectId),
       finalOutputs: this.byProject<FinalResearchOutput>("final_outputs", projectId),
+      runtimeBlockers: this.byProject<RuntimeBlocker>("runtime_blockers", projectId),
+      stepErrors: this.byProject<StepError>("step_errors", projectId),
       openCodeRuns: this.byProject<OpenCodeRun>("opencode_runs", projectId),
       ragContexts: this.byProject<RagContext>("rag_contexts", projectId),
       results: this.byProject<EvidenceBasedResult>("results", projectId),
@@ -219,6 +237,7 @@ export class SqliteResearchStore implements ResearchStore {
       "projects",
       "sessions",
       "research_databases",
+      "research_inputs",
       "questions",
       "hypotheses",
       "evidence",
@@ -237,6 +256,8 @@ export class SqliteResearchStore implements ResearchStore {
       "validation_results",
       "continuation_decisions",
       "final_outputs",
+      "runtime_blockers",
+      "step_errors",
       "opencode_runs",
       "rag_contexts",
       "results",

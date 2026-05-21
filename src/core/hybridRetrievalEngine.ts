@@ -1,9 +1,9 @@
-import { cosineSimilarity, LocalHashEmbeddingProvider, type EmbeddingProvider } from "./embeddingProvider.js";
+import { cosineSimilarity, type EmbeddingProvider } from "./embeddingProvider.js";
 import { createId, nowIso } from "./ids.js";
 import type { HybridContext, ResearchSnapshot } from "./types.js";
 
 export class HybridRetrievalEngine {
-  constructor(private readonly embeddingProvider: EmbeddingProvider = new LocalHashEmbeddingProvider()) {}
+  constructor(private readonly embeddingProvider: EmbeddingProvider) {}
 
   async buildContext(snapshot: ResearchSnapshot, query?: string, iteration?: number): Promise<HybridContext> {
     const activeQuery = query || buildQuery(snapshot);

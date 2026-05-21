@@ -1,24 +1,24 @@
 ﻿import { buildSourceText, chunkResearchSource } from "./chunking.js";
-import { LocalHashEmbeddingProvider, type EmbeddingProvider } from "./embeddingProvider.js";
+import type { EmbeddingProvider } from "./embeddingProvider.js";
 import { EvidenceNormalizer } from "./evidenceNormalizer.js";
 import { FinalOutputWriter } from "./finalOutputWriter.js";
 import { HybridRetrievalEngine } from "./hybridRetrievalEngine.js";
 import { createId, createStableId, nowIso } from "./ids.js";
-import { NoopLlmProvider, type LlmProvider } from "./llm.js";
+import type { LlmProvider } from "./llm.js";
 import { deriveResultWithLlm } from "./llmPlanning.js";
 import { LoopDecisionEngine } from "./loopDecision.js";
 import { OntologyGraphEngine } from "./ontologyGraphEngine.js";
-import { NoopProjectStorage, type ProjectStorage } from "./projectStorage.js";
+import type { ProjectStorage } from "./projectStorage.js";
 import { ReasoningEngine } from "./reasoningEngine.js";
+import { createResearchInput, type ResearchInputPayload } from "./researchInput.js";
 import { buildResearchReport } from "./report.js";
 import { ResearchPlanner } from "./researchPlanner.js";
-import { createDefaultSessions, seedResearchPlan } from "./researchSeed.js";
+import { createDefaultSessions } from "./researchSeed.js";
 import { ResearchSpecificationBuilder } from "./researchSpecification.js";
-import { ResultSynthesizer } from "./resultSynthesizer.js";
+import { RuntimeRequirementChecker, RuntimeRequirementError } from "./runtimeRequirements.js";
 import { ToolRunner } from "./toolRunner.js";
 import { ValidationEngine } from "./validationEngine.js";
 import { VectorIndexEngine } from "./vectorIndexEngine.js";
-import { VectorRagEngine } from "./vectorRagEngine.js";
 import {
   ResearchLoopStep,
   type AppSettings,
@@ -29,6 +29,7 @@ import {
   type FlowKind,
   type LoopIteration,
   type OpenCodeAdapter,
+  type OpenCodeRunOutput,
   type RagContext,
   type RagEngine,
   type ResearchArtifact,
@@ -41,6 +42,8 @@ import {
   type ResearchSource,
   type ResearchSpecification,
   type ResearchStore,
+  type RuntimeBlocker,
+  type StepError,
   type ToolRun
 } from "./types.js";
 
@@ -57,7 +60,7 @@ const defaultSettings: AppSettings = {
   openCodeLlm: { source: "codex-oauth", model: "gpt-5.5" },
   openCode: { enabled: false, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled" },
-  embedding: { provider: "local", model: "local-hash", dimensions: 96 },
+  embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
   allowExternalSearch: false,
   allowCodeExecution: false,
@@ -67,12 +70,6 @@ const defaultSettings: AppSettings = {
   updatedAt: nowIso()
 };
 
-const unconfiguredOpenCodeAdapter: OpenCodeAdapter = {
-  run: async () => {
-    throw new Error("OpenCode execution engine is not configured. Configure OpenCode before starting the research loop.");
-  }
-};
-
 export class AetherOpsOrchestrator {
   private readonly specificationBuilder: ResearchSpecificationBuilder;
   private readonly planner: ResearchPlanner;
@@ -80,17 +77,17 @@ export class AetherOpsOrchestrator {
   private readonly ontologyGraph = new OntologyGraphEngine();
   private readonly reasoning = new ReasoningEngine();
   private readonly validation = new ValidationEngine();
-  private readonly synthesizer = new ResultSynthesizer();
   private readonly loopDecision = new LoopDecisionEngine();
+  private readonly requirements = new RuntimeRequirementChecker();
 
   constructor(
     private readonly store: ResearchStore,
-    private readonly openCode: OpenCodeAdapter = unconfiguredOpenCodeAdapter,
-    private readonly ragEngine: RagEngine = new VectorRagEngine(),
+    private readonly openCode: OpenCodeAdapter,
+    private readonly ragEngine: RagEngine,
     private readonly projectRootBase = ".aetherops/projects",
-    private readonly llm: LlmProvider = new NoopLlmProvider(),
-    private readonly projectStorage: ProjectStorage = new NoopProjectStorage(),
-    private readonly embeddingProvider: EmbeddingProvider = new LocalHashEmbeddingProvider(),
+    private readonly llm: LlmProvider | undefined,
+    private readonly projectStorage: ProjectStorage,
+    private readonly embeddingProvider: EmbeddingProvider,
     private readonly getSettings: SettingsGetter = () => defaultSettings,
     private readonly toolRunner?: ToolRunner
   ) {
@@ -108,8 +105,8 @@ export class AetherOpsOrchestrator {
 
   async getLlmStatus(): Promise<{ provider: string; available: boolean }> {
     return {
-      provider: this.llm.name,
-      available: await this.llm.isAvailable()
+      provider: this.llm?.name ?? "unconfigured",
+      available: this.llm ? await this.llm.isAvailable() : false
     };
   }
 
@@ -194,7 +191,7 @@ export class AetherOpsOrchestrator {
     await this.store.saveArtifacts([writtenUserArtifact]);
     await this.record(projectId, snapshot.project.currentStep, "Main Flow", `${session.title} 사용자 메시지가 저장되었습니다.`);
 
-    if (!(await this.llm.isAvailable())) {
+    if (!this.llm || !(await this.llm.isAvailable())) {
       throw new Error("현재 선택한 LLM을 사용할 수 없습니다. 모델 선택 또는 OAuth/API 설정을 확인해 주세요.");
     }
 
@@ -226,20 +223,29 @@ export class AetherOpsOrchestrator {
     return this.store.getSnapshot(projectId);
   }
 
-  async inputResearchQuestionHypothesis(projectId: string): Promise<ResearchSnapshot> {
+  async inputResearchQuestionHypothesis(projectId: string, payload?: ResearchInputPayload): Promise<ResearchSnapshot> {
     const snapshot = await this.store.getSnapshot(projectId);
-    if (!snapshot.questions.length || !snapshot.hypotheses.length) {
-      const seed = seedResearchPlan(snapshot.project);
-      await this.store.saveQuestions(snapshot.questions.length ? snapshot.questions : seed.questions);
-      await this.store.saveHypotheses(snapshot.hypotheses.length ? snapshot.hypotheses : seed.hypotheses);
-      await this.store.saveEvidence(seed.evidence);
+    if (payload) {
+      const created = createResearchInput(snapshot.project, payload);
+      await this.store.saveResearchInput(created.input);
+      await this.store.saveQuestions(created.questions);
+      await this.store.saveHypotheses(created.hypotheses);
+    }
+    try {
+      await this.assertStepReady(projectId, ResearchLoopStep.InputResearchQuestionHypothesis);
+    } catch (error) {
+      if (error instanceof RuntimeRequirementError) {
+        return this.blockProject(projectId, error);
+      }
+      throw error;
     }
     await this.moveProject(projectId, ResearchLoopStep.InputResearchQuestionHypothesis);
-    await this.record(projectId, ResearchLoopStep.InputResearchQuestionHypothesis, "Main Flow", "연구 질문과 초기 가설 입력이 준비되었습니다.");
+    await this.record(projectId, ResearchLoopStep.InputResearchQuestionHypothesis, "Main Flow", "명시적인 연구 질문과 초기 가설이 입력되었습니다.");
     return this.store.getSnapshot(projectId);
   }
 
   async buildResearchSpecification(projectId: string): Promise<ResearchSnapshot> {
+    await this.assertStepReady(projectId, ResearchLoopStep.BuildResearchSpecification);
     const snapshot = await this.store.getSnapshot(projectId);
     const specification = await this.specificationBuilder.build({
       project: snapshot.project,
@@ -254,6 +260,7 @@ export class AetherOpsOrchestrator {
   }
 
   async planResearch(projectId: string, iteration?: number, decision?: ContinuationDecision): Promise<ResearchSnapshot> {
+    await this.assertStepReady(projectId, ResearchLoopStep.PlanResearch);
     const snapshot = await this.store.getSnapshot(projectId);
     const specification = await this.ensureSpecification(projectId);
     const settings = await this.getSettings();
@@ -271,14 +278,18 @@ export class AetherOpsOrchestrator {
   }
 
   async seedQuestions(projectId: string): Promise<ResearchSnapshot> {
-    await this.inputResearchQuestionHypothesis(projectId);
+    const snapshot = await this.inputResearchQuestionHypothesis(projectId);
+    if (snapshot.project.status === "blocked") {
+      return snapshot;
+    }
     return this.buildResearchSpecification(projectId);
   }
 
   async startLoop(projectId: string): Promise<ResearchSnapshot> {
     try {
       await this.ensureResearchDb(projectId);
-      await this.ensureResearchInput(projectId);
+      const inputSnapshot = await this.ensureResearchInput(projectId);
+      if (inputSnapshot.project.status === "blocked") return inputSnapshot;
       await this.ensureResearchSpecification(projectId);
       await this.ensureResearchPlan(projectId);
       await this.setStatus(projectId, "running");
@@ -316,9 +327,11 @@ export class AetherOpsOrchestrator {
       }
       return this.finalizeOutputs(projectId);
     } catch (error) {
+      if (error instanceof RuntimeRequirementError) {
+        return this.blockProject(projectId, error);
+      }
       const failedStep = (await this.store.getSnapshot(projectId)).project.currentStep;
-      await this.record(projectId, failedStep, "Agent Control", `연구 루프 실패: ${formatError(error)}`);
-      await this.setStatus(projectId, "failed");
+      await this.failProject(projectId, failedStep, error);
       return this.store.getSnapshot(projectId);
     }
   }
@@ -346,6 +359,7 @@ export class AetherOpsOrchestrator {
   }
 
   async executeTools(projectId: string, iteration?: number): Promise<ResearchSnapshot> {
+    await this.assertStepReady(projectId, ResearchLoopStep.ExecuteTools, { checkOpenCodePreflight: true });
     const snapshot = await this.store.getSnapshot(projectId);
     const activeIteration = iteration ?? nextIteration(snapshot);
     const runInput = {
@@ -360,7 +374,14 @@ export class AetherOpsOrchestrator {
       researchPlan: snapshot.researchPlans.at(-1),
       iteration: activeIteration
     };
-    const output = await this.openCode.run(runInput);
+    let output: OpenCodeRunOutput;
+    try {
+      output = await this.openCode.run(runInput);
+    } catch (error) {
+      await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
+      await this.failProject(projectId, ResearchLoopStep.ExecuteTools, error);
+      return this.store.getSnapshot(projectId);
+    }
     const settings = await this.getSettings();
     const toolResults = this.toolRunner ? await this.toolRunner.runAll(runInput, settings) : [];
     const toolResultArtifacts = toolResults.flatMap((result) => result.artifacts);
@@ -432,6 +453,7 @@ export class AetherOpsOrchestrator {
   }
 
   async buildVectorIndex(projectId: string): Promise<ResearchSnapshot> {
+    await this.assertStepReady(projectId, ResearchLoopStep.BuildVectorIndex);
     const snapshot = await this.store.getSnapshot(projectId);
     const database = await this.requireDatabase(projectId);
     const settings = await this.getSettings();
@@ -457,6 +479,7 @@ export class AetherOpsOrchestrator {
   }
 
   async buildOntologyGraph(projectId: string): Promise<ResearchSnapshot> {
+    await this.assertStepReady(projectId, ResearchLoopStep.BuildOntologyGraph);
     const snapshot = await this.store.getSnapshot(projectId);
     const database = await this.requireDatabase(projectId);
     const graph = this.ontologyGraph.build({
@@ -487,18 +510,12 @@ export class AetherOpsOrchestrator {
   }
 
   async synthesizeAndEvaluate(projectId: string, iteration?: number, forceStop = false): Promise<EvidenceBasedResult> {
+    await this.assertStepReady(projectId, ResearchLoopStep.SynthesizeAndEvaluate);
     const snapshot = await this.store.getSnapshot(projectId);
     const activeIteration = iteration ?? nextIteration(snapshot);
     const hybridContext = snapshot.hybridContexts.at(-1) ?? await new HybridRetrievalEngine(this.embeddingProvider).buildContext(snapshot, undefined, activeIteration);
     const latestValidations = snapshot.validationResults.filter((result) => result.iteration === activeIteration);
-    const result =
-      (await this.tryLlmResult(snapshot, activeIteration, forceStop)) ??
-      this.synthesizer.synthesize({
-        snapshot,
-        hybridContext,
-        validationResults: latestValidations.length ? latestValidations : snapshot.validationResults.slice(-snapshot.hypotheses.length),
-        forceStop
-      });
+    const result = await this.tryLlmResult(snapshot, activeIteration, forceStop);
     await this.store.saveResult(result);
     await this.applyHypothesisUpdates(projectId, result);
     await this.moveProject(projectId, ResearchLoopStep.SynthesizeAndEvaluate);
@@ -540,9 +557,10 @@ export class AetherOpsOrchestrator {
 
   async finalizeOutputs(projectId: string): Promise<ResearchSnapshot> {
     const snapshot = await this.store.getSnapshot(projectId);
-    if (snapshot.project.status === "paused" || snapshot.project.status === "aborted") {
+    if (snapshot.project.status === "paused" || snapshot.project.status === "aborted" || snapshot.project.status === "failed" || snapshot.project.status === "blocked") {
       return snapshot;
     }
+    await this.assertStepReady(projectId, ResearchLoopStep.FinalizeOutputs);
     const database = await this.requireDatabase(projectId);
     const output = await new FinalOutputWriter(this.projectStorage).write(snapshot, database);
     const report = buildResearchReport(snapshot);
@@ -662,9 +680,9 @@ export class AetherOpsOrchestrator {
     if (sources.length) await this.store.saveSources(await this.projectStorage.writeSources(snapshot.project, database, sources));
   }
 
-  private async checkAbortOrPause(projectId: string): Promise<"running" | "paused" | "aborted" | "failed"> {
+  private async checkAbortOrPause(projectId: string): Promise<"running" | "paused" | "aborted" | "failed" | "blocked"> {
     const status = (await this.store.getSnapshot(projectId)).project.status;
-    if (status === "paused" || status === "aborted" || status === "failed") return status;
+    if (status === "paused" || status === "aborted" || status === "failed" || status === "blocked") return status;
     return "running";
   }
 
@@ -676,13 +694,87 @@ export class AetherOpsOrchestrator {
     return next.database;
   }
 
-  private async tryLlmResult(snapshot: ResearchSnapshot, iteration: number, forceStop: boolean): Promise<EvidenceBasedResult | undefined> {
-    try {
-      const result = await deriveResultWithLlm(this.llm, snapshot, iteration, forceStop);
-      return result?.answer ? result : undefined;
-    } catch {
-      return undefined;
+  private async assertStepReady(
+    projectId: string,
+    step: ResearchLoopStep,
+    options: { checkOpenCodePreflight?: boolean; storageWritable?: boolean } = {}
+  ): Promise<void> {
+    let openCodeReady: boolean | undefined;
+    if (options.checkOpenCodePreflight) {
+      try {
+        await this.preflightExecutionEngine(projectId);
+        openCodeReady = true;
+      } catch {
+        openCodeReady = false;
+      }
     }
+    this.requirements.assertStepReady(step, {
+      snapshot: await this.store.getSnapshot(projectId),
+      settings: await this.getSettings(),
+      llmAvailable: this.llm ? await this.llm.isAvailable() : false,
+      openCodeReady,
+      storageWritable: options.storageWritable
+    });
+  }
+
+  private async blockProject(projectId: string, error: RuntimeRequirementError): Promise<ResearchSnapshot> {
+    const snapshot = await this.store.getSnapshot(projectId);
+    await this.moveProject(projectId, error.step, "blocked");
+    for (const requirement of error.unmetRequirements) {
+      const blocker: RuntimeBlocker = {
+        id: createId("blocker"),
+        projectId,
+        step: error.step,
+        requirementKey: requirement.key,
+        message: requirement.message ?? `${requirement.label} is required.`,
+        createdAt: nowIso()
+      };
+      await this.store.saveRuntimeBlocker(blocker);
+      if (this.projectStorage.writeRuntimeBlocker) await this.projectStorage.writeRuntimeBlocker(snapshot.project, blocker);
+    }
+    await this.saveStepError(projectId, error.step, error.message, "runtime_requirement", {
+      unmetRequirements: error.unmetRequirements
+    });
+    await this.record(projectId, error.step, "Error Flow", `필수 설정이 부족해 연구가 blocked 상태로 멈췄습니다: ${error.message}`);
+    return this.store.getSnapshot(projectId);
+  }
+
+  private async failProject(projectId: string, step: ResearchLoopStep, error: unknown): Promise<void> {
+    await this.moveProject(projectId, step, "failed");
+    await this.saveStepError(projectId, step, formatError(error), "step_failed", {});
+    await this.record(projectId, step, "Error Flow", `연구 단계 실패: ${formatError(error)}`);
+  }
+
+  private async saveStepError(
+    projectId: string,
+    step: ResearchLoopStep,
+    message: string,
+    cause: string,
+    metadata: Record<string, unknown>
+  ): Promise<void> {
+    const snapshot = await this.store.getSnapshot(projectId);
+    const stepError: StepError = {
+      id: createId("error"),
+      projectId,
+      step,
+      message,
+      cause,
+      metadata,
+      createdAt: nowIso()
+    };
+    await this.store.saveStepError(stepError);
+    if (this.projectStorage.writeStepError) await this.projectStorage.writeStepError(snapshot.project, stepError);
+  }
+
+  private async tryLlmResult(snapshot: ResearchSnapshot, iteration: number, forceStop: boolean): Promise<EvidenceBasedResult> {
+    if (!this.llm || !(await this.llm.isAvailable())) {
+      throw new Error("LLM provider is required to synthesize and evaluate results.");
+    }
+    const result = await deriveResultWithLlm(this.llm, snapshot, iteration, forceStop);
+    if (!result?.answer) {
+      throw new Error("LLM result synthesis did not return an answer.");
+    }
+    return result;
   }
 
   private async applyHypothesisUpdates(projectId: string, result: EvidenceBasedResult): Promise<void> {
@@ -775,6 +867,9 @@ export class AetherOpsOrchestrator {
 
   private async completeChatReply(snapshot: ResearchSnapshot, session: ResearchSession, message: string): Promise<string> {
     const latestContext = snapshot.hybridContexts.at(-1)?.contextText ?? snapshot.ragContexts.at(-1)?.contextText ?? snapshot.ragContexts.at(-1)?.summary;
+    if (!this.llm) {
+      throw new Error("LLM provider is not configured.");
+    }
     const response = await this.llm.completeJson<ChatReplyResponse>({
       schemaName: "AetherOpsChatReply",
       system: [

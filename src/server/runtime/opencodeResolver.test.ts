@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe("resolveOpenCodeCommand", () => {
-  it("prefers the bundled opencode-ai binary for the default command", () => {
+  it("uses the bundled opencode-ai binary only when no command is configured", () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-opencode-"));
     const bundledPath =
       process.platform === "win32"
@@ -23,7 +23,7 @@ describe("resolveOpenCodeCommand", () => {
     mkdirSync(join(bundledPath, ".."), { recursive: true });
     writeFileSync(bundledPath, "", "utf8");
 
-    const resolution = resolveOpenCodeCommand("opencode", { searchRoots: [tempDir] });
+    const resolution = resolveOpenCodeCommand(undefined, { searchRoots: [tempDir] });
 
     expect(resolution.source).toBe("bundled");
     expect(resolution.command).toBe(bundledPath);

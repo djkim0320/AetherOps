@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createId, nowIso } from "../../core/ids.js";
@@ -17,6 +17,8 @@ import type {
   ResearchReport,
   ResearchSnapshot,
   ResearchSource,
+  RuntimeBlocker,
+  StepError,
   ToolRun
 } from "../../core/types.js";
 
@@ -34,6 +36,7 @@ export class NodeProjectStorage implements ProjectStorage {
       knowledgeRoot: join(root, "knowledge"),
       ontologyRoot: join(root, "ontology"),
       exportsRoot: join(root, "exports"),
+      errorsRoot: join(root, "errors"),
       statePath: join(root, "state.json")
     };
 
@@ -47,7 +50,8 @@ export class NodeProjectStorage implements ProjectStorage {
       paths.reportRoot,
       paths.knowledgeRoot,
       paths.ontologyRoot,
-      paths.exportsRoot
+      paths.exportsRoot,
+      paths.errorsRoot
     ]) {
       mkdirSync(directory, { recursive: true });
     }
@@ -208,6 +212,16 @@ export class NodeProjectStorage implements ProjectStorage {
     return { reportPath, knowledgePath, ontologyExportPath, artifactPackagePath };
   }
 
+  async writeRuntimeBlocker(project: ResearchProject, blocker: RuntimeBlocker): Promise<void> {
+    const path = safeJoin(project.projectRoot, "errors/runtime-blockers.jsonl");
+    appendFileSync(path, `${JSON.stringify(blocker)}\n`, "utf8");
+  }
+
+  async writeStepError(project: ResearchProject, error: StepError): Promise<void> {
+    const path = safeJoin(project.projectRoot, "errors/step-errors.jsonl");
+    appendFileSync(path, `${JSON.stringify(error)}\n`, "utf8");
+  }
+
   async writeProjectState(snapshot: ResearchSnapshot): Promise<void> {
     const root = normalize(snapshot.project.projectRoot);
     mkdirSync(root, { recursive: true });
@@ -297,7 +311,8 @@ function buildLoopSpec(snapshot: ResearchSnapshot): Record<string, unknown> {
         entities: snapshot.ontologyEntities.length,
         relations: snapshot.ontologyRelations.length
       },
-      projectsAndReports: snapshot.finalOutputs.length || (snapshot.report ? 1 : 0)
+      projectsAndReports: snapshot.finalOutputs.length || (snapshot.report ? 1 : 0),
+      errorsAndBlockers: snapshot.stepErrors.length + snapshot.runtimeBlockers.length
     },
     counts: {
       sessions: snapshot.sessions.length,
@@ -311,6 +326,8 @@ function buildLoopSpec(snapshot: ResearchSnapshot): Record<string, unknown> {
       ontologyRelations: snapshot.ontologyRelations.length,
       validationResults: snapshot.validationResults.length,
       continuationDecisions: snapshot.continuationDecisions.length,
+      runtimeBlockers: snapshot.runtimeBlockers.length,
+      stepErrors: snapshot.stepErrors.length,
       results: snapshot.results.length,
       events: snapshot.iterations.length
     },
@@ -368,6 +385,7 @@ function migrateResearchDb(path: string): void {
     "artifacts",
     "tool_runs",
     "agent_plans",
+    "research_inputs",
     "research_specifications",
     "research_plans",
     "normalized_records",
@@ -375,6 +393,8 @@ function migrateResearchDb(path: string): void {
     "validation_results",
     "continuation_decisions",
     "final_outputs",
+    "runtime_blockers",
+    "step_errors",
     "reports"
   ]);
 }

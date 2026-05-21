@@ -9,7 +9,7 @@ const settings: AppSettings = {
   openCodeLlm: { source: "codex-oauth", model: "gpt-5.5" },
   openCode: { enabled: false, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled" },
-  embedding: { provider: "local", model: "local-hash", dimensions: 96 },
+  embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKey: "test-key", apiKeyConfigured: true },
   browserUse: { enabled: true, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: true },
   allowExternalSearch: true,
   allowCodeExecution: false,
@@ -43,7 +43,7 @@ describe("BrowserResearchTool", () => {
     expect(result.artifacts.some((artifact) => artifact.relativePath.includes("screenshot"))).toBe(true);
   });
 
-  it("records an evidence gap when browser use is disabled", async () => {
+  it("throws a structured tool error when browser use is disabled", async () => {
     const disabled = {
       ...settings,
       browserUse: { ...settings.browserUse, enabled: false }
@@ -54,11 +54,7 @@ describe("BrowserResearchTool", () => {
       }
     };
 
-    const result = await new BrowserResearchTool(collector).run(input(), disabled);
-
-    expect(result.toolRun.status).toBe("skipped");
-    expect(result.toolRun.error).toBe("tool_unavailable");
-    expect(result.evidence[0].keywords).toContain("evidence_gap");
+    await expect(new BrowserResearchTool(collector).run(input(), disabled)).rejects.toThrow("background browser is disabled");
   });
 });
 

@@ -140,7 +140,7 @@ async function handleRpc(
       return orchestrator.seedQuestions(String(args[0]));
     case "research.inputResearchQuestionHypothesis":
     case "aetherops:inputResearchQuestionHypothesis":
-      return orchestrator.inputResearchQuestionHypothesis(String(args[0]));
+      return orchestrator.inputResearchQuestionHypothesis(String(args[0]), args[1] as never);
     case "research.buildSpecification":
     case "aetherops:buildResearchSpecification":
       return orchestrator.buildResearchSpecification(String(args[0]));

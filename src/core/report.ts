@@ -25,7 +25,7 @@ export function buildResearchReport(snapshot: ResearchSnapshot): ResearchReport 
       ...snapshot.validationResults.flatMap((item) => item.limitations),
       ...snapshot.validationResults.flatMap((item) => item.evidenceGaps.map((gap) => `Evidence gap: ${gap}`)),
       ...(snapshot.evidence.some((item) => !item.citation && !item.sourceUri && !item.sourceId)
-        ? ["citation/sourceUri/sourceId가 없는 근거는 낮은 신뢰도로 처리했습니다."]
+        ? ["citation/sourceUri/sourceId가 없는 항목은 낮은 신뢰도로 처리했습니다."]
         : [])
     ])
   ];
@@ -57,7 +57,7 @@ export function buildResearchReport(snapshot: ResearchSnapshot): ResearchReport 
     hypothesisVerification || "- 가설이 없습니다.",
     "",
     "# 연구 방법",
-    "- 도구 실행 결과를 Source / Artifact / Claim / Evidence / Observation / Citation 단위로 정규화했습니다.",
+    "- 연구 실행 결과를 Source / Artifact / Claim / Evidence / Observation / Citation 단위로 정규화했습니다.",
     "- 정규화된 데이터를 Vector Index와 Ontology Graph에 병렬로 적재했습니다.",
     "- Hybrid Retrieval 결과와 Evidence Ledger를 사용해 가설을 평가했습니다.",
     "",
@@ -105,7 +105,7 @@ export function buildResearchReport(snapshot: ResearchSnapshot): ResearchReport 
   return {
     id: createId("report"),
     projectId: snapshot.project.id,
-    answer: latestResult?.answer ?? `${snapshot.project.topic} 연구는 완료되었지만 근거 수준이 제한적입니다.`,
+    answer: latestResult?.answer ?? `${snapshot.project.topic} 연구는 완료되었지만 근거 수준은 제한적입니다.`,
     hypothesisVerification,
     quantitativeQualitativeResults: [quantitative, "", qualitative].join("\n"),
     comprehensiveReport: markdown,

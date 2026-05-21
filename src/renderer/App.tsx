@@ -1,4 +1,5 @@
 ﻿import {
+  AlertTriangle,
   Bot,
   Boxes,
   CheckCircle2,
@@ -60,8 +61,8 @@ interface PendingChatMessage {
 const defaultInput: ResearchProjectInput = {
   goal: "근거 기반 반복 연구 루프가 질문, 가설, 자료, 산출물을 스스로 개선하는지 검증한다.",
   topic: "AetherOps 자율 연구 루프",
-  scope: "도구 실행, 로컬 Vector Index, Ontology Graph, 산출물 저장, evidence gap 기록을 포함한 MVP 검증",
-  budget: "로컬 MVP 예산",
+  scope: "도구 실행, Vector Index, Ontology Graph, 산출물 저장, blocked/failed 기록을 포함한 운영 12단계 검증",
+  budget: "운영 반복 예산",
   autonomyPolicy: {
     toolApproval: "suggested",
     maxLoopIterations: 2,
@@ -81,7 +82,7 @@ const modelOptions: Record<OpenCodeApiLlmSettings["provider"], string[]> = {
   openai: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
   anthropic: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"],
   google: ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
-  custom: ["gpt-5.5", "gpt-5.4", "gpt-5.2", "claude-sonnet-4-6", "gemini-3-pro-preview", "local-model"]
+  custom: ["gpt-5.5", "gpt-5.4", "gpt-5.2", "claude-sonnet-4-6", "gemini-3-pro-preview", "custom-model"]
 };
 
 const codexOAuthModels = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"];
@@ -99,7 +100,7 @@ const openCodeProviderOptions = ["openai", "anthropic", "google", "custom"];
 const openCodeOAuthProviderOptions = ["대화형 선택", "openai", "anthropic", "github-copilot", "google", "opencode"];
 const openCodeTimeoutOptions = [60_000, 120_000, 180_000, 300_000, 600_000];
 const embeddingModelOptions: Record<AppSettings["embedding"]["provider"], string[]> = {
-  local: ["local-hash"],
+  local: ["text-embedding-3-small", "text-embedding-3-large"],
   openai: ["text-embedding-3-small", "text-embedding-3-large"],
   google: ["gemini-embedding-001"],
   custom: ["text-embedding-3-small", "text-embedding-3-large", "gemini-embedding-001", "custom-embedding-model"]
@@ -274,7 +275,6 @@ export function App(): ReactElement {
       let next = await api.projects.create(projectInput);
       await api.sessions.createForProject(next.project.id);
       next = await api.researchDb.create(next.project.id);
-      next = await api.research.seedQuestions(next.project.id);
       setSnapshot(next);
       setEvents(next.iterations.slice(-16));
       const nextSessionId = firstChatSessionId(next);
@@ -301,8 +301,8 @@ export function App(): ReactElement {
           ...defaultInput,
           goal: prompt,
           topic: deriveTopic(prompt),
-          scope: "사용자 프롬프트를 기반으로 하위 대화 세션, 연구 DB, RAG 루프를 구성합니다.",
-          budget: "초기 자동 생성 프로젝트"
+          scope: "사용자 프롬프트를 기반으로 연구 DB와 채팅 세션을 구성합니다. 연구 질문과 가설은 명시 입력 후 실행됩니다.",
+          budget: "초기 프로젝트"
         }
       : input;
     await createWorkflow(nextInput);
@@ -1254,7 +1254,8 @@ function AetherOpsTab({
     { label: "Evidence Ledger", value: snapshot.evidence.length + snapshot.normalizedRecords.filter((record) => record.kind === "evidence").length },
     { label: "Vector DB", value: snapshot.chunks.length },
     { label: "Ontology Graph DB", value: snapshot.ontologyEntities.length + snapshot.ontologyRelations.length },
-    { label: "Projects & Reports", value: snapshot.finalOutputs.length + (snapshot.report ? 1 : 0) }
+    { label: "Projects & Reports", value: snapshot.finalOutputs.length + (snapshot.report ? 1 : 0) },
+    { label: "Errors / Blockers", value: snapshot.stepErrors.length + snapshot.runtimeBlockers.length }
   ];
   const renderStepTile = (step: ResearchLoopStep): ReactElement => {
     const meta = stepLabels[step];
@@ -1274,7 +1275,7 @@ function AetherOpsTab({
     <section className="codexContent">
       <header className="codexTopbar">
         <div>
-          <p className="eyebrow">Main Flow / Data Flow / Agent Control / Knowledge Flow</p>
+          <p className="eyebrow">Main Flow / Data Flow / Agent Control / Knowledge Flow / Error Flow</p>
           <h1>{snapshot.project.topic}</h1>
         </div>
         <div className={`statusPill ${snapshot.project.status}`}>{statusLabel(snapshot.project.status)}</div>
@@ -1398,6 +1399,22 @@ function AetherOpsTab({
           <div className="latestResult">
             <h3>현재 연구 계획</h3>
             <p>{latestPlan ? latestPlan.objective : "아직 연구 계획이 없습니다."}</p>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panelTitle">
+            <AlertTriangle size={17} />
+            <h2>오류 / Blocker</h2>
+          </div>
+          <div className="runBox">
+            {snapshot.runtimeBlockers.length || snapshot.stepErrors.length ? (
+              [...snapshot.runtimeBlockers.slice(-4).map((blocker) => `blocked · ${blocker.requirementKey}: ${blocker.message}`), ...snapshot.stepErrors.slice(-4).map((error) => `failed · ${error.step}: ${error.message}`)].map((message) => (
+                <p key={message}>{message}</p>
+              ))
+            ) : (
+              <p>현재 runtime blocker나 step error가 없습니다.</p>
+            )}
           </div>
         </section>
 
@@ -1722,7 +1739,7 @@ function SettingsTab({
             <label>
               Provider
               <select
-                value={settingsDraft.embedding.provider}
+                value={settingsDraft.embedding.provider === "local" ? "openai" : settingsDraft.embedding.provider}
                 onChange={(event) => {
                   const provider = event.target.value as AppSettings["embedding"]["provider"];
                   onSettingsDraftChange({
@@ -1731,7 +1748,6 @@ function SettingsTab({
                   });
                 }}
               >
-                <option value="local">local hash</option>
                 <option value="openai">openai</option>
                 <option value="google">google</option>
                 <option value="custom">custom</option>
@@ -1758,7 +1774,7 @@ function SettingsTab({
             API key
             <input
               type="password"
-              placeholder={settingsDraft.embedding.apiKeyConfigured ? "이미 저장됨. 새 값만 입력" : "local hash는 key 불필요"}
+              placeholder={settingsDraft.embedding.apiKeyConfigured ? "이미 저장됨. 새 값만 입력" : "임베딩 API key 필요"}
               value={embeddingKeyInput}
               onChange={(event) => onEmbeddingKeyInputChange(event.target.value)}
             />
@@ -2066,7 +2082,8 @@ function statusLabel(status: ResearchProject["status"]): string {
     paused: "일시정지",
     aborted: "중단됨",
     completed: "완료",
-    failed: "실패"
+    failed: "실패",
+    blocked: "설정 필요"
   };
   return labels[status];
 }

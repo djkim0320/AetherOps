@@ -87,7 +87,8 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number): Normali
     confidence,
     createdAt: evidence.createdAt
   };
-  const kind: NormalizedRecordKind = evidence.keywords.some((keyword) => keyword.includes("gap")) ? "observation" : "evidence";
+  const hasCitation = Boolean(evidence.citation || evidence.sourceUri || evidence.sourceId || evidence.doi);
+  const kind: NormalizedRecordKind = hasCitation ? "evidence" : evidence.keywords.some((keyword) => keyword.includes("error") || keyword.includes("failed")) ? "error" : "claim";
   const records: NormalizedResearchRecord[] = [
     {
       ...base,
@@ -130,7 +131,7 @@ function recordFromToolRun(toolRun: ToolRun): NormalizedResearchRecord {
     id: createStableId("record", `${toolRun.id}:observation`),
     projectId: toolRun.projectId,
     iteration: toolRun.iteration,
-    kind: "observation",
+    kind: toolRun.status === "failed" ? "error" : "observation",
     title: `${toolRun.toolName} ${toolRun.status}`,
     content,
     sourceUri: `logs/iteration-${toolRun.iteration}.json`,

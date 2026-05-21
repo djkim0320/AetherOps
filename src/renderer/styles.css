@@ -1076,7 +1076,8 @@ label {
 }
 
 .statusPill.aborted,
-.statusPill.failed {
+.statusPill.failed,
+.statusPill.blocked {
   color: #b42318;
   border-color: #fecaca;
   background: #fff1f2;

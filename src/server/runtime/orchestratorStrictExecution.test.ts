@@ -2,64 +2,26 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createId, nowIso } from "../../core/ids.js";
-import { InMemoryResearchStore } from "../../core/memoryStore.js";
-import { AetherOpsOrchestrator } from "../../core/orchestrator.js";
+import { nowIso } from "../../core/ids.js";
 import {
-  ResearchLoopStep,
-  type AppSettings,
-  type EvidenceItem,
-  type OpenCodeAdapter,
-  type OpenCodeRunInput,
-  type OpenCodeRunOutput,
-  type ResearchProjectInput
-} from "../../core/types.js";
+  createInputProject,
+  createStrictTestOrchestrator,
+  strictTestSettings
+} from "../../core/orchestratorTestHarness.test.js";
+import { ResearchLoopStep, type OpenCodeAdapter, type OpenCodeRunInput, type OpenCodeRunOutput, type ResearchProjectInput } from "../../core/types.js";
 import { NodeProjectStorage } from "./projectResearchStore.js";
 
 let tempDir: string | undefined;
 
-const settings: AppSettings = {
-  openCodeLlm: {
-    source: "codex-oauth",
-    model: "gpt-5.5"
-  },
-  openCode: {
-    enabled: false,
-    command: "opencode",
-    provider: "openai",
-    model: "gpt-5.5",
-    timeoutMs: 180_000
-  },
-  webSearch: {
-    provider: "disabled"
-  },
-  embedding: {
-    provider: "local",
-    model: "local-hash",
-    dimensions: 96
-  },
-  browserUse: {
-    enabled: false,
-    mode: "background",
-    maxPages: 2,
-    timeoutMs: 30_000,
-    captureScreenshots: false
-  },
-  allowExternalSearch: true,
-  allowCodeExecution: false,
-  maxLoopIterations: 2,
-  updatedAt: "2026-05-14T00:00:00.000Z"
-};
-
 const input: ResearchProjectInput = {
   goal: "Compare Pomodoro 25/5 and 50/10 for a two-hour study session.",
   topic: "Pomodoro 25/5 vs 50/10",
-  scope: "Use traceable evidence or explicit evidence gaps; no code execution.",
+  scope: "Use traceable evidence; no code execution.",
   budget: "30 minutes",
   autonomyPolicy: {
     toolApproval: "suggested",
     maxLoopIterations: 2,
-    allowExternalSearch: true,
+    allowExternalSearch: false,
     allowCodeExecution: false
   }
 };
@@ -72,39 +34,38 @@ afterEach(() => {
 });
 
 describe("AetherOps strict execution loop", () => {
-  it("seeds questions, hypotheses, and evidence", async () => {
-    const orchestrator = new AetherOpsOrchestrator(new InMemoryResearchStore());
+  it("blocks when explicit research input is missing", async () => {
+    const orchestrator = createStrictTestOrchestrator();
     let snapshot = await orchestrator.createProject(input);
-    snapshot = await orchestrator.createResearchDb(snapshot.project.id);
     snapshot = await orchestrator.seedQuestions(snapshot.project.id);
 
-    expect(snapshot.questions.length).toBeGreaterThanOrEqual(3);
-    expect(snapshot.hypotheses.length).toBeGreaterThanOrEqual(2);
-    expect(snapshot.evidence.length).toBeGreaterThanOrEqual(2);
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.InputResearchQuestionHypothesis);
+    expect(snapshot.project.status).toBe("blocked");
+    expect(snapshot.runtimeBlockers.some((blocker) => blocker.requirementKey === "research_input")).toBe(true);
+    expect(snapshot.questions).toHaveLength(0);
+    expect(snapshot.finalOutputs).toHaveLength(0);
   });
 
-  it("fails clearly when the OpenCode execution engine is unavailable", async () => {
+  it("blocks clearly when the OpenCode execution engine is not configured", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-loop-"));
-    const failingAdapter = new FailingOpenCodeAdapter();
-    const orchestrator = new AetherOpsOrchestrator(
-      new InMemoryResearchStore(),
-      failingAdapter,
-      undefined,
-      join(tempDir, "projects"),
-      undefined,
-      new NodeProjectStorage(),
-      undefined,
-      async () => settings
-    );
+    const orchestrator = createStrictTestOrchestrator({
+      storage: new NodeProjectStorage(),
+      projectRootBase: join(tempDir, "projects"),
+      settings: {
+        ...strictTestSettings,
+        openCode: { ...strictTestSettings.openCode, enabled: false, command: "" }
+      }
+    });
 
-    let snapshot = await orchestrator.createProject(input);
+    let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
     expect(snapshot.project.currentStep).toBe(ResearchLoopStep.ExecuteTools);
-    expect(snapshot.project.status).toBe("failed");
-    expect(snapshot.openCodeRuns).toHaveLength(1);
-    expect(snapshot.openCodeRuns[0]?.status).toBe("failed");
-    expect(snapshot.evidence.some((item) => item.keywords.includes("tool_unavailable") || item.keywords.includes("evidence_gap"))).toBe(true);
+    expect(snapshot.project.status).toBe("blocked");
+    expect(snapshot.runtimeBlockers.length).toBeGreaterThan(0);
+    expect(snapshot.stepErrors.length).toBeGreaterThan(0);
+    expect(snapshot.openCodeRuns).toHaveLength(0);
+    expect(snapshot.evidence.some((item) => item.keywords.includes("tool_unavailable") || item.keywords.includes("evidence_gap"))).toBe(false);
     expect(snapshot.report).toBeUndefined();
     expect(snapshot.finalOutputs).toHaveLength(0);
     expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
@@ -112,46 +73,24 @@ describe("AetherOps strict execution loop", () => {
 
   it("does not finalize when paused or aborted during a loop", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-control-"));
-    let orchestrator: AetherOpsOrchestrator;
-    const pausingAdapter: OpenCodeAdapter = {
-      run: async (runInput: OpenCodeRunInput): Promise<OpenCodeRunOutput> => {
-        await orchestrator.pause(runInput.project.id);
-        const createdAt = nowIso();
-        return completedOutput(runInput, "pause-test", createdAt);
-      }
-    };
-    orchestrator = new AetherOpsOrchestrator(
-      new InMemoryResearchStore(),
-      pausingAdapter,
-      undefined,
-      join(tempDir, "projects"),
-      undefined,
-      new NodeProjectStorage()
-    );
+    let orchestrator = createStrictTestOrchestrator({
+      storage: new NodeProjectStorage(),
+      projectRootBase: join(tempDir, "projects"),
+      openCode: pausingAdapter(() => orchestrator)
+    });
 
-    let snapshot = await orchestrator.createProject(input);
+    let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
     expect(snapshot.project.status).toBe("paused");
     expect(snapshot.project.currentStep).not.toBe(ResearchLoopStep.FinalizeOutputs);
     expect(snapshot.report).toBeUndefined();
 
-    let abortingOrchestrator: AetherOpsOrchestrator;
-    const abortingAdapter: OpenCodeAdapter = {
-      run: async (runInput: OpenCodeRunInput): Promise<OpenCodeRunOutput> => {
-        await abortingOrchestrator.abort(runInput.project.id);
-        const createdAt = nowIso();
-        return completedOutput(runInput, "abort-test", createdAt);
-      }
-    };
-    abortingOrchestrator = new AetherOpsOrchestrator(
-      new InMemoryResearchStore(),
-      abortingAdapter,
-      undefined,
-      join(tempDir, "abort-projects"),
-      undefined,
-      new NodeProjectStorage()
-    );
-    snapshot = await abortingOrchestrator.createProject(input);
+    let abortingOrchestrator = createStrictTestOrchestrator({
+      storage: new NodeProjectStorage(),
+      projectRootBase: join(tempDir, "abort-projects"),
+      openCode: abortingAdapter(() => abortingOrchestrator)
+    });
+    snapshot = await createInputProject(abortingOrchestrator, input);
     snapshot = await abortingOrchestrator.startLoop(snapshot.project.id);
     expect(snapshot.project.status).toBe("aborted");
     expect(snapshot.project.status).not.toBe("completed");
@@ -159,48 +98,28 @@ describe("AetherOps strict execution loop", () => {
   });
 });
 
-class FailingOpenCodeAdapter implements OpenCodeAdapter {
-  async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
-    const createdAt = nowIso();
-    const gap: EvidenceItem = {
-      id: createId("evidence"),
-      projectId: input.project.id,
-      category: "experiment_log",
-      title: "tool_unavailable: OpenCode CLI",
-      summary: "OpenCode CLI is unavailable. No alternate execution path is used.",
-      keywords: ["tool_unavailable", "evidence_gap", "opencode"],
-      linkedHypothesisIds: [],
-      reliabilityScore: 0.1,
-      relevanceScore: 0.5,
-      evidenceStrength: "weak",
-      limitations: ["No real OpenCode execution was performed."],
-      createdAt
-    };
-    return {
-      run: {
-        id: createId("opencode"),
-        projectId: input.project.id,
-        iteration: input.iteration,
-        prompt: "opencode-required",
-        toolPlan: ["opencode-cli"],
-        status: "failed",
-        logs: ["OpenCode CLI is unavailable.", "No alternate execution path is configured."],
-        artifactIds: [],
-        evidenceIds: [gap.id],
-        startedAt: createdAt,
-        completedAt: createdAt
-      },
-      artifacts: [],
-      evidence: [gap],
-      fatalError: "OpenCode CLI is unavailable."
-    };
-  }
+function pausingAdapter(orchestrator: () => { pause(projectId: string): Promise<unknown> }): OpenCodeAdapter {
+  return {
+    run: async (runInput: OpenCodeRunInput): Promise<OpenCodeRunOutput> => {
+      await orchestrator().pause(runInput.project.id);
+      return completedOutput(runInput, "pause-test", nowIso());
+    }
+  };
+}
+
+function abortingAdapter(orchestrator: () => { abort(projectId: string): Promise<unknown> }): OpenCodeAdapter {
+  return {
+    run: async (runInput: OpenCodeRunInput): Promise<OpenCodeRunOutput> => {
+      await orchestrator().abort(runInput.project.id);
+      return completedOutput(runInput, "abort-test", nowIso());
+    }
+  };
 }
 
 function completedOutput(input: OpenCodeRunInput, planName: string, createdAt: string): OpenCodeRunOutput {
   return {
     run: {
-      id: createId("opencode"),
+      id: `opencode-${planName}`,
       projectId: input.project.id,
       iteration: input.iteration,
       prompt: planName,

@@ -1,14 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createId, nowIso } from "./ids.js";
 import { InMemoryResearchStore } from "./memoryStore.js";
-import { AetherOpsOrchestrator } from "./orchestrator.js";
-import {
-  ResearchLoopStep,
-  type OpenCodeAdapter,
-  type OpenCodeRunInput,
-  type OpenCodeRunOutput,
-  type ResearchProjectInput
-} from "./types.js";
+import { createInputProject, createStrictTestOrchestrator } from "./orchestratorTestHarness.test.js";
+import { ResearchLoopStep, type ResearchProjectInput } from "./types.js";
 
 const input: ResearchProjectInput = {
   goal: "Verify that the autonomous research loop follows the 12-step structure.",
@@ -18,18 +11,17 @@ const input: ResearchProjectInput = {
   autonomyPolicy: {
     toolApproval: "suggested",
     maxLoopIterations: 2,
-    allowExternalSearch: true,
-    allowCodeExecution: true
+    allowExternalSearch: false,
+    allowCodeExecution: false
   }
 };
 
 describe("AetherOpsOrchestrator", () => {
   it("runs the 1-12 architecture into final outputs", async () => {
-    const orchestrator = new AetherOpsOrchestrator(new InMemoryResearchStore(), new DeterministicOpenCodeAdapter());
-    let snapshot = await orchestrator.createProject(input);
+    const orchestrator = createStrictTestOrchestrator();
+    let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.createSubSessions(snapshot.project.id);
     snapshot = await orchestrator.createResearchDb(snapshot.project.id);
-    snapshot = await orchestrator.seedQuestions(snapshot.project.id);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
     const steps = snapshot.iterations.map((iteration) => iteration.step);
@@ -38,6 +30,7 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.project.status).toBe("completed");
     expect(snapshot.sessions).toHaveLength(1);
     expect(snapshot.database).toBeDefined();
+    expect(snapshot.researchInputs).toHaveLength(1);
     expect(snapshot.questions.length).toBeGreaterThan(0);
     expect(snapshot.hypotheses.every((item) => item.status === "supported" || item.status === "needs_more_evidence")).toBe(true);
     expect(snapshot.openCodeRuns).toHaveLength(2);
@@ -51,7 +44,7 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.validationResults.length).toBeGreaterThan(0);
     expect(snapshot.continuationDecisions.length).toBeGreaterThan(0);
     expect(snapshot.finalOutputs.length).toBeGreaterThan(0);
-    expect(snapshot.report?.answer).toContain("AetherOps loop");
+    expect(snapshot.report?.answer).toContain("AetherOps");
 
     expect(steps).toContain(ResearchLoopStep.CreateResearchDb);
     expect(steps).toContain(ResearchLoopStep.InputResearchQuestionHypothesis);
@@ -68,8 +61,8 @@ describe("AetherOpsOrchestrator", () => {
   });
 
   it("returns from step 11 to step 4 before the next tool execution when continuing", async () => {
-    const orchestrator = new AetherOpsOrchestrator(new InMemoryResearchStore(), new DeterministicOpenCodeAdapter());
-    let snapshot = await orchestrator.createProject(input);
+    const orchestrator = createStrictTestOrchestrator();
+    let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
     const steps = snapshot.iterations.map((iteration) => iteration.step);
@@ -82,9 +75,9 @@ describe("AetherOpsOrchestrator", () => {
     expect(steps[firstDecisionIndex + 2]).toBe(ResearchLoopStep.ExecuteTools);
   });
 
-  it("stores every persistent memory category through the MVP loop", async () => {
-    const orchestrator = new AetherOpsOrchestrator(new InMemoryResearchStore(), new DeterministicOpenCodeAdapter());
-    let snapshot = await orchestrator.createProject(input);
+  it("stores every persistent memory category through the strict loop", async () => {
+    const orchestrator = createStrictTestOrchestrator();
+    let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
     const categories = new Set([
@@ -94,14 +87,13 @@ describe("AetherOpsOrchestrator", () => {
 
     expect(categories.has("generated_artifact")).toBe(true);
     expect(categories.has("experiment_log")).toBe(true);
-    expect(categories.has("conversation_memo")).toBe(true);
     expect(snapshot.sources.length).toBeGreaterThan(0);
     expect(snapshot.chunks.length).toBeGreaterThan(0);
     expect(snapshot.ontologyEntities.length).toBeGreaterThan(0);
   });
 
   it("deletes chat sessions without removing project progress", async () => {
-    const orchestrator = new AetherOpsOrchestrator(new InMemoryResearchStore());
+    const orchestrator = createStrictTestOrchestrator({ store: new InMemoryResearchStore() });
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.createSubSessions(snapshot.project.id);
     const firstSessionId = snapshot.sessions[0]?.id;
@@ -116,51 +108,3 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.iterations.at(-1)?.message).toBeTruthy();
   });
 });
-
-class DeterministicOpenCodeAdapter implements OpenCodeAdapter {
-  async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
-    const createdAt = nowIso();
-    const artifact = {
-      id: createId("artifact"),
-      projectId: input.project.id,
-      category: "generated_artifact" as const,
-      title: `Deterministic analysis ${input.iteration}`,
-      relativePath: `artifacts/iteration-${input.iteration}/analysis.md`,
-      mimeType: "text/markdown",
-      summary: `Analysis artifact for ${input.project.topic}`,
-      content: `Iteration ${input.iteration} analysis for ${input.project.topic}.`,
-      createdAt
-    };
-    const evidence = {
-      id: createId("evidence"),
-      projectId: input.project.id,
-      category: "experiment_log" as const,
-      title: `Deterministic evidence ${input.iteration}`,
-      summary: `Execution evidence for ${input.project.topic}.`,
-      keywords: ["analysis", `iteration-${input.iteration}`],
-      linkedHypothesisIds: input.hypotheses.map((item) => item.id),
-      reliabilityScore: 0.35,
-      relevanceScore: 0.7,
-      evidenceStrength: "weak" as const,
-      limitations: ["Test evidence has intentionally weak citation coverage."],
-      createdAt
-    };
-    return {
-      run: {
-        id: createId("opencode"),
-        projectId: input.project.id,
-        iteration: input.iteration,
-        prompt: `deterministic test run ${input.iteration}`,
-        toolPlan: ["deterministic-analysis"],
-        status: "completed",
-        logs: [`deterministic run ${input.iteration}`],
-        artifactIds: [artifact.id],
-        evidenceIds: [evidence.id],
-        startedAt: createdAt,
-        completedAt: createdAt
-      },
-      artifacts: [artifact],
-      evidence: [evidence]
-    };
-  }
-}

@@ -1,7 +1,7 @@
 import type { AetherOpsApi } from "../vite-env.js";
 
 const missingApiMessage =
-  "AetherOps 웹 백엔드가 연결되지 않았습니다. `npm run dev`로 웹앱을 실행하거나, 빌드 후 `npm run start`를 실행해 주세요.";
+  "AetherOps 백엔드가 연결되지 않았습니다. `npm run dev`로 웹앱을 실행하거나 빌드 후 `npm run start`를 실행해 주세요.";
 
 export function isAetherOpsApiAvailable(): boolean {
   return typeof window.fetch === "function";
@@ -41,7 +41,7 @@ export function getAetherOpsApi(): AetherOpsApi {
     },
     research: {
       seedQuestions: (projectId) => rpc("research.seedQuestions", projectId),
-      inputResearchQuestionHypothesis: (projectId) => rpc("research.inputResearchQuestionHypothesis", projectId),
+      inputResearchQuestionHypothesis: (projectId, payload) => rpc("research.inputResearchQuestionHypothesis", projectId, payload),
       buildSpecification: (projectId) => rpc("research.buildSpecification", projectId),
       plan: (projectId) => rpc("research.plan", projectId)
     },

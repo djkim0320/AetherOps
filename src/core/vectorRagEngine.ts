@@ -1,10 +1,10 @@
 import { createId, nowIso } from "./ids.js";
-import { cosineSimilarity, LocalHashEmbeddingProvider, type EmbeddingProvider } from "./embeddingProvider.js";
+import { cosineSimilarity, type EmbeddingProvider } from "./embeddingProvider.js";
 import type { RagContext, RagEngine, ResearchChunk, ResearchSnapshot } from "./types.js";
 
 export class VectorRagEngine implements RagEngine {
   constructor(
-    private readonly embeddingProvider: EmbeddingProvider = new LocalHashEmbeddingProvider(),
+    private readonly embeddingProvider: EmbeddingProvider,
     private readonly topK = 8
   ) {}
 

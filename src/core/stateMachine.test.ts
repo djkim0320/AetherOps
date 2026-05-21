@@ -24,6 +24,7 @@ describe("research loop state machine", () => {
     expect(normalizeResearchLoopStep("RUN_OPENCODE")).toBe(ResearchLoopStep.ExecuteTools);
     expect(normalizeResearchLoopStep("BUILD_RAG_CONTEXT")).toBe(ResearchLoopStep.BuildVectorIndex);
     expect(normalizeResearchLoopStep("DERIVE_EVIDENCE_BASED_RESULT")).toBe(ResearchLoopStep.SynthesizeAndEvaluate);
+    expect(() => normalizeResearchLoopStep("UNKNOWN_STEP")).toThrow("Unknown research loop step");
   });
 
   it("keeps the 12-step loop and returns from decision to planning when more work is needed", () => {

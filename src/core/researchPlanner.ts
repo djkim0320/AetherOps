@@ -31,47 +31,43 @@ export class ResearchPlanner {
   }): Promise<ResearchPlan> {
     const defaultPlan = this.buildDefaultPlan(input);
     if (!this.llm || !(await this.llm.isAvailable())) {
-      return defaultPlan;
+      throw new Error("LLM provider is required to create a research plan.");
     }
 
-    try {
-      const response = await this.llm.completeJson<PlanLlmResponse>({
-        schemaName: "AetherOpsResearchPlan",
-        system: [
-          "Create an executable research plan for one iteration.",
-          "If previous continuation decision exists, incorporate its planRevisionHints before choosing tools.",
-          "Do not claim unavailable sources were collected. Return only JSON."
-        ].join("\n"),
-        user: [
-          `Specification: ${JSON.stringify(input.specification)}`,
-          `Previous validation: ${JSON.stringify(input.snapshot.validationResults.slice(-8))}`,
-          `Previous continuation decision: ${JSON.stringify(input.continuationDecision)}`,
-          `Settings: ${JSON.stringify({
-            allowExternalSearch: input.settings.allowExternalSearch,
-            allowCodeExecution: input.settings.allowCodeExecution,
-            webSearchProvider: input.settings.webSearch.provider,
-            openCodeEnabled: input.settings.openCode.enabled
-          })}`,
-          "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria."
-        ].join("\n\n"),
-        timeoutMs: 120_000
-      });
+    const response = await this.llm.completeJson<PlanLlmResponse>({
+      schemaName: "AetherOpsResearchPlan",
+      system: [
+        "Create an executable research plan for one iteration.",
+        "If previous continuation decision exists, incorporate its planRevisionHints before choosing tools.",
+        "Do not claim unavailable sources were collected. Return only JSON."
+      ].join("\n"),
+      user: [
+        `Specification: ${JSON.stringify(input.specification)}`,
+        `Previous validation: ${JSON.stringify(input.snapshot.validationResults.slice(-8))}`,
+        `Previous continuation decision: ${JSON.stringify(input.continuationDecision)}`,
+        `Settings: ${JSON.stringify({
+          allowExternalSearch: input.settings.allowExternalSearch,
+          allowCodeExecution: input.settings.allowCodeExecution,
+          webSearchProvider: input.settings.webSearch.provider,
+          openCodeEnabled: input.settings.openCode.enabled
+        })}`,
+        "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria."
+      ].join("\n\n"),
+      timeoutMs: 120_000
+    });
 
-      return {
-        ...defaultPlan,
-        objective: clean(response.objective) || defaultPlan.objective,
-        targetQuestions: selectIdsOrText(response.targetQuestions, defaultPlan.targetQuestions),
-        targetHypotheses: selectIdsOrText(response.targetHypotheses, defaultPlan.targetHypotheses),
-        requiredTools: strings(response.requiredTools, defaultPlan.requiredTools),
-        expectedSources: strings(response.expectedSources, defaultPlan.expectedSources),
-        expectedArtifacts: strings(response.expectedArtifacts, defaultPlan.expectedArtifacts),
-        executionSteps: strings(response.executionSteps, defaultPlan.executionSteps),
-        steps: strings(response.executionSteps, defaultPlan.executionSteps),
-        stopCriteria: strings(response.stopCriteria, defaultPlan.stopCriteria)
-      };
-    } catch {
-      return defaultPlan;
-    }
+    return {
+      ...defaultPlan,
+      objective: clean(response.objective) || defaultPlan.objective,
+      targetQuestions: selectIdsOrText(response.targetQuestions, defaultPlan.targetQuestions),
+      targetHypotheses: selectIdsOrText(response.targetHypotheses, defaultPlan.targetHypotheses),
+      requiredTools: strings(response.requiredTools, defaultPlan.requiredTools),
+      expectedSources: strings(response.expectedSources, defaultPlan.expectedSources),
+      expectedArtifacts: strings(response.expectedArtifacts, defaultPlan.expectedArtifacts),
+      executionSteps: strings(response.executionSteps, defaultPlan.executionSteps),
+      steps: strings(response.executionSteps, defaultPlan.executionSteps),
+      stopCriteria: strings(response.stopCriteria, defaultPlan.stopCriteria)
+    };
   }
 
   private buildDefaultPlan(input: {
@@ -83,10 +79,9 @@ export class ResearchPlanner {
   }): ResearchPlan {
     const tools = [
       "OpenCodeTool",
-      input.settings.allowExternalSearch ? "WebSearchTool" : "WebSearchTool(skipped)",
-      "WebFetchTool",
-      "PaperMetadataTool",
-      input.settings.allowCodeExecution ? "CodeExecutionTool" : "CodeExecutionTool(skipped)",
+      ...(input.settings.allowExternalSearch && input.settings.webSearch.provider !== "disabled" ? ["WebSearchTool"] : []),
+      ...(input.settings.browserUse.enabled && input.settings.allowExternalSearch ? ["BackgroundBrowserTool"] : []),
+      ...(input.settings.allowCodeExecution ? ["CodeExecutionTool"] : []),
       "ArtifactWriterTool",
       "DataAnalysisTool"
     ];
@@ -110,13 +105,13 @@ export class ResearchPlanner {
       ],
       executionSteps: [
         "Run configured execution/search/metadata tools.",
-        "Record unavailable tools as tool_unavailable and evidence_gap.",
+        "Stop with a structured blocked/failed state if a required tool is unavailable.",
         "Write at least one iteration artifact.",
         "Prepare normalized source, artifact, claim, evidence, observation, and citation records."
       ],
       steps: [
         "Run configured execution/search/metadata tools.",
-        "Record unavailable tools as tool_unavailable and evidence_gap.",
+        "Stop with a structured blocked/failed state if a required tool is unavailable.",
         "Write at least one iteration artifact.",
         "Prepare normalized source, artifact, claim, evidence, observation, and citation records."
       ],

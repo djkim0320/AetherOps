@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { createInputProject, createStrictTestOrchestrator } from "./orchestratorTestHarness.test.js";
 import { SimpleRagEngine } from "./simpleRagEngine.js";
 import type { ResearchProjectInput } from "./types.js";
@@ -10,7 +10,6 @@ const input: ResearchProjectInput = {
   budget: "MVP",
   autonomyPolicy: {
     toolApproval: "suggested",
-    maxLoopIterations: 1,
     allowExternalSearch: false,
     allowCodeExecution: false
   }

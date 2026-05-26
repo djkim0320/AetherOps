@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { rankResearchUrls } from "../../core/sourceQuality.js";
 import type { BrowserUseSettings, ResearchProject } from "../../core/types.js";
 
 export interface BrowserCollectInput {
@@ -88,7 +89,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
   }
 
   private async resolveUrls(input: BrowserCollectInput, context: Awaited<ReturnType<typeof chromium.launchPersistentContext>>): Promise<string[]> {
-    const directUrls = uniqueHttpUrls(input.urls ?? []);
+    const directUrls = rankResearchUrls(uniqueHttpUrls(input.urls ?? []));
     if (directUrls.length) {
       return directUrls;
     }
@@ -100,17 +101,35 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
 
     const searchPage = await context.newPage();
     try {
-      await searchPage.goto(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-        waitUntil: "domcontentloaded",
-        timeout: input.settings.timeoutMs
-      });
-      const links = await searchPage.$$eval("a[href]", (anchors) =>
-        anchors
-          .map((anchor) => (anchor as HTMLAnchorElement).href)
-          .filter(Boolean)
-          .slice(0, 30)
-      );
-      return uniqueHttpUrls(links.map(decodeDuckDuckGoRedirect)).filter((url) => !url.includes("duckduckgo.com"));
+      const searchUrls = [
+        `https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`,
+        `https://www.semanticscholar.org/search?q=${encodeURIComponent(query)}&sort=relevance`,
+        `https://search.crossref.org/?q=${encodeURIComponent(query)}`,
+        `https://arxiv.org/search/?query=${encodeURIComponent(query)}&searchtype=all`,
+        `https://duckduckgo.com/html/?q=${encodeURIComponent(publicResearchQuery(query))}`,
+        `https://www.bing.com/search?q=${encodeURIComponent(publicResearchQuery(query))}`,
+        `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+        `https://www.bing.com/search?q=${encodeURIComponent(query)}`,
+        `https://search.brave.com/search?q=${encodeURIComponent(query)}`
+      ];
+      for (const searchUrl of searchUrls) {
+        await searchPage.goto(searchUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: input.settings.timeoutMs
+        });
+        await searchPage.waitForLoadState("networkidle", { timeout: Math.min(input.settings.timeoutMs, 8_000) }).catch(() => undefined);
+        const links = await searchPage.$$eval("a[href]", (anchors) =>
+          anchors
+            .map((anchor) => (anchor as HTMLAnchorElement).href)
+            .filter(Boolean)
+            .slice(0, 80)
+        );
+        const urls = rankResearchUrls(uniqueHttpUrls(links.map(decodeSearchRedirect)).filter((url) => !isSearchEngineUrl(url)));
+        if (urls.length) {
+          return urls;
+        }
+      }
+      return rankResearchUrls(await resolveBingRssUrls(publicResearchQuery(query), input.settings.timeoutMs));
     } finally {
       await searchPage.close().catch(() => undefined);
     }
@@ -138,14 +157,71 @@ function uniqueHttpUrls(urls: string[]): string[] {
   return normalized;
 }
 
-function decodeDuckDuckGoRedirect(rawUrl: string): string {
+function decodeSearchRedirect(rawUrl: string): string {
   try {
     const url = new URL(rawUrl);
-    const redirected = url.searchParams.get("uddg");
+    const redirected = url.searchParams.get("uddg") ?? url.searchParams.get("url") ?? url.searchParams.get("u");
     return redirected ? decodeURIComponent(redirected) : rawUrl;
   } catch {
     return rawUrl;
   }
+}
+
+function isSearchEngineUrl(rawUrl: string): boolean {
+  try {
+    const hostname = new URL(rawUrl).hostname.replace(/^www\./, "");
+    return [
+      "duckduckgo.com",
+      "bing.com",
+      "microsoft.com",
+      "search.brave.com",
+      "brave.com",
+      "google.com",
+      "google.co.kr"
+    ].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+  } catch {
+    return true;
+  }
+}
+
+function publicResearchQuery(query: string): string {
+  return [
+    query,
+    "(site:arxiv.org OR site:semanticscholar.org OR site:doi.org OR site:nist.gov OR site:oecd.org OR site:iso.org OR site:edu)",
+    "paper OR study OR standard OR framework OR report"
+  ].join(" ");
+}
+
+async function resolveBingRssUrls(query: string, timeoutMs: number): Promise<string[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, 15_000));
+  try {
+    const response = await fetch(`https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`, {
+      signal: controller.signal,
+      headers: { accept: "application/rss+xml,application/xml,text/xml" }
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const xml = await response.text();
+    const links = [...xml.matchAll(/<link>([\s\S]*?)<\/link>/gi)]
+      .map((match) => decodeXmlEntities(match[1] ?? "").trim())
+      .filter(Boolean);
+    return uniqueHttpUrls(links).filter((url) => !isSearchEngineUrl(url));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
 }
 
 function normalizePageText(text: string): string {

@@ -6,7 +6,7 @@ export class LoopDecisionEngine {
     snapshot: ResearchSnapshot;
     result: EvidenceBasedResult;
     iteration: number;
-    maxLoopIterations: number;
+    safetyCapIterations: number;
     beforeCounts: { evidence: number; artifacts: number; chunks: number; entities: number; relations: number };
   }): ContinuationDecision {
     const after = input.snapshot;
@@ -22,10 +22,10 @@ export class LoopDecisionEngine {
       ...after.validationResults.slice(-after.hypotheses.length).flatMap((result) => result.evidenceGaps)
     ].filter(Boolean);
     const repeatedLowGrowth = input.iteration > 1 && Object.values(growth).every((value) => value <= 0);
-    const hitMax = input.iteration >= input.maxLoopIterations;
+    const hitSafetyCap = input.iteration >= input.safetyCapIterations;
     const statusBlocked = after.project.status === "aborted" || after.project.status === "paused";
     const shouldContinue =
-      !hitMax &&
+      !hitSafetyCap &&
       !statusBlocked &&
       !repeatedLowGrowth &&
       (input.result.needsMoreEvidence || input.result.needsMoreAnalysis || input.result.nextQuestions.length > 0);
@@ -35,7 +35,7 @@ export class LoopDecisionEngine {
       projectId: after.project.id,
       iteration: input.iteration,
       shouldContinue,
-      reason: reason({ hitMax, statusBlocked, repeatedLowGrowth, result: input.result, growth }),
+      reason: reason({ hitSafetyCap, statusBlocked, repeatedLowGrowth, result: input.result, growth }),
       nextObjective: shouldContinue
         ? `Resolve ${evidenceGaps[0] ?? "remaining evidence gaps"} and improve citation coverage for priority hypotheses.`
         : undefined,
@@ -54,13 +54,13 @@ export class LoopDecisionEngine {
 }
 
 function reason(input: {
-  hitMax: boolean;
+  hitSafetyCap: boolean;
   statusBlocked: boolean;
   repeatedLowGrowth: boolean;
   result: EvidenceBasedResult;
   growth: Record<string, number>;
 }): string {
-  if (input.hitMax) return "Maximum loop iterations reached; finalize with explicit limitations.";
+  if (input.hitSafetyCap) return "Internal loop safety cap reached; finalize with explicit limitations.";
   if (input.statusBlocked) return "Project is paused or aborted.";
   if (input.repeatedLowGrowth) return "No meaningful new evidence, artifact, vector chunk, or graph relation was produced.";
   if (input.result.needsMoreEvidence || input.result.needsMoreAnalysis || input.result.nextQuestions.length) {

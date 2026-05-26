@@ -30,18 +30,20 @@ interface LlmSeedResponse {
 }
 
 interface LlmResultResponse {
-  answer: string;
-  hypothesisUpdates: Array<{
+  answer?: string;
+  finalAnswer?: string;
+  summary?: string;
+  hypothesisUpdates?: Array<{
     hypothesisIndex: number;
     status: HypothesisStatus;
     confidence: number;
     rationale: string;
   }>;
-  quantitativeResults: string[];
-  qualitativeResults: string[];
-  nextQuestions: string[];
-  needsMoreEvidence: boolean;
-  needsMoreAnalysis: boolean;
+  quantitativeResults?: string[];
+  qualitativeResults?: string[];
+  nextQuestions?: string[];
+  needsMoreEvidence?: boolean;
+  needsMoreAnalysis?: boolean;
 }
 
 export async function generateSeedPlanWithLlm(
@@ -152,35 +154,14 @@ export async function deriveResultWithLlm(
     return undefined;
   }
 
-  const response = await llm.completeJson<LlmResultResponse>({
-    schemaName: "AetherOpsEvidenceBasedResult",
-    system: "You are AetherOps, a Korean autonomous research agent. Return only valid JSON.",
-    user: [
-      "Derive an evidence-based research result from the current project state.",
-      "Use only evidence and RAG context. Treat evidence without citation/sourceUri/sourceId as low reliability.",
-      "Every hypothesis update must include a concrete rationale grounded in evidence or an explicit evidence_gap.",
-      "Separate quantitativeResults and qualitativeResults.",
-      "If this is the final iteration, do not force certainty; state limitations and additional research needs.",
-      "Return JSON with keys: answer, hypothesisUpdates, quantitativeResults, qualitativeResults, nextQuestions, needsMoreEvidence, needsMoreAnalysis.",
-      "hypothesisUpdates uses zero-based hypothesisIndex and status among supported, rejected, needs_more_evidence, untested.",
-      forceStop ? "This is the final allowed iteration, so set needsMoreEvidence=false, needsMoreAnalysis=false, nextQuestions=[]." : "",
-      "",
-      `Project: ${JSON.stringify(snapshot.project)}`,
-      `Questions: ${JSON.stringify(snapshot.questions)}`,
-      `Hypotheses: ${JSON.stringify(snapshot.hypotheses)}`,
-      `Evidence: ${JSON.stringify(snapshot.evidence.slice(-18))}`,
-      `Artifacts: ${JSON.stringify(snapshot.artifacts.slice(-8))}`,
-      `RAG Context: ${JSON.stringify(snapshot.ragContexts.at(-1))}`,
-      `Sources: ${JSON.stringify(snapshot.sources.slice(-12))}`,
-      `Chunks: ${JSON.stringify(snapshot.chunks.slice(-12).map((chunk) => ({ id: chunk.id, sourceId: chunk.sourceId, text: chunk.text.slice(0, 500) })))}`,
-      `OpenCode Runs: ${JSON.stringify(snapshot.openCodeRuns.map((run) => ({ iteration: run.iteration, logs: run.logs, toolPlan: run.toolPlan })))}`,
-      `Tool Runs: ${JSON.stringify(snapshot.toolRuns.slice(-12))}`
-    ].join("\n"),
-    timeoutMs: 180_000
-  });
+  let response = await requestResultJson(llm, snapshot, iteration, forceStop);
+  let answer = cleanText(response.answer ?? response.finalAnswer ?? response.summary);
+  if (!answer) {
+    response = await requestResultJson(llm, snapshot, iteration, forceStop, true);
+    answer = cleanText(response.answer ?? response.finalAnswer ?? response.summary);
+  }
 
   const createdAt = nowIso();
-  const answer = cleanText(response.answer);
   if (!answer) {
     return undefined;
   }
@@ -211,6 +192,86 @@ export async function deriveResultWithLlm(
     needsMoreAnalysis: forceStop ? false : Boolean(response.needsMoreAnalysis),
     createdAt
   };
+}
+
+function requestResultJson(
+  llm: LlmProvider,
+  snapshot: ResearchSnapshot,
+  iteration: number,
+  forceStop: boolean,
+  repair = false
+): Promise<LlmResultResponse> {
+  const user = repair
+    ? [
+        "The previous response omitted a non-empty answer. Produce a concise evidence-based JSON result now.",
+        "Return JSON with keys: answer, hypothesisUpdates, quantitativeResults, qualitativeResults, nextQuestions, needsMoreEvidence, needsMoreAnalysis.",
+        "answer is required and must be a non-empty Korean string.",
+        "hypothesisUpdates uses zero-based hypothesisIndex and status among supported, rejected, needs_more_evidence, untested.",
+        forceStop ? "The internal runaway-prevention safety cap has been reached; synthesize cautiously, set needsMoreEvidence=false, needsMoreAnalysis=false, and list unresolved limits instead of requesting another loop." : "",
+        `Project: ${JSON.stringify({
+          topic: snapshot.project.topic,
+          goal: snapshot.project.goal.slice(0, 1_200)
+        })}`,
+        `Hypotheses: ${JSON.stringify(snapshot.hypotheses.map((hypothesis, index) => ({
+          index,
+          statement: hypothesis.statement,
+          status: hypothesis.status,
+          confidence: hypothesis.confidence
+        })))}`,
+        `ValidationResults: ${JSON.stringify(snapshot.validationResults.slice(-8).map((result) => ({
+          hypothesisId: result.hypothesisId,
+          status: result.status,
+          confidence: result.confidence,
+          reasoningSummary: result.reasoningSummary,
+          limitations: result.limitations.slice(0, 4),
+          evidenceGaps: result.evidenceGaps.slice(0, 4)
+        })))}`,
+        `EvidenceCitations: ${JSON.stringify(snapshot.evidence.slice(-12).map((item) => ({
+          title: item.title,
+          citation: item.citation,
+          sourceUri: item.sourceUri,
+          reliabilityScore: item.reliabilityScore,
+          relevanceScore: item.relevanceScore,
+          evidenceStrength: item.evidenceStrength,
+          limitations: item.limitations?.slice(0, 3)
+        })))}`,
+        `HybridCitations: ${JSON.stringify(snapshot.hybridContexts.at(-1)?.citations.slice(0, 12) ?? [])}`
+      ].join("\n")
+    : [
+        "Derive an evidence-based research result from the current project state.",
+        "Use only evidence and RAG context. Treat evidence without citation/sourceUri/sourceId as low reliability.",
+        "Every hypothesis update must include a concrete rationale grounded in evidence or an explicit evidence_gap.",
+        "Separate quantitativeResults and qualitativeResults.",
+        "If this is the final iteration, do not force certainty; state limitations and additional research needs.",
+        "Return JSON with keys: answer, hypothesisUpdates, quantitativeResults, qualitativeResults, nextQuestions, needsMoreEvidence, needsMoreAnalysis.",
+        "hypothesisUpdates uses zero-based hypothesisIndex and status among supported, rejected, needs_more_evidence, untested.",
+        forceStop ? "The internal runaway-prevention safety cap has been reached; synthesize cautiously, set needsMoreEvidence=false, needsMoreAnalysis=false, and list unresolved limits instead of requesting another loop." : "",
+        "",
+        `Project: ${JSON.stringify(snapshot.project)}`,
+        `Questions: ${JSON.stringify(snapshot.questions)}`,
+        `Hypotheses: ${JSON.stringify(snapshot.hypotheses)}`,
+        `ProjectContextSnapshot: ${JSON.stringify(snapshot.projectContextSnapshots.at(-1))}`,
+        `ValidationResults: ${JSON.stringify(snapshot.validationResults.filter((result) => result.iteration === iteration))}`,
+        `Hybrid Context: ${JSON.stringify(snapshot.hybridContexts.at(-1))}`,
+        `Selected Evidence: ${JSON.stringify(snapshot.evidence.filter((item) => snapshot.projectContextSnapshots.at(-1)?.selectedEvidenceIds.includes(item.id)).map((item) => ({
+          title: item.title,
+          citation: item.citation,
+          sourceUri: item.sourceUri,
+          reliabilityScore: item.reliabilityScore,
+          relevanceScore: item.relevanceScore,
+          evidenceStrength: item.evidenceStrength,
+          limitations: item.limitations?.slice(0, 3)
+        })))}`,
+        `Selected Chunks: ${JSON.stringify(snapshot.chunks.filter((chunk) => snapshot.projectContextSnapshots.at(-1)?.selectedChunkIds.includes(chunk.id)).map((chunk) => ({ id: chunk.id, sourceId: chunk.sourceId, text: chunk.text.slice(0, 500), citation: chunk.citation })))}`,
+        `OpenCode Runs: ${JSON.stringify(snapshot.openCodeRuns.map((run) => ({ iteration: run.iteration, logs: run.logs, toolPlan: run.toolPlan })))}`,
+        `Tool Runs: ${JSON.stringify(snapshot.toolRuns.slice(-12))}`
+      ].join("\n");
+  return llm.completeJson<LlmResultResponse>({
+    schemaName: "AetherOpsEvidenceBasedResult",
+    system: "You are AetherOps, a Korean autonomous research agent. Return only valid JSON.",
+    user,
+    timeoutMs: 180_000
+  });
 }
 
 function normalizeArray<T>(value: T[] | undefined | null): T[] {

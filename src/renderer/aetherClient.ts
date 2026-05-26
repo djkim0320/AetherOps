@@ -26,6 +26,7 @@ export function getAetherOpsApi(): AetherOpsApi {
   return {
     projects: {
       create: (input) => rpc("projects.create", input),
+      update: (projectId, input) => rpc("projects.update", projectId, input),
       list: () => rpc("projects.list")
     },
     sessions: {

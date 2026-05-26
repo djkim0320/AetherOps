@@ -13,6 +13,7 @@ import type {
 export interface AetherOpsApi {
   projects: {
     create(input: ResearchProjectInput): Promise<ResearchSnapshot>;
+    update(projectId: string, input: ResearchProjectInput): Promise<ResearchSnapshot>;
     list(): Promise<ResearchProject[]>;
   };
   sessions: {

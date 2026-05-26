@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { ResearchLoopStep, type AppSettings, type OpenCodeRunInput } from "../../core/types.js";
 import { BrowserResearchTool } from "./browserResearchTool.js";
 import type { BrowserCollectInput, BrowserPageCollector } from "./backgroundBrowserRuntime.js";
@@ -13,7 +13,6 @@ const settings: AppSettings = {
   browserUse: { enabled: true, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: true },
   allowExternalSearch: true,
   allowCodeExecution: false,
-  maxLoopIterations: 2,
   ontologyExtractionMode: "rule_based",
   finalOutputExport: { markdown: true, json: true, ontologyGraph: true, artifactPackage: true },
   updatedAt: createdAt
@@ -38,9 +37,35 @@ describe("BrowserResearchTool", () => {
     expect(result.toolRun.status).toBe("completed");
     expect(result.sources).toHaveLength(1);
     expect(result.sources[0].kind).toBe("web");
+    expect(result.sources[0].metadata.sourceQualityTier).toBeTruthy();
     expect(result.evidence[0].sourceUri).toBe("https://example.test/research");
+    expect(result.evidence[0].keywords).not.toContain("manufacturing");
     expect(result.artifacts.some((artifact) => artifact.relativePath.includes("browser/page-1.md"))).toBe(true);
     expect(result.artifacts.some((artifact) => artifact.relativePath.includes("screenshot"))).toBe(true);
+  });
+
+  it("prioritizes public scholarly discovery terms in the browser query", async () => {
+    let capturedQuery = "";
+    const collector: BrowserPageCollector = {
+      collect: async (input: BrowserCollectInput) => {
+        capturedQuery = input.query;
+        return [
+          {
+            url: "https://arxiv.org/abs/2401.00001",
+            title: "Open academic paper",
+            text: "A paper-like source with traceable academic metadata."
+          }
+        ];
+      }
+    };
+
+    const result = await new BrowserResearchTool(collector).run(input(), settings);
+
+    expect(capturedQuery).toContain("Google Scholar");
+    expect(capturedQuery).toContain("Semantic Scholar");
+    expect(capturedQuery).toContain("Crossref");
+    expect(result.evidence[0].reliabilityScore).toBeGreaterThanOrEqual(0.8);
+    expect(result.evidence[0].evidenceStrength).toBe("strong");
   });
 
   it("throws a structured tool error when browser use is disabled", async () => {
@@ -66,7 +91,7 @@ function input(): OpenCodeRunInput {
       topic: "study break research",
       scope: "web evidence collection",
       budget: "short",
-      autonomyPolicy: { toolApproval: "suggested", maxLoopIterations: 2, allowExternalSearch: true, allowCodeExecution: false },
+      autonomyPolicy: { toolApproval: "suggested", allowExternalSearch: true, allowCodeExecution: false },
       createdAt,
       updatedAt: createdAt,
       currentStep: ResearchLoopStep.ExecuteTools,

@@ -1,4 +1,5 @@
 import { createId, nowIso } from "../../core/ids.js";
+import { assessSourceQuality, rankResearchUrls, sourceQualityMetadata } from "../../core/sourceQuality.js";
 import type { ResearchTool, ResearchToolResult } from "../../core/toolRegistry.js";
 import type { AppSettings, EvidenceItem, OpenCodeRunInput, ResearchArtifact, ResearchSource } from "../../core/types.js";
 import type { BrowserCollectedPage, BrowserPageCollector } from "./backgroundBrowserRuntime.js";
@@ -50,6 +51,7 @@ function completed(
   for (const [index, page] of pages.entries()) {
     const sourceId = createId("source");
     const excerpt = page.text.slice(0, 1_200);
+    const quality = assessSourceQuality(page.url, page.title);
     sources.push({
       id: sourceId,
       projectId: input.project.id,
@@ -61,7 +63,8 @@ function completed(
         browserUse: true,
         query,
         excerpt,
-        characterCount: page.text.length
+        characterCount: page.text.length,
+        ...sourceQualityMetadata(page.url, page.title)
       },
       createdAt: completedAt
     });
@@ -102,12 +105,15 @@ function completed(
       sourceUri: page.url,
       citation: `${page.title} - ${page.url}`,
       quote: excerpt.slice(0, 500),
-      keywords: ["background_browser", "web_source", ...keywordSlice(input.project.topic)],
+      keywords: ["background_browser", "web_source", quality.tier, ...keywordSlice(input.project.topic)],
       linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
-      reliabilityScore: 0.68,
-      relevanceScore: 0.72,
-      evidenceStrength: "medium",
-      limitations: ["Automatically collected web page text; claims still require citation-level review."],
+      reliabilityScore: quality.reliabilityScore,
+      relevanceScore: quality.preferredForSearch ? 0.78 : 0.58,
+      evidenceStrength: quality.evidenceStrength,
+      limitations: [
+        "Automatically collected web page text; claims still require citation-level review.",
+        ...quality.limitations
+      ],
       createdAt: completedAt
     });
   }
@@ -136,9 +142,21 @@ function completed(
 }
 
 function buildQuery(input: OpenCodeRunInput): string {
-  const planObjective = input.researchPlan?.objective;
-  const question = input.questions.find((item) => item.status === "open")?.text;
-  return [input.project.topic, planObjective, question].filter(Boolean).join(" ");
+  const plannedQuestion = input.researchPlan?.targetQuestions.find(Boolean);
+  const question = plannedQuestion ?? input.questions.find((item) => item.status === "open")?.text;
+  const hypotheses = input.hypotheses.map((item) => item.statement).join(" ");
+  const academicKeywords = "Google Scholar Semantic Scholar Crossref arXiv DOI NIST OECD ISO systematic review framework standard report";
+  return compactSearchQuery([question, input.project.topic, input.project.goal, hypotheses, academicKeywords].filter(Boolean).join(" "));
+}
+
+function compactSearchQuery(value: string): string {
+  return value
+    .replace(/\b20\d{2}년?\b/g, " ")
+    .replace(/검증\s*\d*[:：]?/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[{}[\]"'`]/g, " ")
+    .trim()
+    .slice(0, 280);
 }
 
 function extractHttpEvidenceUrls(input: OpenCodeRunInput): string[] {
@@ -146,7 +164,7 @@ function extractHttpEvidenceUrls(input: OpenCodeRunInput): string[] {
     .map((item) => item.sourceUri)
     .filter((value): value is string => Boolean(value))
     .filter((value) => value.startsWith("http://") || value.startsWith("https://"));
-  return [...new Set(urls)];
+  return rankResearchUrls(urls);
 }
 
 function keywordSlice(value: string): string[] {

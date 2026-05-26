@@ -5,6 +5,9 @@
   "description": "AetherOps autonomous research agent web app.",
   "type": "module",
   "main": "dist-server/server/webServer.js",
+  "engines": {
+    "node": ">=22.16.0"
+  },
   "scripts": {
     "dev": "node scripts/dev-web.mjs",
     "clean": "node -e \"const fs=require('fs'); for (const p of ['dist','dist-server','dist-electron']) fs.rmSync(p,{recursive:true,force:true});\"",

@@ -3,7 +3,7 @@ import { buildResearchReport } from "./report.js";
 import { createDefaultSessions, seedResearchPlan } from "./researchSeed.js";
 import { ResearchLoopStep, type ResearchProject, type ResearchSnapshot } from "./types.js";
 
-const forbiddenMojibake = /[筌域疫彛肉類]|[?]{3,}/;
+const forbiddenMojibake = /(?:�|[?]{3,}|梨|꾪|똿|몄|뀡|곌|붿|빟|媛|寃|利|吏|㏃)/;
 
 describe("Korean user-facing copy", () => {
   it("keeps default sessions and seed research records readable", () => {
@@ -37,7 +37,6 @@ const project: ResearchProject = {
   budget: "짧은 연구",
   autonomyPolicy: {
     toolApproval: "suggested",
-    maxLoopIterations: 1,
     allowExternalSearch: false,
     allowCodeExecution: false
   },
@@ -67,6 +66,7 @@ const snapshot: ResearchSnapshot = {
   ontologyEntities: [],
   ontologyRelations: [],
   ontologyConstraints: [],
+  projectContextSnapshots: [],
   hybridContexts: [],
   validationResults: [],
   continuationDecisions: [],

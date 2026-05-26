@@ -1,6 +1,7 @@
 import { chunkResearchSource } from "./chunking.js";
 import type { EmbeddingProvider } from "./embeddingProvider.js";
 import { createStableId, nowIso } from "./ids.js";
+import { normalizeMemoryScope, tagMemoryScope } from "./researchMemory.js";
 import type {
   AppSettings,
   NormalizedResearchRecord,
@@ -22,17 +23,22 @@ export class VectorIndexEngine {
   }): Promise<ResearchChunk[]> {
     const existing = new Set(input.snapshot.chunks.map((chunk) => chunk.id));
     const chunks: ResearchChunk[] = [];
-    for (const record of input.records.filter((item) => item.kind !== "error" && item.metadata.traceabilityKind !== "error")) {
+    for (const record of input.records.filter((item) =>
+      item.kind !== "error" &&
+      item.metadata.traceabilityKind !== "error" &&
+      normalizeMemoryScope(item.memoryScope) !== "ephemeral"
+    )) {
       const source = sourceFromRecord(record);
       const traceabilityKind = getTraceabilityKind(record);
       const canSupportHypothesis = record.metadata.canSupportHypothesis === true;
+      const memoryScope = normalizeMemoryScope(record.memoryScope);
       for (const chunk of chunkResearchSource(source, record.content)) {
-        const id = createStableId("chunk", `${record.id}:${chunk.chunkIndex}:${chunk.text}`);
+        const id = createStableId("chunk", `${memoryScope}:${record.originProjectId ?? record.projectId}:${record.id}:${chunk.chunkIndex}:${chunk.text}`);
         if (existing.has(id)) {
           continue;
         }
         const embedding = await this.embeddingProvider.embed(chunk.text);
-        chunks.push({
+        chunks.push(tagMemoryScope({
           ...chunk,
           id,
           recordId: record.id,
@@ -41,12 +47,17 @@ export class VectorIndexEngine {
           recordKind: record.kind,
           traceabilityKind,
           canSupportHypothesis,
+          sourceProjectId: record.sourceProjectId ?? record.originProjectId ?? record.projectId,
+          validationStatus: record.validationStatus === "normalized" ? "indexed" : record.validationStatus,
+          sourceQualityTier: typeof record.metadata.sourceQualityTier === "string" ? record.metadata.sourceQualityTier : undefined,
+          sourceQualityLabel: typeof record.metadata.sourceQualityLabel === "string" ? record.metadata.sourceQualityLabel : undefined,
+          sourceCanSupportHypothesis: typeof record.metadata.sourceCanSupportHypothesis === "boolean" ? record.metadata.sourceCanSupportHypothesis : undefined,
           embedding,
           embeddingProvider: providerName(input.settings),
           embeddingModel: input.settings?.embedding.model ?? "configured-embedding-model",
           embeddingDimensions: embedding.length,
           createdAt: nowIso()
-        });
+        }, memoryScope, record.originProjectId ?? record.projectId, record.workspaceProjectId ?? record.projectId));
       }
     }
     return chunks;
@@ -67,7 +78,10 @@ function sourceFromRecord(record: NormalizedResearchRecord): ResearchSource {
       confidence: record.confidence,
       recordKind: record.kind,
       traceabilityKind: getTraceabilityKind(record),
-      canSupportHypothesis: record.metadata.canSupportHypothesis === true
+      canSupportHypothesis: record.metadata.canSupportHypothesis === true,
+      sourceQualityTier: record.metadata.sourceQualityTier,
+      sourceQualityLabel: record.metadata.sourceQualityLabel,
+      sourceCanSupportHypothesis: record.metadata.sourceCanSupportHypothesis
     },
     createdAt: record.createdAt
   };

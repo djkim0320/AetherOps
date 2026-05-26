@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { chunkResearchSource } from "./chunking.js";
 import { DeterministicEmbeddingProvider } from "./orchestratorTestHarness.test.js";
 import { VectorRagEngine } from "./vectorRagEngine.js";
@@ -32,7 +32,6 @@ describe("VectorRagEngine", () => {
         budget: "test",
         autonomyPolicy: {
           toolApproval: "suggested",
-          maxLoopIterations: 1,
           allowExternalSearch: false,
           allowCodeExecution: false
         },
@@ -58,6 +57,7 @@ describe("VectorRagEngine", () => {
       ontologyEntities: [],
       ontologyRelations: [],
       ontologyConstraints: [],
+      projectContextSnapshots: [],
       hybridContexts: [],
       validationResults: [],
       continuationDecisions: [],

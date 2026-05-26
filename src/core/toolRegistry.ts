@@ -1,4 +1,5 @@
 import { createId, nowIso } from "./ids.js";
+import { assessSourceQuality, rankResearchUrls, sourceQualityMetadata } from "./sourceQuality.js";
 import type {
   AppSettings,
   EvidenceItem,
@@ -25,7 +26,7 @@ export class WebSearchTool implements ResearchTool {
 
   async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
     const startedAt = nowIso();
-    const query = input.project.topic;
+    const query = buildPublicResearchQuery(input);
     if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
       throw new Error("External search is disabled by project autonomy or app settings.");
     }
@@ -42,30 +43,12 @@ export class WebSearchTool implements ResearchTool {
       title: result.title,
       url: result.url,
       retrievedAt: completedAt,
-      metadata: { snippet: result.snippet, provider: settings.webSearch.provider },
+      metadata: { snippet: result.snippet, provider: settings.webSearch.provider, ...sourceQualityMetadata(result.url, result.title) },
       createdAt: completedAt
     }));
-    const evidence = results.slice(0, 5).map((result, index) => ({
-      id: createId("evidence"),
-      projectId: input.project.id,
-      category: "web_source" as const,
-      title: result.title,
-      summary: result.snippet || "Search result did not include a snippet.",
-      sourceId: sources[index]?.id,
-      sourceUri: result.url,
-      citation: `${result.title} - ${result.url}`,
-      keywords: ["web", "search", ...input.project.topic.split(/\s+/).slice(0, 4)],
-      linkedHypothesisIds: input.hypotheses.map((item) => item.id),
-      reliabilityScore: 0.55,
-      relevanceScore: 0.65,
-      evidenceStrength: "medium" as const,
-      limitations: ["Search result snippets should be verified against the fetched source page."],
-      createdAt: completedAt
-    }));
-
     return {
       toolRun: completedToolRun(input, this.name, startedAt, completedAt, { query, provider: settings.webSearch.provider }, { resultCount: results.length }),
-      evidence,
+      evidence: [],
       artifacts: [],
       sources
     };
@@ -104,8 +87,10 @@ export class WebFetchTool implements ResearchTool {
 
   async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
     const startedAt = nowIso();
-    const urls = (input.evidence ?? [])
-      .map((item) => item.sourceUri)
+    const urls = [
+      ...(input.evidence ?? []).map((item) => item.sourceUri),
+      ...(input.sources ?? []).map((item) => item.url)
+    ]
       .filter((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
       .slice(0, 3);
     if (!urls.length) {
@@ -124,7 +109,8 @@ export class WebFetchTool implements ResearchTool {
         contentType: page.contentType,
         status: page.status,
         excerpt: page.text.slice(0, 1_000),
-        characterCount: page.text.length
+        characterCount: page.text.length,
+        ...sourceQualityMetadata(page.url, page.title)
       },
       createdAt: completedAt
     }));
@@ -139,7 +125,9 @@ export class WebFetchTool implements ResearchTool {
       content: [`# ${page.title}`, "", `URL: ${page.url}`, "", page.text].join("\n"),
       createdAt: completedAt
     }));
-    const evidence: EvidenceItem[] = pages.map((page, index) => ({
+    const evidence: EvidenceItem[] = pages.map((page, index) => {
+      const quality = assessSourceQuality(page.url, page.title);
+      return {
       id: createId("evidence"),
       projectId: input.project.id,
       category: "web_source",
@@ -149,14 +137,15 @@ export class WebFetchTool implements ResearchTool {
       sourceUri: page.url,
       citation: `${page.title} - ${page.url}`,
       quote: page.text.slice(0, 500),
-      keywords: ["web_fetch", ...input.project.topic.split(/\s+/).slice(0, 5)],
+      keywords: ["web_fetch", quality.tier, ...input.project.topic.split(/\s+/).slice(0, 5)],
       linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
-      reliabilityScore: 0.62,
-      relevanceScore: 0.68,
-      evidenceStrength: "medium",
-      limitations: ["Fetched web page text was extracted automatically and should be checked against the original page."],
+      reliabilityScore: quality.reliabilityScore,
+      relevanceScore: quality.preferredForSearch ? 0.78 : 0.58,
+      evidenceStrength: quality.evidenceStrength,
+      limitations: ["Fetched web page text was extracted automatically and should be checked against the original page.", ...quality.limitations],
       createdAt: completedAt
-    }));
+      };
+    });
     return {
       toolRun: completedToolRun(input, this.name, startedAt, completedAt, { urls }, { urls, fetchedPages: pages.length }),
       evidence,
@@ -293,14 +282,32 @@ function completedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: 
 }
 
 function normalizeSearchResults(items: Array<{ title?: string; url?: string; snippet?: string }> | undefined): Array<{ title: string; url: string; snippet: string }> {
-  return (items ?? [])
+  const normalized = (items ?? [])
     .map((item) => ({
       title: item.title?.trim() || item.url?.trim() || "Untitled search result",
       url: item.url?.trim() || "",
       snippet: item.snippet?.trim() || ""
     }))
-    .filter((item) => item.url)
+    .filter((item) => item.url);
+  const ranked = rankResearchUrls(normalized.map((item) => item.url));
+  const rank = new Map(ranked.map((url, index) => [url, index]));
+  return normalized
+    .filter((item) => rank.has(item.url))
+    .sort((a, b) => (rank.get(a.url) ?? 999) - (rank.get(b.url) ?? 999))
     .slice(0, 5);
+}
+
+function buildPublicResearchQuery(input: OpenCodeRunInput): string {
+  return [
+    input.questions.find((question) => question.status === "open")?.text,
+    input.project.topic,
+    "Google Scholar Semantic Scholar Crossref arXiv DOI NIST OECD ISO public report academic paper systematic review"
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
 }
 
 async function fetchPage(url: string): Promise<{ url: string; title: string; text: string; contentType: string; status: number }> {

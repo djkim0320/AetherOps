@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+﻿import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -92,7 +92,6 @@ function settings(command: string): AppSettings {
     },
     allowExternalSearch: true,
     allowCodeExecution: false,
-    maxLoopIterations: 2,
     updatedAt: "2026-05-20T00:00:00.000Z"
   };
 }
@@ -106,7 +105,6 @@ function input(): OpenCodeRunInput {
     budget: "none",
     autonomyPolicy: {
       toolApproval: "suggested",
-      maxLoopIterations: 1,
       allowExternalSearch: false,
       allowCodeExecution: false
     },

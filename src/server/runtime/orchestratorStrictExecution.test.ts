@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+﻿import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,7 +22,6 @@ const input: ResearchProjectInput = {
   budget: "30 minutes",
   autonomyPolicy: {
     toolApproval: "suggested",
-    maxLoopIterations: 2,
     allowExternalSearch: false,
     allowCodeExecution: false
   }

@@ -122,6 +122,8 @@ async function handleRpc(
   switch (method) {
     case "projects.create":
       return orchestrator.createProject(args[0] as ResearchProjectInput);
+    case "projects.update":
+      return orchestrator.updateProjectInput(String(args[0]), args[1] as ResearchProjectInput);
     case "projects.list":
       return orchestrator.listProjects();
     case "sessions.createForProject": {

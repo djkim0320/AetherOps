@@ -17,6 +17,7 @@ interface PersistedSettings {
   browserUse?: AppSettings["browserUse"];
   allowExternalSearch?: boolean;
   allowCodeExecution?: boolean;
+  /** @deprecated 반복 횟수는 에이전트의 계속 연구 판단이 결정하며 저장값은 무시됩니다. */
   maxLoopIterations?: number;
   ontologyExtractionMode?: AppSettings["ontologyExtractionMode"];
   finalOutputExport?: AppSettings["finalOutputExport"];
@@ -61,7 +62,6 @@ export const defaultSettings: AppSettings = {
   },
   allowExternalSearch: true,
   allowCodeExecution: false,
-  maxLoopIterations: 2,
   ontologyExtractionMode: "rule_based",
   finalOutputExport: {
     markdown: true,
@@ -135,7 +135,6 @@ export class JsonAppSettingsStore implements AppSettingsStore {
       browserUse: normalizeBrowserUse(settings.browserUse),
       allowExternalSearch: settings.allowExternalSearch,
       allowCodeExecution: settings.allowCodeExecution,
-      maxLoopIterations: settings.maxLoopIterations,
       ontologyExtractionMode: settings.ontologyExtractionMode,
       finalOutputExport: settings.finalOutputExport,
       encryptedApiKey: settings.openCodeLlm.source === "api" ? currentApiKey : undefined,
@@ -197,7 +196,6 @@ export class JsonAppSettingsStore implements AppSettingsStore {
       browserUse: normalizeBrowserUse(settings.browserUse),
       allowExternalSearch: settings.allowExternalSearch,
       allowCodeExecution: settings.allowCodeExecution,
-      maxLoopIterations: settings.maxLoopIterations,
       ontologyExtractionMode: settings.ontologyExtractionMode,
       finalOutputExport: settings.finalOutputExport,
       updatedAt: settings.updatedAt
@@ -229,7 +227,6 @@ export class JsonAppSettingsStore implements AppSettingsStore {
       browserUse: normalizeBrowserUse(normalized.browserUse),
       allowExternalSearch: normalized.allowExternalSearch ?? defaultSettings.allowExternalSearch,
       allowCodeExecution: normalized.allowCodeExecution ?? defaultSettings.allowCodeExecution,
-      maxLoopIterations: normalized.maxLoopIterations ?? defaultSettings.maxLoopIterations,
       ontologyExtractionMode: normalized.ontologyExtractionMode ?? defaultSettings.ontologyExtractionMode,
       finalOutputExport: normalized.finalOutputExport ?? defaultSettings.finalOutputExport,
       updatedAt: normalized.updatedAt
@@ -289,7 +286,6 @@ function normalizePersisted(settings: PersistedSettings): PersistedSettings {
     browserUse: normalizeBrowserUse(settings.browserUse),
     allowExternalSearch: settings.allowExternalSearch ?? defaultSettings.allowExternalSearch,
     allowCodeExecution: settings.allowCodeExecution ?? defaultSettings.allowCodeExecution,
-    maxLoopIterations: settings.maxLoopIterations ?? defaultSettings.maxLoopIterations,
     ontologyExtractionMode:
       settings.ontologyExtractionMode === "llm" || settings.ontologyExtractionMode === "rule_based" || settings.ontologyExtractionMode === "hybrid"
         ? settings.ontologyExtractionMode

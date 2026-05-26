@@ -26,9 +26,9 @@ export class NodeProjectStorage implements ProjectStorage {
   async ensureResearchDb(project: ResearchProject): Promise<ResearchDatabase> {
     const root = normalize(project.projectRoot);
     const paths = {
-      sqlitePath: join(root, "research.sqlite"),
-      vectorPath: join(root, "vector.sqlite"),
-      ontologyPath: join(root, "ontology.sqlite"),
+      sqlitePath: join(root, "project.sqlite"),
+      vectorPath: join(root, "context", "vector-links.sqlite"),
+      ontologyPath: join(root, "context", "ontology-links.sqlite"),
       artifactRoot: join(root, "artifacts"),
       sourceRoot: join(root, "sources"),
       logRoot: join(root, "logs"),
@@ -37,11 +37,13 @@ export class NodeProjectStorage implements ProjectStorage {
       ontologyRoot: join(root, "ontology"),
       exportsRoot: join(root, "exports"),
       errorsRoot: join(root, "errors"),
+      contextRoot: join(root, "context"),
       statePath: join(root, "state.json")
     };
 
     for (const directory of [
       root,
+      paths.contextRoot,
       paths.artifactRoot,
       join(paths.sourceRoot, "web"),
       join(paths.sourceRoot, "papers"),
@@ -301,19 +303,7 @@ function buildLoopSpec(snapshot: ResearchSnapshot): Record<string, unknown> {
       to: ResearchLoopStep.PlanResearch,
       condition: "shouldContinue=true"
     },
-    persistentResearchMemory: {
-      rawSources: snapshot.sources.length,
-      artifacts: snapshot.artifacts.length,
-      toolLogs: snapshot.toolRuns.length,
-      evidenceLedger: snapshot.evidence.length,
-      vectorDb: snapshot.chunks.length,
-      ontologyGraphDb: {
-        entities: snapshot.ontologyEntities.length,
-        relations: snapshot.ontologyRelations.length
-      },
-      projectsAndReports: snapshot.finalOutputs.length || (snapshot.report ? 1 : 0),
-      errorsAndBlockers: snapshot.stepErrors.length + snapshot.runtimeBlockers.length
-    },
+    persistentResearchMemory: buildPersistentMemorySummary(snapshot),
     counts: {
       sessions: snapshot.sessions.length,
       questions: snapshot.questions.length,
@@ -339,10 +329,45 @@ function buildLoopSpec(snapshot: ResearchSnapshot): Record<string, unknown> {
   };
 }
 
+function buildPersistentMemorySummary(snapshot: ResearchSnapshot): Record<string, unknown> {
+  const globalRecords = snapshot.normalizedRecords.filter((record) => record.memoryScope === "global");
+  const projectRecords = snapshot.normalizedRecords.filter((record) => record.memoryScope !== "global");
+  const globalChunks = snapshot.chunks.filter((chunk) => chunk.memoryScope === "global");
+  const projectChunks = snapshot.chunks.filter((chunk) => chunk.memoryScope !== "global");
+  const globalEntities = snapshot.ontologyEntities.filter((entity) => entity.memoryScope === "global");
+  const projectEntities = snapshot.ontologyEntities.filter((entity) => entity.memoryScope !== "global");
+  const globalRelations = snapshot.ontologyRelations.filter((relation) => relation.memoryScope === "global");
+  const projectRelations = snapshot.ontologyRelations.filter((relation) => relation.memoryScope !== "global");
+
+  return {
+    globalResearchMemory: {
+      normalizedRecords: globalRecords.length,
+      vectorChunks: globalChunks.length,
+      ontologyEntities: globalEntities.length,
+      ontologyRelations: globalRelations.length
+    },
+    projectWorkspace: {
+      rawSources: snapshot.sources.length,
+      artifacts: snapshot.artifacts.length,
+      toolLogs: snapshot.toolRuns.length,
+      evidenceLedger: snapshot.evidence.length,
+      normalizedRecords: projectRecords.length,
+      vectorChunks: projectChunks.length,
+      ontologyEntities: projectEntities.length,
+      ontologyRelations: projectRelations.length,
+      projectsAndReports: snapshot.finalOutputs.length || (snapshot.report ? 1 : 0),
+      errorsAndBlockers: snapshot.stepErrors.length + snapshot.runtimeBlockers.length
+    }
+  };
+}
+
 function renderLoopMarkdown(spec: Record<string, unknown>): string {
   const project = spec.project as Record<string, unknown>;
   const stages = spec.stages as Array<Record<string, string>>;
   const counts = spec.counts as Record<string, number>;
+  const memory = spec.persistentResearchMemory as Record<string, Record<string, number>>;
+  const globalMemory = memory.globalResearchMemory ?? {};
+  const projectWorkspace = memory.projectWorkspace ?? {};
   return [
     `# AetherOps 12-Step Research Loop - ${project.topic}`,
     "",
@@ -360,6 +385,12 @@ function renderLoopMarkdown(spec: Record<string, unknown>): string {
     "",
     "## Counts",
     ...Object.entries(counts).map(([key, value]) => `- ${key}: ${value}`),
+    "",
+    "## Persistent Research Memory",
+    "- Global Research Memory",
+    ...Object.entries(globalMemory).map(([key, value]) => `  - ${key}: ${value}`),
+    "- Project Workspace",
+    ...Object.entries(projectWorkspace).map(([key, value]) => `  - ${key}: ${value}`),
     ""
   ].join("\n");
 }
@@ -388,6 +419,11 @@ function migrateResearchDb(path: string): void {
     "research_inputs",
     "research_specifications",
     "research_plans",
+    "project_record_links",
+    "project_chunk_links",
+    "project_entity_links",
+    "project_relation_links",
+    "project_context_snapshots",
     "normalized_records",
     "hybrid_contexts",
     "validation_results",

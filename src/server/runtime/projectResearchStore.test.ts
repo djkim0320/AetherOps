@@ -13,11 +13,10 @@ let store: SqliteResearchStore | undefined;
 const input: ResearchProjectInput = {
   goal: "프로젝트별 독립 저장소 생성 검증",
   topic: "project storage",
-  scope: "research.sqlite, vector.sqlite, artifacts, reports, knowledge 생성",
+  scope: "project.sqlite, context, reports, knowledge 생성",
   budget: "test",
   autonomyPolicy: {
     toolApproval: "suggested",
-    maxLoopIterations: 1,
     allowExternalSearch: false,
     allowCodeExecution: false
   }
@@ -44,9 +43,10 @@ describe("NodeProjectStorage", () => {
 
     expect(snapshot.database).toBeDefined();
     expect(existsSync(snapshot.project.projectRoot)).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "research.sqlite"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "vector.sqlite"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "ontology.sqlite"))).toBe(true);
+    expect(existsSync(join(snapshot.project.projectRoot, "project.sqlite"))).toBe(true);
+    expect(existsSync(join(snapshot.project.projectRoot, "context"))).toBe(true);
+    expect(existsSync(join(snapshot.project.projectRoot, "context", "vector-links.sqlite"))).toBe(true);
+    expect(existsSync(join(snapshot.project.projectRoot, "context", "ontology-links.sqlite"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "artifacts"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "sources"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "logs"))).toBe(true);

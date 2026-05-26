@@ -63,6 +63,17 @@ export type EvidenceStrength = "weak" | "medium" | "strong";
 export type HypothesisStatus = "untested" | "supported" | "rejected" | "needs_more_evidence";
 export type NormalizedRecordKind = "source" | "artifact" | "claim" | "evidence" | "observation" | "citation" | "error";
 export type TraceabilityKind = "internal_artifact" | "external_source" | "tool_observation" | "project_provenance" | "error";
+export type MemoryScope = "global" | "project_only" | "ephemeral";
+export type ResearchMemoryScope = MemoryScope;
+export type ValidationStatus =
+  | "raw"
+  | "normalized"
+  | "indexed"
+  | "graph_linked"
+  | "validated"
+  | "disputed"
+  | "deprecated"
+  | "rejected";
 export type OntologyEntityType =
   | "ResearchQuestion"
   | "Hypothesis"
@@ -104,7 +115,6 @@ export type OntologyRelationType =
 
 export interface AutonomyPolicy {
   toolApproval: "manual" | "suggested" | "automatic";
-  maxLoopIterations: number;
   allowExternalSearch: boolean;
   allowCodeExecution: boolean;
 }
@@ -232,6 +242,11 @@ export interface ResearchSource {
 export interface ResearchChunk {
   id: string;
   projectId: string;
+  sourceProjectId?: string;
+  originProjectId?: string;
+  workspaceProjectId?: string;
+  memoryScope?: MemoryScope;
+  validationStatus?: ValidationStatus;
   sourceId: string;
   text: string;
   chunkIndex: number;
@@ -243,6 +258,9 @@ export interface ResearchChunk {
   recordKind?: NormalizedRecordKind;
   traceabilityKind?: TraceabilityKind;
   canSupportHypothesis?: boolean;
+  sourceQualityTier?: string;
+  sourceQualityLabel?: string;
+  sourceCanSupportHypothesis?: boolean;
   embeddingProvider?: string;
   embeddingModel?: string;
   embeddingDimensions?: number;
@@ -298,6 +316,11 @@ export interface ResearchArtifact {
 export interface NormalizedResearchRecord {
   id: string;
   projectId: string;
+  sourceProjectId?: string;
+  originProjectId?: string;
+  workspaceProjectId?: string;
+  memoryScope: MemoryScope;
+  validationStatus: ValidationStatus;
   iteration: number;
   kind: NormalizedRecordKind;
   title: string;
@@ -315,6 +338,11 @@ export interface NormalizedResearchRecord {
 export interface OntologyEntity {
   id: string;
   projectId: string;
+  sourceProjectId?: string;
+  originProjectId?: string;
+  workspaceProjectId?: string;
+  memoryScope?: MemoryScope;
+  validationStatus?: ValidationStatus;
   label: string;
   type: OntologyEntityType;
   description?: string;
@@ -327,6 +355,11 @@ export interface OntologyEntity {
 export interface OntologyRelation {
   id: string;
   projectId: string;
+  sourceProjectId?: string;
+  originProjectId?: string;
+  workspaceProjectId?: string;
+  memoryScope?: MemoryScope;
+  validationStatus?: ValidationStatus;
   subjectId: string;
   predicate: OntologyRelationType;
   objectId: string;
@@ -339,6 +372,11 @@ export interface OntologyRelation {
 export interface OntologyConstraint {
   id: string;
   projectId: string;
+  sourceProjectId?: string;
+  originProjectId?: string;
+  workspaceProjectId?: string;
+  memoryScope?: MemoryScope;
+  validationStatus?: ValidationStatus;
   label: string;
   description: string;
   appliesToEntityType?: OntologyEntityType;
@@ -419,6 +457,22 @@ export interface HybridContext {
   graphSummary: string;
   contextText: string;
   retrievalScores: Record<string, number>;
+  createdAt: string;
+}
+
+export interface ProjectContextSnapshot {
+  id: string;
+  projectId: string;
+  iteration: number;
+  query: string;
+  selectedRecordIds: string[];
+  selectedSourceIds: string[];
+  selectedEvidenceIds: string[];
+  selectedChunkIds: string[];
+  selectedEntityIds: string[];
+  selectedRelationIds: string[];
+  citations: string[];
+  selectionReason: string;
   createdAt: string;
 }
 
@@ -512,6 +566,21 @@ export interface FinalResearchOutput {
   createdAt: string;
 }
 
+export interface GlobalMemoryItem {
+  id: string;
+  projectId: string;
+  sourceProjectId?: string;
+  title: string;
+  content: string;
+  validationResultId: string;
+  supportingRecordIds: string[];
+  supportingEvidenceIds: string[];
+  citations: string[];
+  promotionReason: string;
+  validationStatus: Extract<ValidationStatus, "validated">;
+  createdAt: string;
+}
+
 export interface ResearchSnapshot {
   project: ResearchProject;
   sessions: ResearchSession[];
@@ -531,10 +600,12 @@ export interface ResearchSnapshot {
   ontologyEntities: OntologyEntity[];
   ontologyRelations: OntologyRelation[];
   ontologyConstraints: OntologyConstraint[];
+  projectContextSnapshots: ProjectContextSnapshot[];
   hybridContexts: HybridContext[];
   validationResults: ValidationResult[];
   continuationDecisions: ContinuationDecision[];
   finalOutputs: FinalResearchOutput[];
+  globalMemoryItems?: GlobalMemoryItem[];
   runtimeBlockers: RuntimeBlocker[];
   stepErrors: StepError[];
   openCodeRuns: OpenCodeRun[];
@@ -550,6 +621,7 @@ export interface OpenCodeRunInput {
   hypotheses: Hypothesis[];
   evidence?: EvidenceItem[];
   artifacts?: ResearchArtifact[];
+  sources?: ResearchSource[];
   ragContext?: RagContext;
   hybridContext?: HybridContext;
   specification?: ResearchSpecification;
@@ -615,7 +687,6 @@ export interface AppSettings {
   browserUse: BrowserUseSettings;
   allowExternalSearch: boolean;
   allowCodeExecution: boolean;
-  maxLoopIterations: number;
   ontologyExtractionMode?: "llm" | "rule_based" | "hybrid";
   finalOutputExport?: {
     markdown: boolean;
@@ -671,10 +742,12 @@ export interface ResearchStore {
   saveOntologyEntities(entities: OntologyEntity[]): Promise<void>;
   saveOntologyRelations(relations: OntologyRelation[]): Promise<void>;
   saveOntologyConstraints(constraints: OntologyConstraint[]): Promise<void>;
+  saveProjectContextSnapshot(context: ProjectContextSnapshot): Promise<void>;
   saveHybridContext(context: HybridContext): Promise<void>;
   saveValidationResults(results: ValidationResult[]): Promise<void>;
   saveContinuationDecision(decision: ContinuationDecision): Promise<void>;
   saveFinalResearchOutput(output: FinalResearchOutput): Promise<void>;
+  saveGlobalMemoryItems(items: GlobalMemoryItem[]): Promise<void>;
   saveRuntimeBlocker(blocker: RuntimeBlocker): Promise<void>;
   saveStepError(error: StepError): Promise<void>;
   saveOpenCodeRun(run: OpenCodeRun): Promise<void>;

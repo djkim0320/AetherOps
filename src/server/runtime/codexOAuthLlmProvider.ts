@@ -53,7 +53,12 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     try {
       const raw = await this.runCodexExec(prompt, outputPath, request.timeoutMs ?? this.timeoutMs);
       const finalMessage = readFileIfExists(outputPath) || raw;
-      return extractJsonObject(finalMessage) as T;
+      try {
+        return extractJsonObject(finalMessage) as T;
+      } catch (parseError) {
+        const repaired = await this.repairJsonResponse(request, finalMessage, parseError, request.timeoutMs ?? this.timeoutMs);
+        return extractJsonObject(repaired) as T;
+      }
     } finally {
       rmSync(outputPath, { force: true });
     }
@@ -122,6 +127,39 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     return typeof this.model === "function" ? this.model() : this.model;
   }
 
+  private async repairJsonResponse(
+    request: LlmJsonRequest,
+    invalidResponse: string,
+    parseError: unknown,
+    timeoutMs: number
+  ): Promise<string> {
+    const repairOutputPath = join(tmpdir(), `aetherops-codex-repair-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
+    const repairPrompt = [
+      "The previous response for an AetherOps JSON-only request was invalid JSON.",
+      "Return exactly one valid JSON object. Do not add markdown fences or commentary.",
+      `Schema name: ${request.schemaName}`,
+      `Parse error: ${formatParseError(parseError)}`,
+      "",
+      "Original system instruction:",
+      request.system,
+      "",
+      "Original user instruction:",
+      request.user.slice(0, 12_000),
+      "",
+      "Invalid response to repair:",
+      invalidResponse.slice(0, 20_000)
+    ].join("\n");
+
+    try {
+      const raw = await this.runCodexExec(repairPrompt, repairOutputPath, Math.min(timeoutMs, 120_000));
+      return readFileIfExists(repairOutputPath) || raw;
+    } catch (repairError) {
+      throw new Error(`LLM JSON parsing failed and repair failed: ${formatParseError(parseError)}; ${formatParseError(repairError)}`);
+    } finally {
+      rmSync(repairOutputPath, { force: true });
+    }
+  }
+
   private runCommand(args: string[], stdin: string, timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       const command = process.platform === "win32" ? "cmd.exe" : "codex";
@@ -181,4 +219,8 @@ function readFileIfExists(path: string): string {
 
 function sanitizeCodexOutput(text: string): string {
   return text.replace(/(access_token|refresh_token|id_token)["'=:\s]+[A-Za-z0-9._-]+/gi, "$1=<redacted>");
+}
+
+function formatParseError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

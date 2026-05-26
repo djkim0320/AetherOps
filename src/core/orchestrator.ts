@@ -7,8 +7,10 @@ import { createId, createStableId, nowIso } from "./ids.js";
 import type { LlmProvider } from "./llm.js";
 import { deriveResultWithLlm } from "./llmPlanning.js";
 import { LoopDecisionEngine } from "./loopDecision.js";
+import { MemoryPromotionEngine } from "./memoryPromotion.js";
 import { OntologyGraphEngine } from "./ontologyGraphEngine.js";
 import type { ProjectStorage } from "./projectStorage.js";
+import { ProjectContextBuilder } from "./projectContextBuilder.js";
 import { ReasoningEngine } from "./reasoningEngine.js";
 import { createResearchInput, type ResearchInputPayload } from "./researchInput.js";
 import { buildResearchReport } from "./report.js";
@@ -19,6 +21,7 @@ import { RuntimeRequirementChecker, RuntimeRequirementError } from "./runtimeReq
 import { ToolRunner } from "./toolRunner.js";
 import { ValidationEngine } from "./validationEngine.js";
 import { VectorIndexEngine } from "./vectorIndexEngine.js";
+import { ResultSynthesizer } from "./resultSynthesizer.js";
 import {
   ResearchLoopStep,
   type AppSettings,
@@ -64,11 +67,12 @@ const defaultSettings: AppSettings = {
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
   allowExternalSearch: false,
   allowCodeExecution: false,
-  maxLoopIterations: 2,
   ontologyExtractionMode: "rule_based",
   finalOutputExport: { markdown: true, json: true, ontologyGraph: true, artifactPackage: true },
   updatedAt: nowIso()
 };
+
+const INTERNAL_LOOP_SAFETY_CAP = 8;
 
 export class AetherOpsOrchestrator {
   private readonly specificationBuilder: ResearchSpecificationBuilder;
@@ -77,6 +81,9 @@ export class AetherOpsOrchestrator {
   private readonly ontologyGraph = new OntologyGraphEngine();
   private readonly reasoning = new ReasoningEngine();
   private readonly validation = new ValidationEngine();
+  private readonly projectContextBuilder = new ProjectContextBuilder();
+  private readonly resultSynthesizer = new ResultSynthesizer();
+  private readonly memoryPromotion = new MemoryPromotionEngine();
   private readonly loopDecision = new LoopDecisionEngine();
   private readonly requirements = new RuntimeRequirementChecker();
 
@@ -100,6 +107,25 @@ export class AetherOpsOrchestrator {
   }
 
   async getSnapshot(projectId: string): Promise<ResearchSnapshot> {
+    return this.store.getSnapshot(projectId);
+  }
+
+  async updateProjectInput(projectId: string, input: ResearchProjectInput): Promise<ResearchSnapshot> {
+    const snapshot = await this.store.getSnapshot(projectId);
+    const updated: ResearchProject = {
+      ...snapshot.project,
+      goal: input.goal,
+      topic: input.topic,
+      scope: input.scope,
+      budget: input.budget,
+      autonomyPolicy: {
+        ...snapshot.project.autonomyPolicy,
+        ...input.autonomyPolicy
+      },
+      updatedAt: nowIso()
+    };
+    await this.store.updateProject(updated);
+    await this.record(projectId, snapshot.project.currentStep, "Main Flow", "프로젝트 연구 메타데이터가 최신 입력으로 저장되었습니다.");
     return this.store.getSnapshot(projectId);
   }
 
@@ -239,7 +265,7 @@ export class AetherOpsOrchestrator {
       }
       throw error;
     }
-    await this.moveProject(projectId, ResearchLoopStep.InputResearchQuestionHypothesis);
+    await this.moveProject(projectId, ResearchLoopStep.InputResearchQuestionHypothesis, snapshot.project.status === "blocked" ? "idle" : undefined);
     await this.record(projectId, ResearchLoopStep.InputResearchQuestionHypothesis, "Main Flow", "명시적인 연구 질문과 초기 가설이 입력되었습니다.");
     return this.store.getSnapshot(projectId);
   }
@@ -265,15 +291,17 @@ export class AetherOpsOrchestrator {
       const snapshot = await this.store.getSnapshot(projectId);
       const specification = await this.ensureSpecification(projectId);
       const settings = await this.getSettings();
+      const executableTools = this.executableToolNames(snapshot, settings);
+      await this.moveProject(projectId, ResearchLoopStep.PlanResearch);
       const plan = await this.planner.plan({
         snapshot: await this.store.getSnapshot(projectId),
         specification,
         iteration: iteration ?? nextIteration(snapshot),
         settings,
-        availableTools: this.registeredToolNames(),
+        availableTools: executableTools,
         continuationDecision: decision ?? snapshot.continuationDecisions.at(-1)
       });
-      this.assertPlanToolsRegistered(plan);
+      this.assertPlanToolsAllowed(plan, executableTools);
       await this.store.saveResearchPlan(plan);
       await this.moveProject(projectId, ResearchLoopStep.PlanResearch);
       await this.record(projectId, ResearchLoopStep.PlanResearch, "Agent Control", `Iteration ${plan.iteration} 연구 계획이 수립되었습니다.`);
@@ -282,7 +310,8 @@ export class AetherOpsOrchestrator {
       if (error instanceof RuntimeRequirementError) {
         return this.blockProject(projectId, error);
       }
-      throw error;
+      await this.failProject(projectId, ResearchLoopStep.PlanResearch, error);
+      return this.store.getSnapshot(projectId);
     }
   }
 
@@ -296,6 +325,10 @@ export class AetherOpsOrchestrator {
 
   async startLoop(projectId: string): Promise<ResearchSnapshot> {
     try {
+      const startingSnapshot = await this.store.getSnapshot(projectId);
+      if (startingSnapshot.project.status === "blocked" || startingSnapshot.project.status === "failed") {
+        await this.setStatus(projectId, "idle");
+      }
       await this.ensureResearchDb(projectId);
       const inputSnapshot = await this.ensureResearchInput(projectId);
       if (inputSnapshot.project.status === "blocked") return inputSnapshot;
@@ -304,11 +337,10 @@ export class AetherOpsOrchestrator {
       const planSnapshot = await this.ensureResearchPlan(projectId);
       if (planSnapshot.project.status === "blocked" || planSnapshot.project.status === "failed") return planSnapshot;
       await this.setStatus(projectId, "running");
-      const settings = await this.getSettings();
       const initialSnapshot = await this.store.getSnapshot(projectId);
-      const maxIterations = Math.max(1, initialSnapshot.project.autonomyPolicy.maxLoopIterations || settings.maxLoopIterations || 1);
+      const safetyCapIterations = INTERNAL_LOOP_SAFETY_CAP;
       const firstIteration = Math.max(initialSnapshot.results.length, initialSnapshot.openCodeRuns.length) + 1;
-      for (let iteration = firstIteration; iteration <= maxIterations; iteration += 1) {
+      for (let iteration = firstIteration; iteration <= safetyCapIterations; iteration += 1) {
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
         const beforeCounts = counts(await this.store.getSnapshot(projectId));
 
@@ -324,8 +356,8 @@ export class AetherOpsOrchestrator {
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
         await this.reasonAndValidate(projectId, iteration);
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
-        const result = await this.synthesizeAndEvaluate(projectId, iteration, iteration >= maxIterations);
-        const decision = await this.decideContinuation(projectId, result, beforeCounts, iteration, maxIterations);
+        const result = await this.synthesizeAndEvaluate(projectId, iteration, iteration >= safetyCapIterations);
+        const decision = await this.decideContinuation(projectId, result, beforeCounts, iteration, safetyCapIterations);
         if (!decision.shouldContinue) {
           break;
         }
@@ -381,6 +413,7 @@ export class AetherOpsOrchestrator {
       hypotheses: snapshot.hypotheses,
       evidence: snapshot.evidence,
       artifacts: snapshot.artifacts,
+      sources: snapshot.sources,
       ragContext: snapshot.ragContexts.at(-1),
       hybridContext: snapshot.hybridContexts.at(-1),
       specification: snapshot.specifications.at(-1),
@@ -448,12 +481,13 @@ export class AetherOpsOrchestrator {
   }
 
   async normalizeData(projectId: string, iteration?: number): Promise<ResearchSnapshot> {
+    await this.moveProject(projectId, ResearchLoopStep.NormalizeData);
+    await this.record(projectId, ResearchLoopStep.NormalizeData, "Storage Flow", "데이터 수집 및 정규화 단계를 시작합니다.");
     await this.ingestSources(projectId);
     const snapshot = await this.store.getSnapshot(projectId);
     const records = this.normalizer.normalize(snapshot, iteration ?? nextIteration(snapshot));
     await this.store.saveNormalizedRecords(records);
-    await this.moveProject(projectId, ResearchLoopStep.NormalizeData);
-    await this.record(projectId, ResearchLoopStep.NormalizeData, "Storage Flow", `정규화 레코드 ${records.length}개가 Source/Artifact/Claim/Evidence/Observation/Citation 단위로 저장되었습니다.`);
+    await this.record(projectId, ResearchLoopStep.NormalizeData, "Storage Flow", `정규화 레코드 ${records.length}개가 Main Research Memory에 저장되고 프로젝트에는 링크되었습니다.`);
     return this.store.getSnapshot(projectId);
   }
 
@@ -463,6 +497,8 @@ export class AetherOpsOrchestrator {
 
   async buildVectorIndex(projectId: string): Promise<ResearchSnapshot> {
     await this.assertStepReady(projectId, ResearchLoopStep.BuildVectorIndex);
+    await this.moveProject(projectId, ResearchLoopStep.BuildVectorIndex);
+    await this.record(projectId, ResearchLoopStep.BuildVectorIndex, "Knowledge Flow", "Main Vector Index 갱신을 시작합니다.");
     const snapshot = await this.store.getSnapshot(projectId);
     const database = await this.requireDatabase(projectId);
     const settings = await this.getSettings();
@@ -474,11 +510,14 @@ export class AetherOpsOrchestrator {
     if (chunks.length) {
       await this.projectStorage.writeChunks(snapshot.project, database, chunks);
       await this.store.saveChunks(chunks);
+      const indexedRecordIds = new Set(chunks.map((chunk) => chunk.recordId).filter(Boolean));
+      await this.store.saveNormalizedRecords(snapshot.normalizedRecords
+        .filter((record) => indexedRecordIds.has(record.id))
+        .map((record) => ({ ...record, validationStatus: record.validationStatus === "normalized" ? "indexed" : record.validationStatus })));
     }
     const ragContext = await this.ragEngine.buildContext(await this.store.getSnapshot(projectId));
     await this.store.saveRagContext(ragContext);
-    await this.moveProject(projectId, ResearchLoopStep.BuildVectorIndex);
-    await this.record(projectId, ResearchLoopStep.BuildVectorIndex, "Knowledge Flow", `Vector index가 갱신되었습니다. 새 chunk=${chunks.length}.`);
+    await this.record(projectId, ResearchLoopStep.BuildVectorIndex, "Knowledge Flow", `Main Vector Index가 갱신되었습니다. 새 chunk=${chunks.length}.`);
     return this.store.getSnapshot(projectId);
   }
 
@@ -489,6 +528,8 @@ export class AetherOpsOrchestrator {
 
   async buildOntologyGraph(projectId: string): Promise<ResearchSnapshot> {
     await this.assertStepReady(projectId, ResearchLoopStep.BuildOntologyGraph);
+    await this.moveProject(projectId, ResearchLoopStep.BuildOntologyGraph);
+    await this.record(projectId, ResearchLoopStep.BuildOntologyGraph, "Knowledge Flow", "Main Ontology Graph 생성을 시작합니다.");
     const snapshot = await this.store.getSnapshot(projectId);
     const database = await this.requireDatabase(projectId);
     const graph = this.ontologyGraph.build({
@@ -500,34 +541,83 @@ export class AetherOpsOrchestrator {
     await this.store.saveOntologyRelations(graph.relations);
     await this.store.saveOntologyConstraints(graph.constraints);
     await this.projectStorage.writeOntologyGraph(snapshot.project, database, { ...graph, exportedAt: nowIso() });
-    await this.moveProject(projectId, ResearchLoopStep.BuildOntologyGraph);
-    await this.record(projectId, ResearchLoopStep.BuildOntologyGraph, "Knowledge Flow", `Ontology graph가 생성되었습니다. entities=${graph.entities.length}, relations=${graph.relations.length}.`);
+    const graphRecordIds = new Set([
+      ...graph.entities.map((entity) => entity.sourceRecordId),
+      ...graph.relations.map((relation) => relation.sourceRecordId),
+      ...graph.constraints.map((constraint) => constraint.sourceRecordId)
+    ].filter(Boolean));
+    if (graphRecordIds.size) {
+      await this.store.saveNormalizedRecords(snapshot.normalizedRecords
+        .filter((record) => graphRecordIds.has(record.id))
+        .map((record) => ({ ...record, validationStatus: record.validationStatus === "normalized" || record.validationStatus === "indexed" ? "graph_linked" : record.validationStatus })));
+    }
+    await this.record(projectId, ResearchLoopStep.BuildOntologyGraph, "Knowledge Flow", `Main Ontology Graph가 생성되었습니다. entities=${graph.entities.length}, relations=${graph.relations.length}.`);
     return this.store.getSnapshot(projectId);
   }
 
   async reasonAndValidate(projectId: string, iteration?: number): Promise<ResearchSnapshot> {
+    await this.moveProject(projectId, ResearchLoopStep.ReasonAndValidate);
+    await this.record(projectId, ResearchLoopStep.ReasonAndValidate, "Agent Control", "ProjectContextSnapshot 선택과 추론/검증을 시작합니다.");
     const snapshot = await this.store.getSnapshot(projectId);
     const activeIteration = iteration ?? nextIteration(snapshot);
-    const hybridContext = await new HybridRetrievalEngine(this.embeddingProvider).buildContext(snapshot, undefined, activeIteration);
+    const contextSnapshot = this.projectContextBuilder.build(snapshot, activeIteration);
+    if (!contextSnapshot.selectedRecordIds.length) {
+      throw new Error("ProjectContextSnapshot could not select any Main Research Memory records for validation.");
+    }
+    await this.store.saveProjectContextSnapshot(contextSnapshot);
+    const afterContext = await this.store.getSnapshot(projectId);
+    const hybridContext = await new HybridRetrievalEngine(this.embeddingProvider).buildContext(afterContext, contextSnapshot, activeIteration);
     await this.store.saveHybridContext(hybridContext);
-    const reasoning = this.reasoning.reason(snapshot, hybridContext);
-    const validations = this.validation.validate(snapshot, hybridContext, reasoning);
+    const contextAwareSnapshot = await this.store.getSnapshot(projectId);
+    const reasoning = this.reasoning.reason(contextAwareSnapshot, hybridContext);
+    const validations = this.validation.validate(contextAwareSnapshot, hybridContext, reasoning);
     await this.store.saveValidationResults(validations);
-    await this.moveProject(projectId, ResearchLoopStep.ReasonAndValidate);
+    const validatedEvidenceIds = new Set(validations.flatMap((validation) => [...validation.supportingEvidenceIds, ...validation.contradictingEvidenceIds]));
+    if (validatedEvidenceIds.size) {
+      await this.store.saveNormalizedRecords(contextAwareSnapshot.normalizedRecords
+        .filter((record) => record.evidenceId && validatedEvidenceIds.has(record.evidenceId) && record.kind === "evidence")
+        .map((record) => ({ ...record, validationStatus: "validated" })));
+    }
     await this.record(projectId, ResearchLoopStep.ReasonAndValidate, "Agent Control", `Hybrid retrieval 기반 검증 결과 ${validations.length}개가 생성되었습니다.`);
     return this.store.getSnapshot(projectId);
   }
 
   async synthesizeAndEvaluate(projectId: string, iteration?: number, forceStop = false): Promise<EvidenceBasedResult> {
     await this.assertStepReady(projectId, ResearchLoopStep.SynthesizeAndEvaluate);
+    await this.moveProject(projectId, ResearchLoopStep.SynthesizeAndEvaluate);
+    await this.record(projectId, ResearchLoopStep.SynthesizeAndEvaluate, "Agent Control", "ProjectContextSnapshot 기반 결과 합성을 시작합니다.");
     const snapshot = await this.store.getSnapshot(projectId);
     const activeIteration = iteration ?? nextIteration(snapshot);
-    const hybridContext = snapshot.hybridContexts.at(-1) ?? await new HybridRetrievalEngine(this.embeddingProvider).buildContext(snapshot, undefined, activeIteration);
+    const contextSnapshot = snapshot.projectContextSnapshots.filter((context) => context.iteration === activeIteration).at(-1);
+    if (!contextSnapshot) {
+      throw new Error(`ProjectContextSnapshot is required before synthesis for iteration ${activeIteration}.`);
+    }
+    const hybridContext = snapshot.hybridContexts.filter((context) => context.iteration === activeIteration).at(-1);
+    if (!hybridContext) {
+      throw new Error(`HybridContext is required before synthesis for iteration ${activeIteration}.`);
+    }
     const latestValidations = snapshot.validationResults.filter((result) => result.iteration === activeIteration);
-    const result = await this.tryLlmResult(snapshot, activeIteration, forceStop);
+    if (!latestValidations.length) {
+      throw new Error(`ValidationResult is required before synthesis for iteration ${activeIteration}.`);
+    }
+    const draft = this.resultSynthesizer.synthesize({ snapshot, hybridContext, validationResults: latestValidations, forceStop });
+    const llmResult = await this.tryLlmResult({ ...snapshot, hybridContexts: [...snapshot.hybridContexts, hybridContext], validationResults: latestValidations }, activeIteration, forceStop);
+    const result = {
+      ...draft,
+      ...llmResult,
+      id: llmResult.id,
+      validationResultIds: latestValidations.map((validation) => validation.id),
+      hybridContextId: hybridContext.id,
+      hypothesisUpdates: llmResult.hypothesisUpdates.length ? llmResult.hypothesisUpdates : draft.hypothesisUpdates,
+      quantitativeResults: llmResult.quantitativeResults.length ? llmResult.quantitativeResults : draft.quantitativeResults,
+      qualitativeResults: [
+        ...(llmResult.qualitativeResults.length ? llmResult.qualitativeResults : draft.qualitativeResults),
+        ...(hybridContext.citations.length ? [`Citations preserved: ${hybridContext.citations.slice(0, 5).join("; ")}`] : [])
+      ]
+    };
+    assertCitationPreservingResult(result, hybridContext);
     await this.store.saveResult(result);
     await this.applyHypothesisUpdates(projectId, result);
-    await this.moveProject(projectId, ResearchLoopStep.SynthesizeAndEvaluate);
     await this.record(projectId, ResearchLoopStep.SynthesizeAndEvaluate, "Agent Control", "결과 합성 및 가설 평가가 완료되었습니다.");
     return result;
   }
@@ -542,15 +632,14 @@ export class AetherOpsOrchestrator {
     result: EvidenceBasedResult,
     beforeCounts?: { evidence: number; artifacts: number; chunks: number; entities: number; relations: number },
     iteration = result.iteration,
-    maxLoopIterations?: number
+    safetyCapIterations = INTERNAL_LOOP_SAFETY_CAP
   ): Promise<ContinuationDecision> {
     const snapshot = await this.store.getSnapshot(projectId);
-    const settings = await this.getSettings();
     const decision = this.loopDecision.decide({
       snapshot,
       result,
       iteration,
-      maxLoopIterations: maxLoopIterations ?? settings.maxLoopIterations,
+      safetyCapIterations,
       beforeCounts: beforeCounts ?? counts(snapshot)
     });
     await this.store.saveContinuationDecision(decision);
@@ -570,13 +659,18 @@ export class AetherOpsOrchestrator {
       return snapshot;
     }
     await this.assertStepReady(projectId, ResearchLoopStep.FinalizeOutputs);
+    await this.moveProject(projectId, ResearchLoopStep.FinalizeOutputs);
+    await this.record(projectId, ResearchLoopStep.FinalizeOutputs, "Output Flow", "최종 결과 산출과 Main Research Memory 승격을 시작합니다.");
     const database = await this.requireDatabase(projectId);
     const output = await new FinalOutputWriter(this.projectStorage).write(snapshot, database);
     const report = buildResearchReport(snapshot);
     await this.store.saveReport({ ...report, reportPath: output.reportPath, knowledgePath: `${snapshot.project.projectRoot}/knowledge/reusable-knowledge.md` });
     await this.store.saveFinalResearchOutput(output);
+    const promotionSnapshot = await this.store.getSnapshot(projectId);
+    const promoted = this.memoryPromotion.promote(promotionSnapshot);
+    if (promoted.length) await this.store.saveGlobalMemoryItems(promoted);
     await this.moveProject(projectId, ResearchLoopStep.FinalizeOutputs, "completed");
-    await this.record(projectId, ResearchLoopStep.FinalizeOutputs, "Output Flow", "최종 보고서, 지식 자산, 그래프 export, artifact package가 생성되었습니다.");
+    await this.record(projectId, ResearchLoopStep.FinalizeOutputs, "Output Flow", `최종 보고서, 지식 자산, 그래프 export, artifact package가 생성되었습니다. 승격된 memory item=${promoted.length}.`);
     return this.store.getSnapshot(projectId);
   }
 
@@ -731,19 +825,54 @@ export class AetherOpsOrchestrator {
     return this.toolRunner?.listToolNames() ?? [];
   }
 
-  private assertPlanToolsRegistered(plan: ResearchPlan): void {
+  private executableToolNames(snapshot: ResearchSnapshot, settings: AppSettings): string[] {
+    const registered = new Set(this.registeredToolNames().map(normalizeToolNameForPlan));
+    const tools: string[] = [];
+    const include = (tool: string, enabled = true) => {
+      if (enabled && (tool === "OpenCodeTool" || registered.has(normalizeToolNameForPlan(tool)))) {
+        tools.push(tool);
+      }
+    };
+    const hasExternalUrls =
+      snapshot.evidence.some((item) => typeof item.sourceUri === "string" && /^https?:\/\//i.test(item.sourceUri)) ||
+      snapshot.sources.some((source) => typeof source.url === "string" && /^https?:\/\//i.test(source.url));
+    const searchConfigured =
+      settings.webSearch.provider !== "disabled" && Boolean(settings.webSearch.apiKey || settings.webSearch.apiKeyConfigured);
+
+    include("OpenCodeTool", settings.openCode.enabled && Boolean(settings.openCode.command?.trim()));
+    include("WebSearchTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && searchConfigured);
+    include("BackgroundBrowserTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && settings.browserUse.enabled);
+    include("WebFetchTool", hasExternalUrls);
+    include("CodeExecutionTool", snapshot.project.autonomyPolicy.allowCodeExecution && settings.allowCodeExecution);
+    include("ArtifactWriterTool");
+    include("DataAnalysisTool");
+    return [...new Set(tools)];
+  }
+
+  private assertPlanToolsAllowed(plan: ResearchPlan, allowedTools: string[]): void {
+    const allowed = new Set(allowedTools.map(normalizeToolNameForPlan));
     const registered = new Set(this.registeredToolNames().map(normalizeToolNameForPlan));
     const missing = plan.requiredTools.filter((tool) => normalizeToolNameForPlan(tool) !== "opencodetool" && !registered.has(normalizeToolNameForPlan(tool)));
-    if (!missing.length) {
-      return;
-    }
-    throw new RuntimeRequirementError(ResearchLoopStep.PlanResearch, missing.map((tool) => ({
+    const unavailable = plan.requiredTools.filter((tool) => normalizeToolNameForPlan(tool) !== "opencodetool" && !allowed.has(normalizeToolNameForPlan(tool)));
+    const unmet = [
+      ...missing.map((tool) => ({
       key: "tool.registered",
       label: "Registered research tool",
       requiredForSteps: [ResearchLoopStep.PlanResearch],
       isSatisfied: false,
       message: `Research plan requires an unregistered tool: ${tool}`
-    })));
+      })),
+      ...unavailable.map((tool) => ({
+        key: "tool.available",
+        label: "Executable research tool",
+        requiredForSteps: [ResearchLoopStep.PlanResearch],
+        isSatisfied: false,
+        message: `Research plan requires a tool that is not executable in the current settings/state: ${tool}`
+      }))
+    ];
+    if (unmet.length) {
+      throw new RuntimeRequirementError(ResearchLoopStep.PlanResearch, unmet);
+    }
   }
 
   private async blockProject(projectId: string, error: RuntimeRequirementError): Promise<ResearchSnapshot> {
@@ -974,6 +1103,28 @@ function counts(snapshot: ResearchSnapshot): { evidence: number; artifacts: numb
     entities: snapshot.ontologyEntities.length,
     relations: snapshot.ontologyRelations.length
   };
+}
+
+function assertCitationPreservingResult(result: EvidenceBasedResult, hybridContext: import("./types.js").HybridContext): void {
+  if (!result.validationResultIds?.length) {
+    throw new Error("Result synthesis omitted validationResultIds.");
+  }
+  if (result.hybridContextId !== hybridContext.id) {
+    throw new Error("Result synthesis omitted the active HybridContext reference.");
+  }
+  if (!hybridContext.citations.length) {
+    return;
+  }
+  const resultText = [
+    result.answer,
+    ...result.quantitativeResults,
+    ...result.qualitativeResults,
+    ...result.hypothesisUpdates.map((update) => update.rationale)
+  ].join("\n");
+  const citesKnownContext = hybridContext.citations.some((citation) => resultText.includes(citation) || resultText.includes(citation.slice(0, 40)));
+  if (!citesKnownContext && result.needsMoreEvidence === false) {
+    throw new Error("LLM synthesis did not preserve any ProjectContextSnapshot citation.");
+  }
 }
 
 function slugify(value: string): string {

@@ -4,6 +4,7 @@ import type {
   AgentPlan,
   ContinuationDecision,
   FinalResearchOutput,
+  GlobalMemoryItem,
   HybridContext,
   LoopIteration,
   NormalizedResearchRecord,
@@ -25,10 +26,14 @@ import type {
   ResearchSource,
   ResearchSnapshot,
   ResearchStore,
+  ProjectContextSnapshot,
   RuntimeBlocker,
   StepError,
   ToolRun
 } from "./types.js";
+import { normalizeMemoryScope } from "./researchMemory.js";
+
+type ScopedProjectItem = { projectId: string; workspaceProjectId?: string; memoryScope?: import("./types.js").MemoryScope };
 
 export class InMemoryResearchStore implements ResearchStore {
   private projects = new Map<string, ResearchProject>();
@@ -49,10 +54,12 @@ export class InMemoryResearchStore implements ResearchStore {
   private ontologyEntities: OntologyEntity[] = [];
   private ontologyRelations: OntologyRelation[] = [];
   private ontologyConstraints: OntologyConstraint[] = [];
+  private projectContextSnapshots: ProjectContextSnapshot[] = [];
   private hybridContexts: HybridContext[] = [];
   private validationResults: import("./types.js").ValidationResult[] = [];
   private continuationDecisions: ContinuationDecision[] = [];
   private finalOutputs: FinalResearchOutput[] = [];
+  private globalMemoryItems: GlobalMemoryItem[] = [];
   private runtimeBlockers: RuntimeBlocker[] = [];
   private stepErrors: StepError[] = [];
   private openCodeRuns: OpenCodeRun[] = [];
@@ -62,19 +69,20 @@ export class InMemoryResearchStore implements ResearchStore {
   private reports = new Map<string, ResearchReport>();
 
   async saveProject(project: ResearchProject): Promise<void> {
-    this.projects.set(project.id, project);
+    this.projects.set(project.id, sanitizeProject(project));
   }
 
   async updateProject(project: ResearchProject): Promise<void> {
-    this.projects.set(project.id, project);
+    this.projects.set(project.id, sanitizeProject(project));
   }
 
   async listProjects(): Promise<ResearchProject[]> {
-    return [...this.projects.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return [...this.projects.values()].map(sanitizeProject).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   async getProject(projectId: string): Promise<ResearchProject | undefined> {
-    return this.projects.get(projectId);
+    const project = this.projects.get(projectId);
+    return project ? sanitizeProject(project) : undefined;
   }
 
   async saveSessions(sessions: ResearchSession[]): Promise<void> {
@@ -150,6 +158,10 @@ export class InMemoryResearchStore implements ResearchStore {
     this.ontologyConstraints = this.upsertMany(this.ontologyConstraints, constraints);
   }
 
+  async saveProjectContextSnapshot(context: ProjectContextSnapshot): Promise<void> {
+    this.projectContextSnapshots = this.upsertMany(this.projectContextSnapshots, [context]);
+  }
+
   async saveHybridContext(context: HybridContext): Promise<void> {
     this.hybridContexts = this.upsertMany(this.hybridContexts, [context]);
   }
@@ -164,6 +176,10 @@ export class InMemoryResearchStore implements ResearchStore {
 
   async saveFinalResearchOutput(output: FinalResearchOutput): Promise<void> {
     this.finalOutputs = this.upsertMany(this.finalOutputs, [output]);
+  }
+
+  async saveGlobalMemoryItems(items: GlobalMemoryItem[]): Promise<void> {
+    this.globalMemoryItems = this.upsertMany(this.globalMemoryItems, items);
   }
 
   async saveRuntimeBlocker(blocker: RuntimeBlocker): Promise<void> {
@@ -195,7 +211,7 @@ export class InMemoryResearchStore implements ResearchStore {
   }
 
   async getSnapshot(projectId: string): Promise<ResearchSnapshot> {
-    const project = this.projects.get(projectId);
+    const project = await this.getProject(projectId);
     if (!project) {
       throw new Error(`Research project not found: ${projectId}`);
     }
@@ -210,19 +226,21 @@ export class InMemoryResearchStore implements ResearchStore {
       evidence: this.evidence.filter((item) => item.projectId === projectId),
       artifacts: this.artifacts.filter((item) => item.projectId === projectId),
       sources: this.sources.filter((item) => item.projectId === projectId),
-      chunks: this.chunks.filter((item) => item.projectId === projectId),
+      chunks: visibleInProject(this.chunks, projectId),
       toolRuns: this.toolRuns.filter((item) => item.projectId === projectId),
       agentPlans: this.agentPlans.filter((item) => item.projectId === projectId),
       researchPlans: this.researchPlans.filter((item) => item.projectId === projectId),
       specifications: this.specifications.filter((item) => item.projectId === projectId),
-      normalizedRecords: this.normalizedRecords.filter((item) => item.projectId === projectId),
-      ontologyEntities: this.ontologyEntities.filter((item) => item.projectId === projectId),
-      ontologyRelations: this.ontologyRelations.filter((item) => item.projectId === projectId),
-      ontologyConstraints: this.ontologyConstraints.filter((item) => item.projectId === projectId),
+      normalizedRecords: visibleInProject(this.normalizedRecords, projectId),
+      ontologyEntities: visibleInProject(this.ontologyEntities, projectId),
+      ontologyRelations: visibleInProject(this.ontologyRelations, projectId),
+      ontologyConstraints: visibleInProject(this.ontologyConstraints, projectId),
+      projectContextSnapshots: this.projectContextSnapshots.filter((item) => item.projectId === projectId),
       hybridContexts: this.hybridContexts.filter((item) => item.projectId === projectId),
       validationResults: this.validationResults.filter((item) => item.projectId === projectId),
       continuationDecisions: this.continuationDecisions.filter((item) => item.projectId === projectId),
       finalOutputs: this.finalOutputs.filter((item) => item.projectId === projectId),
+      globalMemoryItems: visibleInProject(this.globalMemoryItems, projectId),
       runtimeBlockers: this.runtimeBlockers.filter((item) => item.projectId === projectId),
       stepErrors: this.stepErrors.filter((item) => item.projectId === projectId),
       openCodeRuns: this.openCodeRuns.filter((item) => item.projectId === projectId),
@@ -240,4 +258,15 @@ export class InMemoryResearchStore implements ResearchStore {
     }
     return [...merged.values()];
   }
+}
+
+function sanitizeProject(project: ResearchProject): ResearchProject {
+  const { maxLoopIterations: _legacyMaxLoopIterations, ...autonomyPolicy } = project.autonomyPolicy as ResearchProject["autonomyPolicy"] & {
+    maxLoopIterations?: number;
+  };
+  return { ...project, autonomyPolicy };
+}
+
+function visibleInProject<T extends ScopedProjectItem>(items: T[], projectId: string): T[] {
+  return items.filter((item) => item.projectId === projectId || item.workspaceProjectId === projectId);
 }

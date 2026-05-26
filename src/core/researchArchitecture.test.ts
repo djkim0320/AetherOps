@@ -1,13 +1,16 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { EvidenceNormalizer } from "./evidenceNormalizer.js";
 import { HybridRetrievalEngine } from "./hybridRetrievalEngine.js";
 import { LoopDecisionEngine } from "./loopDecision.js";
+import { MemoryPromotionEngine } from "./memoryPromotion.js";
 import { OntologyGraphEngine } from "./ontologyGraphEngine.js";
 import { DeterministicEmbeddingProvider, DeterministicLlmProvider } from "./orchestratorTestHarness.test.js";
+import { ProjectContextBuilder } from "./projectContextBuilder.js";
 import { ReasoningEngine } from "./reasoningEngine.js";
 import { ResearchPlanner } from "./researchPlanner.js";
 import { ResearchSpecificationBuilder } from "./researchSpecification.js";
 import { ResultSynthesizer } from "./resultSynthesizer.js";
+import { WebSearchTool } from "./toolRegistry.js";
 import { ValidationEngine } from "./validationEngine.js";
 import { VectorIndexEngine } from "./vectorIndexEngine.js";
 import { ResearchLoopStep, type AppSettings, type ResearchSnapshot } from "./types.js";
@@ -21,7 +24,6 @@ const settings: AppSettings = {
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
   allowExternalSearch: false,
   allowCodeExecution: false,
-  maxLoopIterations: 2,
   ontologyExtractionMode: "rule_based",
   finalOutputExport: { markdown: true, json: true, ontologyGraph: true, artifactPackage: true },
   updatedAt: createdAt
@@ -35,7 +37,7 @@ function snapshot(): ResearchSnapshot {
       topic: "Pomodoro 25/5 vs 50/10",
       scope: "focus fatigue completion",
       budget: "30 minutes",
-      autonomyPolicy: { toolApproval: "suggested", maxLoopIterations: 2, allowExternalSearch: false, allowCodeExecution: false },
+      autonomyPolicy: { toolApproval: "suggested", allowExternalSearch: false, allowCodeExecution: false },
       createdAt,
       updatedAt: createdAt,
       currentStep: ResearchLoopStep.CreateResearchDb,
@@ -60,8 +62,8 @@ function snapshot(): ResearchSnapshot {
         title: "Study break observation",
         summary: "Frequent short breaks may help fatigue management during studying.",
         sourceId: "s1",
-        sourceUri: "https://example.com/study-breaks",
-        citation: "Example Study Breaks",
+        sourceUri: "https://arxiv.org/abs/2401.00001",
+        citation: "Open academic study-break paper - https://arxiv.org/abs/2401.00001",
         keywords: ["pomodoro", "breaks", "fatigue"],
         linkedHypothesisIds: ["h1"],
         reliabilityScore: 0.7,
@@ -99,7 +101,7 @@ function snapshot(): ResearchSnapshot {
       }
     ],
     sources: [
-      { id: "s1", projectId: "project-1", kind: "web", title: "Study break observation", url: "https://example.com/study-breaks", retrievedAt: createdAt, metadata: {}, createdAt }
+      { id: "s1", projectId: "project-1", kind: "paper", title: "Study break observation", url: "https://arxiv.org/abs/2401.00001", retrievedAt: createdAt, metadata: {}, createdAt }
     ],
     researchInputs: [
       {
@@ -152,6 +154,7 @@ function snapshot(): ResearchSnapshot {
     ontologyEntities: [],
     ontologyRelations: [],
     ontologyConstraints: [],
+    projectContextSnapshots: [],
     hybridContexts: [],
     validationResults: [],
     continuationDecisions: [],
@@ -202,7 +205,42 @@ describe("12-step research architecture modules", () => {
     expect(records.some((record) => record.sourceUri?.startsWith("project://research-input/") && record.metadata.traceabilityKind === "project_provenance")).toBe(true);
     expect(records.some((record) => record.sourceUri?.startsWith("project://research-specification/") && record.metadata.canSupportHypothesis === false)).toBe(true);
     expect(records.some((record) => record.kind === "artifact" && record.metadata.traceabilityKind === "internal_artifact")).toBe(true);
+    expect(records.some((record) => record.metadata.traceabilityKind === "external_source" && record.memoryScope === "global")).toBe(true);
+    expect(records.some((record) => record.metadata.traceabilityKind === "project_provenance" && record.memoryScope === "project_only")).toBe(true);
+    expect(records.some((record) => record.metadata.traceabilityKind === "internal_artifact" && record.memoryScope === "project_only")).toBe(true);
     expect(records.find((record) => record.evidenceId === "gap1")?.confidence).toBeLessThan(0.5);
+
+    const weakWebBase = {
+      ...base,
+      sources: [
+        ...base.sources,
+        { id: "weak-source", projectId: "project-1", kind: "web" as const, title: "Community wiki page", url: "https://namu.wiki/w/pomodoro", retrievedAt: createdAt, metadata: {}, createdAt }
+      ],
+      evidence: [
+        ...base.evidence,
+        {
+          id: "weak-web",
+          projectId: "project-1",
+          category: "web_source" as const,
+          title: "Community wiki page",
+          summary: "A weak tertiary/community source claims support.",
+          sourceId: "weak-source",
+          sourceUri: "https://namu.wiki/w/pomodoro",
+          citation: "Community wiki page - https://namu.wiki/w/pomodoro",
+          keywords: ["weak"],
+          linkedHypothesisIds: ["h1"],
+          reliabilityScore: 0.9,
+          relevanceScore: 0.9,
+          evidenceStrength: "strong" as const,
+          limitations: [],
+          createdAt
+        }
+      ]
+    };
+    const weakRecords = new EvidenceNormalizer().normalize(weakWebBase, 1);
+    const weakRecord = weakRecords.find((record) => record.evidenceId === "weak-web" && record.title === "Community wiki page");
+    expect(weakRecord?.kind).not.toBe("evidence");
+    expect(weakRecord?.metadata.canSupportHypothesis).toBe(false);
 
     const provider = new DeterministicEmbeddingProvider(64);
     const chunks = await new VectorIndexEngine(provider).buildIndex({ snapshot: base, records, settings });
@@ -210,6 +248,9 @@ describe("12-step research architecture modules", () => {
     expect(chunks[0]?.embedding?.length).toBe(64);
     expect(chunks.some((chunk) => records.find((record) => record.id === chunk.recordId)?.kind === "error")).toBe(false);
     expect(chunks.every((chunk) => chunk.recordKind && chunk.traceabilityKind && typeof chunk.canSupportHypothesis === "boolean")).toBe(true);
+    expect(chunks.some((chunk) => chunk.sourceQualityTier)).toBe(true);
+    expect(chunks.some((chunk) => chunk.memoryScope === "global")).toBe(true);
+    expect(chunks.every((chunk) => chunk.originProjectId && chunk.workspaceProjectId)).toBe(true);
 
     const withIndex = { ...base, normalizedRecords: records, chunks };
     const graph = new OntologyGraphEngine().build({ snapshot: withIndex, records });
@@ -217,12 +258,21 @@ describe("12-step research architecture modules", () => {
     expect(graph.relations.some((relation) => relation.predicate === "supports")).toBe(true);
     expect(graph.entities.every((entity) => entity.sourceRecordId || entity.sourceEvidenceId)).toBe(true);
     expect(graph.relations.every((relation) => relation.sourceRecordId || relation.sourceEvidenceId)).toBe(true);
+    expect(graph.entities.some((entity) => entity.memoryScope === "global")).toBe(true);
 
     const withGraph = { ...withIndex, ontologyEntities: graph.entities, ontologyRelations: graph.relations, ontologyConstraints: graph.constraints };
-    const hybrid = await new HybridRetrievalEngine(provider).buildContext(withGraph, "Pomodoro fatigue evidence", 1);
+    const projectContext = new ProjectContextBuilder().build(withGraph, 1);
+    expect(projectContext.selectedRecordIds.length).toBeGreaterThan(0);
+    expect(projectContext.citations.length).toBeGreaterThan(0);
+    const evidenceOnlyContext = {
+      ...projectContext,
+      selectedRecordIds: projectContext.selectedRecordIds.filter((id) => records.find((record) => record.id === id)?.kind !== "artifact")
+    };
+    const hybrid = await new HybridRetrievalEngine(provider).buildContext({ ...withGraph, projectContextSnapshots: [evidenceOnlyContext] }, evidenceOnlyContext, 1);
     expect(hybrid.vectorChunkIds.length).toBeGreaterThan(0);
     expect(hybrid.citations.length).toBeGreaterThan(0);
     expect(hybrid.contextText).toContain("Vector Context");
+    expect(hybrid.artifactIds).not.toContain("a1");
 
     const reasoning = new ReasoningEngine().reason(withGraph, hybrid);
     const validations = new ValidationEngine().validate(withGraph, hybrid, reasoning);
@@ -235,11 +285,68 @@ describe("12-step research architecture modules", () => {
       snapshot: { ...withValidation, results: [result] },
       result,
       iteration: 1,
-      maxLoopIterations: 2,
+      safetyCapIterations: 2,
       beforeCounts: { evidence: 0, artifacts: 0, chunks: 0, entities: 0, relations: 0 }
     });
     expect(decision.shouldContinue).toBe(true);
     expect(decision.nextObjective).toBeTruthy();
     expect(decision.planRevisionHints.join(" ")).toContain("Step 4");
+  });
+
+  it("does not turn web search snippets or internal artifacts into support evidence", async () => {
+    const base = snapshot();
+    const tool = new WebSearchTool();
+    (tool as unknown as { search: () => Promise<Array<{ title: string; url: string; snippet: string }>> }).search = async () => [
+      { title: "Search only result", url: "https://example.edu/search-result", snippet: "Snippet is not verified evidence." }
+    ];
+    const result = await tool.run(
+      {
+        project: { ...base.project, autonomyPolicy: { ...base.project.autonomyPolicy, allowExternalSearch: true } },
+        questions: base.questions,
+        hypotheses: base.hypotheses,
+        sources: base.sources,
+        iteration: 1
+      },
+      { ...settings, allowExternalSearch: true, webSearch: { provider: "custom", apiKey: "test-key", endpoint: "https://example.test/search" } }
+    );
+    expect(result.sources).toHaveLength(1);
+    expect(result.evidence).toHaveLength(0);
+
+    const records = new EvidenceNormalizer().normalize({ ...base, artifacts: base.artifacts, evidence: [], sources: result.sources }, 1);
+    expect(records.some((record) => record.kind === "evidence")).toBe(false);
+    expect(records.some((record) => record.kind === "artifact" && record.metadata.canSupportHypothesis === false)).toBe(true);
+  });
+
+  it("promotes only validated citation-backed external evidence into global memory items", () => {
+    const base = snapshot();
+    const records = new EvidenceNormalizer().normalize(base, 1).map((record) =>
+      record.evidenceId === "e1" && record.kind === "evidence" ? { ...record, validationStatus: "validated" as const } : record
+    );
+    const validation = {
+      id: "validation-supported",
+      projectId: base.project.id,
+      iteration: 1,
+      hypothesisId: "h1",
+      status: "supported" as const,
+      confidence: 0.8,
+      supportingEvidenceIds: ["e1"],
+      contradictingEvidenceIds: [],
+      relatedEntityIds: [],
+      relatedRelationIds: [],
+      reasoningSummary: "External evidence supports the hypothesis.",
+      limitations: [],
+      evidenceGaps: [],
+      createdAt
+    };
+    const promoted = new MemoryPromotionEngine().promote({ ...base, normalizedRecords: records, validationResults: [validation] });
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]?.supportingEvidenceIds).toContain("e1");
+
+    const notPromoted = new MemoryPromotionEngine().promote({
+      ...base,
+      normalizedRecords: records,
+      validationResults: [{ ...validation, id: "validation-gap", status: "inconclusive", supportingEvidenceIds: [] }]
+    });
+    expect(notPromoted).toHaveLength(0);
   });
 });

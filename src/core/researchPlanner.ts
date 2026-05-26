@@ -40,13 +40,14 @@ export class ResearchPlanner {
       system: [
         "Create an executable research plan for one iteration.",
         "If previous continuation decision exists, incorporate its planRevisionHints before choosing tools.",
-        "Do not claim unavailable sources were collected. Return only JSON."
+        "Do not claim unavailable sources were collected.",
+        "Choose requiredTools only from the provided availableTools list. Return only JSON."
       ].join("\n"),
       user: [
         `Specification: ${JSON.stringify(input.specification)}`,
         `Previous validation: ${JSON.stringify(input.snapshot.validationResults.slice(-8))}`,
         `Previous continuation decision: ${JSON.stringify(input.continuationDecision)}`,
-        `Settings: ${JSON.stringify({
+        `Settings and executable tools: ${JSON.stringify({
           allowExternalSearch: input.settings.allowExternalSearch,
           allowCodeExecution: input.settings.allowCodeExecution,
           webSearchProvider: input.settings.webSearch.provider,
@@ -123,7 +124,7 @@ export class ResearchPlanner {
       stopCriteria: [
         "No priority hypothesis remains inconclusive due to fixable evidence gaps.",
         "No new evidence/artifact/chunk/entity/relation is produced.",
-        "maxLoopIterations is reached."
+        "The internal runaway-prevention safety cap is reached."
       ],
       createdAt: nowIso()
     };

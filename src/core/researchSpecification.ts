@@ -104,7 +104,7 @@ export class ResearchSpecificationBuilder {
         "현재 프로젝트 입력은 연구 명세의 출발점이며 외부 출처를 대체하지 않는다.",
         errorSignals.length ? "일부 도구 또는 런타임 요구사항이 충족되지 않을 수 있다." : "수집 자료는 citation/sourceUri로 추적 가능해야 한다."
       ],
-      constraints: [input.project.budget, `maxLoopIterations=${input.project.autonomyPolicy.maxLoopIterations}`].filter(Boolean),
+      constraints: [input.project.budget, "루프 반복 여부는 11단계 계속 연구 판단이 근거 공백과 분석 필요성을 보고 자율 결정한다."].filter(Boolean),
       successCriteria: [
         "질문별로 추적 가능한 evidence/citation을 연결한다.",
         "가설별 supported/contradicted/inconclusive 판단과 한계를 기록한다.",

@@ -1,5 +1,6 @@
 import { extractKeywords } from "./chunking.js";
 import { createStableId, nowIso } from "./ids.js";
+import { normalizeMemoryScope, tagMemoryScope } from "./researchMemory.js";
 import type {
   EvidenceItem,
   Hypothesis,
@@ -77,7 +78,7 @@ export class OntologyGraphEngine {
       this.addSpecification(builder, specification, provenance.specificationRecordId);
     }
 
-    return builder.result();
+    return tagGraphMemoryScope(builder.result(), input.records);
   }
 
   private addQuestion(builder: GraphBuilder, question: ResearchQuestion, sourceRecordId?: string): void {
@@ -717,6 +718,34 @@ function provenanceIndex(records: NormalizedResearchRecord[]): {
       const normalized = normalizeConcept(text);
       return provenanceRecords.find((record) => normalizeConcept(record.content).includes(normalized))?.id ?? specificationRecordId ?? provenanceRecords[0]?.id;
     }
+  };
+}
+
+function tagGraphMemoryScope(graph: OntologyGraphBuildResult, records: NormalizedResearchRecord[]): OntologyGraphBuildResult {
+  const recordById = new Map(records.map((record) => [record.id, record]));
+  const scopeForRecord = (sourceRecordId?: string): { memoryScope: import("./types.js").MemoryScope; originProjectId?: string; workspaceProjectId?: string; validationStatus?: import("./types.js").ValidationStatus } => {
+    const record = sourceRecordId ? recordById.get(sourceRecordId) : undefined;
+    return {
+      memoryScope: normalizeMemoryScope(record?.memoryScope),
+      originProjectId: record?.originProjectId ?? record?.projectId,
+      workspaceProjectId: record?.workspaceProjectId ?? record?.projectId,
+      validationStatus: record?.validationStatus === "normalized" ? "graph_linked" : record?.validationStatus
+    };
+  };
+
+  return {
+    entities: graph.entities.map((entity) => {
+      const scope = scopeForRecord(entity.sourceRecordId);
+      return { ...tagMemoryScope(entity, scope.memoryScope, scope.originProjectId ?? entity.projectId, scope.workspaceProjectId ?? entity.projectId), validationStatus: scope.validationStatus ?? entity.validationStatus ?? "raw" };
+    }),
+    relations: graph.relations.map((relation) => {
+      const scope = scopeForRecord(relation.sourceRecordId);
+      return { ...tagMemoryScope(relation, scope.memoryScope, scope.originProjectId ?? relation.projectId, scope.workspaceProjectId ?? relation.projectId), validationStatus: scope.validationStatus ?? relation.validationStatus ?? "raw" };
+    }),
+    constraints: graph.constraints.map((constraint) => {
+      const scope = scopeForRecord(constraint.sourceRecordId);
+      return { ...tagMemoryScope(constraint, scope.memoryScope, scope.originProjectId ?? constraint.projectId, scope.workspaceProjectId ?? constraint.projectId), validationStatus: scope.validationStatus ?? constraint.validationStatus ?? "raw" };
+    })
   };
 }
 

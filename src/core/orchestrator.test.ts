@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { InMemoryResearchStore } from "./memoryStore.js";
 import { createInputProject, createStrictTestOrchestrator } from "./orchestratorTestHarness.test.js";
 import { ResearchLoopStep, type ResearchProjectInput } from "./types.js";
@@ -10,7 +10,6 @@ const input: ResearchProjectInput = {
   budget: "MVP",
   autonomyPolicy: {
     toolApproval: "suggested",
-    maxLoopIterations: 2,
     allowExternalSearch: false,
     allowCodeExecution: false
   }
@@ -42,6 +41,7 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.ontologyEntities.length).toBeGreaterThan(0);
     expect(snapshot.ontologyRelations.length).toBeGreaterThan(0);
     expect(snapshot.validationResults.length).toBeGreaterThan(0);
+    expect(snapshot.projectContextSnapshots.length).toBeGreaterThan(0);
     expect(snapshot.continuationDecisions.length).toBeGreaterThan(0);
     expect(snapshot.finalOutputs.length).toBeGreaterThan(0);
     expect(snapshot.report?.answer).toContain("AetherOps");
@@ -73,6 +73,16 @@ describe("AetherOpsOrchestrator", () => {
     expect(firstDecisionIndex).toBeGreaterThan(-1);
     expect(steps[firstDecisionIndex + 1]).toBe(ResearchLoopStep.PlanResearch);
     expect(steps[firstDecisionIndex + 2]).toBe(ResearchLoopStep.ExecuteTools);
+  });
+
+  it("does not synthesize without a ProjectContextSnapshot", async () => {
+    const orchestrator = createStrictTestOrchestrator();
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.createResearchDb(snapshot.project.id);
+    snapshot = await orchestrator.buildResearchSpecification(snapshot.project.id);
+    snapshot = await orchestrator.planResearch(snapshot.project.id);
+
+    await expect(orchestrator.synthesizeAndEvaluate(snapshot.project.id, 1)).rejects.toThrow(/ProjectContextSnapshot/);
   });
 
   it("stores every persistent memory category through the strict loop", async () => {

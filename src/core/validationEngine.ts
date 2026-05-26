@@ -10,6 +10,10 @@ export class ValidationEngine {
           record.kind === "evidence" &&
           record.evidenceId &&
           record.metadata.canSupportHypothesis === true &&
+          record.metadata.sourceCanSupportHypothesis !== false &&
+          record.metadata.sourceQualityTier !== "weak" &&
+          record.metadata.sourceQualityTier !== "excluded" &&
+          record.metadata.sourceQualityTier !== "general_web" &&
           (record.metadata.traceabilityKind === "external_source" || record.metadata.traceabilityKind === "tool_observation")
         )
         .map((record) => record.evidenceId as string)
@@ -17,8 +21,9 @@ export class ValidationEngine {
     return reasoning.map((item) => {
       const supportingEvidenceIds = item.supportingEvidenceIds.filter((id) => supportEligibleEvidenceIds.has(id));
       const contradictingEvidenceIds = item.contradictingEvidenceIds.filter((id) => supportEligibleEvidenceIds.has(id));
+      const contextEvidenceIds = new Set(hybridContext.evidenceIds);
       const evidence = snapshot.evidence.filter((entry) =>
-        supportingEvidenceIds.includes(entry.id) || contradictingEvidenceIds.includes(entry.id)
+        contextEvidenceIds.has(entry.id) && (supportingEvidenceIds.includes(entry.id) || contradictingEvidenceIds.includes(entry.id))
       );
       const citedEvidence = evidence.filter((entry) => entry.citation || entry.sourceUri || entry.sourceId);
       const citationCoverage = evidence.length ? citedEvidence.length / evidence.length : 0;

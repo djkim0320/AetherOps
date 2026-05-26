@@ -1,14 +1,20 @@
 import { cosineSimilarity, type EmbeddingProvider } from "./embeddingProvider.js";
 import { createId, nowIso } from "./ids.js";
-import type { HybridContext, ResearchSnapshot } from "./types.js";
+import type { HybridContext, ProjectContextSnapshot, ResearchSnapshot } from "./types.js";
 
 export class HybridRetrievalEngine {
   constructor(private readonly embeddingProvider: EmbeddingProvider) {}
 
-  async buildContext(snapshot: ResearchSnapshot, query?: string, iteration?: number): Promise<HybridContext> {
-    const activeQuery = query || buildQuery(snapshot);
+  async buildContext(snapshot: ResearchSnapshot, contextOrQuery?: ProjectContextSnapshot | string, iteration?: number): Promise<HybridContext> {
+    const contextSnapshot = typeof contextOrQuery === "object" ? contextOrQuery : undefined;
+    const activeQuery = contextSnapshot?.query || (typeof contextOrQuery === "string" ? contextOrQuery : buildQuery(snapshot));
     const queryEmbedding = await this.embeddingProvider.embed(activeQuery);
+    const allowedChunkIds = contextSnapshot ? new Set(contextSnapshot.selectedChunkIds) : undefined;
+    const allowedEntityIds = contextSnapshot ? new Set(contextSnapshot.selectedEntityIds) : undefined;
+    const allowedRelationIds = contextSnapshot ? new Set(contextSnapshot.selectedRelationIds) : undefined;
+    const allowedEvidenceIds = contextSnapshot ? new Set(contextSnapshot.selectedEvidenceIds) : undefined;
     const vectorHits = snapshot.chunks
+      .filter((chunk) => !allowedChunkIds || allowedChunkIds.has(chunk.id))
       .map((chunk) => ({
         chunk,
         score: chunk.embedding?.length ? cosineSimilarity(queryEmbedding, chunk.embedding) : lexicalScore(activeQuery, chunk.text)
@@ -18,11 +24,13 @@ export class HybridRetrievalEngine {
 
     const queryTokens = new Set(tokens(activeQuery));
     const entityHits = snapshot.ontologyEntities
+      .filter((entity) => !allowedEntityIds || allowedEntityIds.has(entity.id))
       .map((entity) => ({ entity, score: lexicalScore([...queryTokens].join(" "), `${entity.label} ${entity.description ?? ""}`) + entity.confidence }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 8);
     const entityIds = new Set(entityHits.map(({ entity }) => entity.id));
     const relationHits = snapshot.ontologyRelations
+      .filter((relation) => !allowedRelationIds || allowedRelationIds.has(relation.id))
       .filter((relation) => entityIds.has(relation.subjectId) || entityIds.has(relation.objectId))
       .slice(0, 12);
     const evidenceIds = new Set<string>();
@@ -38,15 +46,19 @@ export class HybridRetrievalEngine {
     for (const relation of relationHits) {
       if (relation.sourceEvidenceId) evidenceIds.add(relation.sourceEvidenceId);
     }
+    if (allowedEvidenceIds) {
+      for (const id of allowedEvidenceIds) evidenceIds.add(id);
+    }
     for (const evidenceId of evidenceIds) {
       const evidence = snapshot.evidence.find((item) => item.id === evidenceId);
       if (evidence?.citation || evidence?.sourceUri || evidence?.sourceId) {
         citations.add(evidence.citation ?? evidence.sourceUri ?? evidence.sourceId ?? evidence.title);
       }
     }
-    for (const artifact of snapshot.artifacts.slice(-8)) {
-      artifactIds.add(artifact.id);
+    for (const record of snapshot.normalizedRecords.filter((record) => contextSnapshot?.selectedRecordIds.includes(record.id) && record.artifactId)) {
+      artifactIds.add(record.artifactId as string);
     }
+    for (const citation of contextSnapshot?.citations ?? []) citations.add(citation);
 
     const vectorSummary = vectorHits.length
       ? vectorHits.map(({ chunk }, index) => `${index + 1}. ${chunk.text.slice(0, 180)}`).join("\n")
@@ -61,7 +73,7 @@ export class HybridRetrievalEngine {
     return {
       id: createId("hybrid"),
       projectId: snapshot.project.id,
-      iteration: iteration ?? Math.max(snapshot.openCodeRuns.length, snapshot.researchPlans.at(-1)?.iteration ?? 1),
+      iteration: contextSnapshot?.iteration ?? iteration ?? Math.max(snapshot.openCodeRuns.length, snapshot.researchPlans.at(-1)?.iteration ?? 1),
       query: activeQuery,
       vectorChunkIds: vectorHits.map(({ chunk }) => chunk.id),
       ontologyEntityIds: entityHits.map(({ entity }) => entity.id),

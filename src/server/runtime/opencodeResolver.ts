@@ -32,9 +32,31 @@ export function resolveOpenCodeCommand(
   }
 
   const resolvedConfigured = resolveConfiguredCommand(command, roots, checkedPaths);
+  if (resolvedConfigured) {
+    return {
+      command: resolvedConfigured,
+      source: "configured",
+      checkedPaths
+    };
+  }
+  const bundled = isDefaultOpenCodeCommand(command) ? findBundledOpenCode(roots, checkedPaths) : undefined;
+  if (bundled) {
+    return {
+      command: bundled,
+      source: "bundled",
+      checkedPaths
+    };
+  }
+  if (!isDefaultOpenCodeCommand(command)) {
+    return {
+      command,
+      source: "configured",
+      checkedPaths
+    };
+  }
   return {
-    command: resolvedConfigured ?? command,
-    source: "configured",
+    command,
+    source: "system",
     checkedPaths
   };
 }
@@ -73,6 +95,11 @@ function resolveConfiguredCommand(command: string, roots: string[], checkedPaths
   }
 
   return undefined;
+}
+
+function isDefaultOpenCodeCommand(command: string): boolean {
+  const normalized = command.trim().replace(/^["']|["']$/g, "").replace(/\\/g, "/").toLowerCase();
+  return normalized === "opencode" || normalized === "opencode.cmd" || normalized === "opencode.exe";
 }
 
 function bundledOpenCodeCandidates(): string[] {

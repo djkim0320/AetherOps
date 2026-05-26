@@ -64,4 +64,28 @@ describe("JsonAppSettingsStore", () => {
     expect(publicSettings.embedding.apiKeyConfigured).toBe(true);
     expect(runtimeSettings.embedding.apiKey).toBe("sk-test");
   });
+
+  it("ignores legacy maxLoopIterations because loop continuation is agent-controlled", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        {
+          maxLoopIterations: 1,
+          updatedAt: "2026-05-20T00:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const store = new JsonAppSettingsStore(settingsPath);
+    const publicSettings = await store.getSettings();
+    const saved = await store.saveSettings(publicSettings);
+
+    expect(publicSettings.maxLoopIterations).toBeUndefined();
+    expect(saved.maxLoopIterations).toBeUndefined();
+  });
 });

@@ -1,5 +1,7 @@
 import { extractKeywords } from "./chunking.js";
 import { createStableId, nowIso } from "./ids.js";
+import { memoryScopeForTraceability, tagMemoryScope } from "./researchMemory.js";
+import { assessSourceQuality, canEvidenceSupportHypothesis, sourceQualityMetadata } from "./sourceQuality.js";
 import type {
   EvidenceItem,
   NormalizedRecordKind,
@@ -98,7 +100,7 @@ function provenanceRecord(
   sourceUri: string,
   createdAt: string
 ): NormalizedResearchRecord {
-  return {
+  return tagMemoryScope({
     id: createStableId("record", stableKey),
     projectId,
     iteration,
@@ -108,14 +110,17 @@ function provenanceRecord(
     sourceUri,
     metadata: metadata("project_provenance", false, content, { sourceKind: "conversation" }),
     confidence: 0.6,
+    validationStatus: "raw",
     createdAt
-  };
+  }, "project_only");
 }
 
 function recordFromSource(source: ResearchSource, iteration: number): NormalizedResearchRecord {
   const content = [source.title, source.url, source.doi, source.rawPath, JSON.stringify(source.metadata)].filter(Boolean).join("\n");
   const traceabilityKind = sourceTraceability(source);
-  return {
+  const quality = assessSourceQuality(source.url ?? source.rawPath, source.title);
+  const canSupportHypothesis = traceabilityKind === "external_source" && quality.canSupportHypothesis;
+  return tagMemoryScope({
     id: createStableId("record", `${source.id}:source`),
     projectId: source.projectId,
     iteration,
@@ -125,20 +130,22 @@ function recordFromSource(source: ResearchSource, iteration: number): Normalized
     sourceId: source.id,
     citation: source.url || source.doi || source.rawPath,
     sourceUri: source.url || source.rawPath,
-    metadata: metadata(traceabilityKind, traceabilityKind === "external_source", content, {
+    metadata: metadata(traceabilityKind, canSupportHypothesis, content, {
       sourceKind: source.kind,
       authors: source.authors,
       publishedAt: source.publishedAt,
-      doi: source.doi
+      doi: source.doi,
+      ...sourceQualityMetadata(source.url ?? source.rawPath, source.title)
     }),
-    confidence: traceabilityKind === "external_source" ? 0.75 : 0.35,
+    confidence: canSupportHypothesis ? quality.reliabilityScore : traceabilityKind === "external_source" ? Math.min(0.55, quality.reliabilityScore) : 0.35,
+    validationStatus: validationStatusFor(traceabilityKind, canSupportHypothesis, "source"),
     createdAt: source.createdAt ?? source.retrievedAt
-  };
+  }, memoryScopeForTraceability(traceabilityKind));
 }
 
 function recordFromArtifact(artifact: ResearchArtifact, iteration: number): NormalizedResearchRecord {
   const content = [artifact.title, artifact.summary, artifact.content, artifact.relativePath].filter(Boolean).join("\n");
-  return {
+  return tagMemoryScope({
     id: createStableId("record", `${artifact.id}:artifact`),
     projectId: artifact.projectId,
     iteration,
@@ -154,22 +161,27 @@ function recordFromArtifact(artifact: ResearchArtifact, iteration: number): Norm
       sourceKind: "artifact"
     }),
     confidence: artifact.category === "generated_artifact" ? 0.55 : 0.45,
+    validationStatus: "raw",
     createdAt: artifact.createdAt
-  };
+  }, "project_only");
 }
 
 function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?: ResearchSource): NormalizedResearchRecord[] {
   const content = [evidence.title, evidence.summary, evidence.quote, evidence.citation, evidence.sourceUri, evidence.doi].filter(Boolean).join("\n");
   const traceabilityKind = evidenceTraceability(evidence, source);
   const canSupportHypothesis =
-    traceabilityKind === "external_source" ||
-    (traceabilityKind === "tool_observation" && hasNonInternalTrace(evidence));
+    (traceabilityKind === "external_source" || (traceabilityKind === "tool_observation" && hasNonInternalTrace(evidence))) &&
+    canEvidenceSupportHypothesis(evidence, source);
   const confidence = confidenceFromEvidence(evidence, canSupportHypothesis);
   const isError = evidence.keywords.some((keyword) => keyword.includes("error") || keyword.includes("failed") || keyword.includes("tool_unavailable"));
   const isGeneratedArtifact = evidence.category === "generated_artifact";
   const kind: NormalizedRecordKind = isError ? "error" : canSupportHypothesis && !isGeneratedArtifact ? "evidence" : isGeneratedArtifact ? "observation" : "claim";
+  const memoryScope = memoryScopeForTraceability(traceabilityKind);
   const base = {
     projectId: evidence.projectId,
+    originProjectId: evidence.projectId,
+    workspaceProjectId: evidence.projectId,
+    memoryScope,
     iteration,
     evidenceId: evidence.id,
     sourceId: evidence.sourceId,
@@ -183,23 +195,25 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
       evidenceStrength: evidence.evidenceStrength,
       limitations: evidence.limitations,
       sourceKind: source?.kind,
-      doi: evidence.doi
+      doi: evidence.doi,
+      ...sourceQualityMetadata(evidence.sourceUri ?? source?.url ?? source?.rawPath, evidence.title)
     }),
     confidence,
+    validationStatus: validationStatusFor(traceabilityKind, canSupportHypothesis && !isGeneratedArtifact, kind),
     createdAt: evidence.createdAt
   };
   const records: NormalizedResearchRecord[] = [
-    {
+    tagMemoryScope({
       ...base,
       id: createStableId("record", `${evidence.id}:${kind}`),
       kind,
       title: evidence.title,
       content
-    }
+    }, memoryScope)
   ];
 
   if (canSupportHypothesis && (evidence.citation || evidence.sourceUri || evidence.doi)) {
-    records.push({
+    records.push(tagMemoryScope({
       ...base,
       id: createStableId("record", `${evidence.id}:citation:${evidence.citation ?? evidence.sourceUri ?? evidence.doi}`),
       kind: "citation",
@@ -211,10 +225,10 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
         doi: evidence.doi
       }),
       confidence: 0.7
-    });
+    }, memoryScope));
   }
 
-  records.push({
+  records.push(tagMemoryScope({
     ...base,
     id: createStableId("record", `${evidence.id}:claim`),
     kind: "claim",
@@ -225,8 +239,9 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
       category: evidence.category,
       linkedHypothesisIds: evidence.linkedHypothesisIds
     }),
-    confidence: Math.max(0.1, confidence - 0.15)
-  });
+    confidence: Math.max(0.1, confidence - 0.15),
+    validationStatus: "raw"
+  }, memoryScope));
   return records;
 }
 
@@ -239,7 +254,7 @@ function recordFromToolRun(toolRun: ToolRun): NormalizedResearchRecord {
     toolRun.error
   ].filter(Boolean).join("\n");
   const isError = toolRun.status === "failed";
-  return {
+  return tagMemoryScope({
     id: createStableId("record", `${toolRun.id}:${isError ? "error" : "observation"}`),
     projectId: toolRun.projectId,
     iteration: toolRun.iteration,
@@ -254,8 +269,9 @@ function recordFromToolRun(toolRun: ToolRun): NormalizedResearchRecord {
       sourceKind: "log"
     }),
     confidence: toolRun.status === "completed" ? 0.65 : 0.2,
+    validationStatus: isError ? "rejected" : "raw",
     createdAt: toolRun.completedAt || nowIso()
-  };
+  }, isError ? "ephemeral" : "project_only");
 }
 
 function metadata(traceabilityKind: TraceabilityKind, canSupportHypothesis: boolean, text: string, extra: Record<string, unknown>): Record<string, unknown> {
@@ -265,6 +281,12 @@ function metadata(traceabilityKind: TraceabilityKind, canSupportHypothesis: bool
     canSupportHypothesis,
     keywords: extractKeywords(text)
   };
+}
+
+function validationStatusFor(traceabilityKind: TraceabilityKind, canSupportHypothesis: boolean, kind: NormalizedRecordKind): "raw" | "normalized" | "rejected" {
+  if (traceabilityKind === "error") return "rejected";
+  if (traceabilityKind === "external_source" && (canSupportHypothesis || kind === "source" || kind === "citation")) return "normalized";
+  return "raw";
 }
 
 function sourceTraceability(source: ResearchSource): TraceabilityKind {

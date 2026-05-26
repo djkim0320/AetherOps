@@ -62,10 +62,9 @@ const defaultInput: ResearchProjectInput = {
   goal: "근거 기반 반복 연구 루프가 질문, 가설, 자료, 산출물을 스스로 개선하는지 검증한다.",
   topic: "AetherOps 자율 연구 루프",
   scope: "도구 실행, Vector Index, Ontology Graph, 산출물 저장, blocked/failed 기록을 포함한 운영 12단계 검증",
-  budget: "운영 반복 예산",
+  budget: "운영 제약",
   autonomyPolicy: {
     toolApproval: "suggested",
-    maxLoopIterations: 2,
     allowExternalSearch: true,
     allowCodeExecution: false
   }
@@ -106,7 +105,6 @@ const embeddingModelOptions: Record<AppSettings["embedding"]["provider"], string
   custom: ["text-embedding-3-small", "text-embedding-3-large", "gemini-embedding-001", "custom-embedding-model"]
 };
 const embeddingDimensionOptions = [64, 96, 128, 256, 512, 1024, 1536, 3072];
-const maxLoopIterationOptions = [1, 2, 3, 4, 5, 6, 8];
 
 const stepLabels: Record<ResearchLoopStep, { index: string; label: string; flow: StepFlowClass; icon: IconComponent }> = {
   [ResearchLoopStep.CreateResearchDb]: { index: "1", label: "연구 DB 생성", flow: "storage", icon: Database },
@@ -275,6 +273,7 @@ export function App(): ReactElement {
       let next = await api.projects.create(projectInput);
       await api.sessions.createForProject(next.project.id);
       next = await api.researchDb.create(next.project.id);
+      setInput(projectInput);
       setSnapshot(next);
       setEvents(next.iterations.slice(-16));
       const nextSessionId = firstChatSessionId(next);
@@ -537,7 +536,18 @@ export function App(): ReactElement {
     }
     setBusy(true);
     try {
-      const next = await api.loop.start(snapshot.project.id);
+      let prepared = await api.projects.update(snapshot.project.id, input);
+      setSnapshot(prepared);
+      setEvents(prepared.iterations.slice(-16));
+      if (!prepared.researchInputs.length) {
+        const payload = buildResearchInputPayload(input);
+        if (payload.initialHypotheses.length) {
+          prepared = await api.research.inputResearchQuestionHypothesis(snapshot.project.id, payload);
+          setSnapshot(prepared);
+          setEvents(prepared.iterations.slice(-16));
+        }
+      }
+      const next = await api.loop.start(prepared.project.id);
       setSnapshot(next);
       setEvents(next.iterations.slice(-16));
     } finally {
@@ -1304,14 +1314,6 @@ function AetherOpsTab({
         </div>
         <div className="composerSide">
           <label>
-            반복
-            <NumberSelect
-              value={input.autonomyPolicy.maxLoopIterations}
-              options={maxLoopIterationOptions}
-              onChange={(maxLoopIterations) => setInput({ ...input, autonomyPolicy: { ...input.autonomyPolicy, maxLoopIterations } })}
-            />
-          </label>
-          <label>
             승인
             <select
               value={input.autonomyPolicy.toolApproval}
@@ -1409,8 +1411,8 @@ function AetherOpsTab({
           </div>
           <div className="runBox">
             {snapshot.runtimeBlockers.length || snapshot.stepErrors.length ? (
-              [...snapshot.runtimeBlockers.slice(-4).map((blocker) => `blocked · ${blocker.requirementKey}: ${blocker.message}`), ...snapshot.stepErrors.slice(-4).map((error) => `failed · ${error.step}: ${error.message}`)].map((message) => (
-                <p key={message}>{message}</p>
+              [...snapshot.runtimeBlockers.slice(-4).map((blocker) => `blocked · ${blocker.requirementKey}: ${blocker.message}`), ...snapshot.stepErrors.slice(-4).map((error) => `failed · ${error.step}: ${error.message}`)].map((message, index) => (
+                <p key={`${index}-${message}`}>{message}</p>
               ))
             ) : (
               <p>현재 runtime blocker나 step error가 없습니다.</p>
@@ -1788,14 +1790,6 @@ function SettingsTab({
           </div>
           <div className="fieldGrid three">
             <label>
-              최대 반복
-              <NumberSelect
-                value={settingsDraft.maxLoopIterations}
-                options={maxLoopIterationOptions}
-                onChange={(maxLoopIterations) => onSettingsDraftChange({ ...settingsDraft, maxLoopIterations })}
-              />
-            </label>
-            <label>
               코드 실행
               <select
                 value={settingsDraft.allowCodeExecution ? "true" : "false"}
@@ -2046,6 +2040,73 @@ function normalizeEmbedding(embedding: AppSettings["embedding"]): AppSettings["e
     model: embedding.model || embeddingModelOptions[embedding.provider][0],
     dimensions: embedding.dimensions || 96
   };
+}
+
+function buildResearchInputPayload(input: ResearchProjectInput): {
+  researchQuestion: string;
+  initialHypotheses: string[];
+  constraints: string[];
+  expectedOutputs: string[];
+} {
+  const combined = [input.goal, input.scope, input.budget].filter(Boolean).join("\n");
+  return {
+    researchQuestion: input.goal.trim(),
+    initialHypotheses: extractExplicitSections(combined, /가설\s*[A-Za-z0-9가-힣-]*\s*[:：]\s*/g, /(?:제약|범위|최종\s*산출물|예상\s*산출물|조건)\s*[:：]/),
+    constraints: extractInlineList(combined, /제약\s*[:：]\s*([\s\S]*?)(?=(?:최종\s*산출물|예상\s*산출물)\s*[:：]|$)/),
+    expectedOutputs: extractInlineList(combined, /(?:최종\s*산출물|예상\s*산출물)\s*[:：]\s*([\s\S]*?)$/)
+  };
+}
+
+function extractExplicitSections(text: string, marker: RegExp, stop: RegExp): string[] {
+  const matches = [...text.matchAll(marker)];
+  if (!matches.length) {
+    return [];
+  }
+  const values: string[] = [];
+  for (let index = 0; index < matches.length; index += 1) {
+    const current = matches[index];
+    const next = matches[index + 1];
+    const start = current.index === undefined ? 0 : current.index + current[0].length;
+    const after = text.slice(start, next?.index);
+    const stopMatch = after.match(stop);
+    const candidate = cleanHypothesisText(stopMatch?.index === undefined ? after : after.slice(0, stopMatch.index));
+    if (candidate) values.push(candidate);
+  }
+  return dedupeStrings(values).slice(0, 6);
+}
+
+function extractInlineList(text: string, pattern: RegExp): string[] {
+  const match = text.match(pattern);
+  if (!match?.[1]) {
+    return [];
+  }
+  return dedupeStrings(
+    match[1]
+      .split(/\n|;|,|ㆍ|·/)
+      .map((item) => item.replace(/^[-*\d.)\s]+/, "").trim())
+      .filter(Boolean)
+  ).slice(0, 8);
+}
+
+function cleanHypothesisText(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^(?:[-*\d.)]\s*)+/, "")
+    .trim()
+    .replace(/\s+(?=(?:가설|제약|최종\s*산출물)\s*[:：]).*$/s, "")
+    .trim();
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = value.toLocaleLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function describeLlm(settings?: AppSettings): string {

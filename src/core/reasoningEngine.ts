@@ -16,12 +16,19 @@ export class ReasoningEngine {
           record.kind === "evidence" &&
           record.evidenceId &&
           record.metadata.canSupportHypothesis === true &&
+          record.metadata.sourceCanSupportHypothesis !== false &&
+          record.metadata.sourceQualityTier !== "weak" &&
+          record.metadata.sourceQualityTier !== "excluded" &&
+          record.metadata.sourceQualityTier !== "general_web" &&
           (record.metadata.traceabilityKind === "external_source" || record.metadata.traceabilityKind === "tool_observation")
         )
         .map((record) => record.evidenceId as string)
     );
     return snapshot.hypotheses.map((hypothesis) => {
-      const linkedEvidence = snapshot.evidence.filter((evidence) => evidence.linkedHypothesisIds.includes(hypothesis.id));
+      const contextEvidenceIds = new Set(hybridContext.evidenceIds);
+      const linkedEvidence = snapshot.evidence.filter((evidence) =>
+        evidence.linkedHypothesisIds.includes(hypothesis.id) && contextEvidenceIds.has(evidence.id)
+      );
       const supportableEvidence = linkedEvidence.filter((evidence) => supportEligibleEvidenceIds.has(evidence.id));
       const supporting = supportableEvidence
         .filter((evidence) => !evidence.keywords.includes("contradicts") && !evidence.keywords.includes("rejected"))

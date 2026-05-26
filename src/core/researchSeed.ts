@@ -91,7 +91,7 @@ export function seedResearchPlan(project: ResearchProject): {
       projectId: project.id,
       category: "conversation_memo",
       title: "자율성 정책",
-      summary: `도구 승인: ${project.autonomyPolicy.toolApproval}, 최대 반복: ${project.autonomyPolicy.maxLoopIterations}, 외부 검색: ${project.autonomyPolicy.allowExternalSearch}, 코드 실행: ${project.autonomyPolicy.allowCodeExecution}`,
+      summary: `도구 승인: ${project.autonomyPolicy.toolApproval}, 반복 판단: 에이전트 자율, 외부 검색: ${project.autonomyPolicy.allowExternalSearch}, 코드 실행: ${project.autonomyPolicy.allowCodeExecution}`,
       keywords: ["autonomy", "policy", "loop"],
       linkedHypothesisIds: [hypotheses[0].id],
       reliabilityScore: 0.6,

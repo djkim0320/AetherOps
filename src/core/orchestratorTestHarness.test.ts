@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import type { EmbeddingProvider } from "./embeddingProvider.js";
 import type { LlmJsonRequest, LlmProvider } from "./llm.js";
 import { InMemoryResearchStore } from "./memoryStore.js";
@@ -30,7 +30,6 @@ export const strictTestSettings: AppSettings = {
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
   allowExternalSearch: false,
   allowCodeExecution: false,
-  maxLoopIterations: 2,
   ontologyExtractionMode: "rule_based",
   finalOutputExport: { markdown: true, json: true, ontologyGraph: true, artifactPackage: true },
   updatedAt: "2026-05-20T00:00:00.000Z"
@@ -39,8 +38,8 @@ export const strictTestSettings: AppSettings = {
 export const strictResearchInput = {
   researchQuestion: "AetherOps가 12단계 연구 검증 루프를 올바른 순서로 수행하는가?",
   initialHypotheses: [
-    "명시적 연구 입력과 설정이 있으면 12단계 루프가 완료될 수 있다.",
-    "계속 연구가 필요하면 11번 판단 뒤 4번 연구 계획으로 복귀해야 한다."
+    "명시적 연구 입력과 설정이 있으면 12단계 루프가 완료되어야 한다.",
+    "계속 연구가 필요하면 11번 판단 후 4번 연구 계획으로 복귀해야 한다."
   ],
   constraints: ["테스트 더블은 테스트 파일에서만 사용한다."],
   expectedOutputs: ["final-report.md", "reusable-knowledge.md"]
@@ -107,10 +106,10 @@ export class DeterministicLlmProvider implements LlmProvider {
           "계속 연구 판단은 연구 계획 단계로 복귀하는가?"
         ],
         refinedHypotheses: [
-          "strict 설정이 충족되면 루프는 최종 산출까지 진행된다.",
+          "strict 설정이 충족되면 루프는 최종 산출까지 진행한다.",
           "근거가 부족한 첫 iteration은 PlanResearch 복귀를 유도한다."
         ],
-        assumptions: ["테스트 입력은 실제 외부 연구 근거가 아니라 흐름 검증 입력이다."],
+        assumptions: ["테스트 입력은 실제 외부 연구 근거가 아니라 빠른 검증 입력이다."],
         constraints: ["실제 URL/DOI를 만들지 않는다."],
         successCriteria: ["12단계 기록", "최종 산출 저장"],
         requiredEvidenceTypes: ["tool log", "artifact", "citation"],
@@ -128,32 +127,34 @@ export class DeterministicLlmProvider implements LlmProvider {
         expectedSources: ["tool log", "artifact"],
         expectedArtifacts: ["research-note.md"],
         executionSteps: ["Run OpenCodeTool", "Normalize outputs", "Validate hypotheses"],
-        stopCriteria: ["Enough cited evidence exists", "maxLoopIterations reached"]
+        stopCriteria: ["Enough cited evidence exists", "Internal safety cap reached"]
       } as T;
     }
     if (request.schemaName === "AetherOpsEvidenceBasedResult") {
-      const forceStop = request.user.includes("final allowed iteration");
+      const forceStop = request.user.includes("internal runaway-prevention safety cap");
+      const secondIteration = request.user.includes("iteration\":2") || request.user.includes("Iteration 2");
+      const shouldFinish = forceStop || secondIteration;
       return {
-        answer: forceStop ? "AetherOps loop completed with traceable test evidence." : "AetherOps loop needs one more planned iteration.",
+        answer: shouldFinish ? "AetherOps loop completed with traceable test evidence." : "AetherOps loop needs one more planned iteration.",
         hypothesisUpdates: [
           {
             hypothesisIndex: 0,
-            status: forceStop ? "supported" : "needs_more_evidence",
-            confidence: forceStop ? 0.75 : 0.45,
+            status: shouldFinish ? "supported" : "needs_more_evidence",
+            confidence: shouldFinish ? 0.75 : 0.45,
             rationale: "Based on deterministic test execution artifacts and citations."
           },
           {
             hypothesisIndex: 1,
-            status: forceStop ? "supported" : "needs_more_evidence",
-            confidence: forceStop ? 0.72 : 0.4,
+            status: shouldFinish ? "supported" : "needs_more_evidence",
+            confidence: shouldFinish ? 0.72 : 0.4,
             rationale: "First iteration keeps an evidence gap so the loop must return to planning."
           }
         ],
         quantitativeResults: ["step coverage tracked"],
         qualitativeResults: ["strict loop ordering preserved"],
-        nextQuestions: forceStop ? [] : ["Which validation gap remains?"],
-        needsMoreEvidence: !forceStop,
-        needsMoreAnalysis: !forceStop
+        nextQuestions: shouldFinish ? [] : ["Which validation gap remains?"],
+        needsMoreEvidence: !shouldFinish,
+        needsMoreAnalysis: !shouldFinish
       } as T;
     }
     return {
@@ -220,9 +221,9 @@ export class TestProjectStorage implements ProjectStorage {
     return {
       id: createId("db"),
       projectId: project.id,
-      sqlitePath: `${project.projectRoot}/research.sqlite`,
-      vectorPath: `${project.projectRoot}/vector.sqlite`,
-      ontologyPath: `${project.projectRoot}/ontology.sqlite`,
+      sqlitePath: `${project.projectRoot}/project.sqlite`,
+      vectorPath: `${project.projectRoot}/context/vector-links.sqlite`,
+      ontologyPath: `${project.projectRoot}/context/ontology-links.sqlite`,
       artifactRoot: `${project.projectRoot}/artifacts`,
       sourceRoot: `${project.projectRoot}/sources`,
       logRoot: `${project.projectRoot}/logs`,

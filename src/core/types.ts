@@ -298,6 +298,7 @@ export interface EvidenceItem {
   relevanceScore?: number;
   evidenceStrength?: EvidenceStrength;
   limitations?: string[];
+  metadata?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -311,6 +312,7 @@ export interface ResearchArtifact {
   summary: string;
   content?: string;
   rawPath?: string;
+  metadata?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -425,6 +427,7 @@ export interface OpenCodeRun {
   logs: string[];
   artifactIds: string[];
   evidenceIds: string[];
+  metadata?: Record<string, unknown>;
   startedAt: string;
   completedAt?: string;
 }
@@ -711,6 +714,8 @@ export interface OpenCodeRunOutput {
   artifacts: ResearchArtifact[];
   evidence: EvidenceItem[];
   sources?: ResearchSource[];
+  claims?: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>;
+  observations?: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>;
   chunks?: ResearchChunk[];
   toolRuns?: ToolRun[];
   agentPlan?: AgentPlan;

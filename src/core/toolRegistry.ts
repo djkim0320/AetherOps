@@ -3,11 +3,18 @@ import { assessSourceQuality, rankResearchUrls, sourceQualityMetadata } from "./
 import type {
   AppSettings,
   EvidenceItem,
+  NormalizedResearchRecord,
   OpenCodeRunInput,
   ResearchArtifact,
   ResearchSource,
-  ToolRun
+  ToolRun,
+  ValidationResult
 } from "./types.js";
+
+const FETCH_TIMEOUT_MS = 10_000;
+const MAX_FETCH_BYTES = 2 * 1024 * 1024;
+const ALLOWED_FETCH_CONTENT_TYPES = new Set(["text/html", "text/plain", "application/xhtml+xml"]);
+const BLOCKED_HOST_SUFFIXES = [".local", ".localhost", ".internal"];
 
 export interface ResearchToolResult {
   toolRun: ToolRun;
@@ -94,7 +101,13 @@ export class WebFetchTool implements ResearchTool {
     if (!urls.length) {
       throw new Error("WebFetchTool requires at least one external source URL from previous evidence.");
     }
-    const settledPages = await Promise.allSettled(urls.map((url) => fetchPage(url)));
+    const settledPages: Array<PromiseSettledResult<{ url: string; title: string; text: string; contentType: string; status: number }>> = [];
+    for (const url of urls) {
+      settledPages.push(await Promise.resolve(fetchPage(url)).then(
+        (value) => ({ status: "fulfilled", value }),
+        (reason) => ({ status: "rejected", reason })
+      ));
+    }
     const completedAt = nowIso();
     const pages = settledPages.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
     const failedUrls = settledPages.flatMap((result, index) => (result.status === "rejected" ? [urls[index] as string] : []));
@@ -141,22 +154,22 @@ export class WebFetchTool implements ResearchTool {
     const evidence: EvidenceItem[] = pages.map((page, index) => {
       const quality = assessSourceQuality(page.url, page.title);
       return {
-      id: createId("evidence"),
-      projectId: input.project.id,
-      category: "web_source",
-      title: page.title,
-      summary: page.text.slice(0, 800) || `Fetched ${page.url}`,
-      sourceId: sources[index]?.id,
-      sourceUri: page.url,
-      citation: `${page.title} - ${page.url}`,
-      quote: page.text.slice(0, 500),
-      keywords: ["web_fetch", quality.tier, ...input.project.topic.split(/\s+/).slice(0, 5)],
-      linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
-      reliabilityScore: quality.reliabilityScore,
-      relevanceScore: quality.preferredForSearch ? 0.78 : 0.58,
-      evidenceStrength: quality.evidenceStrength,
-      limitations: ["Fetched web page text was extracted automatically and should be checked against the original page.", ...quality.limitations],
-      createdAt: completedAt
+        id: createId("evidence"),
+        projectId: input.project.id,
+        category: "web_source",
+        title: page.title,
+        summary: page.text.slice(0, 800) || `Fetched ${page.url}`,
+        sourceId: sources[index]?.id,
+        sourceUri: page.url,
+        citation: `${page.title} - ${page.url}`,
+        quote: page.text.slice(0, 500),
+        keywords: ["web_fetch", quality.tier, ...input.project.topic.split(/\s+/).slice(0, 5)],
+        linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
+        reliabilityScore: quality.reliabilityScore,
+        relevanceScore: quality.preferredForSearch ? 0.78 : 0.58,
+        evidenceStrength: quality.evidenceStrength,
+        limitations: ["Fetched web page text was extracted automatically and should be checked against the original page.", ...quality.limitations],
+        createdAt: completedAt
       };
     });
     return {
@@ -254,10 +267,58 @@ export class DataAnalysisTool implements ResearchTool {
   async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
     const startedAt = nowIso();
     const completedAt = nowIso();
+    const analysisInput = input as OpenCodeRunInput & {
+      normalizedRecords?: NormalizedResearchRecord[];
+      validationResults?: ValidationResult[];
+    };
+    const evidence = input.evidence ?? [];
+    const normalizedRecords = analysisInput.normalizedRecords ?? [];
+    const validationResults = analysisInput.validationResults ?? [];
+    const supportEligibleEvidenceIds = new Set(
+      normalizedRecords
+        .filter((record) =>
+          record.kind === "evidence" &&
+          record.evidenceId &&
+          record.metadata.canSupportHypothesis === true &&
+          record.metadata.sourceQualityTier !== "weak" &&
+          record.metadata.sourceQualityTier !== "excluded" &&
+          record.metadata.sourceQualityTier !== "general_web" &&
+          (record.metadata.traceabilityKind === "external_source" || record.metadata.traceabilityKind === "tool_observation")
+        )
+        .map((record) => record.evidenceId as string)
+    );
+    const citedEvidenceCount = evidence.filter((item) => Boolean(item.citation || item.quote || item.sourceUri)).length;
+    const latestIteration = validationResults.reduce((max, result) => Math.max(max, result.iteration), 0);
+    const latestValidation = latestIteration ? validationResults.filter((result) => result.iteration === latestIteration) : [];
     const output = {
-      evidenceCount: input.evidence?.length ?? 0,
-      artifactCount: input.artifacts?.length ?? 0,
-      hypothesisCount: input.hypotheses.length
+      evidenceCount: evidence.length,
+      supportEligibleEvidenceCount: supportEligibleEvidenceIds.size,
+      citationCoverage: evidence.length ? citedEvidenceCount / evidence.length : 0,
+      sourceQualityDistribution: countBy([
+        ...evidence.map((item) => item.keywords.find((keyword) => ["scholarly", "official", "institutional", "general_web", "weak", "excluded"].includes(keyword)) ?? "unknown"),
+        ...normalizedRecords.map((record) => stringMetadata(record.metadata.sourceQualityTier, "unknown"))
+      ]),
+      traceabilityKindDistribution: countBy(normalizedRecords.map((record) => stringMetadata(record.metadata.traceabilityKind, "unknown"))),
+      hypothesisEvidenceCoverage: Object.fromEntries(
+        input.hypotheses.map((hypothesis) => [
+          hypothesis.id,
+          {
+            linkedEvidenceCount: evidence.filter((item) => item.linkedHypothesisIds.includes(hypothesis.id)).length,
+            supportEligibleEvidenceCount: evidence.filter((item) => item.linkedHypothesisIds.includes(hypothesis.id) && supportEligibleEvidenceIds.has(item.id)).length
+          }
+        ])
+      ),
+      validationStatusDistribution: countBy(validationResults.map((result) => result.status)),
+      iterationGrowthSummary: {
+        iteration: input.iteration,
+        evidenceCount: evidence.length,
+        artifactCount: input.artifacts?.length ?? 0,
+        sourceCount: input.sources?.length ?? 0,
+        toolRunCount: input.toolRuns?.length ?? 0,
+        normalizedRecordCount: normalizedRecords.length,
+        validationResultCount: validationResults.length
+      },
+      evidenceGapsFromLatestValidation: [...new Set(latestValidation.flatMap((result) => result.evidenceGaps))]
     };
     return {
       toolRun: completedToolRun(input, this.name, startedAt, completedAt, { iteration: input.iteration }, output),
@@ -388,18 +449,125 @@ function buildPublicResearchQuery(input: OpenCodeRunInput): string {
 }
 
 async function fetchPage(url: string): Promise<{ url: string; title: string; text: string; contentType: string; status: number }> {
-  const response = await fetch(url, { headers: { accept: "text/html,text/plain,application/xhtml+xml" } });
+  await assertPublicHttpUrl(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: "text/html,text/plain,application/xhtml+xml" }, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+  await assertPublicHttpUrl(response.url || url);
   if (!response.ok) {
     throw new Error(`fetch failed for ${url}: ${response.status} ${response.statusText}`);
   }
   const contentType = response.headers.get("content-type") ?? "unknown";
-  const raw = await response.text();
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!ALLOWED_FETCH_CONTENT_TYPES.has(mediaType)) {
+    throw new Error(`unsupported content-type for ${url}: ${contentType}`);
+  }
+  const contentLength = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_FETCH_BYTES) {
+    throw new Error(`content-length exceeds 2MB for ${url}`);
+  }
+  const raw = await readLimitedText(response, url);
   const title = extractTitle(raw) || url;
   const text = normalizePageText(raw);
   if (!text) {
     throw new Error(`fetch produced no readable text for ${url}`);
   }
   return { url: response.url || url, title, text, contentType, status: response.status };
+}
+
+async function assertPublicHttpUrl(value: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`invalid URL: ${value}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`unsupported URL protocol: ${parsed.protocol}`);
+  }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!hostname || hostname === "localhost" || BLOCKED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) {
+    throw new Error(`blocked internal hostname: ${parsed.hostname}`);
+  }
+  if (isPrivateOrInternalIp(hostname)) {
+    throw new Error(`blocked internal IP address: ${parsed.hostname}`);
+  }
+  if (!isIpLiteral(hostname)) {
+    const addresses = await resolveHostAddresses(hostname);
+    const blocked = addresses.find((address) => isPrivateOrInternalIp(address));
+    if (blocked) {
+      throw new Error(`DNS resolved ${hostname} to blocked internal IP address: ${blocked}`);
+    }
+  }
+}
+
+async function resolveHostAddresses(hostname: string): Promise<string[]> {
+  try {
+    const dns = await import("node:dns/promises");
+    const records = await dns.lookup(hostname, { all: true, verbatim: true });
+    return records.map((record) => record.address);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`DNS resolution failed for ${hostname}: ${reason}`);
+  }
+}
+
+function isIpLiteral(hostname: string): boolean {
+  return isIpv4(hostname) || hostname.includes(":");
+}
+
+function isPrivateOrInternalIp(value: string): boolean {
+  const hostname = value.replace(/^\[|\]$/g, "").toLowerCase();
+  if (hostname === "::1" || hostname === "0:0:0:0:0:0:0:1") return true;
+  const ipv4Mapped = hostname.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (ipv4Mapped?.[1]) return isPrivateOrInternalIp(ipv4Mapped[1]);
+  if (!isIpv4(hostname)) return false;
+  const octets = hostname.split(".").map((part) => Number(part));
+  const [first, second, third, fourth] = octets;
+  if (first === undefined || second === undefined || third === undefined || fourth === undefined) return false;
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 169 && second === 254)
+  );
+}
+
+function isIpv4(value: string): boolean {
+  const parts = value.split(".");
+  return parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255);
+}
+
+async function readLimitedText(response: Response, url: string): Promise<string> {
+  if (!response.body) {
+    const raw = await response.text();
+    if (new TextEncoder().encode(raw).length > MAX_FETCH_BYTES) {
+      throw new Error(`body exceeds 2MB for ${url}`);
+    }
+    return raw;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_FETCH_BYTES) {
+      throw new Error(`body exceeds 2MB for ${url}`);
+    }
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+  chunks.push(decoder.decode());
+  return chunks.join("");
 }
 
 function extractTitle(raw: string): string {
@@ -425,4 +593,15 @@ function decodeEntities(value: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, "\"")
     .replace(/&#39;/g, "'");
+}
+
+function countBy(values: string[]): Record<string, number> {
+  return values.reduce<Record<string, number>>((counts, value) => {
+    counts[value] = (counts[value] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function stringMetadata(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
 }

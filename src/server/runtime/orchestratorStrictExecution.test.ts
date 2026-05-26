@@ -104,7 +104,8 @@ describe("AetherOps strict execution loop", () => {
       toolRunner: new ToolRunner([new WebFetchTool()]),
       settings: {
         ...strictTestSettings,
-        allowExternalSearch: true
+        allowExternalSearch: true,
+        webSearch: { provider: "custom", apiKey: "test-key", endpoint: "https://search.example.test" }
       }
     });
     vi.stubGlobal(
@@ -128,6 +129,7 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.project.status).not.toBe("failed");
     expect(snapshot.openCodeRuns).toHaveLength(1);
     expect(snapshot.toolRuns.some((run) => run.toolName === "WebFetchTool" && run.status === "completed")).toBe(true);
+    expect(snapshot.sources.some((item) => item.url === "https://example.edu/opencode-source" && item.metadata.fetchStatus === "fetched")).toBe(true);
     expect(snapshot.evidence.some((item) => item.sourceUri === "https://example.edu/opencode-source")).toBe(true);
   });
 
@@ -149,6 +151,30 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.sources.some((source) => source.id === "partial-source-1")).toBe(true);
     expect(snapshot.toolRuns.some((run) => run.id === "partial-tool-1" && run.status === "completed")).toBe(true);
     expect(snapshot.toolRuns.some((run) => run.id === "partial-tool-2" && run.status === "failed")).toBe(true);
+    expect(snapshot.toolRuns.find((run) => run.id === "partial-tool-2")?.output).toMatchObject({ executionBundleId: "execution-bundle:" + snapshot.project.id + ":1:opencode-completed" });
+
+    snapshot = await orchestrator.executeTools(snapshot.project.id, 1);
+    expect(snapshot.toolRuns.filter((run) => run.id === "partial-tool-1")).toHaveLength(1);
+    expect(snapshot.toolRuns.filter((run) => run.id === "partial-tool-2")).toHaveLength(1);
+    expect(snapshot.sources.filter((source) => source.id === "partial-source-1")).toHaveLength(1);
+  });
+
+  it("persists a synthetic failed tool run when an auxiliary tool throws", async () => {
+    const orchestrator = createStrictTestOrchestrator({
+      openCode: completedAdapter(),
+      llm: new ThrowingToolPlanner(),
+      toolRunner: new ToolRunner([partialSuccessTool(), throwingTool()])
+    });
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.createResearchDb(snapshot.project.id);
+    snapshot = await orchestrator.buildResearchSpecification(snapshot.project.id);
+    snapshot = await orchestrator.planResearch(snapshot.project.id, 1);
+    snapshot = await orchestrator.executeTools(snapshot.project.id, 1);
+
+    expect(snapshot.project.status).toBe("failed");
+    expect(snapshot.sources.some((source) => source.id === "partial-source-1")).toBe(true);
+    expect(snapshot.toolRuns.some((run) => run.id === "partial-tool-1" && run.status === "completed")).toBe(true);
+    expect(snapshot.toolRuns.some((run) => run.toolName === "ThrowingTool" && run.status === "failed" && run.error === "synthetic throw")).toBe(true);
   });
 
   it("does not finalize when paused or aborted during a loop", async () => {
@@ -232,6 +258,24 @@ class PartialFailurePlanner extends DeterministicLlmProvider {
   }
 }
 
+class ThrowingToolPlanner extends DeterministicLlmProvider {
+  override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
+    if (request.schemaName === "AetherOpsResearchPlan") {
+      return {
+        objective: "Run one successful auxiliary tool before a thrown failure.",
+        targetQuestions: ["q1"],
+        targetHypotheses: ["h1"],
+        requiredTools: ["OpenCodeTool", "PartialSuccessTool", "ThrowingTool"],
+        expectedSources: ["tool source"],
+        expectedArtifacts: ["tool log"],
+        executionSteps: ["Run partial success", "Throw"],
+        stopCriteria: ["failure is recorded"]
+      } as T;
+    }
+    return super.completeJson<T>(request);
+  }
+}
+
 function failingAdapter(): OpenCodeAdapter {
   return {
     run: async () => {
@@ -287,6 +331,15 @@ function partialFailureTool(): ResearchTool {
       artifacts: [],
       sources: []
     })
+  };
+}
+
+function throwingTool(): ResearchTool {
+  return {
+    name: "ThrowingTool",
+    run: async () => {
+      throw new Error("synthetic throw");
+    }
   };
 }
 

@@ -168,6 +168,32 @@ function snapshot(): ResearchSnapshot {
   };
 }
 
+function supportRecord(
+  id: string,
+  evidenceId: string,
+  traceabilityKind: string,
+  sourceQualityTier: string,
+  canSupportHypothesis: boolean
+): ResearchSnapshot["normalizedRecords"][number] {
+  return {
+    id,
+    projectId: "project-1",
+    memoryScope: "global",
+    validationStatus: "normalized",
+    iteration: 1,
+    kind: "evidence",
+    title: `Pomodoro ${id}`,
+    content: `Pomodoro fatigue focus study evidence ${id}`,
+    sourceId: "s1",
+    evidenceId,
+    citation: sourceQualityTier === "scholarly" ? `https://example.com/${id}` : undefined,
+    sourceUri: `https://example.com/${id}`,
+    metadata: { traceabilityKind, sourceQualityTier, canSupportHypothesis },
+    confidence: 0.8,
+    createdAt
+  };
+}
+
 describe("12-step research architecture modules", () => {
   it("builds specification and plan from project questions and hypotheses", async () => {
     const base = snapshot();
@@ -454,6 +480,37 @@ describe("12-step research architecture modules", () => {
     expect(context.selectedEvidenceIds).toContain("e1");
     expect(context.selectionReason).toContain("Context candidates:");
     expect(context.selectionReason).toContain("Reverse-included parents:");
+  });
+
+  it("only selects support-eligible evidence ids from records, chunks, and graph provenance", () => {
+    const base = snapshot();
+    const records = [
+      supportRecord("eligible-record", "eligible-evidence", "external_source", "scholarly", true),
+      supportRecord("internal-record", "internal-evidence", "internal_artifact", "scholarly", true),
+      supportRecord("weak-record", "weak-evidence", "external_source", "general_web", true)
+    ];
+
+    const context = new ProjectContextBuilder().build({
+      ...base,
+      normalizedRecords: records,
+      chunks: [
+        { id: "eligible-chunk", projectId: base.project.id, memoryScope: "global", validationStatus: "indexed", sourceId: "s1", text: "Pomodoro fatigue eligible chunk", chunkIndex: 0, keywords: [], recordId: "eligible-record", evidenceId: "eligible-evidence", citation: "https://example.com/eligible", traceabilityKind: "external_source", sourceQualityTier: "scholarly", canSupportHypothesis: true, createdAt },
+        { id: "internal-chunk", projectId: base.project.id, memoryScope: "global", validationStatus: "indexed", sourceId: "s1", text: "Pomodoro fatigue internal chunk", chunkIndex: 1, keywords: [], recordId: "internal-record", evidenceId: "internal-evidence", citation: "project://artifact/internal", traceabilityKind: "internal_artifact", sourceQualityTier: "scholarly", canSupportHypothesis: true, createdAt },
+        { id: "weak-chunk", projectId: base.project.id, memoryScope: "global", validationStatus: "indexed", sourceId: "s1", text: "Pomodoro fatigue weak chunk", chunkIndex: 2, keywords: [], recordId: "weak-record", evidenceId: "weak-evidence", citation: "https://example.com/weak", traceabilityKind: "external_source", sourceQualityTier: "general_web", canSupportHypothesis: true, createdAt }
+      ],
+      ontologyEntities: [
+        { id: "eligible-entity", projectId: base.project.id, memoryScope: "global", validationStatus: "graph_linked", label: "Pomodoro evidence", type: "Evidence", sourceRecordId: "eligible-record", sourceEvidenceId: "eligible-evidence", confidence: 0.9, createdAt },
+        { id: "internal-entity", projectId: base.project.id, memoryScope: "global", validationStatus: "graph_linked", label: "Pomodoro internal", type: "Evidence", sourceRecordId: "internal-record", sourceEvidenceId: "internal-evidence", confidence: 0.9, createdAt }
+      ],
+      ontologyRelations: [
+        { id: "eligible-relation", projectId: base.project.id, memoryScope: "global", validationStatus: "graph_linked", subjectId: "eligible-entity", predicate: "supports", objectId: "h1", sourceRecordId: "eligible-record", sourceEvidenceId: "eligible-evidence", confidence: 0.9, createdAt },
+        { id: "internal-relation", projectId: base.project.id, memoryScope: "global", validationStatus: "graph_linked", subjectId: "internal-entity", predicate: "supports", objectId: "h1", sourceRecordId: "internal-record", sourceEvidenceId: "internal-evidence", confidence: 0.9, createdAt }
+      ]
+    }, 1);
+
+    expect(context.selectedEvidenceIds).toContain("eligible-evidence");
+    expect(context.selectedEvidenceIds).not.toContain("internal-evidence");
+    expect(context.selectedEvidenceIds).not.toContain("weak-evidence");
   });
 
   it("builds hybrid context only from ProjectContextSnapshot selected ids", async () => {

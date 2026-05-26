@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDefaultResearchTools, WebFetchTool, WebSearchTool, type ResearchTool, type ResearchToolResult } from "./toolRegistry.js";
+import { createDefaultResearchTools, DataAnalysisTool, WebFetchTool, WebSearchTool, type ResearchTool, type ResearchToolResult } from "./toolRegistry.js";
 import { dedupeResearchTools, normalizeToolName, orderToolNames, ToolRunner, ToolRunnerError } from "./toolRunner.js";
 import { ResearchLoopStep, type AppSettings, type OpenCodeRunInput, type ResearchSource } from "./types.js";
 
@@ -56,6 +56,7 @@ function runInput(requiredTools: string[] = []): OpenCodeRunInput {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("ToolRunner registry", () => {
@@ -101,6 +102,7 @@ describe("ToolRunner web tool pipeline", () => {
     expect(results[0]?.sources).toHaveLength(1);
     expect(results[0]?.evidence).toHaveLength(0);
     expect(results[1]?.evidence).toHaveLength(1);
+    expect(results[1]?.sources).toHaveLength(1);
     expect(results[1]?.artifacts).toHaveLength(0);
     expect(input.sources).toEqual([]);
     expect(input.evidence).toEqual([]);
@@ -187,6 +189,56 @@ describe("ToolRunner web tool pipeline", () => {
     }
   });
 
+  it("creates a synthetic failed ToolRun when a tool throws before returning a result", async () => {
+    const input = runInput(["First", "ThrowingTool"]);
+    const first: ResearchTool = {
+      name: "First",
+      run: async (): Promise<ResearchToolResult> => ({
+        toolRun: { id: "tool-1", projectId: "project-1", iteration: 1, toolName: "First", input: {}, output: {}, status: "completed", startedAt: createdAt, completedAt: createdAt },
+        evidence: [],
+        artifacts: [],
+        sources: [webSource("s1", "https://example.edu/a")]
+      })
+    };
+    const throwing: ResearchTool = {
+      name: "ThrowingTool",
+      run: async () => {
+        throw new Error("network exploded before result");
+      }
+    };
+
+    await expect(new ToolRunner([first, throwing]).runAll(input, settings)).rejects.toMatchObject({
+      partialResults: expect.arrayContaining([expect.objectContaining({ toolRun: expect.objectContaining({ toolName: "First" }) })]),
+      failedResult: expect.objectContaining({
+        toolRun: expect.objectContaining({
+          toolName: "ThrowingTool",
+          status: "failed",
+          error: "network exploded before result"
+        })
+      })
+    });
+  });
+
+  it("separates registered tools from currently executable tools", () => {
+    const runner = new ToolRunner(createDefaultResearchTools());
+    const input = runInput();
+    const snapshot = {
+      project: input.project,
+      sources: [],
+      evidence: [],
+      artifacts: [],
+      toolRuns: [],
+      continuationDecisions: []
+    } as unknown as Parameters<ToolRunner["listExecutableToolNames"]>[0]["snapshot"];
+
+    const executable = runner.listExecutableToolNames({ snapshot, settings });
+
+    expect(runner.listRegisteredToolNames()).toEqual(expect.arrayContaining(["PaperMetadataTool", "PdfIngestionTool"]));
+    expect(executable).not.toContain("PaperMetadataTool");
+    expect(executable).not.toContain("PdfIngestionTool");
+    expect(executable).toEqual(expect.arrayContaining(["WebSearchTool", "WebFetchTool", "ArtifactWriterTool", "DataAnalysisTool"]));
+  });
+
   it("fetches web sources before evidence URLs, dedupes normalized URLs, caps at three, and reports partial failures as completed", async () => {
     const input = {
       ...runInput(),
@@ -226,7 +278,99 @@ describe("ToolRunner web tool pipeline", () => {
     expect(fetched).toEqual(["https://Example.edu/a#section", "https://example.edu/fail", "https://example.edu/evidence"]);
     expect(result.evidence).toHaveLength(2);
     expect(result.sources).toHaveLength(2);
-    expect(result.toolRun.output).toMatchObject({ fetchedPages: 2, failedUrls: ["https://example.edu/fail"], duplicateUrls: ["https://example.edu/a"] });
+    expect(result.toolRun.output).toMatchObject({
+      fetchedPages: 2,
+      failedUrls: ["https://example.edu/fail"],
+      failureReasons: { "https://example.edu/fail": "fetch failed for https://example.edu/fail: 500 Nope" },
+      duplicateUrls: ["https://example.edu/a"],
+      skippedUrls: []
+    });
+  });
+
+  it("blocks internal WebFetch URLs before fetch and records failure reasons", async () => {
+    const input = {
+      ...runInput(["WebFetchTool"]),
+      sources: [
+        webSource("localhost", "http://localhost/admin"),
+        webSource("loopback", "http://127.0.0.1/admin"),
+        webSource("private", "http://10.1.2.3/admin"),
+        webSource("internal", "https://service.internal/status")
+      ]
+    };
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await new WebFetchTool().run(input, settings);
+
+    expect(result.toolRun.status).toBe("failed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.sources).toHaveLength(0);
+    expect(result.evidence).toHaveLength(0);
+    expect(result.toolRun.output).toMatchObject({
+      fetchedPages: 0,
+      failedUrls: ["http://localhost/admin", "http://127.0.0.1/admin", "http://10.1.2.3/admin"],
+      skippedUrls: [],
+      duplicateUrls: []
+    });
+    expect((result.toolRun.output as { failureReasons: Record<string, string> }).failureReasons["http://localhost/admin"]).toContain("blocked internal hostname");
+    expect((result.toolRun.output as { failureReasons: Record<string, string> }).failureReasons["http://127.0.0.1/admin"]).toContain("blocked internal IP address");
+  });
+
+  it("rejects unsafe redirects, unsupported content types, and oversized responses", async () => {
+    const input = {
+      ...runInput(["WebFetchTool"]),
+      sources: [
+        webSource("redirect", "https://example.edu/redirect"),
+        webSource("image", "https://example.edu/image"),
+        webSource("large", "https://example.edu/large")
+      ]
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        expect(init?.signal).toBeDefined();
+        if (url.includes("/redirect")) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            url: "http://127.0.0.1/metadata",
+            headers: new Headers({ "content-type": "text/html" }),
+            text: async () => "<html><title>Redirected</title><body>Internal redirect.</body></html>"
+          };
+        }
+        if (url.includes("/image")) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            url,
+            headers: new Headers({ "content-type": "image/png" }),
+            text: async () => "not text"
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          url,
+          headers: new Headers({ "content-type": "text/plain", "content-length": String(2 * 1024 * 1024 + 1) }),
+          text: async () => "oversized"
+        };
+      })
+    );
+
+    const result = await new WebFetchTool().run(input, settings);
+
+    expect(result.toolRun.status).toBe("failed");
+    expect(result.sources).toHaveLength(0);
+    expect(result.evidence).toHaveLength(0);
+    const output = result.toolRun.output as { failedUrls: string[]; failureReasons: Record<string, string>; fetchedPages: number };
+    expect(output.fetchedPages).toBe(0);
+    expect(output.failedUrls).toEqual(["https://example.edu/redirect", "https://example.edu/image", "https://example.edu/large"]);
+    expect(output.failureReasons["https://example.edu/redirect"]).toContain("blocked internal IP address");
+    expect(output.failureReasons["https://example.edu/image"]).toContain("unsupported content-type");
+    expect(output.failureReasons["https://example.edu/large"]).toContain("content-length exceeds 2MB");
   });
 
   it("returns a failed tool run when every selected URL fails so ToolRunner rejects it", async () => {
@@ -244,6 +388,133 @@ describe("ToolRunner web tool pipeline", () => {
   it("blocks WebFetchTool direct runs when external search is disabled", async () => {
     const input = { ...runInput(["WebFetchTool"]), sources: [webSource("s1", "https://example.edu/a")] };
     await expect(new WebFetchTool().run(input, { ...settings, allowExternalSearch: false })).rejects.toThrow("external network access");
+  });
+
+  it("blocks private or local fetch targets before calling fetch", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const blockedUrls = [
+      "http://localhost:3000",
+      "http://127.0.0.1",
+      "http://169.254.169.254"
+    ];
+
+    const result = await new WebFetchTool().run(
+      { ...runInput(["WebFetchTool"]), sources: blockedUrls.map((url, index) => webSource(`blocked-${index}`, url)) },
+      settings
+    );
+
+    expect(result.toolRun.status).toBe("failed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.toolRun.output).toMatchObject({ failedUrls: blockedUrls });
+  });
+
+  it("rejects oversized and non-text responses without creating evidence", async () => {
+    const input = { ...runInput(["WebFetchTool"]), sources: [webSource("s1", "https://example.com/huge"), webSource("s2", "https://example.com/image")] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        url,
+        headers: url.includes("huge")
+          ? new Headers({ "content-type": "text/html", "content-length": String(2 * 1024 * 1024 + 1) })
+          : new Headers({ "content-type": "image/png" }),
+        text: async () => "should not become evidence"
+      }))
+    );
+
+    const result = await new WebFetchTool().run(input, settings);
+
+    expect(result.toolRun.status).toBe("failed");
+    expect(result.evidence).toHaveLength(0);
+    expect(Object.values((result.toolRun.output as { failureReasons: Record<string, string> }).failureReasons).join(" ")).toMatch(/content-length|content-type/);
+  });
+});
+
+describe("DataAnalysisTool", () => {
+  it("returns expanded distributions and does not create evidence", async () => {
+    const input = {
+      ...runInput(["DataAnalysisTool"]),
+      evidence: [
+        { id: "e1", projectId: "project-1", category: "web_source" as const, title: "Evidence 1", summary: "Summary", citation: "Citation", sourceUri: "https://example.edu/one", keywords: ["scholarly"], linkedHypothesisIds: ["h1"], createdAt },
+        { id: "e2", projectId: "project-1", category: "web_source" as const, title: "Evidence 2", summary: "Summary", keywords: ["weak"], linkedHypothesisIds: [], createdAt }
+      ],
+      sources: [webSource("s1", "https://example.edu/one")],
+      artifacts: [{ id: "a1", projectId: "project-1", category: "generated_artifact" as const, title: "Artifact", relativePath: "artifact.md", mimeType: "text/markdown", summary: "Summary", createdAt }],
+      toolRuns: [{ id: "tool-1", projectId: "project-1", iteration: 1, toolName: "WebFetchTool", input: {}, output: {}, status: "completed" as const, startedAt: createdAt, completedAt: createdAt }],
+      normalizedRecords: [
+        {
+          id: "r1",
+          projectId: "project-1",
+          memoryScope: "global" as const,
+          validationStatus: "validated" as const,
+          iteration: 1,
+          kind: "evidence" as const,
+          title: "Record 1",
+          content: "Record content",
+          evidenceId: "e1",
+          metadata: { canSupportHypothesis: true, sourceQualityTier: "scholarly", traceabilityKind: "external_source" },
+          createdAt
+        },
+        {
+          id: "r2",
+          projectId: "project-1",
+          memoryScope: "project_only" as const,
+          validationStatus: "rejected" as const,
+          iteration: 1,
+          kind: "artifact" as const,
+          title: "Record 2",
+          content: "Record content",
+          metadata: { canSupportHypothesis: false, sourceQualityTier: "weak", traceabilityKind: "internal_artifact" },
+          createdAt
+        }
+      ],
+      validationResults: [
+        {
+          id: "v1",
+          projectId: "project-1",
+          iteration: 1,
+          hypothesisId: "h1",
+          status: "partially_supported" as const,
+          confidence: 0.5,
+          supportingEvidenceIds: ["e1"],
+          contradictingEvidenceIds: [],
+          relatedEntityIds: [],
+          relatedRelationIds: [],
+          reasoningSummary: "Partial support.",
+          limitations: [],
+          evidenceGaps: ["Need a stronger source."],
+          createdAt
+        }
+      ]
+    };
+
+    const result = await new DataAnalysisTool().run(input);
+
+    expect(result.evidence).toEqual([]);
+    expect(result.sources).toEqual([]);
+    expect(result.artifacts).toEqual([]);
+    expect(result.toolRun.output).toMatchObject({
+      evidenceCount: 2,
+      supportEligibleEvidenceCount: 1,
+      citationCoverage: 0.5,
+      sourceQualityDistribution: { scholarly: 2, weak: 2 },
+      traceabilityKindDistribution: { external_source: 1, internal_artifact: 1 },
+      hypothesisEvidenceCoverage: { h1: { linkedEvidenceCount: 1, supportEligibleEvidenceCount: 1 } },
+      validationStatusDistribution: { partially_supported: 1 },
+      iterationGrowthSummary: {
+        iteration: 1,
+        evidenceCount: 2,
+        artifactCount: 1,
+        sourceCount: 1,
+        toolRunCount: 1,
+        normalizedRecordCount: 2,
+        validationResultCount: 1
+      },
+      evidenceGapsFromLatestValidation: ["Need a stronger source."]
+    });
   });
 });
 

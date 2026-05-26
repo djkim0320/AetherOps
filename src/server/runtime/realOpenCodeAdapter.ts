@@ -6,7 +6,9 @@ import type {
   OpenCodeAdapter,
   OpenCodeRunInput,
   OpenCodeRunOutput,
-  ResearchArtifact
+  ResearchArtifact,
+  ResearchSource,
+  ToolRun
 } from "../../core/types.js";
 import { isWindowsShellCommand, resolveOpenCodeCommand, type OpenCodeCommandOptions } from "./opencodeResolver.js";
 
@@ -73,27 +75,16 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
         summary: "string",
         toolPlan: ["string"],
         artifacts: [{ title: "string", relativePath: "string", mimeType: "string", content: "string", summary: "string" }],
-        evidence: [
-          {
-            category: "generated_artifact|paper_reference|web_source|experiment_log|conversation_memo",
-            title: "string",
-            summary: "string",
-            sourceUri: "string",
-            citation: "string",
-            quote: "string",
-            keywords: ["string"],
-            linkedHypothesisIds: ["string"],
-            reliabilityScore: 0.5,
-            relevanceScore: 0.5,
-            evidenceStrength: "weak|medium|strong",
-            limitations: ["string"]
-          }
-        ],
+        claims: [{ title: "string", content: "string", sourceUri: "string", citation: "string" }],
+        observations: [{ title: "string", content: "string", sourceUri: "string", citation: "string" }],
+        sourceCandidates: [{ title: "string", url: "string", doi: "string", snippet: "string" }],
         nextActions: ["string"],
         needsMoreEvidence: true,
         needsMoreAnalysis: true
       }),
-      "Never invent paper citations or URLs. If a tool/source is unavailable, report the problem in the summary and do not present it as evidence.",
+      "Never invent paper citations, URLs, DOI values, or experimental results.",
+      "Do not return hypothesis-support evidence. Return source candidates, claims, and observations only; WebFetch/PDF/paper tools create citation-backed evidence later.",
+      "If a tool/source is unavailable, report the problem in the summary and do not present it as evidence.",
       "",
       `Project: ${JSON.stringify(input.project)}`,
       `Questions: ${JSON.stringify(input.questions)}`,
@@ -111,7 +102,11 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     stderr: string
   ): OpenCodeRunOutput {
     const artifacts = normalizeArtifacts(input, parsed, completedAt);
-    const evidence = normalizeEvidence(input, parsed, completedAt);
+    const downgraded = downgradeLegacyEvidence(parsed);
+    const claims = [...normalizeClaimLike(parsed.claims), ...downgraded.claims];
+    const observations = [...normalizeClaimLike(parsed.observations), ...downgraded.observations];
+    const sources = normalizeSourceCandidates(input, [...(parsed.sourceCandidates ?? []), ...downgraded.sourceCandidates], completedAt);
+    const toolRuns = normalizeStructuredOutputToolRuns(input, claims, observations, sources, startedAt, completedAt);
     return {
       run: {
         id: createId("opencode"),
@@ -123,15 +118,20 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
         logs: [
           parsed.summary || "OpenCode CLI execution completed.",
           "OpenCode CLI was resolved from AetherOps bundled dependencies when available.",
+          downgraded.downgradedCount ? `Downgraded ${downgraded.downgradedCount} legacy evidence items to non-support claims/source candidates.` : "No legacy evidence items were returned.",
           stderr ? `stderr: ${stderr.slice(0, 2000)}` : "stderr: empty"
         ],
         artifactIds: artifacts.map((item) => item.id),
-        evidenceIds: evidence.map((item) => item.id),
+        evidenceIds: [],
         startedAt,
         completedAt
       },
       artifacts,
-      evidence,
+      evidence: [],
+      sources,
+      claims,
+      observations,
+      toolRuns,
       nextActions: Array.isArray(parsed.nextActions) ? parsed.nextActions.filter((item): item is string => typeof item === "string") : [],
       needsMoreEvidence: Boolean(parsed.needsMoreEvidence),
       needsMoreAnalysis: Boolean(parsed.needsMoreAnalysis)
@@ -150,6 +150,9 @@ interface OpenCodeSchema {
   summary?: string;
   toolPlan?: string[];
   artifacts?: Array<{ title?: string; relativePath?: string; mimeType?: string; content?: string; summary?: string }>;
+  claims?: Array<Record<string, unknown>>;
+  observations?: Array<Record<string, unknown>>;
+  sourceCandidates?: Array<Record<string, unknown>>;
   evidence?: Array<Record<string, unknown>>;
   nextActions?: string[];
   needsMoreEvidence?: boolean;
@@ -228,7 +231,7 @@ function schemaFromParsed(parsed: unknown): OpenCodeSchema | undefined {
   if (!parsed || typeof parsed !== "object") {
     return undefined;
   }
-  if ("summary" in parsed || "artifacts" in parsed || "evidence" in parsed) {
+  if ("summary" in parsed || "artifacts" in parsed || "evidence" in parsed || "sourceCandidates" in parsed || "claims" in parsed || "observations" in parsed) {
     return parsed as OpenCodeSchema;
   }
   const content = (parsed as { message?: { content?: string } }).message?.content;
@@ -269,28 +272,100 @@ function normalizeArtifacts(input: OpenCodeRunInput, parsed: OpenCodeSchema, cre
   }));
 }
 
-function normalizeEvidence(input: OpenCodeRunInput, parsed: OpenCodeSchema, createdAt: string): EvidenceItem[] {
-  return (parsed.evidence ?? [])
-    .slice(0, 24)
-    .filter((item) => cleanString(item.sourceUri) || cleanString(item.citation))
-    .filter((item) => normalizeCategory(item.category) !== "generated_artifact")
-    .map((item) => ({
-      id: createId("evidence"),
+function normalizeClaimLike(items: Array<Record<string, unknown>> | undefined): Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }> {
+  return (items ?? []).slice(0, 24).map((item, index) => ({
+    title: cleanString(item.title) || `OpenCode claim ${index + 1}`,
+    content: cleanString(item.content) || cleanString(item.summary) || cleanString(item.quote),
+    sourceUri: cleanString(item.sourceUri) || cleanString(item.url) || undefined,
+    citation: cleanString(item.citation) || undefined,
+    metadata: {
+      traceabilityKind: "tool_observation",
+      canSupportHypothesis: false,
+      downgradedFromEvidence: item.downgradedFromEvidence === true
+    }
+  })).filter((item) => item.content || item.sourceUri || item.citation);
+}
+
+function normalizeSourceCandidates(input: OpenCodeRunInput, candidates: Array<Record<string, unknown>>, createdAt: string): ResearchSource[] {
+  return candidates.slice(0, 24).flatMap((item, index) => {
+    const url = cleanString(item.url) || cleanString(item.sourceUri);
+    const doi = cleanString(item.doi);
+    if (!url && !doi) return [];
+    return [{
+      id: createId("source"),
       projectId: input.project.id,
-      category: normalizeCategory(item.category),
-      title: cleanString(item.title) || "OpenCode evidence",
-      summary: cleanString(item.summary),
-      sourceUri: cleanString(item.sourceUri) || undefined,
-      citation: cleanString(item.citation) || undefined,
-      quote: cleanString(item.quote) || undefined,
-      keywords: normalizeStringArray(item.keywords),
-      linkedHypothesisIds: normalizeStringArray(item.linkedHypothesisIds).filter((id) => input.hypotheses.some((hypothesis) => hypothesis.id === id)),
-      reliabilityScore: normalizeScore(item.reliabilityScore),
-      relevanceScore: normalizeScore(item.relevanceScore),
-      evidenceStrength: normalizeStrength(item.evidenceStrength),
-      limitations: normalizeStringArray(item.limitations),
+      kind: doi && !url ? "paper" as const : "web" as const,
+      title: cleanString(item.title) || cleanString(item.citation) || `OpenCode source candidate ${index + 1}`,
+      url: url || undefined,
+      doi: doi || undefined,
+      retrievedAt: createdAt,
+      metadata: {
+        provider: "opencode",
+        snippet: cleanString(item.snippet) || cleanString(item.summary) || cleanString(item.quote),
+        citation: cleanString(item.citation) || undefined,
+        traceabilityKind: "external_source",
+        canSupportHypothesis: false,
+        sourceCandidateOnly: true
+      },
       createdAt
-    }));
+    }];
+  });
+}
+
+function normalizeStructuredOutputToolRuns(
+  input: OpenCodeRunInput,
+  claims: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>,
+  observations: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>,
+  sources: ResearchSource[],
+  startedAt: string,
+  completedAt: string
+): ToolRun[] {
+  if (!claims.length && !observations.length && !sources.length) return [];
+  return [{
+    id: createId("tool"),
+    projectId: input.project.id,
+    iteration: input.iteration,
+    toolName: "OpenCodeStructuredOutput",
+    input: { iteration: input.iteration },
+    output: { claims, observations, sourceCandidateIds: sources.map((source) => source.id) },
+    status: "completed",
+    startedAt,
+    completedAt
+  }];
+}
+
+function downgradeLegacyEvidence(parsed: OpenCodeSchema): {
+  claims: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>;
+  observations: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>;
+  sourceCandidates: Array<Record<string, unknown>>;
+  downgradedCount: number;
+} {
+  const claims: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }> = [];
+  const observations: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }> = [];
+  const sourceCandidates: Array<Record<string, unknown>> = [];
+  for (const item of (parsed.evidence ?? []).slice(0, 24)) {
+    const title = cleanString(item.title) || "Downgraded OpenCode claim";
+    const content = cleanString(item.summary) || cleanString(item.quote) || cleanString(item.citation) || cleanString(item.sourceUri);
+    const sourceUri = cleanString(item.sourceUri);
+    const citation = cleanString(item.citation);
+    const downgraded = { title, content, sourceUri: sourceUri || undefined, citation: citation || undefined, metadata: { downgradedFromEvidence: true, canSupportHypothesis: false } };
+    if (normalizeCategory(item.category) === "generated_artifact") {
+      observations.push(downgraded);
+    } else {
+      claims.push(downgraded);
+    }
+    if (sourceUri || cleanString(item.doi)) {
+      sourceCandidates.push({
+        title,
+        url: sourceUri,
+        doi: cleanString(item.doi),
+        citation,
+        snippet: content,
+        downgradedFromEvidence: true
+      });
+    }
+  }
+  return { claims, observations, sourceCandidates, downgradedCount: claims.length + observations.length };
 }
 
 function formatOpenCodeModel(settings: AppSettings): string | undefined {

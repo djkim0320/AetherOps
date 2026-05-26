@@ -469,29 +469,51 @@ export class AetherOpsOrchestrator {
     output: OpenCodeRunOutput,
     toolResults: ResearchToolResult[] = []
   ): Promise<void> {
-    const toolResultArtifacts = toolResults.flatMap((result) => result.artifacts);
-    const toolResultEvidence = toolResults.flatMap((result) => result.evidence);
-    const toolResultSources = toolResults.flatMap((result) => result.sources);
+    const executionBundleId = `execution-bundle:${project.id}:${iteration}:${output.run.id}`;
+    const bundledOutput: OpenCodeRunOutput = {
+      ...output,
+      run: {
+        ...output.run,
+        metadata: { ...(output.run.metadata ?? {}), executionBundleId },
+        logs: output.run.logs.some((line) => line.includes(executionBundleId))
+          ? output.run.logs
+          : [...output.run.logs, `executionBundleId: ${executionBundleId}`]
+      },
+      artifacts: output.artifacts.map((artifact) => withArtifactBundle(artifact, executionBundleId)),
+      evidence: output.evidence.map((evidence) => withEvidenceBundle(evidence, executionBundleId)),
+      sources: output.sources?.map((source) => withSourceBundle(source, executionBundleId)),
+      toolRuns: output.toolRuns?.map((run) => withToolRunBundle(run, executionBundleId))
+    };
+    const bundledToolResults = toolResults.map((result) => ({
+      ...result,
+      toolRun: withToolRunBundle(result.toolRun, executionBundleId),
+      artifacts: result.artifacts.map((artifact) => withArtifactBundle(artifact, executionBundleId)),
+      evidence: result.evidence.map((evidence) => withEvidenceBundle(evidence, executionBundleId)),
+      sources: result.sources.map((source) => withSourceBundle(source, executionBundleId))
+    }));
+    const toolResultArtifacts = bundledToolResults.flatMap((result) => result.artifacts);
+    const toolResultEvidence = bundledToolResults.flatMap((result) => result.evidence);
+    const toolResultSources = bundledToolResults.flatMap((result) => result.sources);
     const artifacts = await this.projectStorage.writeArtifacts(project, database, iteration, [
-      ...output.artifacts,
+      ...bundledOutput.artifacts,
       ...toolResultArtifacts
     ]);
-    const toolRuns = [...(output.toolRuns ?? []), ...toolResults.map((result) => result.toolRun)];
-    const logSource = await this.projectStorage.writeRunLog(project, database, iteration, output.run, toolRuns);
+    const toolRuns = [...(bundledOutput.toolRuns ?? []), ...bundledToolResults.map((result) => result.toolRun)];
+    const logSource = await this.projectStorage.writeRunLog(project, database, iteration, bundledOutput.run, toolRuns);
 
-    await this.store.saveOpenCodeRun(output.run);
+    await this.store.saveOpenCodeRun(bundledOutput.run);
     await this.store.saveArtifacts(artifacts);
-    await this.store.saveEvidence([...output.evidence, ...toolResultEvidence]);
-    const sources = [...(output.sources ?? []), ...toolResultSources];
+    await this.store.saveEvidence([...bundledOutput.evidence, ...toolResultEvidence]);
+    const sources = [...(bundledOutput.sources ?? []), ...toolResultSources];
     if (sources.length) {
       await this.store.saveSources(await this.projectStorage.writeSources(project, database, sources));
     }
-    if (logSource) await this.store.saveSources([logSource]);
+    if (logSource) await this.store.saveSources([withSourceBundle(logSource, executionBundleId)]);
     if (toolRuns.length) await this.store.saveToolRuns(toolRuns);
-    if (output.agentPlan) await this.store.saveResearchPlan(output.agentPlan);
-    if (output.chunks?.length) {
-      await this.projectStorage.writeChunks(project, database, output.chunks);
-      await this.store.saveChunks(output.chunks);
+    if (bundledOutput.agentPlan) await this.store.saveResearchPlan(bundledOutput.agentPlan);
+    if (bundledOutput.chunks?.length) {
+      await this.projectStorage.writeChunks(project, database, bundledOutput.chunks);
+      await this.store.saveChunks(bundledOutput.chunks);
     }
   }
 
@@ -857,34 +879,13 @@ export class AetherOpsOrchestrator {
   }
 
   private registeredToolNames(): string[] {
-    return this.toolRunner?.listToolNames() ?? [];
+    return this.toolRunner?.listRegisteredToolNames?.() ?? this.toolRunner?.listToolNames() ?? [];
   }
 
   private executableToolNames(snapshot: ResearchSnapshot, settings: AppSettings): string[] {
-    const registered = new Set(this.registeredToolNames().map(normalizeToolNameForPlan));
-    const tools: string[] = [];
-    const include = (tool: string, enabled = true) => {
-      if (enabled && (tool === "OpenCodeTool" || registered.has(normalizeToolNameForPlan(tool)))) {
-        tools.push(tool);
-      }
-    };
-    const searchConfigured =
-      settings.webSearch.provider !== "disabled" && Boolean(settings.webSearch.apiKey || settings.webSearch.apiKeyConfigured);
-
-    include("OpenCodeTool", settings.openCode.enabled && Boolean(settings.openCode.command?.trim()));
-    include("WebSearchTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && searchConfigured);
-    include("BackgroundBrowserTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && settings.browserUse.enabled);
-    include("WebFetchTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch);
-    include("CodeExecutionTool", snapshot.project.autonomyPolicy.allowCodeExecution && settings.allowCodeExecution);
-    include("ArtifactWriterTool");
-    include("DataAnalysisTool");
-    for (const tool of this.registeredToolNames()) {
-      const normalized = normalizeToolNameForPlan(tool);
-      if (!["websearchtool", "backgroundbrowsertool", "webfetchtool", "codeexecutiontool", "artifactwritertool", "dataanalysistool"].includes(normalized)) {
-        include(tool);
-      }
-    }
-    return [...new Set(tools)];
+    const tools = this.toolRunner?.listExecutableToolNames?.({ snapshot, settings }) ?? this.registeredToolNames();
+    const withOpenCode = settings.openCode.enabled && Boolean(settings.openCode.command?.trim()) ? ["OpenCodeTool", ...tools] : tools;
+    return [...new Set(withOpenCode)];
   }
 
   private assertPlanToolsAllowed(plan: ResearchPlan, allowedTools: string[]): void {
@@ -1119,6 +1120,42 @@ function sourceFromEvidence(evidence: EvidenceItem, sourceId: string): ResearchS
     },
     createdAt: evidence.createdAt
   };
+}
+
+function withToolRunBundle(toolRun: ToolRun, executionBundleId: string): ToolRun {
+  return {
+    ...toolRun,
+    input: appendBundleToUnknown(toolRun.input, executionBundleId),
+    output: appendBundleToUnknown(toolRun.output, executionBundleId)
+  };
+}
+
+function withSourceBundle(source: ResearchSource, executionBundleId: string): ResearchSource {
+  return {
+    ...source,
+    metadata: { ...source.metadata, executionBundleId }
+  };
+}
+
+function withEvidenceBundle(evidence: EvidenceItem, executionBundleId: string): EvidenceItem {
+  return {
+    ...evidence,
+    metadata: { ...(evidence.metadata ?? {}), executionBundleId }
+  };
+}
+
+function withArtifactBundle(artifact: ResearchArtifact, executionBundleId: string): ResearchArtifact {
+  return {
+    ...artifact,
+    metadata: { ...(artifact.metadata ?? {}), executionBundleId }
+  };
+}
+
+function appendBundleToUnknown(value: unknown, executionBundleId: string): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return { ...(value as Record<string, unknown>), executionBundleId };
+  }
+  return { value, executionBundleId };
 }
 
 function kindFromEvidence(evidence: EvidenceItem): ResearchSource["kind"] {

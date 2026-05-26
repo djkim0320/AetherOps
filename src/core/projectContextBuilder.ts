@@ -121,20 +121,26 @@ export class ProjectContextBuilder {
       ...selectedRecords.map((record) => record.sourceId).filter((id): id is string => Boolean(id)),
       ...rankedChunks.map(({ chunk }) => chunk.sourceId).filter((id): id is string => Boolean(id))
     ]);
+    const eligibleEvidenceIds = new Set(
+      [...eligibleRecordById.values()]
+        .filter(isSupportEligibleEvidenceRecord)
+        .map((record) => record.evidenceId)
+        .filter((id): id is string => Boolean(id))
+    );
     const selectedEvidenceIds = new Set(
       selectedRecords
-        .filter((record) => record.kind === "evidence" && record.metadata.canSupportHypothesis === true)
+        .filter(isSupportEligibleEvidenceRecord)
         .map((record) => record.evidenceId)
         .filter((id): id is string => Boolean(id))
     );
     for (const { chunk } of rankedChunks) {
-      if (chunk.evidenceId) selectedEvidenceIds.add(chunk.evidenceId);
+      if (chunk.evidenceId && eligibleEvidenceIds.has(chunk.evidenceId)) selectedEvidenceIds.add(chunk.evidenceId);
     }
     for (const { entity } of rankedEntities) {
-      if (entity.sourceEvidenceId) selectedEvidenceIds.add(entity.sourceEvidenceId);
+      if (entity.sourceEvidenceId && eligibleEvidenceIds.has(entity.sourceEvidenceId)) selectedEvidenceIds.add(entity.sourceEvidenceId);
     }
     for (const { relation } of rankedRelations) {
-      if (relation.sourceEvidenceId) selectedEvidenceIds.add(relation.sourceEvidenceId);
+      if (relation.sourceEvidenceId && eligibleEvidenceIds.has(relation.sourceEvidenceId)) selectedEvidenceIds.add(relation.sourceEvidenceId);
     }
     const citations = new Set<string>();
     for (const record of selectedRecords) {
@@ -189,6 +195,17 @@ function isEligibleRecord(record: ResearchSnapshot["normalizedRecords"][number])
     record.validationStatus !== "rejected" &&
     !(record.kind === "evidence" && ["weak", "excluded", "general_web"].includes(String(record.metadata.sourceQualityTier ?? ""))) &&
     !((record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") && record.metadata.canSupportHypothesis !== true);
+}
+
+function isSupportEligibleEvidenceRecord(record: ResearchSnapshot["normalizedRecords"][number]): boolean {
+  const traceabilityKind = String(record.metadata.traceabilityKind ?? "");
+  const sourceQualityTier = String(record.metadata.sourceQualityTier ?? "");
+  return record.kind === "evidence" &&
+    record.metadata.canSupportHypothesis === true &&
+    (traceabilityKind === "external_source" || traceabilityKind === "tool_observation") &&
+    !["weak", "excluded", "general_web"].includes(sourceQualityTier) &&
+    normalizeMemoryScope(record.memoryScope) !== "ephemeral" &&
+    record.validationStatus !== "rejected";
 }
 
 function buildProjectQuery(snapshot: ResearchSnapshot): string {

@@ -29,18 +29,51 @@ describe("RealOpenCodeAdapter", () => {
     expect(output.needsMoreAnalysis).toBe(false);
     expect(output.fatalError).toBeUndefined();
   });
+
+  it("downgrades legacy OpenCode evidence into non-support claims and source candidates", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-real-opencode-legacy-"));
+    const command = createFakeOpenCodeCommand(tempDir, {
+      summary: "legacy evidence returned",
+      toolPlan: ["legacy"],
+      artifacts: [],
+      evidence: [
+        {
+          category: "web_source",
+          title: "Invented-looking evidence",
+          summary: "This must not be stored as EvidenceItem.",
+          sourceUri: "https://example.com/source",
+          citation: "Example source",
+          quote: "Quote"
+        }
+      ],
+      nextActions: [],
+      needsMoreEvidence: true,
+      needsMoreAnalysis: false
+    });
+    const adapter = new RealOpenCodeAdapter(() => settings(command));
+
+    const output = await adapter.run(input());
+
+    expect(output.evidence).toEqual([]);
+    expect(output.run.evidenceIds).toEqual([]);
+    expect(output.claims?.[0]).toMatchObject({ title: "Invented-looking evidence", sourceUri: "https://example.com/source" });
+    expect(output.sources?.[0]).toMatchObject({ url: "https://example.com/source", metadata: expect.objectContaining({ sourceCandidateOnly: true }) });
+    expect(output.toolRuns?.[0]?.toolName).toBe("OpenCodeStructuredOutput");
+  });
 });
 
-function createFakeOpenCodeCommand(root: string): string {
+function createFakeOpenCodeCommand(root: string, payload?: Record<string, unknown>): string {
   mkdirSync(root, { recursive: true });
   const event = JSON.stringify({
     type: "text",
     part: {
-      text: JSON.stringify({
+      text: JSON.stringify(payload ?? {
         summary: "parsed from OpenCode text event",
         toolPlan: ["self-check"],
         artifacts: [],
-        evidence: [],
+        claims: [],
+        observations: [],
+        sourceCandidates: [],
         nextActions: [],
         needsMoreEvidence: false,
         needsMoreAnalysis: false

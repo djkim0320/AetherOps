@@ -1,5 +1,7 @@
-import type { AppSettings, OpenCodeRunInput } from "./types.js";
+import type { AppSettings, OpenCodeRunInput, ToolRun } from "./types.js";
 import { createDefaultResearchTools, type ResearchToolResult, type ResearchTool } from "./toolRegistry.js";
+
+type RollingOpenCodeRunInput = OpenCodeRunInput & { toolRuns?: ToolRun[] };
 
 export class ToolRunner {
   constructor(private readonly tools: ResearchTool[] = createDefaultResearchTools()) {}
@@ -15,6 +17,13 @@ export class ToolRunner {
 
   async runAll(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult[]> {
     const results: ResearchToolResult[] = [];
+    let rollingInput: RollingOpenCodeRunInput = {
+      ...input,
+      evidence: [...(input.evidence ?? [])],
+      artifacts: [...(input.artifacts ?? [])],
+      sources: [...(input.sources ?? [])],
+      toolRuns: []
+    };
     const toolMap = new Map(this.tools.map((tool) => [normalizeToolName(tool.name), tool]));
     const requiredTools = (input.researchPlan?.requiredTools ?? [])
       .map(normalizeToolName)
@@ -25,11 +34,25 @@ export class ToolRunner {
       if (!tool) {
         throw new Error(`Required research tool is not registered: ${toolName}`);
       }
-      const result = await tool.run(input, settings);
+      const currentInput: RollingOpenCodeRunInput = {
+        ...rollingInput,
+        evidence: [...(rollingInput.evidence ?? [])],
+        artifacts: [...(rollingInput.artifacts ?? [])],
+        sources: [...(rollingInput.sources ?? [])],
+        toolRuns: [...(rollingInput.toolRuns ?? [])]
+      };
+      const result = await tool.run(currentInput, settings);
       if (result.toolRun.status !== "completed") {
         throw new Error(`${tool.name} did not complete successfully: ${result.toolRun.error ?? JSON.stringify(result.toolRun.output)}`);
       }
       results.push(result);
+      rollingInput = {
+        ...rollingInput,
+        evidence: [...(rollingInput.evidence ?? []), ...result.evidence],
+        artifacts: [...(rollingInput.artifacts ?? []), ...result.artifacts],
+        sources: [...(rollingInput.sources ?? []), ...result.sources],
+        toolRuns: [...(rollingInput.toolRuns ?? []), result.toolRun]
+      };
     }
     return results;
   }

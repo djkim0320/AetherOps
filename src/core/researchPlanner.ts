@@ -59,12 +59,13 @@ export class ResearchPlanner {
       timeoutMs: 120_000
     });
 
+    const requiredTools = ensureHintTools(strings(response.requiredTools, defaultPlan.requiredTools), input);
     return {
       ...defaultPlan,
       objective: clean(response.objective) || defaultPlan.objective,
       targetQuestions: selectIdsOrText(response.targetQuestions, defaultPlan.targetQuestions),
       targetHypotheses: selectIdsOrText(response.targetHypotheses, defaultPlan.targetHypotheses),
-      requiredTools: strings(response.requiredTools, defaultPlan.requiredTools),
+      requiredTools,
       expectedSources: strings(response.expectedSources, defaultPlan.expectedSources),
       expectedArtifacts: strings(response.expectedArtifacts, defaultPlan.expectedArtifacts),
       executionSteps: strings(response.executionSteps, defaultPlan.executionSteps),
@@ -82,9 +83,15 @@ export class ResearchPlanner {
     continuationDecision?: ContinuationDecision;
   }): ResearchPlan {
     const available = new Set(input.availableTools.map(normalizeToolName));
+    const hasFetchHint = (input.continuationDecision?.planRevisionHints ?? []).some((hint) => /webfetchtool|fetch selected source urls/i.test(hint));
+    const hasExternalUrls =
+      input.snapshot.evidence.some((item) => typeof item.sourceUri === "string" && /^https?:\/\//i.test(item.sourceUri)) ||
+      input.snapshot.sources.some((source) => typeof source.url === "string" && /^https?:\/\//i.test(source.url));
+    const externalSearchReady = input.settings.allowExternalSearch && input.settings.webSearch.provider !== "disabled";
     const candidateTools = [
       "OpenCodeTool",
-      ...(input.settings.allowExternalSearch && input.settings.webSearch.provider !== "disabled" ? ["WebSearchTool"] : []),
+      ...(externalSearchReady ? ["WebSearchTool"] : []),
+      ...(externalSearchReady && (hasFetchHint || hasExternalUrls || available.has(normalizeToolName("WebSearchTool"))) ? ["WebFetchTool"] : []),
       ...(input.settings.browserUse.enabled && input.settings.allowExternalSearch ? ["BackgroundBrowserTool"] : []),
       ...(input.settings.allowCodeExecution ? ["CodeExecutionTool"] : []),
       "ArtifactWriterTool",
@@ -129,6 +136,22 @@ export class ResearchPlanner {
       createdAt: nowIso()
     };
   }
+}
+
+function ensureHintTools(
+  tools: string[],
+  input: {
+    availableTools: string[];
+    continuationDecision?: ContinuationDecision;
+  }
+): string[] {
+  const available = new Set(input.availableTools.map(normalizeToolName));
+  const needsFetch = (input.continuationDecision?.planRevisionHints ?? []).some((hint) => /webfetchtool|fetch selected source urls/i.test(hint));
+  const result = [...tools];
+  if (needsFetch && available.has(normalizeToolName("WebFetchTool")) && !result.some((tool) => normalizeToolName(tool) === normalizeToolName("WebFetchTool"))) {
+    result.push("WebFetchTool");
+  }
+  return result;
 }
 
 function clean(value: unknown): string {

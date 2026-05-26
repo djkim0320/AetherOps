@@ -477,6 +477,12 @@ export interface ProjectContextSnapshot {
   createdAt: string;
 }
 
+export interface MainMemorySearchOptions {
+  projectId?: string;
+  limit?: number;
+  includeEphemeral?: boolean;
+}
+
 export interface ValidationResult {
   id: string;
   projectId: string;
@@ -624,6 +630,7 @@ export interface OpenCodeRunInput {
   evidence?: EvidenceItem[];
   artifacts?: ResearchArtifact[];
   sources?: ResearchSource[];
+  toolRuns?: ToolRun[];
   ragContext?: RagContext;
   hybridContext?: HybridContext;
   specification?: ResearchSpecification;
@@ -759,4 +766,11 @@ export interface ResearchStore {
   saveReport(report: ResearchReport): Promise<void>;
   updateProject(project: ResearchProject): Promise<void>;
   getSnapshot(projectId: string): Promise<ResearchSnapshot>;
+  searchGlobalRecords(query: string, options?: MainMemorySearchOptions): Promise<NormalizedResearchRecord[]>;
+  searchGlobalChunks(query: string, options?: MainMemorySearchOptions): Promise<ResearchChunk[]>;
+  searchGlobalGraph(query: string, options?: MainMemorySearchOptions): Promise<{
+    entities: OntologyEntity[];
+    relations: OntologyRelation[];
+    constraints: OntologyConstraint[];
+  }>;
 }

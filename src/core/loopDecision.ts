@@ -17,9 +17,17 @@ export class LoopDecisionEngine {
       entities: after.ontologyEntities.length - input.beforeCounts.entities,
       relations: after.ontologyRelations.length - input.beforeCounts.relations
     };
+    const latestContext = [...after.projectContextSnapshots].reverse().find((context) => context.iteration === input.iteration);
+    const sourceCandidatesNeedFetch = Boolean(
+      latestContext &&
+      latestContext.selectedEvidenceIds.length === 0 &&
+      hasFetchableExternalCandidate(after, latestContext)
+    );
+    const fetchEvidenceGap = "Source candidates found but not fetched into citation-backed evidence";
     const evidenceGaps = [
       ...input.result.nextQuestions,
-      ...after.validationResults.slice(-after.hypotheses.length).flatMap((result) => result.evidenceGaps)
+      ...after.validationResults.slice(-after.hypotheses.length).flatMap((result) => result.evidenceGaps),
+      ...(sourceCandidatesNeedFetch ? [fetchEvidenceGap] : [])
     ].filter(Boolean);
     const repeatedLowGrowth = input.iteration > 1 && Object.values(growth).every((value) => value <= 0);
     const hitSafetyCap = input.iteration >= input.safetyCapIterations;
@@ -28,7 +36,7 @@ export class LoopDecisionEngine {
       !hitSafetyCap &&
       !statusBlocked &&
       !repeatedLowGrowth &&
-      (input.result.needsMoreEvidence || input.result.needsMoreAnalysis || input.result.nextQuestions.length > 0);
+      (input.result.needsMoreEvidence || input.result.needsMoreAnalysis || input.result.nextQuestions.length > 0 || sourceCandidatesNeedFetch);
 
     return {
       id: createId("decision"),
@@ -46,12 +54,37 @@ export class LoopDecisionEngine {
         ? [
             "Return to Step 4 and revise the research plan before executing tools again.",
             "Prioritize traceable sources over additional seed or untraceable artifacts.",
+            ...(sourceCandidatesNeedFetch ? ["Use WebFetchTool to fetch selected source URLs."] : []),
             growth.evidence <= 0 ? "Previous iteration produced little or no new evidence; change tool/source strategy." : "Use new evidence to narrow validation targets."
           ]
         : [],
       createdAt: nowIso()
     };
   }
+}
+
+function hasFetchableExternalCandidate(
+  snapshot: ResearchSnapshot,
+  context: NonNullable<ResearchSnapshot["projectContextSnapshots"][number]>
+): boolean {
+  const selectedRecordIds = new Set(context.selectedRecordIds);
+  const selectedSourceIds = new Set(context.selectedSourceIds);
+  return (
+    context.citations.some(isFetchableExternalReference) ||
+    snapshot.sources.some((source) =>
+      selectedSourceIds.has(source.id) &&
+      (isFetchableExternalReference(source.url) || isFetchableExternalReference(source.doi))
+    ) ||
+    snapshot.normalizedRecords.some((record) =>
+      selectedRecordIds.has(record.id) &&
+      (isFetchableExternalReference(record.sourceUri) || isFetchableExternalReference(record.citation))
+    )
+  );
+}
+
+function isFetchableExternalReference(value: string | undefined): boolean {
+  if (!value) return false;
+  return /^https?:\/\//i.test(value) || /^10\.\d{4,9}\//.test(value);
 }
 
 function reason(input: {

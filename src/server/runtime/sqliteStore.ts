@@ -35,13 +35,20 @@ import {
   type RuntimeBlocker,
   type StepError,
   type ToolRun,
-  type ValidationResult
+  type ValidationResult,
+  type MainMemorySearchOptions
 } from "../../core/types.js";
 import { normalizeMemoryScope } from "../../core/researchMemory.js";
 
 type JsonRecord = { id: string; project_id?: string; created_at?: string; data: string };
 const OPEN_CODE_RUNS_TABLE = `opencode_${"runs"}`;
-type ScopedProjectItem = { id: string; projectId: string; workspaceProjectId?: string; memoryScope?: import("../../core/types.js").MemoryScope };
+type ScopedProjectItem = {
+  id: string;
+  projectId: string;
+  workspaceProjectId?: string;
+  memoryScope?: import("../../core/types.js").MemoryScope;
+  validationStatus?: import("../../core/types.js").ValidationStatus;
+};
 
 export class SqliteResearchStore implements ResearchStore {
   private readonly db: DatabaseSync;
@@ -280,6 +287,50 @@ export class SqliteResearchStore implements ResearchStore {
     };
   }
 
+  async searchGlobalRecords(query: string, options: MainMemorySearchOptions = {}): Promise<NormalizedResearchRecord[]> {
+    return searchScopedItems(
+      this.allFrom(this.mainDb, "global_normalized_records").map((row) => this.parse<NormalizedResearchRecord>(row)),
+      query,
+      options
+    );
+  }
+
+  async searchGlobalChunks(query: string, options: MainMemorySearchOptions = {}): Promise<ResearchChunk[]> {
+    return searchScopedItems(
+      this.allFrom(this.mainVectorDb, "global_chunks").map((row) => this.parse<ResearchChunk>(row)),
+      query,
+      options,
+      (chunk) => `${chunk.text}\n${chunk.keywords.join(" ")}\n${chunk.citation ?? ""}`
+    );
+  }
+
+  async searchGlobalGraph(query: string, options: MainMemorySearchOptions = {}): Promise<{
+    entities: OntologyEntity[];
+    relations: OntologyRelation[];
+    constraints: OntologyConstraint[];
+  }> {
+    const entities = searchScopedItems(
+      this.allFrom(this.mainOntologyDb, "global_entities").map((row) => this.parse<OntologyEntity>(row)),
+      query,
+      options,
+      (entity) => `${entity.label}\n${entity.description ?? ""}`
+    );
+    const entityIds = new Set(entities.map((entity) => entity.id));
+    const relations = visibleScopedItems(
+      this.allFrom(this.mainOntologyDb, "global_relations").map((row) => this.parse<OntologyRelation>(row)),
+      options
+    )
+      .filter((relation) => entityIds.has(relation.subjectId) || entityIds.has(relation.objectId))
+      .slice(0, options.limit ?? 24);
+    const constraints = searchScopedItems(
+      this.allFrom(this.mainOntologyDb, "global_constraints").map((row) => this.parse<OntologyConstraint>(row)),
+      query,
+      options,
+      (constraint) => `${constraint.label}\n${constraint.description}`
+    );
+    return { entities, relations, constraints };
+  }
+
   close(): void {
     if (this.closed) {
       return;
@@ -439,6 +490,10 @@ export class SqliteResearchStore implements ResearchStore {
     return this.db.prepare(`select id, data from ${table}`).all() as JsonRecord[];
   }
 
+  private allFrom(db: DatabaseSync, table: string): JsonRecord[] {
+    return db.prepare(`select id, project_id, created_at, data from ${table} order by created_at asc`).all() as JsonRecord[];
+  }
+
   private byProject<T>(table: string, projectId: string): T[] {
     const rows = this.db
       .prepare(`select id, project_id, created_at, data from ${table} where project_id = ? order by created_at asc`)
@@ -515,4 +570,52 @@ function groupByProject<T extends { projectId: string }>(items: T[]): Array<[str
 
 function sanitizeProject(project: ResearchProject): ResearchProject {
   return project;
+}
+
+function searchScopedItems<T extends ScopedProjectItem>(
+  items: T[],
+  query: string,
+  options: MainMemorySearchOptions,
+  textOf: (item: T) => string = (item) => {
+    const searchable = item as T & { title?: string; content?: string; metadata?: unknown };
+    return `${searchable.title ?? ""}\n${searchable.content ?? ""}\n${JSON.stringify(searchable.metadata ?? {})}`;
+  }
+): T[] {
+  const limit = options.limit ?? 24;
+  return items
+    .filter((item) =>
+      !options.projectId ||
+      item.projectId === options.projectId ||
+      item.workspaceProjectId === options.projectId ||
+      normalizeMemoryScope(item.memoryScope) === "global"
+    )
+    .filter((item) => options.includeEphemeral || normalizeMemoryScope(item.memoryScope) !== "ephemeral")
+    .filter((item) => item.validationStatus !== "rejected")
+    .map((item) => ({ item, score: lexicalScore(query, textOf(item)) }))
+    .filter(({ item, score }) => normalizeMemoryScope(item.memoryScope) !== "global" || score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
+function visibleScopedItems<T extends ScopedProjectItem>(items: T[], options: MainMemorySearchOptions): T[] {
+  return items
+    .filter((item) =>
+      !options.projectId ||
+      item.projectId === options.projectId ||
+      item.workspaceProjectId === options.projectId ||
+      normalizeMemoryScope(item.memoryScope) === "global"
+    )
+    .filter((item) => options.includeEphemeral || normalizeMemoryScope(item.memoryScope) !== "ephemeral")
+    .filter((item) => item.validationStatus !== "rejected");
+}
+
+function lexicalScore(query: string, text: string): number {
+  const queryTokens = new Set(tokens(query));
+  if (!queryTokens.size) return 0;
+  return tokens(text).reduce((score, token) => score + (queryTokens.has(token) ? 1 / queryTokens.size : 0), 0);
+}
+
+function tokens(text: string): string[] {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").split(/\s+/).filter(Boolean);
 }

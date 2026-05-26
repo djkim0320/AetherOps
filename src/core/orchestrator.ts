@@ -560,7 +560,11 @@ export class AetherOpsOrchestrator {
     await this.record(projectId, ResearchLoopStep.ReasonAndValidate, "Agent Control", "ProjectContextSnapshot 선택과 추론/검증을 시작합니다.");
     const snapshot = await this.store.getSnapshot(projectId);
     const activeIteration = iteration ?? nextIteration(snapshot);
-    const contextSnapshot = this.projectContextBuilder.build(snapshot, activeIteration);
+    const contextSnapshot = await this.projectContextBuilder.buildFromMainMemory({
+      snapshot,
+      iteration: activeIteration,
+      store: this.store
+    });
     if (!contextSnapshot.selectedRecordIds.length) {
       throw new Error("ProjectContextSnapshot could not select any Main Research Memory records for validation.");
     }
@@ -842,7 +846,7 @@ export class AetherOpsOrchestrator {
     include("OpenCodeTool", settings.openCode.enabled && Boolean(settings.openCode.command?.trim()));
     include("WebSearchTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && searchConfigured);
     include("BackgroundBrowserTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && settings.browserUse.enabled);
-    include("WebFetchTool", hasExternalUrls);
+    include("WebFetchTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && (hasExternalUrls || searchConfigured));
     include("CodeExecutionTool", snapshot.project.autonomyPolicy.allowCodeExecution && settings.allowCodeExecution);
     include("ArtifactWriterTool");
     include("DataAnalysisTool");

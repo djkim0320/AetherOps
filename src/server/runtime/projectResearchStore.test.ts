@@ -1,6 +1,7 @@
 ﻿import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createStrictTestOrchestrator } from "../../core/orchestratorTestHarness.test.js";
 import type { ResearchProjectInput, OntologyEntity, OntologyRelation } from "../../core/types.js";
@@ -97,5 +98,56 @@ describe("NodeProjectStorage", () => {
 
     expect(existsSync(join(snapshot.project.projectRoot, "ontology", "project-graph.json"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "ontology", "project-graph.nt"))).toBe(true);
+  });
+
+  it("stores external raw sources in Main files while internal artifacts stay in the project workspace", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-storage-"));
+    store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
+    const projectStorage = new NodeProjectStorage();
+    const orchestrator = createStrictTestOrchestrator({ store, storage: projectStorage, projectRootBase: join(tempDir, "projects") });
+
+    let snapshot = await orchestrator.createProject(input);
+    snapshot = await orchestrator.createResearchDb(snapshot.project.id);
+    const createdAt = "2026-05-20T00:00:00.000Z";
+    const [source] = await projectStorage.writeSources(snapshot.project, snapshot.database!, [
+      {
+        id: "source-web-main",
+        projectId: snapshot.project.id,
+        kind: "web",
+        title: "Fetched external page",
+        url: "https://example.edu/pomodoro",
+        retrievedAt: createdAt,
+        metadata: { rawText: "full fetched page body", fetchStatus: "fetched" },
+        createdAt
+      }
+    ]);
+    const [artifact] = await projectStorage.writeArtifacts(snapshot.project, snapshot.database!, 1, [
+      {
+        id: "artifact-local",
+        projectId: snapshot.project.id,
+        category: "generated_artifact",
+        title: "Internal note",
+        relativePath: "artifacts/iteration-1/internal-note.md",
+        mimeType: "text/markdown",
+        summary: "Internal project artifact",
+        content: "internal artifact body",
+        createdAt
+      }
+    ]);
+
+    expect(source?.rawPath).toContain(join(tempDir, "main", "files", "sources", "web"));
+    expect(source?.rawPath).not.toContain(join(snapshot.project.projectRoot, "sources", "web"));
+    expect(source?.rawPath && existsSync(source.rawPath)).toBe(true);
+    expect(artifact?.rawPath).toContain(join(snapshot.project.projectRoot, "artifacts"));
+    expect(artifact?.rawPath && existsSync(artifact.rawPath)).toBe(true);
+
+    const projectDb = new DatabaseSync(snapshot.database!.sqlitePath);
+    try {
+      const row = projectDb.prepare("select data from sources where id = ?").get("source-web-main") as { data: string } | undefined;
+      expect(row).toBeDefined();
+      expect(JSON.parse(row?.data ?? "{}").metadata.rawText).toBeUndefined();
+    } finally {
+      projectDb.close();
+    }
   });
 });

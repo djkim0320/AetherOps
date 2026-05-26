@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createId, nowIso } from "../../core/ids.js";
 import type { ProjectStorage } from "../../core/projectStorage.js";
@@ -127,7 +127,8 @@ export class NodeProjectStorage implements ProjectStorage {
     for (const source of sources) {
       const sourceWithPath = source.rawPath ? source : await writeSourceText(project, source);
       savedSources.push(sourceWithPath);
-      upsertJson(database.sqlitePath, "sources", sourceWithPath.id, project.id, sourceWithPath.createdAt ?? sourceWithPath.retrievedAt, sourceWithPath);
+      const workspaceSource = isExternalSource(sourceWithPath) ? stripExternalRawPayload(sourceWithPath) : sourceWithPath;
+      upsertJson(database.sqlitePath, "sources", workspaceSource.id, project.id, workspaceSource.createdAt ?? workspaceSource.retrievedAt, workspaceSource);
     }
     return savedSources;
   }
@@ -471,10 +472,43 @@ function upsertJson(path: string, table: string, id: string, projectId: string, 
 async function writeSourceText(project: ResearchProject, source: ResearchSource): Promise<ResearchSource> {
   const folder = source.kind === "paper" ? "papers" : source.kind === "web" ? "web" : "files";
   const filename = `${sanitizeFilename(source.title)}-${source.id}.json`;
-  const rawPath = safeJoin(project.projectRoot, `sources/${folder}/${filename}`);
+  const rawPath = isExternalSource(source)
+    ? safeMainJoin(project.projectRoot, `sources/${folder}/${filename}`)
+    : safeJoin(project.projectRoot, `sources/${folder}/${filename}`);
   mkdirSync(dirname(rawPath), { recursive: true });
   writeFileSync(rawPath, `${JSON.stringify(source, null, 2)}\n`, "utf8");
   return { ...source, rawPath };
+}
+
+function isExternalSource(source: ResearchSource): boolean {
+  return (source.kind === "web" || source.kind === "paper") && Boolean(source.url || source.doi);
+}
+
+function stripExternalRawPayload(source: ResearchSource): ResearchSource {
+  const metadata = { ...source.metadata };
+  delete metadata.rawText;
+  return { ...source, metadata };
+}
+
+function safeMainJoin(projectRoot: string, target: string): string {
+  const root = mainFilesRoot(projectRoot);
+  const normalizedTarget = normalize(target).replace(/^(\.\.(\/|\\|$))+/, "");
+  const resolved = join(root, normalizedTarget);
+  const distance = relative(root, resolved);
+  if (distance.startsWith("..") || isAbsolute(distance)) {
+    throw new Error(`Path escapes main research memory root: ${target}`);
+  }
+  mkdirSync(dirname(resolved), { recursive: true });
+  return resolved;
+}
+
+function mainFilesRoot(projectRoot: string): string {
+  const root = normalize(projectRoot);
+  const parent = dirname(root);
+  if (basename(parent).toLowerCase() === "projects") {
+    return join(dirname(parent), "main", "files");
+  }
+  return join(parent, "main", "files");
 }
 
 function normalizeArtifactPath(relativePath: string, iteration: number, title: string): string {

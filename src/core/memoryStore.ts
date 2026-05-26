@@ -29,7 +29,8 @@ import type {
   ProjectContextSnapshot,
   RuntimeBlocker,
   StepError,
-  ToolRun
+  ToolRun,
+  MainMemorySearchOptions
 } from "./types.js";
 import { normalizeMemoryScope } from "./researchMemory.js";
 
@@ -251,6 +252,30 @@ export class InMemoryResearchStore implements ResearchStore {
     };
   }
 
+  async searchGlobalRecords(query: string, options: MainMemorySearchOptions = {}): Promise<NormalizedResearchRecord[]> {
+    return searchItems(this.normalizedRecords, query, options);
+  }
+
+  async searchGlobalChunks(query: string, options: MainMemorySearchOptions = {}): Promise<ResearchChunk[]> {
+    return searchItems(this.chunks, query, options, (chunk) => `${chunk.text}\n${chunk.keywords.join(" ")}\n${chunk.citation ?? ""}`);
+  }
+
+  async searchGlobalGraph(query: string, options: MainMemorySearchOptions = {}): Promise<{
+    entities: OntologyEntity[];
+    relations: OntologyRelation[];
+    constraints: OntologyConstraint[];
+  }> {
+    const entities = searchItems(this.ontologyEntities, query, options, (entity) => `${entity.label}\n${entity.description ?? ""}`);
+    const entityIds = new Set(entities.map((entity) => entity.id));
+    const relations = searchItems(this.ontologyRelations, query, { ...options, limit: Math.max(options.limit ?? 24, 24) }, (relation) =>
+      `${relation.subjectId} ${relation.predicate} ${relation.objectId}`
+    )
+      .filter((relation) => entityIds.has(relation.subjectId) || entityIds.has(relation.objectId))
+      .slice(0, options.limit ?? 24);
+    const constraints = searchItems(this.ontologyConstraints, query, options, (constraint) => `${constraint.label}\n${constraint.description}`);
+    return { entities, relations, constraints };
+  }
+
   private upsertMany<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
     const merged = new Map(existing.map((item) => [item.id, item]));
     for (const item of incoming) {
@@ -266,4 +291,35 @@ function sanitizeProject(project: ResearchProject): ResearchProject {
 
 function visibleInProject<T extends ScopedProjectItem>(items: T[], projectId: string): T[] {
   return items.filter((item) => item.projectId === projectId || item.workspaceProjectId === projectId || normalizeMemoryScope(item.memoryScope) === "global");
+}
+
+function searchItems<T extends ScopedProjectItem>(
+  items: T[],
+  query: string,
+  options: MainMemorySearchOptions,
+  textOf: (item: T) => string = (item) => {
+    const record = item as T & { title?: string; content?: string; metadata?: unknown };
+    return `${record.title ?? ""}\n${record.content ?? ""}\n${JSON.stringify(record.metadata ?? {})}`;
+  }
+): T[] {
+  const limit = options.limit ?? 24;
+  return items
+    .filter((item) => !options.projectId || item.projectId === options.projectId || item.workspaceProjectId === options.projectId || normalizeMemoryScope(item.memoryScope) === "global")
+    .filter((item) => options.includeEphemeral || normalizeMemoryScope(item.memoryScope) !== "ephemeral")
+    .filter((item) => (item as T & { validationStatus?: string }).validationStatus !== "rejected")
+    .map((item) => ({ item, score: lexicalScore(query, textOf(item)) }))
+    .filter(({ item, score }) => normalizeMemoryScope(item.memoryScope) !== "global" || score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
+function lexicalScore(query: string, text: string): number {
+  const queryTokens = new Set(tokens(query));
+  if (!queryTokens.size) return 0;
+  return tokens(text).reduce((score, token) => score + (queryTokens.has(token) ? 1 / queryTokens.size : 0), 0);
+}
+
+function tokens(text: string): string[] {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").split(/\s+/).filter(Boolean);
 }

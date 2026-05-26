@@ -87,17 +87,22 @@ export class WebFetchTool implements ResearchTool {
 
   async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
     const startedAt = nowIso();
-    const urls = [
-      ...(input.evidence ?? []).map((item) => item.sourceUri),
-      ...(input.sources ?? []).map((item) => item.url)
-    ]
-      .filter((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
-      .slice(0, 3);
+    const urls = selectFetchUrls(input);
     if (!urls.length) {
       throw new Error("WebFetchTool requires at least one external source URL from previous evidence.");
     }
-    const pages = await Promise.all(urls.map((url) => fetchPage(url)));
+    const settledPages = await Promise.allSettled(urls.map((url) => fetchPage(url)));
     const completedAt = nowIso();
+    const pages = settledPages.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const failedUrls = settledPages.flatMap((result, index) => (result.status === "rejected" ? [urls[index] as string] : []));
+    if (!pages.length) {
+      return {
+        toolRun: failedToolRun(input, this.name, startedAt, completedAt, { urls }, { urls, failedUrls, fetchedPages: 0 }, `WebFetchTool failed to fetch all selected URLs: ${failedUrls.join(", ")}`),
+        evidence: [],
+        artifacts: [],
+        sources: []
+      };
+    }
     const sources: ResearchSource[] = pages.map((page) => ({
       id: createId("source"),
       projectId: input.project.id,
@@ -109,20 +114,12 @@ export class WebFetchTool implements ResearchTool {
         contentType: page.contentType,
         status: page.status,
         excerpt: page.text.slice(0, 1_000),
+        rawText: page.text,
+        fetchedAt: completedAt,
+        fetchStatus: "fetched",
         characterCount: page.text.length,
         ...sourceQualityMetadata(page.url, page.title)
       },
-      createdAt: completedAt
-    }));
-    const artifacts: ResearchArtifact[] = pages.map((page, index) => ({
-      id: createId("artifact"),
-      projectId: input.project.id,
-      category: "web_source",
-      title: `Fetched web source ${index + 1}: ${page.title}`,
-      relativePath: `artifacts/iteration-${input.iteration}/web-fetch/source-${index + 1}.md`,
-      mimeType: "text/markdown",
-      summary: page.text.slice(0, 400) || `Fetched ${page.url}`,
-      content: [`# ${page.title}`, "", `URL: ${page.url}`, "", page.text].join("\n"),
       createdAt: completedAt
     }));
     const evidence: EvidenceItem[] = pages.map((page, index) => {
@@ -147,9 +144,9 @@ export class WebFetchTool implements ResearchTool {
       };
     });
     return {
-      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { urls }, { urls, fetchedPages: pages.length }),
+      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { urls }, { urls, fetchedPages: pages.length, failedUrls }),
       evidence,
-      artifacts,
+      artifacts: [],
       sources
     };
   }
@@ -279,6 +276,62 @@ function completedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: 
     startedAt,
     completedAt
   };
+}
+
+function failedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown, error: string): ToolRun {
+  return {
+    id: createId("tool"),
+    projectId: input.project.id,
+    iteration: input.iteration,
+    toolName,
+    input: toolInput,
+    output,
+    status: "failed",
+    error,
+    startedAt,
+    completedAt
+  };
+}
+
+function selectFetchUrls(input: OpenCodeRunInput): string[] {
+  const alreadyFetched = new Set(
+    (input.sources ?? [])
+      .filter((source) => source.rawPath || source.metadata.fetchStatus === "fetched")
+      .map((source) => normalizeHttpUrl(source.url))
+      .filter((url): url is string => Boolean(url))
+  );
+  const candidates = [
+    ...(input.sources ?? [])
+      .filter((source) => source.kind === "web" && !source.rawPath && source.metadata.fetchStatus !== "fetched")
+      .map((source) => source.url),
+    ...(input.evidence ?? []).map((item) => item.sourceUri)
+  ];
+  const selected = new Map<string, string>();
+  for (const candidate of candidates) {
+    const normalized = normalizeHttpUrl(candidate);
+    if (normalized && !alreadyFetched.has(normalized) && !selected.has(normalized)) {
+      selected.set(normalized, candidate?.trim() ?? normalized);
+    }
+    if (selected.size >= 3) break;
+  }
+  return [...selected.values()];
+}
+
+function normalizeHttpUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+    parsed.hash = "";
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+    if ((parsed.protocol === "https:" && parsed.port === "443") || (parsed.protocol === "http:" && parsed.port === "80")) {
+      parsed.port = "";
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeSearchResults(items: Array<{ title?: string; url?: string; snippet?: string }> | undefined): Array<{ title: string; url: string; snippet: string }> {

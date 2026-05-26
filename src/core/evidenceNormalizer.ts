@@ -275,11 +275,14 @@ function recordFromToolRun(toolRun: ToolRun): NormalizedResearchRecord {
 }
 
 function metadata(traceabilityKind: TraceabilityKind, canSupportHypothesis: boolean, text: string, extra: Record<string, unknown>): Record<string, unknown> {
+  const keywords = extractKeywords(text);
   return {
     ...extra,
     traceabilityKind,
     canSupportHypothesis,
-    keywords: extractKeywords(text)
+    keywords,
+    inferredKeywords: keywords.slice(0, 12),
+    domainTags: keywords.slice(0, 8)
   };
 }
 

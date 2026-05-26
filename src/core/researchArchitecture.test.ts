@@ -301,6 +301,104 @@ describe("12-step research architecture modules", () => {
     expect(() => new ProjectContextBuilder().build({ ...base, normalizedRecords: [] }, 1)).toThrow(ProjectContextSelectionError);
   });
 
+  it("builds project context from Main DB search results and rejects off-topic global memory", async () => {
+    const base = snapshot();
+    const records = [
+      ...new EvidenceNormalizer().normalize(base, 1),
+      {
+        id: "off-topic-global",
+        projectId: "other-project",
+        workspaceProjectId: "other-project",
+        sourceProjectId: "other-project",
+        memoryScope: "global" as const,
+        validationStatus: "normalized" as const,
+        iteration: 1,
+        kind: "source" as const,
+        title: "Wind turbine gearbox lubrication",
+        content: "gearbox viscosity turbine blade maintenance",
+        metadata: { traceabilityKind: "external_source", canSupportHypothesis: true },
+        confidence: 0.8,
+        createdAt
+      }
+    ];
+    const provider = new DeterministicEmbeddingProvider(64);
+    const chunks = await new VectorIndexEngine(provider).buildIndex({ snapshot: base, records, settings });
+    const graph = new OntologyGraphEngine().build({ snapshot: { ...base, normalizedRecords: records, chunks }, records });
+    const calls: string[] = [];
+    const context = await new ProjectContextBuilder().buildFromMainMemory({
+      snapshot: base,
+      iteration: 1,
+      store: {
+        async searchGlobalRecords(query) {
+          calls.push(`records:${query}`);
+          return records;
+        },
+        async searchGlobalChunks(query) {
+          calls.push(`chunks:${query}`);
+          return chunks;
+        },
+        async searchGlobalGraph(query) {
+          calls.push(`graph:${query}`);
+          return graph;
+        }
+      }
+    });
+
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toContain(base.project.topic);
+    expect(context.selectedRecordIds).not.toContain("off-topic-global");
+    expect(context.selectionReason).toContain("Main Research Memory search API");
+    expect(context.selectionReason).toContain("lowRelevanceGlobal=");
+  });
+
+  it("adds a WebFetch revision hint only when selected context has external source candidates without evidence", () => {
+    const base = snapshot();
+    const result = {
+      id: "result-fetch-hint",
+      projectId: base.project.id,
+      iteration: 1,
+      answer: "Source candidates require fetch.",
+      hypothesisUpdates: [],
+      quantitativeResults: [],
+      qualitativeResults: [],
+      nextQuestions: [],
+      needsMoreEvidence: false,
+      needsMoreAnalysis: false,
+      ragContextId: undefined,
+      createdAt
+    };
+    const decision = new LoopDecisionEngine().decide({
+      snapshot: {
+        ...base,
+        projectContextSnapshots: [
+          {
+            id: "context-fetch",
+            projectId: base.project.id,
+            iteration: 1,
+            query: "Pomodoro",
+            selectedRecordIds: [],
+            selectedSourceIds: ["s1"],
+            selectedEvidenceIds: [],
+            selectedChunkIds: [],
+            selectedEntityIds: [],
+            selectedRelationIds: [],
+            citations: ["https://arxiv.org/abs/2401.00001"],
+            selectionReason: "external source candidate",
+            createdAt
+          }
+        ]
+      },
+      result,
+      iteration: 1,
+      safetyCapIterations: 3,
+      beforeCounts: { evidence: base.evidence.length, artifacts: base.artifacts.length, chunks: 0, entities: 0, relations: 0 }
+    });
+
+    expect(decision.shouldContinue).toBe(true);
+    expect(decision.evidenceGaps).toContain("Source candidates found but not fetched into citation-backed evidence");
+    expect(decision.planRevisionHints).toContain("Use WebFetchTool to fetch selected source URLs.");
+  });
+
   it("does not turn web search snippets or internal artifacts into support evidence", async () => {
     const base = snapshot();
     const tool = new WebSearchTool();

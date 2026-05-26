@@ -5,6 +5,14 @@ import type { HybridContext, ProjectContextSnapshot, ResearchSnapshot } from "./
 export class HybridRetrievalEngine {
   constructor(private readonly embeddingProvider: EmbeddingProvider) {}
 
+  async buildContextFromProjectContext(
+    snapshot: ResearchSnapshot,
+    contextSnapshot: ProjectContextSnapshot,
+    iteration?: number
+  ): Promise<HybridContext> {
+    return this.buildContext(snapshot, contextSnapshot, iteration);
+  }
+
   async buildContext(snapshot: ResearchSnapshot, contextOrQuery?: ProjectContextSnapshot | string, iteration?: number): Promise<HybridContext> {
     const contextSnapshot = typeof contextOrQuery === "object" ? contextOrQuery : undefined;
     const activeQuery = contextSnapshot?.query || (typeof contextOrQuery === "string" ? contextOrQuery : buildQuery(snapshot));

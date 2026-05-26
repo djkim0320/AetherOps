@@ -26,6 +26,7 @@ export class MemoryPromotionEngine {
             id: createStableId("memory", `${validation.id}:${item.id}`),
             projectId: snapshot.project.id,
             sourceProjectId: snapshot.project.id,
+            memoryScope: "global",
             title: item.title,
             content: item.summary,
             validationResultId: validation.id,

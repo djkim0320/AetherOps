@@ -261,12 +261,9 @@ export class InMemoryResearchStore implements ResearchStore {
 }
 
 function sanitizeProject(project: ResearchProject): ResearchProject {
-  const { maxLoopIterations: _legacyMaxLoopIterations, ...autonomyPolicy } = project.autonomyPolicy as ResearchProject["autonomyPolicy"] & {
-    maxLoopIterations?: number;
-  };
-  return { ...project, autonomyPolicy };
+  return project;
 }
 
 function visibleInProject<T extends ScopedProjectItem>(items: T[], projectId: string): T[] {
-  return items.filter((item) => item.projectId === projectId || item.workspaceProjectId === projectId);
+  return items.filter((item) => item.projectId === projectId || item.workspaceProjectId === projectId || normalizeMemoryScope(item.memoryScope) === "global");
 }

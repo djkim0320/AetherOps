@@ -338,7 +338,7 @@ export class AetherOpsOrchestrator {
       if (planSnapshot.project.status === "blocked" || planSnapshot.project.status === "failed") return planSnapshot;
       await this.setStatus(projectId, "running");
       const initialSnapshot = await this.store.getSnapshot(projectId);
-      const safetyCapIterations = INTERNAL_LOOP_SAFETY_CAP;
+      const safetyCapIterations = resolveSafetyCapIterations(initialSnapshot.project.autonomyPolicy.maxLoopIterations);
       const firstIteration = Math.max(initialSnapshot.results.length, initialSnapshot.openCodeRuns.length) + 1;
       for (let iteration = firstIteration; iteration <= safetyCapIterations; iteration += 1) {
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
@@ -566,7 +566,7 @@ export class AetherOpsOrchestrator {
     }
     await this.store.saveProjectContextSnapshot(contextSnapshot);
     const afterContext = await this.store.getSnapshot(projectId);
-    const hybridContext = await new HybridRetrievalEngine(this.embeddingProvider).buildContext(afterContext, contextSnapshot, activeIteration);
+    const hybridContext = await new HybridRetrievalEngine(this.embeddingProvider).buildContextFromProjectContext(afterContext, contextSnapshot, activeIteration);
     await this.store.saveHybridContext(hybridContext);
     const contextAwareSnapshot = await this.store.getSnapshot(projectId);
     const reasoning = this.reasoning.reason(contextAwareSnapshot, hybridContext);
@@ -1239,6 +1239,13 @@ function cleanStringArray(value: unknown): string[] {
 function summarize(value: string): string {
   const cleaned = value.replace(/\s+/g, " ").trim();
   return cleaned.length > 180 ? `${cleaned.slice(0, 177)}...` : cleaned;
+}
+
+function resolveSafetyCapIterations(maxLoopIterations: number | undefined): number {
+  if (typeof maxLoopIterations === "number" && Number.isFinite(maxLoopIterations) && maxLoopIterations > 0) {
+    return Math.max(1, Math.floor(maxLoopIterations));
+  }
+  return INTERNAL_LOOP_SAFETY_CAP;
 }
 
 function formatError(error: unknown): string {

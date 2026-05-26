@@ -4,7 +4,16 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createInputProject, createStrictTestOrchestrator } from "../../core/orchestratorTestHarness.test.js";
-import { ResearchLoopStep, type NormalizedResearchRecord, type OntologyEntity, type ResearchChunk, type ResearchProject, type ResearchProjectInput } from "../../core/types.js";
+import {
+  ResearchLoopStep,
+  type GlobalMemoryItem,
+  type NormalizedResearchRecord,
+  type OntologyEntity,
+  type ResearchChunk,
+  type ResearchProject,
+  type ResearchProjectInput,
+  type ResearchStore
+} from "../../core/types.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
 
 let tempDir: string | undefined;
@@ -32,6 +41,14 @@ afterEach(() => {
 });
 
 describe("SqliteResearchStore", () => {
+  it("implements the ResearchStore interface", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
+    const sqliteStore = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
+    store = sqliteStore;
+    const researchStore: ResearchStore = sqliteStore;
+    expect(researchStore).toBe(sqliteStore);
+  });
+
   it("persists project snapshots with DB, runs, RAG contexts, and final report", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
     store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
@@ -80,7 +97,7 @@ describe("SqliteResearchStore", () => {
     expect(reloaded.sessions[0]?.title).toBe("채팅 세션 2");
   });
 
-  it("assembles project snapshots from project rows plus linked main research memory", async () => {
+  it("assembles project snapshots from project rows plus global-visible main research memory", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
     store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
     const createdAt = new Date().toISOString();
@@ -92,6 +109,7 @@ describe("SqliteResearchStore", () => {
     const records: NormalizedResearchRecord[] = [
       testRecord("global-record-a", projectA.id, "global", createdAt),
       { ...testRecord("global-record-linked-to-b", projectA.id, "global", createdAt), workspaceProjectId: projectB.id },
+      { ...testRecord("ephemeral-record-a", projectA.id, "project_only", createdAt), memoryScope: "ephemeral" },
       testRecord("local-record-a", projectA.id, "project_only", createdAt),
       testRecord("local-record-b", projectB.id, "project_only", createdAt)
     ];
@@ -110,14 +128,12 @@ describe("SqliteResearchStore", () => {
     ]);
 
     const snapshot = await store.getSnapshot(projectB.id);
-    expect(snapshot.normalizedRecords.map((record) => record.id)).toEqual(expect.arrayContaining(["global-record-linked-to-b", "local-record-b"]));
-    expect(snapshot.normalizedRecords.map((record) => record.id)).not.toContain("global-record-a");
+    expect(snapshot.normalizedRecords.map((record) => record.id)).toEqual(expect.arrayContaining(["global-record-a", "global-record-linked-to-b", "local-record-b"]));
     expect(snapshot.normalizedRecords.map((record) => record.id)).not.toContain("local-record-a");
-    expect(snapshot.chunks.map((chunk) => chunk.id)).toEqual(expect.arrayContaining(["global-chunk-linked-to-b", "local-chunk-b"]));
-    expect(snapshot.chunks.map((chunk) => chunk.id)).not.toContain("global-chunk-a");
+    expect(snapshot.normalizedRecords.map((record) => record.id)).not.toContain("ephemeral-record-a");
+    expect(snapshot.chunks.map((chunk) => chunk.id)).toEqual(expect.arrayContaining(["global-chunk-a", "global-chunk-linked-to-b", "local-chunk-b"]));
     expect(snapshot.chunks.map((chunk) => chunk.id)).not.toContain("local-chunk-a");
-    expect(snapshot.ontologyEntities.map((entity) => entity.id)).toEqual(expect.arrayContaining(["global-entity-linked-to-b", "local-entity-b"]));
-    expect(snapshot.ontologyEntities.map((entity) => entity.id)).not.toContain("global-entity-a");
+    expect(snapshot.ontologyEntities.map((entity) => entity.id)).toEqual(expect.arrayContaining(["global-entity-a", "global-entity-linked-to-b", "local-entity-b"]));
     expect(snapshot.ontologyEntities.map((entity) => entity.id)).not.toContain("local-entity-a");
   });
 
@@ -127,6 +143,8 @@ describe("SqliteResearchStore", () => {
     const createdAt = new Date().toISOString();
     const project = testProject("project-memory", createdAt);
     await store.saveProject(project);
+    const otherProject = testProject("project-memory-other", createdAt);
+    await store.saveProject(otherProject);
     const record = testRecord("global-record-memory", project.id, "global", createdAt);
     await store.saveNormalizedRecords([record]);
     await store.saveProjectContextSnapshot({
@@ -144,10 +162,11 @@ describe("SqliteResearchStore", () => {
       selectionReason: "test selection",
       createdAt
     });
-    await store.saveGlobalMemoryItems([{
+    const globalItem: GlobalMemoryItem = {
       id: "memory-item",
       projectId: project.id,
       sourceProjectId: project.id,
+      memoryScope: "global",
       title: "Validated memory",
       content: "Validated content",
       validationResultId: "validation-1",
@@ -157,7 +176,11 @@ describe("SqliteResearchStore", () => {
       promotionReason: "test promotion",
       validationStatus: "validated",
       createdAt
-    }]);
+    };
+    await store.saveGlobalMemoryItems([
+      globalItem,
+      { ...globalItem, id: "project-local-memory-item", memoryScope: undefined }
+    ]);
 
     expect(existsSync(join(tempDir, "main", "main.sqlite"))).toBe(true);
     expect(existsSync(join(project.projectRoot, "project.sqlite"))).toBe(true);
@@ -165,9 +188,13 @@ describe("SqliteResearchStore", () => {
     const projectDb = new DatabaseSync(join(project.projectRoot, "project.sqlite"));
     try {
       const globalRecord = mainDb.prepare("select count(*) as count from global_normalized_records").get() as { count: number };
+      const globalMemoryItem = mainDb.prepare("select count(*) as count from global_memory_items").get() as { count: number };
       const linkedRecord = projectDb.prepare("select count(*) as count from project_record_links").get() as { count: number };
+      const contextSnapshots = projectDb.prepare("select count(*) as count from project_context_snapshots").get() as { count: number };
       expect(globalRecord.count).toBe(1);
+      expect(globalMemoryItem.count).toBe(2);
       expect(linkedRecord.count).toBe(1);
+      expect(contextSnapshots.count).toBe(1);
     } finally {
       mainDb.close();
       projectDb.close();
@@ -175,6 +202,9 @@ describe("SqliteResearchStore", () => {
     const snapshot = await store.getSnapshot(project.id);
     expect(snapshot.projectContextSnapshots).toHaveLength(1);
     expect(snapshot.globalMemoryItems?.map((item) => item.id)).toContain("memory-item");
+    const otherSnapshot = await store.getSnapshot(otherProject.id);
+    expect(otherSnapshot.globalMemoryItems?.map((item) => item.id)).toContain("memory-item");
+    expect(otherSnapshot.globalMemoryItems?.map((item) => item.id)).not.toContain("project-local-memory-item");
   });
 });
 

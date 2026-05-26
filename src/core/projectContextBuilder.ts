@@ -2,17 +2,40 @@ import { createId, nowIso } from "./ids.js";
 import { normalizeMemoryScope } from "./researchMemory.js";
 import type { ProjectContextSnapshot, ResearchSnapshot } from "./types.js";
 
+export class ProjectContextSelectionError extends Error {
+  constructor(
+    readonly projectId: string,
+    readonly iteration: number,
+    readonly query: string
+  ) {
+    super(`ProjectContextSnapshot could not select any eligible records for project ${projectId} iteration ${iteration}.`);
+    this.name = "ProjectContextSelectionError";
+  }
+}
+
 export class ProjectContextBuilder {
   build(snapshot: ResearchSnapshot, iteration: number): ProjectContextSnapshot {
     const query = buildProjectQuery(snapshot);
-    const rankedRecords = snapshot.normalizedRecords
-      .filter((record) => normalizeMemoryScope(record.memoryScope) !== "ephemeral")
+    const scopedRecords = snapshot.normalizedRecords.map((record) => ({ record, scope: normalizeMemoryScope(record.memoryScope) }));
+    const excludedEphemeral = scopedRecords.filter(({ scope }) => scope === "ephemeral").length;
+    const excludedError = scopedRecords.filter(({ record }) => record.kind === "error").length;
+    const excludedRejected = scopedRecords.filter(({ record }) => record.validationStatus === "rejected").length;
+    const excludedUnsupportedInternal = scopedRecords.filter(({ record }) =>
+      (record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") &&
+      record.metadata.canSupportHypothesis !== true
+    ).length;
+    const rankedRecords = scopedRecords
+      .filter(({ scope }) => scope !== "ephemeral")
+      .map(({ record }) => record)
       .filter((record) => record.kind !== "error" && record.validationStatus !== "rejected")
       .map((record) => ({ record, score: lexicalScore(query, `${record.title}\n${record.content}`) + statusBoost(record.validationStatus) }))
       .sort((left, right) => right.score - left.score)
       .slice(0, 24);
 
     const selectedRecordIds = new Set(rankedRecords.map(({ record }) => record.id));
+    if (!selectedRecordIds.size) {
+      throw new ProjectContextSelectionError(snapshot.project.id, iteration, query);
+    }
     const selectedSourceIds = new Set(rankedRecords.map(({ record }) => record.sourceId).filter((id): id is string => Boolean(id)));
     const selectedEvidenceIds = new Set(
       rankedRecords
@@ -45,6 +68,8 @@ export class ProjectContextBuilder {
         if (citation && !isInternalCitation(citation)) citations.add(citation);
       }
     }
+    const selectedGlobalRecords = rankedRecords.filter(({ record }) => normalizeMemoryScope(record.memoryScope) === "global").length;
+    const selectedProjectRecords = rankedRecords.length - selectedGlobalRecords;
 
     return {
       id: createId("project-context"),
@@ -60,6 +85,8 @@ export class ProjectContextBuilder {
       citations: [...citations],
       selectionReason: [
         "Selected from Main Research Memory using the active ResearchPlan objective, target questions, and target hypotheses.",
+        `Selected records: global=${selectedGlobalRecords}, project=${selectedProjectRecords}.`,
+        `Excluded records: ephemeral=${excludedEphemeral}, error=${excludedError}, rejected=${excludedRejected}, unsupportedInternal=${excludedUnsupportedInternal}.`,
         "Ephemeral, error, rejected, and unsupported internal records were excluded from support evidence selection."
       ].join(" "),
       createdAt: nowIso()

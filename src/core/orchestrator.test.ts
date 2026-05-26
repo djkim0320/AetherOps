@@ -75,6 +75,23 @@ describe("AetherOpsOrchestrator", () => {
     expect(steps[firstDecisionIndex + 2]).toBe(ResearchLoopStep.ExecuteTools);
   });
 
+  it("honors optional autonomyPolicy.maxLoopIterations as the internal safety cap", async () => {
+    const orchestrator = createStrictTestOrchestrator();
+    let snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: {
+        ...input.autonomyPolicy,
+        maxLoopIterations: 1
+      }
+    });
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.openCodeRuns).toHaveLength(1);
+    expect(snapshot.continuationDecisions.at(-1)?.forceStop).toBe(true);
+    expect(snapshot.project.status).toBe("completed");
+  });
+
+
   it("does not synthesize without a ProjectContextSnapshot", async () => {
     const orchestrator = createStrictTestOrchestrator();
     let snapshot = await createInputProject(orchestrator, input);

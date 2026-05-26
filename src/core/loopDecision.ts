@@ -41,6 +41,7 @@ export class LoopDecisionEngine {
         : undefined,
       nextQuestions: shouldContinue ? [...new Set(input.result.nextQuestions)].slice(0, 5) : [],
       evidenceGaps: [...new Set(evidenceGaps)].slice(0, 8),
+      forceStop: hitSafetyCap,
       planRevisionHints: shouldContinue
         ? [
             "Return to Step 4 and revise the research plan before executing tools again.",

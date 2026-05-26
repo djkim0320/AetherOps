@@ -117,6 +117,7 @@ export interface AutonomyPolicy {
   toolApproval: "manual" | "suggested" | "automatic";
   allowExternalSearch: boolean;
   allowCodeExecution: boolean;
+  maxLoopIterations?: number;
 }
 
 export interface ResearchProjectInput {
@@ -570,6 +571,7 @@ export interface GlobalMemoryItem {
   id: string;
   projectId: string;
   sourceProjectId?: string;
+  memoryScope?: Extract<MemoryScope, "global">;
   title: string;
   content: string;
   validationResultId: string;

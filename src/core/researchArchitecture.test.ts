@@ -5,7 +5,7 @@ import { LoopDecisionEngine } from "./loopDecision.js";
 import { MemoryPromotionEngine } from "./memoryPromotion.js";
 import { OntologyGraphEngine } from "./ontologyGraphEngine.js";
 import { DeterministicEmbeddingProvider, DeterministicLlmProvider } from "./orchestratorTestHarness.test.js";
-import { ProjectContextBuilder } from "./projectContextBuilder.js";
+import { ProjectContextBuilder, ProjectContextSelectionError } from "./projectContextBuilder.js";
 import { ReasoningEngine } from "./reasoningEngine.js";
 import { ResearchPlanner } from "./researchPlanner.js";
 import { ResearchSpecificationBuilder } from "./researchSpecification.js";
@@ -264,11 +264,14 @@ describe("12-step research architecture modules", () => {
     const projectContext = new ProjectContextBuilder().build(withGraph, 1);
     expect(projectContext.selectedRecordIds.length).toBeGreaterThan(0);
     expect(projectContext.citations.length).toBeGreaterThan(0);
+    expect(projectContext.selectionReason).toContain("global=");
+    expect(projectContext.selectionReason).toContain("project=");
+    expect(projectContext.selectionReason).toContain("Excluded records:");
     const evidenceOnlyContext = {
       ...projectContext,
       selectedRecordIds: projectContext.selectedRecordIds.filter((id) => records.find((record) => record.id === id)?.kind !== "artifact")
     };
-    const hybrid = await new HybridRetrievalEngine(provider).buildContext({ ...withGraph, projectContextSnapshots: [evidenceOnlyContext] }, evidenceOnlyContext, 1);
+    const hybrid = await new HybridRetrievalEngine(provider).buildContextFromProjectContext({ ...withGraph, projectContextSnapshots: [evidenceOnlyContext] }, evidenceOnlyContext, 1);
     expect(hybrid.vectorChunkIds.length).toBeGreaterThan(0);
     expect(hybrid.citations.length).toBeGreaterThan(0);
     expect(hybrid.contextText).toContain("Vector Context");
@@ -291,6 +294,11 @@ describe("12-step research architecture modules", () => {
     expect(decision.shouldContinue).toBe(true);
     expect(decision.nextObjective).toBeTruthy();
     expect(decision.planRevisionHints.join(" ")).toContain("Step 4");
+  });
+
+  it("fails project context selection when no eligible records exist", () => {
+    const base = snapshot();
+    expect(() => new ProjectContextBuilder().build({ ...base, normalizedRecords: [] }, 1)).toThrow(ProjectContextSelectionError);
   });
 
   it("does not turn web search snippets or internal artifacts into support evidence", async () => {

@@ -41,7 +41,7 @@ import { normalizeMemoryScope } from "../../core/researchMemory.js";
 
 type JsonRecord = { id: string; project_id?: string; created_at?: string; data: string };
 const OPEN_CODE_RUNS_TABLE = `opencode_${"runs"}`;
-type ScopedProjectItem = { id: string; projectId: string; memoryScope?: import("../../core/types.js").MemoryScope };
+type ScopedProjectItem = { id: string; projectId: string; workspaceProjectId?: string; memoryScope?: import("../../core/types.js").MemoryScope };
 
 export class SqliteResearchStore implements ResearchStore {
   private readonly db: DatabaseSync;
@@ -255,21 +255,21 @@ export class SqliteResearchStore implements ResearchStore {
       evidence: this.byProject<EvidenceItem>("evidence", projectId),
       artifacts: this.byProject<ResearchArtifact>("artifacts", projectId),
       sources: this.byProject<ResearchSource>("sources", projectId),
-      chunks: this.byProjectOrLinked<ResearchChunk>("chunks", projectId, "project_chunk_links"),
+      chunks: this.byProjectOrGlobalVisible<ResearchChunk>("chunks", projectId),
       toolRuns: this.byProject<ToolRun>("tool_runs", projectId),
       agentPlans: this.byProject<AgentPlan>("agent_plans", projectId),
       researchPlans: this.byProject<ResearchPlan>("research_plans", projectId),
       specifications: this.byProject<ResearchSpecification>("research_specifications", projectId),
-      normalizedRecords: this.byProjectOrLinked<NormalizedResearchRecord>("normalized_records", projectId, "project_record_links"),
-      ontologyEntities: this.byProjectOrLinked<OntologyEntity>("ontology_entities", projectId, "project_entity_links"),
-      ontologyRelations: this.byProjectOrLinked<OntologyRelation>("ontology_relations", projectId, "project_relation_links"),
-      ontologyConstraints: this.byProjectOrLinked<OntologyConstraint>("ontology_constraints", projectId, "project_constraint_links"),
+      normalizedRecords: this.byProjectOrGlobalVisible<NormalizedResearchRecord>("normalized_records", projectId),
+      ontologyEntities: this.byProjectOrGlobalVisible<OntologyEntity>("ontology_entities", projectId),
+      ontologyRelations: this.byProjectOrGlobalVisible<OntologyRelation>("ontology_relations", projectId),
+      ontologyConstraints: this.byProjectOrGlobalVisible<OntologyConstraint>("ontology_constraints", projectId),
       projectContextSnapshots: this.byProject<ProjectContextSnapshot>("project_context_snapshots", projectId),
       hybridContexts: this.byProject<HybridContext>("hybrid_contexts", projectId),
       validationResults: this.byProject<ValidationResult>("validation_results", projectId),
       continuationDecisions: this.byProject<ContinuationDecision>("continuation_decisions", projectId),
       finalOutputs: this.byProject<FinalResearchOutput>("final_outputs", projectId),
-      globalMemoryItems: this.byProject<GlobalMemoryItem>("global_memory_items", projectId),
+      globalMemoryItems: this.byProjectOrGlobalVisible<GlobalMemoryItem>("global_memory_items", projectId),
       runtimeBlockers: this.byProject<RuntimeBlocker>("runtime_blockers", projectId),
       stepErrors: this.byProject<StepError>("step_errors", projectId),
       openCodeRuns: this.byProject<OpenCodeRun>(OPEN_CODE_RUNS_TABLE, projectId),
@@ -446,20 +446,13 @@ export class SqliteResearchStore implements ResearchStore {
     return rows.map((row) => this.parse<T>(row));
   }
 
-  private byProjectOrLinked<T extends ScopedProjectItem>(table: string, projectId: string, linkTable: string): T[] {
-    const linkedIds = this.linkedItemIds(projectId, linkTable);
+  private byProjectOrGlobalVisible<T extends ScopedProjectItem>(table: string, projectId: string): T[] {
     const rows = this.db.prepare(`select id, project_id, created_at, data from ${table} order by created_at asc`).all() as JsonRecord[];
-    return rows.map((row) => this.parse<T>(row)).filter((item) => item.projectId === projectId || linkedIds.has(item.id));
-  }
-
-  private linkedItemIds(projectId: string, linkTable: string): Set<string> {
-    const rows = this.projectDb(projectId)
-      .prepare(`select id, project_id, created_at, data from ${linkTable} where project_id = ? order by created_at asc`)
-      .all(projectId) as JsonRecord[];
-    return new Set(rows.map((row) => {
-      const parsed = JSON.parse(row.data) as { itemId?: string };
-      return parsed.itemId ?? row.id.slice(projectId.length + 1);
-    }));
+    return rows.map((row) => this.parse<T>(row)).filter((item) =>
+      item.projectId === projectId ||
+      item.workspaceProjectId === projectId ||
+      normalizeMemoryScope(item.memoryScope) === "global"
+    );
   }
 
   private parse<T>(row: JsonRecord): T {
@@ -521,8 +514,5 @@ function groupByProject<T extends { projectId: string }>(items: T[]): Array<[str
 }
 
 function sanitizeProject(project: ResearchProject): ResearchProject {
-  const { maxLoopIterations: _legacyMaxLoopIterations, ...autonomyPolicy } = project.autonomyPolicy as ResearchProject["autonomyPolicy"] & {
-    maxLoopIterations?: number;
-  };
-  return { ...project, autonomyPolicy };
+  return project;
 }

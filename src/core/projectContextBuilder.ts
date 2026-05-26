@@ -38,6 +38,13 @@ export class ProjectContextBuilder {
   build(snapshot: ResearchSnapshot, iteration: number, selectionPrefix = "Selected from Main Research Memory using the active ResearchPlan objective, target questions, and target hypotheses."): ProjectContextSnapshot {
     const query = buildProjectQuery(snapshot);
     const scopedRecords = snapshot.normalizedRecords.map((record) => ({ record, scope: normalizeMemoryScope(record.memoryScope) }));
+    const eligibleRecordById = new Map(
+      scopedRecords
+        .filter(({ scope }) => scope !== "ephemeral")
+        .map(({ record }) => record)
+        .filter(isEligibleRecord)
+        .map((record) => [record.id, record])
+    );
     const excludedEphemeral = scopedRecords.filter(({ scope }) => scope === "ephemeral").length;
     const excludedError = scopedRecords.filter(({ record }) => record.kind === "error").length;
     const excludedRejected = scopedRecords.filter(({ record }) => record.validationStatus === "rejected").length;
@@ -49,16 +56,7 @@ export class ProjectContextBuilder {
       record.kind === "evidence" &&
       ["weak", "excluded", "general_web"].includes(String(record.metadata.sourceQualityTier ?? ""))
     ).length;
-    const rankedRecords = scopedRecords
-      .filter(({ scope }) => scope !== "ephemeral")
-      .map(({ record }) => record)
-      .filter((record) => record.kind !== "error" && record.validationStatus !== "rejected")
-      .filter((record) =>
-        !(record.kind === "evidence" && ["weak", "excluded", "general_web"].includes(String(record.metadata.sourceQualityTier ?? "")))
-      )
-      .filter((record) =>
-        !((record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") && record.metadata.canSupportHypothesis !== true)
-      )
+    const rankedRecords = [...eligibleRecordById.values()]
       .map((record) => {
         const relevance = lexicalScore(query, `${record.title}\n${record.content}\n${JSON.stringify(record.metadata)}`);
         return { record, relevance, score: relevance + statusBoost(record.validationStatus) + qualityBoost(record.metadata.sourceQualityTier) };
@@ -68,45 +66,93 @@ export class ProjectContextBuilder {
       .slice(0, 24);
 
     const selectedRecordIds = new Set(rankedRecords.map(({ record }) => record.id));
-    if (!selectedRecordIds.size) {
+    const rankedChunks = snapshot.chunks
+      .filter((chunk) => normalizeMemoryScope(chunk.memoryScope) !== "ephemeral")
+      .filter((chunk) => !chunk.recordId || eligibleRecordById.has(chunk.recordId))
+      .map((chunk) => {
+        const relevance = lexicalScore(query, `${chunk.text}\n${chunk.citation ?? ""}\n${chunk.recordKind ?? ""}\n${chunk.traceabilityKind ?? ""}`);
+        return { chunk, relevance, score: relevance + statusBoost(chunk.validationStatus) + qualityBoost(chunk.sourceQualityTier) };
+      })
+      .filter(({ chunk, relevance }) => normalizeMemoryScope(chunk.memoryScope) !== "global" || relevance > 0)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 16);
+    const selectedChunkIds = rankedChunks.map(({ chunk }) => chunk.id);
+    for (const { chunk } of rankedChunks) {
+      if (chunk.recordId && eligibleRecordById.has(chunk.recordId)) selectedRecordIds.add(chunk.recordId);
+    }
+
+    const rankedEntities = snapshot.ontologyEntities
+      .filter((entity) => normalizeMemoryScope(entity.memoryScope) !== "ephemeral")
+      .filter((entity) => !entity.sourceRecordId || eligibleRecordById.has(entity.sourceRecordId))
+      .map((entity) => {
+        const relevance = lexicalScore(query, `${entity.label}\n${entity.description ?? ""}\n${entity.type}`);
+        return { entity, relevance, score: relevance + entity.confidence + statusBoost(entity.validationStatus) };
+      })
+      .filter(({ entity, relevance }) => normalizeMemoryScope(entity.memoryScope) !== "global" || relevance > 0)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 18);
+    const selectedEntityIds = rankedEntities.map(({ entity }) => entity.id);
+    const selectedEntitySet = new Set(selectedEntityIds);
+    for (const { entity } of rankedEntities) {
+      if (entity.sourceRecordId && eligibleRecordById.has(entity.sourceRecordId)) selectedRecordIds.add(entity.sourceRecordId);
+    }
+
+    const rankedRelations = snapshot.ontologyRelations
+      .filter((relation) => normalizeMemoryScope(relation.memoryScope) !== "ephemeral")
+      .filter((relation) => !relation.sourceRecordId || eligibleRecordById.has(relation.sourceRecordId))
+      .filter((relation) => selectedEntitySet.has(relation.subjectId) || selectedEntitySet.has(relation.objectId) || lexicalScore(query, relation.predicate) > 0)
+      .map((relation) => {
+        const relevance = lexicalScore(query, `${relation.subjectId}\n${relation.predicate}\n${relation.objectId}`);
+        return { relation, relevance, score: relevance + relation.confidence + statusBoost(relation.validationStatus) };
+      })
+      .filter(({ relation, relevance }) => normalizeMemoryScope(relation.memoryScope) !== "global" || relevance > 0 || selectedEntitySet.has(relation.subjectId) || selectedEntitySet.has(relation.objectId))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 24);
+    const selectedRelationIds = rankedRelations.map(({ relation }) => relation.id);
+    for (const { relation } of rankedRelations) {
+      if (relation.sourceRecordId && eligibleRecordById.has(relation.sourceRecordId)) selectedRecordIds.add(relation.sourceRecordId);
+    }
+
+    if (!selectedRecordIds.size && !selectedChunkIds.length && !selectedEntityIds.length && !selectedRelationIds.length) {
       throw new ProjectContextSelectionError(snapshot.project.id, iteration, query);
     }
-    const selectedSourceIds = new Set(rankedRecords.map(({ record }) => record.sourceId).filter((id): id is string => Boolean(id)));
+    const selectedRecords = [...selectedRecordIds].map((id) => eligibleRecordById.get(id)).filter((record): record is NonNullable<typeof record> => Boolean(record));
+    const selectedSourceIds = new Set([
+      ...selectedRecords.map((record) => record.sourceId).filter((id): id is string => Boolean(id)),
+      ...rankedChunks.map(({ chunk }) => chunk.sourceId).filter((id): id is string => Boolean(id))
+    ]);
     const selectedEvidenceIds = new Set(
-      rankedRecords
-        .filter(({ record }) => record.kind === "evidence" && record.metadata.canSupportHypothesis === true)
-        .map(({ record }) => record.evidenceId)
+      selectedRecords
+        .filter((record) => record.kind === "evidence" && record.metadata.canSupportHypothesis === true)
+        .map((record) => record.evidenceId)
         .filter((id): id is string => Boolean(id))
     );
-    const selectedChunkIds = snapshot.chunks
-      .filter((chunk) => chunk.recordId && selectedRecordIds.has(chunk.recordId))
-      .filter((chunk) => normalizeMemoryScope(chunk.memoryScope) !== "ephemeral")
-      .slice(0, 16)
-      .map((chunk) => chunk.id);
-    const selectedEntityIds = snapshot.ontologyEntities
-      .filter((entity) => entity.sourceRecordId && selectedRecordIds.has(entity.sourceRecordId))
-      .slice(0, 18)
-      .map((entity) => entity.id);
-    const selectedEntitySet = new Set(selectedEntityIds);
-    const selectedRelationIds = snapshot.ontologyRelations
-      .filter((relation) =>
-        relation.sourceRecordId &&
-        selectedRecordIds.has(relation.sourceRecordId) &&
-        (selectedEntitySet.has(relation.subjectId) || selectedEntitySet.has(relation.objectId))
-      )
-      .slice(0, 24)
-      .map((relation) => relation.id);
+    for (const { chunk } of rankedChunks) {
+      if (chunk.evidenceId) selectedEvidenceIds.add(chunk.evidenceId);
+    }
+    for (const { entity } of rankedEntities) {
+      if (entity.sourceEvidenceId) selectedEvidenceIds.add(entity.sourceEvidenceId);
+    }
+    for (const { relation } of rankedRelations) {
+      if (relation.sourceEvidenceId) selectedEvidenceIds.add(relation.sourceEvidenceId);
+    }
     const citations = new Set<string>();
-    for (const { record } of rankedRecords) {
+    for (const record of selectedRecords) {
       if (record.kind === "evidence" || record.kind === "citation" || record.kind === "source") {
         const citation = record.citation ?? record.sourceUri;
         if (citation && !isInternalCitation(citation)) citations.add(citation);
       }
     }
-    const selectedGlobalRecords = rankedRecords.filter(({ record }) => normalizeMemoryScope(record.memoryScope) === "global").length;
-    const selectedProjectRecords = rankedRecords.length - selectedGlobalRecords;
+    for (const { chunk } of rankedChunks) {
+      if (chunk.citation && !isInternalCitation(chunk.citation)) citations.add(chunk.citation);
+    }
+    const selectedGlobalRecords = selectedRecords.filter((record) => normalizeMemoryScope(record.memoryScope) === "global").length;
+    const selectedProjectRecords = selectedRecords.length - selectedGlobalRecords;
     const candidateGlobalRecords = scopedRecords.filter(({ scope }) => scope === "global").length;
     const candidateProjectRecords = scopedRecords.length - candidateGlobalRecords;
+    const candidateChunks = snapshot.chunks.filter((chunk) => normalizeMemoryScope(chunk.memoryScope) !== "ephemeral").length;
+    const candidateEntities = snapshot.ontologyEntities.filter((entity) => normalizeMemoryScope(entity.memoryScope) !== "ephemeral").length;
+    const candidateRelations = snapshot.ontologyRelations.filter((relation) => normalizeMemoryScope(relation.memoryScope) !== "ephemeral").length;
     const excludedLowRelevanceGlobal = scopedRecords.filter(({ record, scope }) =>
       scope === "global" && lexicalScore(query, `${record.title}\n${record.content}\n${JSON.stringify(record.metadata)}`) <= 0
     ).length;
@@ -126,13 +172,23 @@ export class ProjectContextBuilder {
       selectionReason: [
         selectionPrefix,
         `Candidates: global=${candidateGlobalRecords}, project=${candidateProjectRecords}.`,
+        `Context candidates: records=${scopedRecords.length}, chunks=${candidateChunks}, entities=${candidateEntities}, relations=${candidateRelations}.`,
+        `Selected context: records=${selectedRecordIds.size}, chunks=${selectedChunkIds.length}, entities=${selectedEntityIds.length}, relations=${selectedRelationIds.length}, evidence=${selectedEvidenceIds.size}.`,
         `Selected records: global=${selectedGlobalRecords}, project=${selectedProjectRecords}.`,
+        `Reverse-included parents: fromChunks=${rankedChunks.filter(({ chunk }) => chunk.recordId && selectedRecordIds.has(chunk.recordId)).length}, fromGraphRecords=${[...rankedEntities.map(({ entity }) => entity.sourceRecordId), ...rankedRelations.map(({ relation }) => relation.sourceRecordId)].filter((id) => id && selectedRecordIds.has(id)).length}, fromGraphEvidence=${[...rankedEntities.map(({ entity }) => entity.sourceEvidenceId), ...rankedRelations.map(({ relation }) => relation.sourceEvidenceId)].filter((id) => id && selectedEvidenceIds.has(id)).length}.`,
         `Excluded records: ephemeral=${excludedEphemeral}, error=${excludedError}, rejected=${excludedRejected}, unsupportedInternal=${excludedUnsupportedInternal}, weakSupport=${excludedWeakSupport}, lowRelevanceGlobal=${excludedLowRelevanceGlobal}.`,
         "Ephemeral, error, rejected, unsupported internal, weak/general support, and low-relevance global records were excluded from ProjectContextSnapshot selection."
       ].join(" "),
       createdAt: nowIso()
     };
   }
+}
+
+function isEligibleRecord(record: ResearchSnapshot["normalizedRecords"][number]): boolean {
+  return record.kind !== "error" &&
+    record.validationStatus !== "rejected" &&
+    !(record.kind === "evidence" && ["weak", "excluded", "general_web"].includes(String(record.metadata.sourceQualityTier ?? ""))) &&
+    !((record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") && record.metadata.canSupportHypothesis !== true);
 }
 
 function buildProjectQuery(snapshot: ResearchSnapshot): string {

@@ -85,9 +85,12 @@ export class WebSearchTool implements ResearchTool {
 export class WebFetchTool implements ResearchTool {
   name = "WebFetchTool";
 
-  async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
+  async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
     const startedAt = nowIso();
-    const urls = selectFetchUrls(input);
+    if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
+      throw new Error("WebFetchTool requires external network access, but external search is disabled by project autonomy or app settings.");
+    }
+    const { urls, skippedUrls, duplicateUrls } = selectFetchTargets(input);
     if (!urls.length) {
       throw new Error("WebFetchTool requires at least one external source URL from previous evidence.");
     }
@@ -95,9 +98,22 @@ export class WebFetchTool implements ResearchTool {
     const completedAt = nowIso();
     const pages = settledPages.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
     const failedUrls = settledPages.flatMap((result, index) => (result.status === "rejected" ? [urls[index] as string] : []));
+    const failureReasons = Object.fromEntries(
+      settledPages.flatMap((result, index) =>
+        result.status === "rejected" ? [[urls[index] as string, result.reason instanceof Error ? result.reason.message : String(result.reason)]] : []
+      )
+    );
     if (!pages.length) {
       return {
-        toolRun: failedToolRun(input, this.name, startedAt, completedAt, { urls }, { urls, failedUrls, fetchedPages: 0 }, `WebFetchTool failed to fetch all selected URLs: ${failedUrls.join(", ")}`),
+        toolRun: failedToolRun(
+          input,
+          this.name,
+          startedAt,
+          completedAt,
+          { urls, skippedUrls, duplicateUrls },
+          { urls, failedUrls, failureReasons, fetchedPages: 0, skippedUrls, duplicateUrls },
+          `WebFetchTool failed to fetch all selected URLs: ${failedUrls.join(", ")}`
+        ),
         evidence: [],
         artifacts: [],
         sources: []
@@ -144,7 +160,7 @@ export class WebFetchTool implements ResearchTool {
       };
     });
     return {
-      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { urls }, { urls, fetchedPages: pages.length, failedUrls }),
+      toolRun: completedToolRun(input, this.name, startedAt, completedAt, { urls, skippedUrls, duplicateUrls }, { urls, fetchedPages: pages.length, failedUrls, failureReasons, skippedUrls, duplicateUrls }),
       evidence,
       artifacts: [],
       sources
@@ -293,7 +309,7 @@ function failedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: str
   };
 }
 
-function selectFetchUrls(input: OpenCodeRunInput): string[] {
+function selectFetchTargets(input: OpenCodeRunInput): { urls: string[]; skippedUrls: string[]; duplicateUrls: string[] } {
   const alreadyFetched = new Set(
     (input.sources ?? [])
       .filter((source) => source.rawPath || source.metadata.fetchStatus === "fetched")
@@ -307,14 +323,22 @@ function selectFetchUrls(input: OpenCodeRunInput): string[] {
     ...(input.evidence ?? []).map((item) => item.sourceUri)
   ];
   const selected = new Map<string, string>();
+  const skippedUrls: string[] = [];
+  const duplicateUrls: string[] = [];
   for (const candidate of candidates) {
     const normalized = normalizeHttpUrl(candidate);
-    if (normalized && !alreadyFetched.has(normalized) && !selected.has(normalized)) {
-      selected.set(normalized, candidate?.trim() ?? normalized);
+    if (!normalized) {
+      if (candidate?.trim()) skippedUrls.push(candidate.trim());
+      continue;
     }
+    if (alreadyFetched.has(normalized) || selected.has(normalized)) {
+      duplicateUrls.push(candidate?.trim() ?? normalized);
+      continue;
+    }
+    selected.set(normalized, candidate?.trim() ?? normalized);
     if (selected.size >= 3) break;
   }
-  return [...selected.values()];
+  return { urls: [...selected.values()], skippedUrls, duplicateUrls };
 }
 
 function normalizeHttpUrl(value: string | undefined): string | undefined {

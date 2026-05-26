@@ -13,6 +13,7 @@ import {
   type ResearchChunk,
   type ResearchProject,
   type ResearchProjectInput,
+  type ResearchSource,
   type ResearchStore
 } from "../../core/types.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
@@ -96,6 +97,43 @@ describe("SqliteResearchStore", () => {
     reloaded = await store.getSnapshot(projectId);
     expect(reloaded.sessions).toHaveLength(1);
     expect(reloaded.sessions[0]?.title).toBe("채팅 세션 2");
+  });
+
+  it("strips external rawText before writing sources to app and Main SQLite", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
+    const sqlitePath = join(tempDir, "aetherops.sqlite");
+    store = new SqliteResearchStore(sqlitePath);
+    const project = testProject("raw-text-project", "2026-05-20T00:00:00.000Z");
+    await store.saveProject(project);
+    const source: ResearchSource = {
+      id: "source-raw-text",
+      projectId: project.id,
+      kind: "web",
+      title: "Fetched page",
+      url: "https://example.edu/raw",
+      retrievedAt: "2026-05-20T00:00:00.000Z",
+      rawPath: join(tempDir, "main", "files", "sources", "web", "source-raw-text.json"),
+      metadata: { rawText: "full fetched page body", fetchStatus: "fetched" },
+      createdAt: "2026-05-20T00:00:00.000Z"
+    };
+
+    await store.saveSources([source]);
+
+    const appDb = new DatabaseSync(sqlitePath);
+    const mainDb = new DatabaseSync(join(tempDir, "main", "main.sqlite"));
+    try {
+      const appRow = appDb.prepare("select data from sources where id = ?").get(source.id) as { data: string } | undefined;
+      const mainRow = mainDb.prepare("select data from global_sources where id = ?").get(source.id) as { data: string } | undefined;
+      const appSource = JSON.parse(appRow?.data ?? "{}") as ResearchSource;
+      const mainSource = JSON.parse(mainRow?.data ?? "{}") as ResearchSource;
+      expect(appSource.metadata.rawText).toBeUndefined();
+      expect(mainSource.metadata.rawText).toBeUndefined();
+      expect(appSource.metadata.characterCount).toBe("full fetched page body".length);
+      expect(mainSource.rawPath).toContain(join(tempDir, "main", "files", "sources"));
+    } finally {
+      appDb.close();
+      mainDb.close();
+    }
   });
 
   it("assembles project snapshots from project rows plus global-visible main research memory", async () => {

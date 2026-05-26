@@ -351,6 +351,172 @@ describe("12-step research architecture modules", () => {
     expect(context.selectionReason).toContain("lowRelevanceGlobal=");
   });
 
+  it("keeps chunk and graph candidates when parent global records miss lexical record search", async () => {
+    const base = snapshot();
+    const parentRecord = {
+      id: "parent-record-missed-by-record-search",
+      projectId: "other-project",
+      workspaceProjectId: base.project.id,
+      sourceProjectId: "other-project",
+      memoryScope: "global" as const,
+      validationStatus: "indexed" as const,
+      iteration: 1,
+      kind: "evidence" as const,
+      title: "Unrelated archival title",
+      content: "gearbox viscosity turbine blade maintenance",
+      sourceId: "selected-source",
+      evidenceId: "e1",
+      citation: "https://example.edu/chunk-hit",
+      sourceUri: "https://example.edu/chunk-hit",
+      metadata: { traceabilityKind: "external_source", canSupportHypothesis: true, sourceQualityTier: "scholarly" },
+      confidence: 0.8,
+      createdAt
+    };
+    const context = new ProjectContextBuilder().build({
+      ...base,
+      normalizedRecords: [parentRecord],
+      chunks: [
+        {
+          id: "selected-chunk-from-missed-record",
+          projectId: "other-project",
+          workspaceProjectId: base.project.id,
+          sourceProjectId: "other-project",
+          memoryScope: "global",
+          validationStatus: "indexed",
+          sourceId: "selected-source",
+          text: "Pomodoro 25/5 breaks reduce fatigue in a two-hour study session.",
+          chunkIndex: 0,
+          keywords: ["pomodoro", "fatigue"],
+          recordId: parentRecord.id,
+          evidenceId: "e1",
+          citation: "https://example.edu/chunk-hit",
+          recordKind: "evidence",
+          traceabilityKind: "external_source",
+          canSupportHypothesis: true,
+          sourceQualityTier: "scholarly",
+          createdAt
+        }
+      ],
+      ontologyEntities: [
+        {
+          id: "selected-entity-from-missed-record",
+          projectId: "other-project",
+          workspaceProjectId: base.project.id,
+          sourceProjectId: "other-project",
+          memoryScope: "global",
+          validationStatus: "graph_linked",
+          label: "Pomodoro fatigue",
+          type: "Concept",
+          description: "Focus fatigue during Pomodoro study sessions",
+          sourceRecordId: parentRecord.id,
+          sourceEvidenceId: "e1",
+          confidence: 0.8,
+          createdAt
+        },
+        {
+          id: "selected-hypothesis-from-missed-record",
+          projectId: "other-project",
+          workspaceProjectId: base.project.id,
+          sourceProjectId: "other-project",
+          memoryScope: "global",
+          validationStatus: "graph_linked",
+          label: "25/5 may reduce fatigue",
+          type: "Hypothesis",
+          sourceRecordId: parentRecord.id,
+          sourceEvidenceId: "e1",
+          confidence: 0.8,
+          createdAt
+        }
+      ],
+      ontologyRelations: [
+        {
+          id: "selected-relation-from-missed-record",
+          projectId: "other-project",
+          workspaceProjectId: base.project.id,
+          sourceProjectId: "other-project",
+          memoryScope: "global",
+          validationStatus: "graph_linked",
+          subjectId: "selected-entity-from-missed-record",
+          predicate: "supports",
+          objectId: "selected-hypothesis-from-missed-record",
+          sourceRecordId: parentRecord.id,
+          sourceEvidenceId: "e1",
+          confidence: 0.9,
+          createdAt
+        }
+      ]
+    }, 1);
+
+    expect(context.selectedRecordIds).toContain(parentRecord.id);
+    expect(context.selectedChunkIds).toContain("selected-chunk-from-missed-record");
+    expect(context.selectedEntityIds).toEqual(expect.arrayContaining(["selected-entity-from-missed-record", "selected-hypothesis-from-missed-record"]));
+    expect(context.selectedRelationIds).toContain("selected-relation-from-missed-record");
+    expect(context.selectedEvidenceIds).toContain("e1");
+    expect(context.selectionReason).toContain("Context candidates:");
+    expect(context.selectionReason).toContain("Reverse-included parents:");
+  });
+
+  it("builds hybrid context only from ProjectContextSnapshot selected ids", async () => {
+    const base = snapshot();
+    const provider = new DeterministicEmbeddingProvider(64);
+    const hybrid = await new HybridRetrievalEngine(provider).buildContextFromProjectContext(
+      {
+        ...base,
+        normalizedRecords: [
+          {
+            id: "selected-artifact-record",
+            projectId: base.project.id,
+            memoryScope: "project_only",
+            validationStatus: "indexed",
+            iteration: 1,
+            kind: "artifact",
+            title: "Selected artifact",
+            content: "Selected artifact content",
+            artifactId: "a1",
+            metadata: { traceabilityKind: "internal_artifact", canSupportHypothesis: true },
+            createdAt
+          }
+        ],
+        chunks: [
+          { id: "selected-chunk", projectId: base.project.id, memoryScope: "project_only", validationStatus: "indexed", sourceId: "s1", text: "Pomodoro 25/5 selected fatigue chunk", chunkIndex: 0, keywords: [], recordId: "selected-artifact-record", evidenceId: "e1", citation: "selected citation", createdAt },
+          { id: "unselected-chunk", projectId: base.project.id, memoryScope: "project_only", validationStatus: "indexed", sourceId: "s1", text: "Pomodoro 25/5 unselected fatigue chunk with higher match", chunkIndex: 1, keywords: [], evidenceId: "gap1", citation: "unselected citation", createdAt }
+        ],
+        ontologyEntities: [
+          { id: "selected-entity", projectId: base.project.id, memoryScope: "project_only", validationStatus: "graph_linked", label: "Pomodoro selected", type: "Concept", confidence: 0.5, createdAt },
+          { id: "unselected-entity", projectId: base.project.id, memoryScope: "project_only", validationStatus: "graph_linked", label: "Pomodoro unselected", type: "Concept", confidence: 1, createdAt }
+        ],
+        ontologyRelations: [
+          { id: "selected-relation", projectId: base.project.id, memoryScope: "project_only", validationStatus: "graph_linked", subjectId: "selected-entity", predicate: "supports", objectId: "unselected-entity", sourceEvidenceId: "e1", confidence: 0.9, createdAt },
+          { id: "unselected-relation", projectId: base.project.id, memoryScope: "project_only", validationStatus: "graph_linked", subjectId: "unselected-entity", predicate: "supports", objectId: "selected-entity", sourceEvidenceId: "gap1", confidence: 1, createdAt }
+        ]
+      },
+      {
+        id: "context-selected-only",
+        projectId: base.project.id,
+        iteration: 1,
+        query: "Pomodoro fatigue",
+        selectedRecordIds: ["selected-artifact-record"],
+        selectedSourceIds: [],
+        selectedEvidenceIds: ["e1"],
+        selectedChunkIds: ["selected-chunk"],
+        selectedEntityIds: ["selected-entity"],
+        selectedRelationIds: ["selected-relation"],
+        citations: ["selected context citation"],
+        selectionReason: "selected ids only",
+        createdAt
+      },
+      1
+    );
+
+    expect(hybrid.vectorChunkIds).toEqual(["selected-chunk"]);
+    expect(hybrid.ontologyEntityIds).toEqual(["selected-entity"]);
+    expect(hybrid.ontologyRelationIds).toEqual(["selected-relation"]);
+    expect(hybrid.evidenceIds).toEqual(["e1"]);
+    expect(hybrid.artifactIds).toEqual(["a1"]);
+    expect(hybrid.citations).toEqual(expect.arrayContaining(["selected citation", "selected context citation"]));
+    expect(hybrid.citations).not.toContain("unselected citation");
+  });
+
   it("adds a WebFetch revision hint only when selected context has external source candidates without evidence", () => {
     const base = snapshot();
     const result = {

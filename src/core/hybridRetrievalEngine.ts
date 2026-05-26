@@ -10,10 +10,17 @@ export class HybridRetrievalEngine {
     contextSnapshot: ProjectContextSnapshot,
     iteration?: number
   ): Promise<HybridContext> {
-    return this.buildContext(snapshot, contextSnapshot, iteration);
+    return this.buildContextInternal(snapshot, contextSnapshot, iteration);
   }
 
-  async buildContext(snapshot: ResearchSnapshot, contextOrQuery?: ProjectContextSnapshot | string, iteration?: number): Promise<HybridContext> {
+  /**
+   * @deprecated Test/compatibility helper only. Production reasoning must use buildContextFromProjectContext().
+   */
+  async buildLegacyContextForTest(snapshot: ResearchSnapshot, query?: string, iteration?: number): Promise<HybridContext> {
+    return this.buildContextInternal(snapshot, query, iteration);
+  }
+
+  private async buildContextInternal(snapshot: ResearchSnapshot, contextOrQuery?: ProjectContextSnapshot | string, iteration?: number): Promise<HybridContext> {
     const contextSnapshot = typeof contextOrQuery === "object" ? contextOrQuery : undefined;
     const activeQuery = contextSnapshot?.query || (typeof contextOrQuery === "string" ? contextOrQuery : buildQuery(snapshot));
     const queryEmbedding = await this.embeddingProvider.embed(activeQuery);
@@ -21,6 +28,7 @@ export class HybridRetrievalEngine {
     const allowedEntityIds = contextSnapshot ? new Set(contextSnapshot.selectedEntityIds) : undefined;
     const allowedRelationIds = contextSnapshot ? new Set(contextSnapshot.selectedRelationIds) : undefined;
     const allowedEvidenceIds = contextSnapshot ? new Set(contextSnapshot.selectedEvidenceIds) : undefined;
+    const allowedSourceIds = contextSnapshot ? new Set(contextSnapshot.selectedSourceIds) : undefined;
     const vectorHits = snapshot.chunks
       .filter((chunk) => !allowedChunkIds || allowedChunkIds.has(chunk.id))
       .map((chunk) => ({
@@ -39,20 +47,22 @@ export class HybridRetrievalEngine {
     const entityIds = new Set(entityHits.map(({ entity }) => entity.id));
     const relationHits = snapshot.ontologyRelations
       .filter((relation) => !allowedRelationIds || allowedRelationIds.has(relation.id))
-      .filter((relation) => entityIds.has(relation.subjectId) || entityIds.has(relation.objectId))
+      .filter((relation) => allowedRelationIds || entityIds.has(relation.subjectId) || entityIds.has(relation.objectId))
       .slice(0, 12);
     const evidenceIds = new Set<string>();
     const artifactIds = new Set<string>();
     const citations = new Set<string>();
 
     for (const { chunk } of vectorHits) {
-      if (chunk.evidenceId) evidenceIds.add(chunk.evidenceId);
+      if (chunk.evidenceId && (!allowedEvidenceIds || allowedEvidenceIds.has(chunk.evidenceId))) evidenceIds.add(chunk.evidenceId);
       if (chunk.citation) citations.add(chunk.citation);
-      const source = snapshot.sources.find((item) => item.id === chunk.sourceId);
-      if (source?.url || source?.doi || source?.rawPath) citations.add(source.url ?? source.doi ?? source.rawPath ?? source.title);
+      if (!allowedSourceIds || allowedSourceIds.has(chunk.sourceId)) {
+        const source = snapshot.sources.find((item) => item.id === chunk.sourceId);
+        if (source?.url || source?.doi || source?.rawPath) citations.add(source.url ?? source.doi ?? source.rawPath ?? source.title);
+      }
     }
     for (const relation of relationHits) {
-      if (relation.sourceEvidenceId) evidenceIds.add(relation.sourceEvidenceId);
+      if (relation.sourceEvidenceId && (!allowedEvidenceIds || allowedEvidenceIds.has(relation.sourceEvidenceId))) evidenceIds.add(relation.sourceEvidenceId);
     }
     if (allowedEvidenceIds) {
       for (const id of allowedEvidenceIds) evidenceIds.add(id);

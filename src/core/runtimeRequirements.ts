@@ -119,8 +119,8 @@ function requiredToolRequirements(
     requirements.push(requirement("tool.registered", "Registered research tool", step, false, `Research plan requires an unregistered tool: ${missing}`));
   }
 
-  if (normalizedTools.has("websearchtool") || normalizedTools.has("backgroundbrowsertool")) {
-    requirements.push(requirement("webSearch.allowed", "외부 검색 허용", step, project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch, "연구 계획이 외부 검색을 요구하지만 외부 검색이 비활성화되어 있습니다."));
+  if (normalizedTools.has("websearchtool") || normalizedTools.has("backgroundbrowsertool") || normalizedTools.has("webfetchtool")) {
+    requirements.push(requirement("webSearch.allowed", "외부 검색 허용", step, project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch, "연구 계획이 WebSearchTool/BackgroundBrowserTool/WebFetchTool 외부 네트워크 접근을 요구하지만 외부 검색이 비활성화되어 있습니다."));
     if (normalizedTools.has("websearchtool")) {
       const configured = settings.webSearch.provider !== "disabled" && Boolean(settings.webSearch.apiKey || settings.webSearch.apiKeyConfigured);
       requirements.push(requirement("webSearch.provider", "Web search provider/API key", step, configured, "Web search provider와 API key가 필요합니다."));

@@ -18,7 +18,8 @@ import { ResearchPlanner } from "./researchPlanner.js";
 import { createDefaultSessions } from "./researchSeed.js";
 import { ResearchSpecificationBuilder } from "./researchSpecification.js";
 import { RuntimeRequirementChecker, RuntimeRequirementError } from "./runtimeRequirements.js";
-import { ToolRunner } from "./toolRunner.js";
+import { ToolRunner, ToolRunnerError } from "./toolRunner.js";
+import type { ResearchToolResult } from "./toolRegistry.js";
 import { ValidationEngine } from "./validationEngine.js";
 import { VectorIndexEngine } from "./vectorIndexEngine.js";
 import { ResultSynthesizer } from "./resultSynthesizer.js";
@@ -422,39 +423,36 @@ export class AetherOpsOrchestrator {
     };
     try {
       const output = await this.openCode.run(runInput);
+      const database = await this.requireDatabase(projectId);
+      await this.store.saveOpenCodeRun(output.run);
       if (output.fatalError || output.run.status === "failed") {
         const reason = output.fatalError ?? output.run.logs.at(-1) ?? "OpenCode execution failed.";
         await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", `OpenCode 도구 실패: ${reason}`);
+        await this.persistExecutionOutputs(snapshot.project, database, activeIteration, output);
         throw new Error(reason);
       }
       const settings = await this.getSettings();
-      const toolResults = this.toolRunner ? await this.toolRunner.runAll(runInput, settings) : [];
-      const toolResultArtifacts = toolResults.flatMap((result) => result.artifacts);
-      const toolResultEvidence = toolResults.flatMap((result) => result.evidence);
-      const toolResultSources = toolResults.flatMap((result) => result.sources);
-
-      const database = await this.requireDatabase(projectId);
-      const artifacts = await this.projectStorage.writeArtifacts(snapshot.project, database, activeIteration, [
-        ...output.artifacts,
-        ...toolResultArtifacts
-      ]);
-      const toolRuns = [...(output.toolRuns ?? []), ...toolResults.map((result) => result.toolRun)];
-      const logSource = await this.projectStorage.writeRunLog(snapshot.project, database, activeIteration, output.run, toolRuns);
-
-      await this.store.saveOpenCodeRun(output.run);
-      await this.store.saveArtifacts(artifacts);
-      await this.store.saveEvidence([...output.evidence, ...toolResultEvidence]);
-      const sources = [...(output.sources ?? []), ...toolResultSources];
-      if (sources.length) {
-        await this.store.saveSources(await this.projectStorage.writeSources(snapshot.project, database, sources));
+      const toolInput = {
+        ...runInput,
+        evidence: [...(runInput.evidence ?? []), ...output.evidence],
+        artifacts: [...(runInput.artifacts ?? []), ...output.artifacts],
+        sources: [...(runInput.sources ?? []), ...(output.sources ?? [])],
+        toolRuns: [...(output.toolRuns ?? [])]
+      };
+      let toolResults: ResearchToolResult[] = [];
+      try {
+        toolResults = this.toolRunner ? await this.toolRunner.runAll(toolInput, settings) : [];
+      } catch (toolError) {
+        if (toolError instanceof ToolRunnerError) {
+          const resultsToPersist = [
+            ...toolError.partialResults,
+            ...(toolError.failedResult ? [toolError.failedResult] : [])
+          ];
+          await this.persistExecutionOutputs(snapshot.project, database, activeIteration, output, resultsToPersist);
+        }
+        throw toolError;
       }
-      if (logSource) await this.store.saveSources([logSource]);
-      if (toolRuns.length) await this.store.saveToolRuns(toolRuns);
-      if (output.agentPlan) await this.store.saveResearchPlan(output.agentPlan);
-      if (output.chunks?.length) {
-        await this.projectStorage.writeChunks(snapshot.project, database, output.chunks);
-        await this.store.saveChunks(output.chunks);
-      }
+      await this.persistExecutionOutputs(snapshot.project, database, activeIteration, output, toolResults);
       await this.ingestSources(projectId);
       await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", "도구 실행 및 연구 수행 단계가 완료되었습니다.");
     } catch (error) {
@@ -462,6 +460,39 @@ export class AetherOpsOrchestrator {
       return this.store.getSnapshot(projectId);
     }
     return this.store.getSnapshot(projectId);
+  }
+
+  private async persistExecutionOutputs(
+    project: ResearchProject,
+    database: ResearchDatabase,
+    iteration: number,
+    output: OpenCodeRunOutput,
+    toolResults: ResearchToolResult[] = []
+  ): Promise<void> {
+    const toolResultArtifacts = toolResults.flatMap((result) => result.artifacts);
+    const toolResultEvidence = toolResults.flatMap((result) => result.evidence);
+    const toolResultSources = toolResults.flatMap((result) => result.sources);
+    const artifacts = await this.projectStorage.writeArtifacts(project, database, iteration, [
+      ...output.artifacts,
+      ...toolResultArtifacts
+    ]);
+    const toolRuns = [...(output.toolRuns ?? []), ...toolResults.map((result) => result.toolRun)];
+    const logSource = await this.projectStorage.writeRunLog(project, database, iteration, output.run, toolRuns);
+
+    await this.store.saveOpenCodeRun(output.run);
+    await this.store.saveArtifacts(artifacts);
+    await this.store.saveEvidence([...output.evidence, ...toolResultEvidence]);
+    const sources = [...(output.sources ?? []), ...toolResultSources];
+    if (sources.length) {
+      await this.store.saveSources(await this.projectStorage.writeSources(project, database, sources));
+    }
+    if (logSource) await this.store.saveSources([logSource]);
+    if (toolRuns.length) await this.store.saveToolRuns(toolRuns);
+    if (output.agentPlan) await this.store.saveResearchPlan(output.agentPlan);
+    if (output.chunks?.length) {
+      await this.projectStorage.writeChunks(project, database, output.chunks);
+      await this.store.saveChunks(output.chunks);
+    }
   }
 
   private async preflightExecutionEngine(projectId: string): Promise<void> {
@@ -837,19 +868,22 @@ export class AetherOpsOrchestrator {
         tools.push(tool);
       }
     };
-    const hasExternalUrls =
-      snapshot.evidence.some((item) => typeof item.sourceUri === "string" && /^https?:\/\//i.test(item.sourceUri)) ||
-      snapshot.sources.some((source) => typeof source.url === "string" && /^https?:\/\//i.test(source.url));
     const searchConfigured =
       settings.webSearch.provider !== "disabled" && Boolean(settings.webSearch.apiKey || settings.webSearch.apiKeyConfigured);
 
     include("OpenCodeTool", settings.openCode.enabled && Boolean(settings.openCode.command?.trim()));
     include("WebSearchTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && searchConfigured);
     include("BackgroundBrowserTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && settings.browserUse.enabled);
-    include("WebFetchTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch && (hasExternalUrls || searchConfigured));
+    include("WebFetchTool", snapshot.project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch);
     include("CodeExecutionTool", snapshot.project.autonomyPolicy.allowCodeExecution && settings.allowCodeExecution);
     include("ArtifactWriterTool");
     include("DataAnalysisTool");
+    for (const tool of this.registeredToolNames()) {
+      const normalized = normalizeToolNameForPlan(tool);
+      if (!["websearchtool", "backgroundbrowsertool", "webfetchtool", "codeexecutiontool", "artifactwritertool", "dataanalysistool"].includes(normalized)) {
+        include(tool);
+      }
+    }
     return [...new Set(tools)];
   }
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -127,7 +128,7 @@ export class SqliteResearchStore implements ResearchStore {
   }
 
   async saveSources(sources: ResearchSource[]): Promise<void> {
-    const normalized = sources.map((source) => ({ ...source, createdAt: source.createdAt ?? source.retrievedAt }));
+    const normalized = sources.map((source) => sanitizeSourceForSqlite({ ...source, createdAt: source.createdAt ?? source.retrievedAt }));
     this.upsertMany("sources", normalized);
     this.upsertManyMain("global_sources", normalized);
   }
@@ -570,6 +571,21 @@ function groupByProject<T extends { projectId: string }>(items: T[]): Array<[str
 
 function sanitizeProject(project: ResearchProject): ResearchProject {
   return project;
+}
+
+function sanitizeSourceForSqlite(source: ResearchSource): ResearchSource {
+  if ((source.kind !== "web" && source.kind !== "paper") || (!source.url && !source.doi)) {
+    return source;
+  }
+  const metadata = { ...source.metadata };
+  const rawText = typeof metadata.rawText === "string" ? metadata.rawText : undefined;
+  delete metadata.rawText;
+  if (rawText) {
+    metadata.excerpt = typeof metadata.excerpt === "string" ? metadata.excerpt : rawText.slice(0, 1_000);
+    metadata.characterCount = typeof metadata.characterCount === "number" ? metadata.characterCount : rawText.length;
+    metadata.contentHash = metadata.contentHash ?? createHash("sha256").update(rawText).digest("hex");
+  }
+  return { ...source, metadata };
 }
 
 function searchScopedItems<T extends ScopedProjectItem>(

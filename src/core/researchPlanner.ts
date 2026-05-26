@@ -1,5 +1,6 @@
 import { createId, nowIso } from "./ids.js";
 import type { LlmProvider } from "./llm.js";
+import { normalizeToolName, orderToolNames } from "./toolRunner.js";
 import type {
   AppSettings,
   ContinuationDecision,
@@ -59,7 +60,7 @@ export class ResearchPlanner {
       timeoutMs: 120_000
     });
 
-    const requiredTools = ensureHintTools(strings(response.requiredTools, defaultPlan.requiredTools), input);
+    const requiredTools = orderToolNames(ensureHintTools(strings(response.requiredTools, defaultPlan.requiredTools), input));
     return {
       ...defaultPlan,
       objective: clean(response.objective) || defaultPlan.objective,
@@ -97,7 +98,7 @@ export class ResearchPlanner {
       "ArtifactWriterTool",
       "DataAnalysisTool"
     ];
-    const tools = candidateTools.filter((tool) => tool === "OpenCodeTool" || available.has(normalizeToolName(tool)));
+    const tools = orderToolNames(candidateTools.filter((tool) => tool === "OpenCodeTool" || available.has(normalizeToolName(tool))));
     const nextObjective = input.continuationDecision?.nextObjective;
     return {
       id: createId("plan"),
@@ -165,8 +166,4 @@ function strings(value: unknown, defaultValue: string[]): string[] {
 
 function selectIdsOrText(value: unknown, defaultValue: string[]): string[] {
   return strings(value, defaultValue);
-}
-
-function normalizeToolName(value: string): string {
-  return value.replace(/\(.*?\)/g, "").replace(/\s+/g, "").trim().toLowerCase();
 }

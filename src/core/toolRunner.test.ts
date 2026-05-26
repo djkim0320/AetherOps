@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDefaultResearchTools, WebFetchTool, WebSearchTool, type ResearchTool, type ResearchToolResult } from "./toolRegistry.js";
-import { dedupeResearchTools, normalizeToolName, ToolRunner } from "./toolRunner.js";
+import { dedupeResearchTools, normalizeToolName, orderToolNames, ToolRunner, ToolRunnerError } from "./toolRunner.js";
 import { ResearchLoopStep, type AppSettings, type OpenCodeRunInput, type ResearchSource } from "./types.js";
 
 const createdAt = "2026-05-26T00:00:00.000Z";
@@ -108,7 +108,12 @@ describe("ToolRunner web tool pipeline", () => {
   });
 
   it("passes accumulated sources, evidence, artifacts, and tool runs to later tools", async () => {
-    const input = runInput(["first", "second"]);
+    const seedToolRun = { id: "opencode-tool-1", projectId: "project-1", iteration: 1, toolName: "OpenCodeTool", input: {}, output: {}, status: "completed" as const, startedAt: createdAt, completedAt: createdAt };
+    const input = {
+      ...runInput(["first", "second"]),
+      sources: [webSource("seed-source", "https://example.edu/seed")],
+      toolRuns: [seedToolRun]
+    };
     const observed: OpenCodeRunInput[] = [];
     const first: ResearchTool = {
       name: "First",
@@ -134,13 +139,52 @@ describe("ToolRunner web tool pipeline", () => {
 
     await new ToolRunner([first, second]).runAll(input, settings);
 
-    expect(observed[0]?.sources).toHaveLength(1);
+    expect(observed[0]?.sources).toHaveLength(2);
     expect(observed[0]?.evidence).toHaveLength(1);
     expect(observed[0]?.artifacts).toHaveLength(1);
-    expect((observed[0] as OpenCodeRunInput & { toolRuns?: unknown[] }).toolRuns).toHaveLength(1);
-    expect(input.sources).toEqual([]);
+    expect((observed[0] as OpenCodeRunInput & { toolRuns?: unknown[] }).toolRuns).toHaveLength(2);
+    expect(input.sources).toHaveLength(1);
     expect(input.evidence).toEqual([]);
     expect(input.artifacts).toEqual([]);
+  });
+
+  it("orders required tools canonically so WebSearch runs before WebFetch", async () => {
+    expect(orderToolNames(["WebFetchTool", "WebSearchTool", "ArtifactWriterTool"])).toEqual(["WebSearchTool", "WebFetchTool", "ArtifactWriterTool"]);
+  });
+
+  it("preserves partial outputs and failed tool run when a later tool fails", async () => {
+    const input = runInput(["First", "Second"]);
+    const first: ResearchTool = {
+      name: "First",
+      run: async (): Promise<ResearchToolResult> => ({
+        toolRun: { id: "tool-1", projectId: "project-1", iteration: 1, toolName: "First", input: {}, output: {}, status: "completed", startedAt: createdAt, completedAt: createdAt },
+        evidence: [],
+        artifacts: [],
+        sources: [webSource("s1", "https://example.edu/a")]
+      })
+    };
+    const second: ResearchTool = {
+      name: "Second",
+      run: async (): Promise<ResearchToolResult> => ({
+        toolRun: { id: "tool-2", projectId: "project-1", iteration: 1, toolName: "Second", input: {}, output: { reason: "boom" }, status: "failed", error: "boom", startedAt: createdAt, completedAt: createdAt },
+        evidence: [],
+        artifacts: [],
+        sources: []
+      })
+    };
+
+    try {
+      await new ToolRunner([first, second]).runAll(input, settings);
+      throw new Error("expected ToolRunnerError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ToolRunnerError);
+      const toolError = error as ToolRunnerError;
+      expect(toolError.partialResults).toHaveLength(1);
+      expect(toolError.partialResults[0]?.sources).toHaveLength(1);
+      expect(toolError.failedResult?.toolRun.id).toBe("tool-2");
+      expect(toolError.rollingInput.sources).toHaveLength(1);
+      expect(toolError.rollingInput.toolRuns).toHaveLength(2);
+    }
   });
 
   it("fetches web sources before evidence URLs, dedupes normalized URLs, caps at three, and reports partial failures as completed", async () => {
@@ -176,13 +220,13 @@ describe("ToolRunner web tool pipeline", () => {
       })
     );
 
-    const result = await new WebFetchTool().run(input);
+    const result = await new WebFetchTool().run(input, settings);
 
     expect(result.toolRun.status).toBe("completed");
     expect(fetched).toEqual(["https://Example.edu/a#section", "https://example.edu/fail", "https://example.edu/evidence"]);
     expect(result.evidence).toHaveLength(2);
     expect(result.sources).toHaveLength(2);
-    expect(result.toolRun.output).toMatchObject({ fetchedPages: 2, failedUrls: ["https://example.edu/fail"] });
+    expect(result.toolRun.output).toMatchObject({ fetchedPages: 2, failedUrls: ["https://example.edu/fail"], duplicateUrls: ["https://example.edu/a"] });
   });
 
   it("returns a failed tool run when every selected URL fails so ToolRunner rejects it", async () => {
@@ -192,9 +236,14 @@ describe("ToolRunner web tool pipeline", () => {
       vi.fn(async (url: string) => ({ ok: false, status: 503, statusText: "Unavailable", url, headers: new Headers(), text: async () => "" }))
     );
 
-    const result = await new WebFetchTool().run(input);
+    const result = await new WebFetchTool().run(input, settings);
     expect(result.toolRun.status).toBe("failed");
-    await expect(new ToolRunner([new WebFetchTool()]).runAll(input, settings)).rejects.toThrow("WebFetchTool did not complete successfully");
+    await expect(new ToolRunner([new WebFetchTool()]).runAll(input, settings)).rejects.toBeInstanceOf(ToolRunnerError);
+  });
+
+  it("blocks WebFetchTool direct runs when external search is disabled", async () => {
+    const input = { ...runInput(["WebFetchTool"]), sources: [webSource("s1", "https://example.edu/a")] };
+    await expect(new WebFetchTool().run(input, { ...settings, allowExternalSearch: false })).rejects.toThrow("external network access");
   });
 });
 

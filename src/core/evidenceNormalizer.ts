@@ -45,7 +45,7 @@ export class EvidenceNormalizer {
       records.push(...recordsFromEvidence(evidence, iteration, sourceById.get(evidence.sourceId ?? "")));
     }
     for (const toolRun of snapshot.toolRuns) {
-      records.push(recordFromToolRun(toolRun));
+      records.push(...recordsFromToolRun(toolRun));
     }
     return dedupe(records);
   }
@@ -119,7 +119,8 @@ function recordFromSource(source: ResearchSource, iteration: number): Normalized
   const content = [source.title, source.url, source.doi, source.rawPath, JSON.stringify(source.metadata)].filter(Boolean).join("\n");
   const traceabilityKind = sourceTraceability(source);
   const quality = assessSourceQuality(source.url ?? source.rawPath, source.title);
-  const canSupportHypothesis = traceabilityKind === "external_source" && quality.canSupportHypothesis;
+  const sourceCandidateOnly = source.metadata.sourceCandidateOnly === true || source.metadata.canSupportHypothesis === false;
+  const canSupportHypothesis = !sourceCandidateOnly && traceabilityKind === "external_source" && quality.canSupportHypothesis;
   return tagMemoryScope({
     id: createStableId("record", `${source.id}:source`),
     projectId: source.projectId,
@@ -138,7 +139,7 @@ function recordFromSource(source: ResearchSource, iteration: number): Normalized
       ...sourceQualityMetadata(source.url ?? source.rawPath, source.title)
     }),
     confidence: canSupportHypothesis ? quality.reliabilityScore : traceabilityKind === "external_source" ? Math.min(0.55, quality.reliabilityScore) : 0.35,
-    validationStatus: validationStatusFor(traceabilityKind, canSupportHypothesis, "source"),
+    validationStatus: sourceCandidateOnly ? "raw" : validationStatusFor(traceabilityKind, canSupportHypothesis, "source"),
     createdAt: source.createdAt ?? source.retrievedAt
   }, memoryScopeForTraceability(traceabilityKind));
 }
@@ -245,7 +246,7 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
   return records;
 }
 
-function recordFromToolRun(toolRun: ToolRun): NormalizedResearchRecord {
+function recordsFromToolRun(toolRun: ToolRun): NormalizedResearchRecord[] {
   const content = [
     toolRun.toolName,
     toolRun.status,
@@ -254,7 +255,7 @@ function recordFromToolRun(toolRun: ToolRun): NormalizedResearchRecord {
     toolRun.error
   ].filter(Boolean).join("\n");
   const isError = toolRun.status === "failed";
-  return tagMemoryScope({
+  const records: NormalizedResearchRecord[] = [tagMemoryScope({
     id: createStableId("record", `${toolRun.id}:${isError ? "error" : "observation"}`),
     projectId: toolRun.projectId,
     iteration: toolRun.iteration,
@@ -271,7 +272,53 @@ function recordFromToolRun(toolRun: ToolRun): NormalizedResearchRecord {
     confidence: toolRun.status === "completed" ? 0.65 : 0.2,
     validationStatus: isError ? "rejected" : "raw",
     createdAt: toolRun.completedAt || nowIso()
-  }, isError ? "ephemeral" : "project_only");
+  }, isError ? "ephemeral" : "project_only")];
+
+  if (toolRun.toolName === "OpenCodeStructuredOutput" && toolRun.status === "completed") {
+    records.push(...recordsFromOpenCodeStructuredOutput(toolRun));
+  }
+  return records;
+}
+
+function recordsFromOpenCodeStructuredOutput(toolRun: ToolRun): NormalizedResearchRecord[] {
+  const output = toolRun.output as { claims?: unknown; observations?: unknown } | undefined;
+  return [
+    ...structuredItems(output?.claims, "claim", toolRun),
+    ...structuredItems(output?.observations, "observation", toolRun)
+  ];
+}
+
+function structuredItems(value: unknown, kind: Extract<NormalizedRecordKind, "claim" | "observation">, toolRun: ToolRun): NormalizedResearchRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 48).flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as { title?: unknown; content?: unknown; sourceUri?: unknown; citation?: unknown; metadata?: unknown };
+    const title = typeof record.title === "string" && record.title.trim() ? record.title.trim() : `OpenCode ${kind} ${index + 1}`;
+    const content = typeof record.content === "string" ? record.content.trim() : "";
+    if (!content && typeof record.sourceUri !== "string" && typeof record.citation !== "string") return [];
+    const metadataExtra = record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata)
+      ? record.metadata as Record<string, unknown>
+      : {};
+    return [tagMemoryScope({
+      id: createStableId("record", `${toolRun.id}:${kind}:${index}:${title}:${content.slice(0, 120)}`),
+      projectId: toolRun.projectId,
+      iteration: toolRun.iteration,
+      kind,
+      title,
+      content,
+      sourceUri: typeof record.sourceUri === "string" ? record.sourceUri : `logs/iteration-${toolRun.iteration}.json`,
+      citation: typeof record.citation === "string" ? record.citation : undefined,
+      metadata: metadata("tool_observation", false, content || title, {
+        ...metadataExtra,
+        toolRunId: toolRun.id,
+        sourceKind: "log",
+        openCodeStructuredOutput: true
+      }),
+      confidence: 0.4,
+      validationStatus: "raw",
+      createdAt: toolRun.completedAt || nowIso()
+    }, "project_only")];
+  });
 }
 
 function metadata(traceabilityKind: TraceabilityKind, canSupportHypothesis: boolean, text: string, extra: Record<string, unknown>): Record<string, unknown> {

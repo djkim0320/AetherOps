@@ -184,6 +184,7 @@ describe("ToolRunner web tool pipeline", () => {
       expect(toolError.partialResults).toHaveLength(1);
       expect(toolError.partialResults[0]?.sources).toHaveLength(1);
       expect(toolError.failedResult?.toolRun.id).toBe("tool-2");
+      expect(toolError.toolName).toBe("Second");
       expect(toolError.rollingInput.sources).toHaveLength(1);
       expect(toolError.rollingInput.toolRuns).toHaveLength(2);
     }
@@ -215,7 +216,8 @@ describe("ToolRunner web tool pipeline", () => {
           status: "failed",
           error: "network exploded before result"
         })
-      })
+      }),
+      toolName: "ThrowingTool"
     });
   });
 

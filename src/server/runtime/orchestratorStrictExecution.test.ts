@@ -288,7 +288,7 @@ function sourceCandidateAdapter(): OpenCodeAdapter {
   return {
     run: async (runInput: OpenCodeRunInput): Promise<OpenCodeRunOutput> => ({
       ...completedOutput(runInput, "source-candidate", nowIso()),
-      sources: [
+      sourceCandidates: [
         {
           id: "opencode-source-1",
           projectId: runInput.project.id,

@@ -4,6 +4,8 @@ import type {
   AppSettings,
   EvidenceItem,
   OpenCodeAdapter,
+  OpenCodeClaim,
+  OpenCodeObservation,
   OpenCodeRunInput,
   OpenCodeRunOutput,
   ResearchArtifact,
@@ -129,6 +131,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
       artifacts,
       evidence: [],
       sources,
+      sourceCandidates: sources,
       claims,
       observations,
       toolRuns,
@@ -272,7 +275,7 @@ function normalizeArtifacts(input: OpenCodeRunInput, parsed: OpenCodeSchema, cre
   }));
 }
 
-function normalizeClaimLike(items: Array<Record<string, unknown>> | undefined): Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }> {
+function normalizeClaimLike(items: Array<Record<string, unknown>> | undefined): OpenCodeClaim[] {
   return (items ?? []).slice(0, 24).map((item, index) => ({
     title: cleanString(item.title) || `OpenCode claim ${index + 1}`,
     content: cleanString(item.content) || cleanString(item.summary) || cleanString(item.quote),
@@ -314,8 +317,8 @@ function normalizeSourceCandidates(input: OpenCodeRunInput, candidates: Array<Re
 
 function normalizeStructuredOutputToolRuns(
   input: OpenCodeRunInput,
-  claims: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>,
-  observations: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>,
+  claims: OpenCodeClaim[],
+  observations: OpenCodeObservation[],
   sources: ResearchSource[],
   startedAt: string,
   completedAt: string
@@ -335,13 +338,13 @@ function normalizeStructuredOutputToolRuns(
 }
 
 function downgradeLegacyEvidence(parsed: OpenCodeSchema): {
-  claims: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>;
-  observations: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>;
+  claims: OpenCodeClaim[];
+  observations: OpenCodeObservation[];
   sourceCandidates: Array<Record<string, unknown>>;
   downgradedCount: number;
 } {
-  const claims: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }> = [];
-  const observations: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }> = [];
+  const claims: OpenCodeClaim[] = [];
+  const observations: OpenCodeObservation[] = [];
   const sourceCandidates: Array<Record<string, unknown>> = [];
   for (const item of (parsed.evidence ?? []).slice(0, 24)) {
     const title = cleanString(item.title) || "Downgraded OpenCode claim";

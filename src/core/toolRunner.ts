@@ -14,6 +14,7 @@ export interface ToolRunnerResult {
   failedResult?: ResearchToolResult;
   failure?: Error;
   rollingInput: OpenCodeRunInput;
+  toolName?: string;
 }
 
 export class ToolRunnerError extends Error {
@@ -21,6 +22,7 @@ export class ToolRunnerError extends Error {
   readonly failedResult?: ResearchToolResult;
   readonly rollingInput: OpenCodeRunInput;
   readonly failure?: Error;
+  readonly toolName: string;
 
   constructor(message: string, result: ToolRunnerResult) {
     super(message);
@@ -29,6 +31,7 @@ export class ToolRunnerError extends Error {
     this.failedResult = result.failedResult;
     this.rollingInput = result.rollingInput;
     this.failure = result.failure;
+    this.toolName = result.toolName ?? result.failedResult?.toolRun.toolName ?? "unknown";
   }
 }
 
@@ -89,6 +92,9 @@ export class ToolRunner {
       evidence: [...(input.evidence ?? [])],
       artifacts: [...(input.artifacts ?? [])],
       sources: [...(input.sources ?? [])],
+      sourceCandidates: [...(input.sourceCandidates ?? [])],
+      claims: [...(input.claims ?? [])],
+      observations: [...(input.observations ?? [])],
       toolRuns: [...(input.toolRuns ?? [])]
     };
     const toolMap = new Map(this.tools.map((tool) => [normalizeToolName(tool.name), tool]));
@@ -101,7 +107,8 @@ export class ToolRunner {
       if (!tool) {
         throw new ToolRunnerError(`Required research tool is not registered: ${toolName}`, {
           completedResults: results,
-          rollingInput
+          rollingInput,
+          toolName
         });
       }
       const currentInput: RollingOpenCodeRunInput = {
@@ -109,6 +116,9 @@ export class ToolRunner {
         evidence: [...(rollingInput.evidence ?? [])],
         artifacts: [...(rollingInput.artifacts ?? [])],
         sources: [...(rollingInput.sources ?? [])],
+        sourceCandidates: [...(rollingInput.sourceCandidates ?? [])],
+        claims: [...(rollingInput.claims ?? [])],
+        observations: [...(rollingInput.observations ?? [])],
         toolRuns: [...(rollingInput.toolRuns ?? [])]
       };
       let result: ResearchToolResult;
@@ -121,14 +131,16 @@ export class ToolRunner {
           completedResults: results,
           failedResult,
           failure,
-          rollingInput: accumulateToolResult(rollingInput, failedResult)
+          rollingInput: accumulateToolResult(rollingInput, failedResult),
+          toolName: tool.name
         });
       }
       if (result.toolRun.status !== "completed") {
         throw new ToolRunnerError(`${tool.name} did not complete successfully: ${result.toolRun.error ?? JSON.stringify(result.toolRun.output)}`, {
           completedResults: results,
           failedResult: result,
-          rollingInput: accumulateToolResult(rollingInput, result)
+          rollingInput: accumulateToolResult(rollingInput, result),
+          toolName: tool.name
         });
       }
       results.push(result);

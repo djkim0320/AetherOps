@@ -432,11 +432,15 @@ export class AetherOpsOrchestrator {
         throw new Error(reason);
       }
       const settings = await this.getSettings();
+      const outputSourceCandidates = output.sourceCandidates ?? [];
       const toolInput = {
         ...runInput,
         evidence: [...(runInput.evidence ?? []), ...output.evidence],
         artifacts: [...(runInput.artifacts ?? []), ...output.artifacts],
-        sources: [...(runInput.sources ?? []), ...(output.sources ?? [])],
+        sources: [...(runInput.sources ?? []), ...(output.sources ?? []), ...outputSourceCandidates],
+        sourceCandidates: outputSourceCandidates,
+        claims: output.claims ?? [],
+        observations: output.observations ?? [],
         toolRuns: [...(output.toolRuns ?? [])]
       };
       let toolResults: ResearchToolResult[] = [];
@@ -482,6 +486,9 @@ export class AetherOpsOrchestrator {
       artifacts: output.artifacts.map((artifact) => withArtifactBundle(artifact, executionBundleId)),
       evidence: output.evidence.map((evidence) => withEvidenceBundle(evidence, executionBundleId)),
       sources: output.sources?.map((source) => withSourceBundle(source, executionBundleId)),
+      sourceCandidates: output.sourceCandidates?.map((source) => withSourceBundle(source, executionBundleId)),
+      claims: output.claims?.map((claim) => withOpenCodeStructuredBundle(claim, executionBundleId)),
+      observations: output.observations?.map((observation) => withOpenCodeStructuredBundle(observation, executionBundleId)),
       toolRuns: output.toolRuns?.map((run) => withToolRunBundle(run, executionBundleId))
     };
     const bundledToolResults = toolResults.map((result) => ({
@@ -504,7 +511,7 @@ export class AetherOpsOrchestrator {
     await this.store.saveOpenCodeRun(bundledOutput.run);
     await this.store.saveArtifacts(artifacts);
     await this.store.saveEvidence([...bundledOutput.evidence, ...toolResultEvidence]);
-    const sources = [...(bundledOutput.sources ?? []), ...toolResultSources];
+    const sources = [...(bundledOutput.sources ?? []), ...(bundledOutput.sourceCandidates ?? []), ...toolResultSources];
     if (sources.length) {
       await this.store.saveSources(await this.projectStorage.writeSources(project, database, sources));
     }
@@ -1148,6 +1155,13 @@ function withArtifactBundle(artifact: ResearchArtifact, executionBundleId: strin
   return {
     ...artifact,
     metadata: { ...(artifact.metadata ?? {}), executionBundleId }
+  };
+}
+
+function withOpenCodeStructuredBundle<T extends { metadata?: Record<string, unknown> }>(value: T, executionBundleId: string): T {
+  return {
+    ...value,
+    metadata: { ...(value.metadata ?? {}), executionBundleId }
   };
 }
 

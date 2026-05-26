@@ -58,6 +58,7 @@ describe("RealOpenCodeAdapter", () => {
     expect(output.run.evidenceIds).toEqual([]);
     expect(output.claims?.[0]).toMatchObject({ title: "Invented-looking evidence", sourceUri: "https://example.com/source" });
     expect(output.sources?.[0]).toMatchObject({ url: "https://example.com/source", metadata: expect.objectContaining({ sourceCandidateOnly: true }) });
+    expect(output.sourceCandidates?.[0]).toMatchObject({ url: "https://example.com/source", metadata: expect.objectContaining({ sourceCandidateOnly: true }) });
     expect(output.toolRuns?.[0]?.toolName).toBe("OpenCodeStructuredOutput");
   });
 });

@@ -633,6 +633,9 @@ export interface OpenCodeRunInput {
   evidence?: EvidenceItem[];
   artifacts?: ResearchArtifact[];
   sources?: ResearchSource[];
+  sourceCandidates?: ResearchSource[];
+  claims?: OpenCodeClaim[];
+  observations?: OpenCodeObservation[];
   toolRuns?: ToolRun[];
   ragContext?: RagContext;
   hybridContext?: HybridContext;
@@ -714,8 +717,9 @@ export interface OpenCodeRunOutput {
   artifacts: ResearchArtifact[];
   evidence: EvidenceItem[];
   sources?: ResearchSource[];
-  claims?: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>;
-  observations?: Array<{ title: string; content: string; sourceUri?: string; citation?: string; metadata?: Record<string, unknown> }>;
+  sourceCandidates?: ResearchSource[];
+  claims?: OpenCodeClaim[];
+  observations?: OpenCodeObservation[];
   chunks?: ResearchChunk[];
   toolRuns?: ToolRun[];
   agentPlan?: AgentPlan;
@@ -723,6 +727,22 @@ export interface OpenCodeRunOutput {
   needsMoreEvidence?: boolean;
   needsMoreAnalysis?: boolean;
   fatalError?: string;
+}
+
+export interface OpenCodeClaim {
+  title: string;
+  content: string;
+  sourceUri?: string;
+  citation?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OpenCodeObservation {
+  title: string;
+  content: string;
+  sourceUri?: string;
+  citation?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface OpenCodeAdapter {

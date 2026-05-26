@@ -646,6 +646,66 @@ describe("12-step research architecture modules", () => {
     expect(records.some((record) => record.kind === "artifact" && record.metadata.canSupportHypothesis === false)).toBe(true);
   });
 
+  it("normalizes OpenCode claims and observations without support evidence eligibility", () => {
+    const base = snapshot();
+    const records = new EvidenceNormalizer().normalize({
+      ...base,
+      toolRuns: [
+        {
+          id: "tool-opencode-structured",
+          projectId: base.project.id,
+          iteration: 1,
+          toolName: "OpenCodeStructuredOutput",
+          input: {},
+          output: {
+            claims: [{ title: "OpenCode claim", content: "Claim text", sourceUri: "https://example.com/source" }],
+            observations: [{ title: "OpenCode observation", content: "Observation text" }]
+          },
+          status: "completed",
+          startedAt: createdAt,
+          completedAt: createdAt
+        }
+      ]
+    }, 1);
+
+    const claim = records.find((record) => record.title === "OpenCode claim");
+    const observation = records.find((record) => record.title === "OpenCode observation");
+    expect(claim?.kind).toBe("claim");
+    expect(observation?.kind).toBe("observation");
+    expect(claim?.metadata.canSupportHypothesis).toBe(false);
+    expect(observation?.metadata.canSupportHypothesis).toBe(false);
+    expect(claim?.evidenceId).toBeUndefined();
+    expect(observation?.evidenceId).toBeUndefined();
+  });
+
+  it("does not mark OpenCode source candidates as support-capable source evidence", () => {
+    const base = snapshot();
+    const records = new EvidenceNormalizer().normalize({
+      ...base,
+      evidence: [],
+      sources: [
+        {
+          id: "opencode-source-candidate",
+          projectId: base.project.id,
+          kind: "web",
+          title: "OpenCode candidate only",
+          url: "https://arxiv.org/abs/2401.00001",
+          retrievedAt: createdAt,
+          metadata: {
+            sourceCandidateOnly: true,
+            canSupportHypothesis: false,
+            provider: "opencode"
+          },
+          createdAt
+        }
+      ]
+    }, 1);
+
+    const sourceRecord = records.find((record) => record.sourceId === "opencode-source-candidate" && record.kind === "source");
+    expect(sourceRecord?.metadata.canSupportHypothesis).toBe(false);
+    expect(sourceRecord?.validationStatus).toBe("raw");
+  });
+
   it("promotes only validated citation-backed external evidence into global memory items", () => {
     const base = snapshot();
     const records = new EvidenceNormalizer().normalize(base, 1).map((record) =>

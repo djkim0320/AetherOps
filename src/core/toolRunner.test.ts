@@ -278,7 +278,8 @@ describe("ToolRunner web tool pipeline", () => {
     const result = await new WebFetchTool().run(input, settings);
 
     expect(result.toolRun.status).toBe("completed");
-    expect(fetched).toEqual(["https://Example.edu/a#section", "https://example.edu/fail", "https://example.edu/evidence"]);
+    expect((result.toolRun.output as { urls: string[] }).urls).toEqual(["https://Example.edu/a#section", "https://example.edu/fail", "https://example.edu/evidence"]);
+    expect(fetched).toEqual(expect.arrayContaining(["https://Example.edu/a#section", "https://example.edu/fail", "https://example.edu/evidence"]));
     expect(result.evidence).toHaveLength(2);
     expect(result.sources).toHaveLength(2);
     expect(result.toolRun.output).toMatchObject({
@@ -321,9 +322,69 @@ describe("ToolRunner web tool pipeline", () => {
     const result = await new WebFetchTool().run(input, settings);
 
     expect(result.toolRun.status).toBe("completed");
-    expect(fetched[0]).toBe("https://example.edu/from-plan");
+    expect((result.toolRun.output as { urls: string[] }).urls[0]).toBe("https://example.edu/from-plan");
     expect(fetched).toContain("https://example.edu/from-source");
     expect(fetched).toContain("https://example.edu/from-citation");
+  });
+
+  it("fetches up to two URLs concurrently while preserving failure mapping order", async () => {
+    const input = {
+      ...runInput(["WebFetchTool"]),
+      sources: [
+        webSource("one", "https://93.184.216.34/one"),
+        webSource("two", "https://93.184.216.34/two"),
+        webSource("three", "https://93.184.216.34/three")
+      ]
+    };
+    const started: string[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const pending: Array<{ url: string; resolve: (value: unknown) => void }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        started.push(url);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise((resolve) => {
+          pending.push({
+            url,
+            resolve: (value) => {
+              inFlight -= 1;
+              resolve(value);
+            }
+          });
+        });
+      })
+    );
+
+    const running = new WebFetchTool().run(input, settings);
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    expect(started).toEqual(["https://93.184.216.34/one", "https://93.184.216.34/two"]);
+    pending.find((item) => item.url.endsWith("/one"))?.resolve(successResponse("https://93.184.216.34/one"));
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    expect(started).toEqual(["https://93.184.216.34/one", "https://93.184.216.34/two", "https://93.184.216.34/three"]);
+    pending.find((item) => item.url.endsWith("/three"))?.resolve(successResponse("https://93.184.216.34/three"));
+    pending.find((item) => item.url.endsWith("/two"))?.resolve({
+      ok: false,
+      status: 503,
+      statusText: "Slow Fail",
+      url: "https://93.184.216.34/two",
+      headers: new Headers(),
+      text: async () => ""
+    });
+
+    const result = await running;
+
+    expect(maxInFlight).toBe(2);
+    expect(result.toolRun.status).toBe("completed");
+    expect(result.evidence.map((item) => item.sourceUri)).toEqual(["https://93.184.216.34/one", "https://93.184.216.34/three"]);
+    expect(result.toolRun.output).toMatchObject({
+      failedUrls: ["https://93.184.216.34/two"],
+      failureReasons: {
+        "https://93.184.216.34/two": "fetch failed for https://93.184.216.34/two: 503 Slow Fail"
+      }
+    });
   });
 
   it("blocks internal WebFetch URLs before fetch and records failure reasons", async () => {
@@ -678,4 +739,15 @@ describe("DataAnalysisTool", () => {
 
 function webSource(id: string, url: string): ResearchSource {
   return { id, projectId: "project-1", kind: "web", title: id, url, retrievedAt: createdAt, metadata: {}, createdAt };
+}
+
+function successResponse(url: string): unknown {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    url,
+    headers: new Headers({ "content-type": "text/html" }),
+    text: async () => `<html><title>${url}</title><body>Readable text for ${url}</body></html>`
+  };
 }

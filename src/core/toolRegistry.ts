@@ -14,6 +14,7 @@ import type {
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_FETCH_BYTES = 2 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
+const WEB_FETCH_CONCURRENCY = 2;
 const ALLOWED_FETCH_CONTENT_TYPES = new Set(["text/html", "text/plain", "application/xhtml+xml"]);
 const BLOCKED_HOST_SUFFIXES = [".local", ".localhost", ".internal"];
 
@@ -102,13 +103,7 @@ export class WebFetchTool implements ResearchTool {
     if (!urls.length) {
       throw new Error("WebFetchTool requires at least one external source URL from ResearchPlan.fetchCandidateUrls, input.sources, citation URLs, or previous ProjectContextSnapshot.");
     }
-    const settledPages: Array<PromiseSettledResult<{ url: string; title: string; text: string; contentType: string; status: number }>> = [];
-    for (const url of urls) {
-      settledPages.push(await Promise.resolve(fetchPage(url)).then(
-        (value) => ({ status: "fulfilled", value }),
-        (reason) => ({ status: "rejected", reason })
-      ));
-    }
+    const settledPages = await runWithConcurrency(urls, WEB_FETCH_CONCURRENCY, (url) => fetchPage(url));
     const completedAt = nowIso();
     const pages = settledPages.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
     const failedUrls = settledPages.flatMap((result, index) => (result.status === "rejected" ? [urls[index] as string] : []));
@@ -607,6 +602,29 @@ function normalizeSearchResults(items: Array<{ title?: string; url?: string; sni
     .filter((item) => rank.has(item.url))
     .sort((a, b) => (rank.get(a.url) ?? 999) - (rank.get(b.url) ?? 999))
     .slice(0, 5);
+}
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T, index: number) => Promise<R>
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      try {
+        results[currentIndex] = { status: "fulfilled", value: await task(items[currentIndex] as T, currentIndex) };
+      } catch (reason) {
+        results[currentIndex] = { status: "rejected", reason };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function buildPublicResearchQuery(input: OpenCodeRunInput): string {

@@ -19,15 +19,25 @@ export class LoopDecisionEngine {
     };
     const latestContext = [...after.projectContextSnapshots].reverse().find((context) => context.iteration === input.iteration);
     const continuationContext = latestContext ? collectContinuationContext(after, latestContext) : emptyContinuationContext();
+    const analysisSignal = latestDataAnalysisSignal(after);
+    const analysisHasInputs = (analysisSignal?.normalizedRecordCount ?? 0) > 0 || (analysisSignal?.validationResultCount ?? 0) > 0;
     const sourceCandidatesNeedFetch = Boolean(
       latestContext &&
       latestContext.selectedEvidenceIds.length === 0 &&
       continuationContext.fetchCandidateUrls.length > 0
     );
     const fetchEvidenceGap = "Source candidates found but not fetched into citation-backed evidence";
+    const analysisEvidenceGaps = [
+      ...(analysisHasInputs ? (analysisSignal?.evidenceGapsFromLatestValidation ?? []) : []),
+      analysisHasInputs && analysisSignal?.supportEligibleEvidenceCount === 0 ? "DataAnalysisTool found no support-eligible citation-backed evidence." : undefined,
+      analysisHasInputs && typeof analysisSignal?.citationCoverage === "number" && analysisSignal.citationCoverage < 0.5
+        ? `DataAnalysisTool reported low citation coverage (${analysisSignal.citationCoverage.toFixed(2)}).`
+        : undefined
+    ].filter((gap): gap is string => Boolean(gap));
     const evidenceGaps = [
       ...input.result.nextQuestions,
       ...after.validationResults.slice(-after.hypotheses.length).flatMap((result) => result.evidenceGaps),
+      ...analysisEvidenceGaps,
       ...(sourceCandidatesNeedFetch ? [fetchEvidenceGap] : [])
     ].filter(Boolean);
     const repeatedLowGrowth = input.iteration > 1 && Object.values(growth).every((value) => value <= 0);
@@ -44,7 +54,7 @@ export class LoopDecisionEngine {
       projectId: after.project.id,
       iteration: input.iteration,
       shouldContinue,
-      reason: reason({ hitSafetyCap, statusBlocked, repeatedLowGrowth, result: input.result, growth }),
+      reason: reason({ hitSafetyCap, statusBlocked, repeatedLowGrowth, result: input.result, growth, analysisSignal }),
       nextObjective: shouldContinue
         ? `Resolve ${evidenceGaps[0] ?? "remaining evidence gaps"} and improve citation coverage for priority hypotheses.`
         : undefined,
@@ -139,6 +149,37 @@ function emptyContinuationContext(): ReturnType<typeof collectContinuationContex
   };
 }
 
+interface DataAnalysisSignal {
+  supportEligibleEvidenceCount?: number;
+  citationCoverage?: number;
+  evidenceGapsFromLatestValidation?: string[];
+  normalizedRecordCount?: number;
+  validationResultCount?: number;
+}
+
+function latestDataAnalysisSignal(snapshot: ResearchSnapshot): DataAnalysisSignal | undefined {
+  const output = [...snapshot.toolRuns].reverse().find((run) => run.toolName === "DataAnalysisTool" && run.status === "completed")?.output;
+  if (!output || typeof output !== "object" || Array.isArray(output)) return undefined;
+  const value = output as Record<string, unknown>;
+  return {
+    supportEligibleEvidenceCount: readNumber(value.supportEligibleEvidenceCount),
+    citationCoverage: readNumber(value.citationCoverage),
+    normalizedRecordCount: readNumber(readObject(value.inputAvailability)?.normalizedRecordCount),
+    validationResultCount: readNumber(readObject(value.inputAvailability)?.validationResultCount),
+    evidenceGapsFromLatestValidation: Array.isArray(value.evidenceGapsFromLatestValidation)
+      ? value.evidenceGapsFromLatestValidation.filter((item): item is string => typeof item === "string")
+      : undefined
+  };
+}
+
+function readObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function addUrls(target: Set<string>, value: string | undefined): void {
   for (const url of extractPublicHttpUrls(value)) target.add(url);
 }
@@ -182,10 +223,18 @@ function reason(input: {
   repeatedLowGrowth: boolean;
   result: EvidenceBasedResult;
   growth: Record<string, number>;
+  analysisSignal?: DataAnalysisSignal;
 }): string {
   if (input.hitSafetyCap) return "Internal loop safety cap reached; finalize with explicit limitations.";
   if (input.statusBlocked) return "Project is paused or aborted.";
   if (input.repeatedLowGrowth) return "No meaningful new evidence, artifact, vector chunk, or graph relation was produced.";
+  const analysisHasInputs = (input.analysisSignal?.normalizedRecordCount ?? 0) > 0 || (input.analysisSignal?.validationResultCount ?? 0) > 0;
+  if (analysisHasInputs && input.analysisSignal?.supportEligibleEvidenceCount === 0) {
+    return `More research is needed. DataAnalysisTool found no support-eligible evidence and citation coverage is ${input.analysisSignal.citationCoverage ?? "unknown"}. Growth: ${JSON.stringify(input.growth)}.`;
+  }
+  if (analysisHasInputs && typeof input.analysisSignal?.citationCoverage === "number" && input.analysisSignal.citationCoverage < 0.5) {
+    return `More research is needed. DataAnalysisTool reported low citation coverage (${input.analysisSignal.citationCoverage.toFixed(2)}). Growth: ${JSON.stringify(input.growth)}.`;
+  }
   if (input.result.needsMoreEvidence || input.result.needsMoreAnalysis || input.result.nextQuestions.length) {
     return `More research is needed. Growth: ${JSON.stringify(input.growth)}.`;
   }

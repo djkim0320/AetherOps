@@ -386,13 +386,16 @@ export class DataAnalysisTool implements ResearchTool {
   async run(input: OpenCodeRunInput): Promise<ResearchToolResult> {
     const startedAt = nowIso();
     const completedAt = nowIso();
-    const analysisInput = input as OpenCodeRunInput & {
-      normalizedRecords?: NormalizedResearchRecord[];
-      validationResults?: ValidationResult[];
-    };
     const evidence = input.evidence ?? [];
-    const normalizedRecords = analysisInput.normalizedRecords ?? [];
-    const validationResults = analysisInput.validationResults ?? [];
+    const normalizedRecords = input.normalizedRecords ?? [];
+    const validationResults = input.validationResults ?? [];
+    const projectContextSnapshots = input.projectContextSnapshots ?? [];
+    const synthesizedResults = input.results ?? [];
+    const missingInputWarnings = [
+      normalizedRecords.length === 0 ? "normalizedRecords input was not available; support eligibility may be undercounted." : undefined,
+      validationResults.length === 0 ? "validationResults input was not available; latest evidence gaps may be incomplete." : undefined,
+      projectContextSnapshots.length === 0 ? "projectContextSnapshots input was not available; context coverage analysis may be incomplete." : undefined
+    ].filter((item): item is string => Boolean(item));
     const supportEligibleEvidenceIds = new Set(
       normalizedRecords
         .filter((record) =>
@@ -435,8 +438,17 @@ export class DataAnalysisTool implements ResearchTool {
         sourceCount: input.sources?.length ?? 0,
         toolRunCount: input.toolRuns?.length ?? 0,
         normalizedRecordCount: normalizedRecords.length,
-        validationResultCount: validationResults.length
+        validationResultCount: validationResults.length,
+        projectContextSnapshotCount: projectContextSnapshots.length,
+        synthesizedResultCount: synthesizedResults.length
       },
+      inputAvailability: {
+        normalizedRecordCount: normalizedRecords.length,
+        validationResultCount: validationResults.length,
+        projectContextSnapshotCount: projectContextSnapshots.length,
+        resultCount: synthesizedResults.length
+      },
+      missingInputWarnings,
       evidenceGapsFromLatestValidation: [...new Set(latestValidation.flatMap((result) => result.evidenceGaps))]
     };
     return {
@@ -613,69 +625,78 @@ function buildPublicResearchQuery(input: OpenCodeRunInput): string {
 async function fetchPage(url: string): Promise<{ url: string; title: string; text: string; contentType: string; status: number }> {
   await assertPublicHttpUrl(url);
   const controller = new AbortController();
+  const deadline = Date.now() + FETCH_TIMEOUT_MS;
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(url, { headers: { accept: "text/html,text/plain,application/xhtml+xml" }, signal: controller.signal });
+    try {
+      response = await fetch(url, { headers: { accept: "text/html,text/plain,application/xhtml+xml" }, signal: controller.signal });
+    } catch (error) {
+      if (isAbortOrTimeout(error, deadline)) throw new Error(`fetch timeout for ${url}`);
+      throw error;
+    }
+    await assertPublicHttpUrl(response.url || url);
+    if (!response.ok) {
+      throw new Error(`fetch failed for ${url}: ${response.status} ${response.statusText}`);
+    }
+    const contentType = response.headers.get("content-type") ?? "unknown";
+    const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (!ALLOWED_FETCH_CONTENT_TYPES.has(mediaType)) {
+      throw new Error(`unsupported content-type for ${url}: ${contentType}`);
+    }
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > MAX_FETCH_BYTES) {
+      throw new Error(`content-length exceeds 2MB for ${url}`);
+    }
+    const raw = await readLimitedText(response, url, deadline);
+    const title = extractTitle(raw) || url;
+    const text = normalizePageText(raw);
+    if (!text) {
+      throw new Error(`fetch produced no readable text for ${url}`);
+    }
+    return { url: response.url || url, title, text, contentType, status: response.status };
   } finally {
     clearTimeout(timeout);
   }
-  await assertPublicHttpUrl(response.url || url);
-  if (!response.ok) {
-    throw new Error(`fetch failed for ${url}: ${response.status} ${response.statusText}`);
-  }
-  const contentType = response.headers.get("content-type") ?? "unknown";
-  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (!ALLOWED_FETCH_CONTENT_TYPES.has(mediaType)) {
-    throw new Error(`unsupported content-type for ${url}: ${contentType}`);
-  }
-  const contentLength = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > MAX_FETCH_BYTES) {
-    throw new Error(`content-length exceeds 2MB for ${url}`);
-  }
-  const raw = await readLimitedText(response, url);
-  const title = extractTitle(raw) || url;
-  const text = normalizePageText(raw);
-  if (!text) {
-    throw new Error(`fetch produced no readable text for ${url}`);
-  }
-  return { url: response.url || url, title, text, contentType, status: response.status };
 }
 
 async function fetchPdfText(url: string): Promise<{ url: string; title: string; pages: Array<{ page: number; text: string }> }> {
   await assertPublicHttpUrl(url);
   const controller = new AbortController();
+  const deadline = Date.now() + FETCH_TIMEOUT_MS;
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(url, { headers: { accept: "application/pdf" }, signal: controller.signal });
+    try {
+      response = await fetch(url, { headers: { accept: "application/pdf" }, signal: controller.signal });
+    } catch (error) {
+      if (isAbortOrTimeout(error, deadline)) throw new Error(`fetch timeout for ${url}`);
+      throw error;
+    }
+    await assertPublicHttpUrl(response.url || url);
+    if (!response.ok) throw new Error(`PDF fetch failed for ${url}: ${response.status} ${response.statusText}`);
+    const contentType = response.headers.get("content-type") ?? "unknown";
+    const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (mediaType && mediaType !== "application/pdf" && mediaType !== "application/octet-stream") {
+      throw new Error(`unsupported PDF content-type for ${url}: ${contentType}`);
+    }
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
+      throw new Error(`PDF content-length exceeds 20MB for ${url}`);
+    }
+    const bytes = await readLimitedBytes(response, url, MAX_PDF_BYTES, deadline, "PDF body read timeout");
+    const text = extractPdfTextFallback(bytes);
+    if (!text.trim()) {
+      throw new Error(`PDF text extraction produced no readable text for ${url}`);
+    }
+    return {
+      url: response.url || url,
+      title: titleFromPdfUrl(response.url || url),
+      pages: splitPdfPages(text)
+    };
   } finally {
     clearTimeout(timeout);
   }
-  await assertPublicHttpUrl(response.url || url);
-  if (!response.ok) throw new Error(`PDF fetch failed for ${url}: ${response.status} ${response.statusText}`);
-  const contentType = response.headers.get("content-type") ?? "unknown";
-  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (mediaType && mediaType !== "application/pdf" && mediaType !== "application/octet-stream") {
-    throw new Error(`unsupported PDF content-type for ${url}: ${contentType}`);
-  }
-  const contentLength = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
-    throw new Error(`PDF content-length exceeds 20MB for ${url}`);
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_PDF_BYTES) {
-    throw new Error(`PDF body exceeds 20MB for ${url}`);
-  }
-  const text = extractPdfTextFallback(bytes);
-  if (!text.trim()) {
-    throw new Error(`PDF text extraction produced no readable text for ${url}`);
-  }
-  return {
-    url: response.url || url,
-    title: titleFromPdfUrl(response.url || url),
-    pages: splitPdfPages(text)
-  };
 }
 
 function extractPdfTextFallback(bytes: Uint8Array): string {
@@ -780,9 +801,11 @@ function isIpLiteral(hostname: string): boolean {
 
 function isPrivateOrInternalIp(value: string): boolean {
   const hostname = value.replace(/^\[|\]$/g, "").toLowerCase();
-  if (hostname === "::1" || hostname === "0:0:0:0:0:0:0:1") return true;
+  if (isPrivateOrInternalIpv6(hostname)) return true;
   const ipv4Mapped = hostname.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (ipv4Mapped?.[1]) return isPrivateOrInternalIp(ipv4Mapped[1]);
+  const expandedIpv4Mapped = hostname.match(/^0:0:0:0:0:ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (expandedIpv4Mapped?.[1]) return isPrivateOrInternalIp(expandedIpv4Mapped[1]);
   if (!isIpv4(hostname)) return false;
   const octets = hostname.split(".").map((part) => Number(part));
   const [first, second, third, fourth] = octets;
@@ -797,14 +820,31 @@ function isPrivateOrInternalIp(value: string): boolean {
   );
 }
 
+function isPrivateOrInternalIpv6(hostname: string): boolean {
+  if (!hostname.includes(":")) return false;
+  if (hostname === "::" || hostname === "::1" || hostname === "0:0:0:0:0:0:0:0" || hostname === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  const mapped = hostname.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/) ?? hostname.match(/^0:0:0:0:0:ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped?.[1]) return isPrivateOrInternalIp(mapped[1]);
+  const firstHextet = hostname.split(":").find(Boolean);
+  if (!firstHextet || !/^[0-9a-f]{1,4}$/i.test(firstHextet)) return false;
+  const first = Number.parseInt(firstHextet, 16);
+  return (
+    (first & 0xfe00) === 0xfc00 ||
+    (first & 0xffc0) === 0xfe80 ||
+    (first & 0xff00) === 0xff00
+  );
+}
+
 function isIpv4(value: string): boolean {
   const parts = value.split(".");
   return parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255);
 }
 
-async function readLimitedText(response: Response, url: string): Promise<string> {
+async function readLimitedText(response: Response, url: string, deadline: number): Promise<string> {
   if (!response.body) {
-    const raw = await response.text();
+    const raw = await withDeadline(response.text(), deadline, `body read timeout for ${url}`);
     if (new TextEncoder().encode(raw).length > MAX_FETCH_BYTES) {
       throw new Error(`body exceeds 2MB for ${url}`);
     }
@@ -815,7 +855,14 @@ async function readLimitedText(response: Response, url: string): Promise<string>
   const chunks: string[] = [];
   let bytes = 0;
   while (true) {
-    const { done, value } = await reader.read();
+    let readResult: ReadableStreamReadResult<Uint8Array>;
+    try {
+      readResult = await withDeadline(reader.read(), deadline, `body read timeout for ${url}`);
+    } catch (error) {
+      await reader.cancel().catch(() => undefined);
+      throw error;
+    }
+    const { done, value } = readResult;
     if (done) break;
     bytes += value.byteLength;
     if (bytes > MAX_FETCH_BYTES) {
@@ -825,6 +872,58 @@ async function readLimitedText(response: Response, url: string): Promise<string>
   }
   chunks.push(decoder.decode());
   return chunks.join("");
+}
+
+async function readLimitedBytes(response: Response, url: string, maxBytes: number, deadline: number, timeoutLabel: string): Promise<Uint8Array> {
+  if (!response.body) {
+    const buffer = await withDeadline(response.arrayBuffer(), deadline, `${timeoutLabel} for ${url}`);
+    const bytes = new Uint8Array(buffer);
+    if (bytes.byteLength > maxBytes) throw new Error(`PDF body exceeds 20MB for ${url}`);
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    let readResult: ReadableStreamReadResult<Uint8Array>;
+    try {
+      readResult = await withDeadline(reader.read(), deadline, `${timeoutLabel} for ${url}`);
+    } catch (error) {
+      await reader.cancel().catch(() => undefined);
+      throw error;
+    }
+    if (readResult.done) break;
+    const value = readResult.value;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`PDF body exceeds 20MB for ${url}`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function withDeadline<T>(promise: Promise<T>, deadline: number, message: string): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return Promise.reject(new Error(message));
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timer = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), remaining);
+  });
+  return Promise.race([promise, timer]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+function isAbortOrTimeout(error: unknown, deadline: number): boolean {
+  return Date.now() >= deadline || (error instanceof Error && (error.name === "AbortError" || /abort|timeout/i.test(error.message)));
 }
 
 function extractTitle(raw: string): string {

@@ -606,6 +606,7 @@ export interface RunAuditOutput {
   continuationDecisionIds: string[];
   evidenceGaps: string[];
   recoverableNextActions: string[];
+  unmetRequirements?: Array<{ requirementKey: string; message: string }>;
   markdownReport: string;
   reportPath?: string;
   jsonPath?: string;
@@ -691,6 +692,10 @@ export interface OpenCodeRunInput {
   claims?: OpenCodeClaim[];
   observations?: OpenCodeObservation[];
   toolRuns?: ToolRun[];
+  normalizedRecords?: NormalizedResearchRecord[];
+  validationResults?: ValidationResult[];
+  projectContextSnapshots?: ProjectContextSnapshot[];
+  results?: EvidenceBasedResult[];
   ragContext?: RagContext;
   hybridContext?: HybridContext;
   specification?: ResearchSpecification;

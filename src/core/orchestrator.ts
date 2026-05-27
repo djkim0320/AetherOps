@@ -15,8 +15,9 @@ import { ReasoningEngine } from "./reasoningEngine.js";
 import { createResearchInput, type ResearchInputPayload } from "./researchInput.js";
 import { buildResearchReport } from "./report.js";
 import { ResearchPlanner } from "./researchPlanner.js";
-import { buildBenchmarkPlan, RunAuditWriter } from "./runAuditWriter.js";
+import { buildBenchmarkPlan, buildRunAuditOutput, RunAuditWriter } from "./runAuditWriter.js";
 import { createDefaultSessions } from "./researchSeed.js";
+import { dedupeSourcesByIdUrlDoi } from "./sourceDedupe.js";
 import { ResearchSpecificationBuilder } from "./researchSpecification.js";
 import { RuntimeRequirementChecker, RuntimeRequirementError } from "./runtimeRequirements.js";
 import { ToolRunner, ToolRunnerError } from "./toolRunner.js";
@@ -424,12 +425,16 @@ export class AetherOpsOrchestrator {
       hypotheses: snapshot.hypotheses,
       evidence: snapshot.evidence,
       artifacts: snapshot.artifacts,
-      sources: [...snapshot.sources, ...continuationSources],
+      sources: dedupeSourcesByIdUrlDoi([...snapshot.sources, ...continuationSources]),
       ragContext: snapshot.ragContexts.at(-1),
       hybridContext: snapshot.hybridContexts.at(-1),
       specification: snapshot.specifications.at(-1),
       researchPlan,
       projectContextSnapshot,
+      normalizedRecords: snapshot.normalizedRecords,
+      validationResults: snapshot.validationResults,
+      projectContextSnapshots: snapshot.projectContextSnapshots,
+      results: snapshot.results,
       iteration: activeIteration
     };
     try {
@@ -448,11 +453,15 @@ export class AetherOpsOrchestrator {
         ...runInput,
         evidence: [...(runInput.evidence ?? []), ...output.evidence],
         artifacts: [...(runInput.artifacts ?? []), ...output.artifacts],
-        sources: [...(runInput.sources ?? []), ...(output.sources ?? []), ...outputSourceCandidates],
-        sourceCandidates: outputSourceCandidates,
+        sources: dedupeSourcesByIdUrlDoi([...(runInput.sources ?? []), ...(output.sources ?? []), ...outputSourceCandidates]),
+        sourceCandidates: dedupeSourcesByIdUrlDoi(outputSourceCandidates),
         claims: output.claims ?? [],
         observations: output.observations ?? [],
-        toolRuns: [...(output.toolRuns ?? [])]
+        toolRuns: [...(output.toolRuns ?? [])],
+        normalizedRecords: snapshot.normalizedRecords,
+        validationResults: snapshot.validationResults,
+        projectContextSnapshots: snapshot.projectContextSnapshots,
+        results: snapshot.results
       };
       let toolResults: ResearchToolResult[] = [];
       try {
@@ -522,7 +531,7 @@ export class AetherOpsOrchestrator {
     await this.store.saveOpenCodeRun(bundledOutput.run);
     await this.store.saveArtifacts(artifacts);
     await this.store.saveEvidence([...bundledOutput.evidence, ...toolResultEvidence]);
-    const sources = [...(bundledOutput.sources ?? []), ...(bundledOutput.sourceCandidates ?? []), ...toolResultSources];
+    const sources = dedupeSourcesByIdUrlDoi([...(bundledOutput.sources ?? []), ...(bundledOutput.sourceCandidates ?? []), ...toolResultSources]);
     if (sources.length) {
       await this.store.saveSources(await this.projectStorage.writeSources(project, database, sources));
     }
@@ -952,6 +961,7 @@ export class AetherOpsOrchestrator {
       unmetRequirements: error.unmetRequirements
     });
     await this.record(projectId, error.step, "Error Flow", `필수 설정이 부족해 연구가 blocked 상태로 멈췄습니다: ${error.message}`);
+    await this.writeRunAudit(projectId, error.step, error.message);
     return this.store.getSnapshot(projectId);
   }
 
@@ -965,8 +975,9 @@ export class AetherOpsOrchestrator {
   private async writeRunAudit(projectId: string, step: ResearchLoopStep, reason: string): Promise<void> {
     try {
       const snapshot = await this.store.getSnapshot(projectId);
-      const database = await this.requireDatabase(projectId);
-      const output = await new RunAuditWriter(this.projectStorage).write(snapshot, database, { step, reason });
+      const output = snapshot.database
+        ? await new RunAuditWriter(this.projectStorage).write(snapshot, snapshot.database, { step, reason })
+        : buildRunAuditOutput(snapshot, { step, reason });
       await this.store.saveRunAuditOutput(output);
       await this.store.saveBenchmarkPlan(buildBenchmarkPlan(snapshot));
     } catch {

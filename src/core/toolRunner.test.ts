@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDefaultResearchTools, DataAnalysisTool, WebFetchTool, WebSearchTool, type ResearchTool, type ResearchToolResult } from "./toolRegistry.js";
+import { createDefaultResearchTools, DataAnalysisTool, PdfIngestionTool, WebFetchTool, WebSearchTool, type ResearchTool, type ResearchToolResult } from "./toolRegistry.js";
 import { dedupeResearchTools, normalizeToolName, orderToolNames, ToolRunner, ToolRunnerError } from "./toolRunner.js";
 import { ResearchLoopStep, type AppSettings, type OpenCodeRunInput, type ResearchSource } from "./types.js";
 
@@ -57,6 +57,7 @@ function runInput(requiredTools: string[] = []): OpenCodeRunInput {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("ToolRunner registry", () => {
@@ -447,6 +448,99 @@ describe("ToolRunner web tool pipeline", () => {
     expect(result.toolRun.output).toMatchObject({ failedUrls: blockedUrls });
   });
 
+  it("blocks IPv6 private, loopback, unspecified, and multicast fetch targets before calling fetch", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const blockedUrls = [
+      "http://[::1]",
+      "http://[::]",
+      "http://[fc00::1]"
+    ];
+
+    const result = await new WebFetchTool().run(
+      { ...runInput(["WebFetchTool"]), sources: blockedUrls.map((url, index) => webSource(`blocked-${index}`, url)) },
+      settings
+    );
+
+    expect(result.toolRun.status).toBe("failed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.toolRun.output).toMatchObject({ failedUrls: blockedUrls });
+  });
+
+  it("blocks IPv6 link-local and multicast fetch targets before calling fetch", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const blockedUrls = ["http://[fe80::1]", "http://[ff02::1]"];
+
+    const result = await new WebFetchTool().run(
+      { ...runInput(["WebFetchTool"]), sources: blockedUrls.map((url, index) => webSource(`blocked-v6-${index}`, url)) },
+      settings
+    );
+
+    expect(result.toolRun.status).toBe("failed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.toolRun.output).toMatchObject({ failedUrls: blockedUrls });
+  });
+
+  it("records body read timeout for slow HTML response streams", async () => {
+    vi.useFakeTimers();
+    const input = { ...runInput(["WebFetchTool"]), sources: [webSource("slow", "https://93.184.216.34/slow")] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        url,
+        headers: new Headers({ "content-type": "text/html" }),
+        body: {
+          getReader: () => ({
+            read: () => new Promise<ReadableStreamReadResult<Uint8Array>>(() => undefined),
+            cancel: () => Promise.resolve()
+          })
+        }
+      }))
+    );
+
+    const pending = new WebFetchTool().run(input, settings);
+    await vi.advanceTimersByTimeAsync(10_050);
+    const result = await pending;
+
+    expect(result.toolRun.status).toBe("failed");
+    expect((result.toolRun.output as { failureReasons: Record<string, string> }).failureReasons["https://93.184.216.34/slow"]).toContain("body read timeout");
+  });
+
+  it("records PDF body read timeout for slow PDF streams", async () => {
+    vi.useFakeTimers();
+    const input = {
+      ...runInput(["PdfIngestionTool"]),
+      researchPlan: { ...runInput(["PdfIngestionTool"]).researchPlan!, fetchCandidateUrls: ["https://93.184.216.34/paper.pdf"] }
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        url,
+        headers: new Headers({ "content-type": "application/pdf" }),
+        body: {
+          getReader: () => ({
+            read: () => new Promise<ReadableStreamReadResult<Uint8Array>>(() => undefined),
+            cancel: () => Promise.resolve()
+          })
+        }
+      }))
+    );
+
+    const pending = new PdfIngestionTool().run(input, settings);
+    await vi.advanceTimersByTimeAsync(10_050);
+    const result = await pending;
+
+    expect(result.toolRun.status).toBe("failed");
+    expect((result.toolRun.output as { failureReasons: Record<string, string> }).failureReasons["https://93.184.216.34/paper.pdf"]).toContain("PDF body read timeout");
+  });
+
   it("rejects oversized and non-text responses without creating evidence", async () => {
     const input = { ...runInput(["WebFetchTool"]), sources: [webSource("s1", "https://example.com/huge"), webSource("s2", "https://example.com/image")] };
     vi.stubGlobal(
@@ -549,9 +643,35 @@ describe("DataAnalysisTool", () => {
         sourceCount: 1,
         toolRunCount: 1,
         normalizedRecordCount: 2,
-        validationResultCount: 1
+        validationResultCount: 1,
+        projectContextSnapshotCount: 0,
+        synthesizedResultCount: 0
       },
+      inputAvailability: {
+        normalizedRecordCount: 2,
+        validationResultCount: 1,
+        projectContextSnapshotCount: 0,
+        resultCount: 0
+      },
+      missingInputWarnings: ["projectContextSnapshots input was not available; context coverage analysis may be incomplete."],
       evidenceGapsFromLatestValidation: ["Need a stronger source."]
+    });
+  });
+
+  it("reports missing analysis inputs explicitly", async () => {
+    const result = await new DataAnalysisTool().run({ ...runInput(["DataAnalysisTool"]), evidence: [] });
+
+    expect(result.toolRun.output).toMatchObject({
+      supportEligibleEvidenceCount: 0,
+      inputAvailability: {
+        normalizedRecordCount: 0,
+        validationResultCount: 0,
+        projectContextSnapshotCount: 0
+      },
+      missingInputWarnings: expect.arrayContaining([
+        "normalizedRecords input was not available; support eligibility may be undercounted.",
+        "validationResults input was not available; latest evidence gaps may be incomplete."
+      ])
     });
   });
 });

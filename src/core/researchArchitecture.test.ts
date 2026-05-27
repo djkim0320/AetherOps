@@ -688,6 +688,73 @@ describe("12-step research architecture modules", () => {
     expect(decision.fetchCandidateUrls).toContain("https://arxiv.org/abs/2401.00001");
   });
 
+  it("uses DataAnalysisTool output as a conservative loop decision signal without overriding the safety cap", () => {
+    const base = snapshot();
+    const result = {
+      id: "result-analysis-signal",
+      projectId: base.project.id,
+      iteration: 1,
+      answer: "No further work requested by synthesizer.",
+      hypothesisUpdates: [],
+      quantitativeResults: [],
+      qualitativeResults: [],
+      nextQuestions: [],
+      needsMoreEvidence: false,
+      needsMoreAnalysis: false,
+      createdAt
+    };
+    const snapshotWithAnalysis = {
+      ...base,
+      toolRuns: [
+        {
+          id: "analysis-run",
+          projectId: base.project.id,
+          iteration: 1,
+          toolName: "DataAnalysisTool",
+          input: {},
+          output: {
+            supportEligibleEvidenceCount: 0,
+            citationCoverage: 0.25,
+            inputAvailability: {
+              normalizedRecordCount: 2,
+              validationResultCount: 1,
+              projectContextSnapshotCount: 1
+            },
+            evidenceGapsFromLatestValidation: ["Need citation-backed source path."]
+          },
+          status: "completed" as const,
+          startedAt: createdAt,
+          completedAt: createdAt
+        }
+      ]
+    };
+
+    const decision = new LoopDecisionEngine().decide({
+      snapshot: snapshotWithAnalysis,
+      result,
+      iteration: 1,
+      safetyCapIterations: 3,
+      beforeCounts: { evidence: base.evidence.length, artifacts: base.artifacts.length, chunks: 0, entities: 0, relations: 0 }
+    });
+    expect(decision.shouldContinue).toBe(false);
+    expect(decision.evidenceGaps).toEqual(expect.arrayContaining([
+      "Need citation-backed source path.",
+      "DataAnalysisTool found no support-eligible citation-backed evidence.",
+      "DataAnalysisTool reported low citation coverage (0.25)."
+    ]));
+    expect(decision.reason).toContain("DataAnalysisTool found no support-eligible evidence");
+
+    const capped = new LoopDecisionEngine().decide({
+      snapshot: snapshotWithAnalysis,
+      result,
+      iteration: 3,
+      safetyCapIterations: 3,
+      beforeCounts: { evidence: base.evidence.length, artifacts: base.artifacts.length, chunks: 0, entities: 0, relations: 0 }
+    });
+    expect(capped.shouldContinue).toBe(false);
+    expect(capped.forceStop).toBe(true);
+  });
+
   it("does not turn web search snippets or internal artifacts into support evidence", async () => {
     const base = snapshot();
     const tool = new WebSearchTool();

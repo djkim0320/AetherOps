@@ -71,6 +71,15 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.evidence.some((item) => item.keywords.includes("tool_unavailable") || item.keywords.includes("evidence_gap"))).toBe(false);
     expect(snapshot.report).toBeUndefined();
     expect(snapshot.finalOutputs).toHaveLength(0);
+    expect(snapshot.runAuditOutputs).toHaveLength(1);
+    expect(snapshot.runAuditOutputs[0]).toMatchObject({
+      finalStatus: "blocked",
+      failedStep: ResearchLoopStep.ExecuteTools
+    });
+    expect(snapshot.runAuditOutputs[0]?.markdownReport).toContain("blocked before execution could proceed");
+    expect(snapshot.runAuditOutputs[0]?.unmetRequirements?.length).toBeGreaterThan(0);
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "run-audit.md"))).toBe(true);
+    expect(existsSync(join(snapshot.project.projectRoot, "exports", "run-audit.json"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
   });
 
@@ -131,6 +140,43 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.toolRuns.some((run) => run.toolName === "WebFetchTool" && run.status === "completed")).toBe(true);
     expect(snapshot.sources.some((item) => item.url === "https://example.edu/opencode-source" && item.metadata.fetchStatus === "fetched")).toBe(true);
     expect(snapshot.evidence.some((item) => item.sourceUri === "https://example.edu/opencode-source")).toBe(true);
+  });
+
+  it("dedupes duplicate OpenCode sources and source candidates before persistence", async () => {
+    const orchestrator = createStrictTestOrchestrator({
+      openCode: duplicateSourceAdapter(),
+      llm: new DuplicateSourcePlanner(),
+      toolRunner: new ToolRunner([])
+    });
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.createResearchDb(snapshot.project.id);
+    snapshot = await orchestrator.buildResearchSpecification(snapshot.project.id);
+    snapshot = await orchestrator.planResearch(snapshot.project.id, 1);
+    snapshot = await orchestrator.executeTools(snapshot.project.id, 1);
+
+    const duplicates = snapshot.sources.filter((source) => source.url?.startsWith("https://example.edu/duplicate-source"));
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0]?.metadata.sourceCandidateOnly).toBe(true);
+  });
+
+  it("passes snapshot analysis arrays into auxiliary tool inputs", async () => {
+    const orchestrator = createStrictTestOrchestrator({
+      openCode: completedAdapter(),
+      llm: new CaptureInputPlanner(),
+      toolRunner: new ToolRunner([captureInputTool()])
+    });
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.createResearchDb(snapshot.project.id);
+    snapshot = await orchestrator.buildResearchSpecification(snapshot.project.id);
+    snapshot = await orchestrator.planResearch(snapshot.project.id, 1);
+    snapshot = await orchestrator.executeTools(snapshot.project.id, 1);
+
+    expect(snapshot.toolRuns.find((run) => run.toolName === "CaptureInputTool")?.output).toMatchObject({
+      hasNormalizedRecords: true,
+      hasValidationResults: true,
+      hasProjectContextSnapshots: true,
+      hasResults: true
+    });
   });
 
   it("persists completed and failed auxiliary tool output before marking ExecuteTools failed", async () => {
@@ -240,6 +286,42 @@ class FetchOnlyPlanner extends DeterministicLlmProvider {
   }
 }
 
+class DuplicateSourcePlanner extends DeterministicLlmProvider {
+  override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
+    if (request.schemaName === "AetherOpsResearchPlan") {
+      return {
+        objective: "Persist OpenCode source candidates without duplicate rows.",
+        targetQuestions: ["q1"],
+        targetHypotheses: ["h1"],
+        requiredTools: ["OpenCodeTool"],
+        expectedSources: ["web"],
+        expectedArtifacts: ["tool log"],
+        executionSteps: ["Run OpenCodeTool"],
+        stopCriteria: ["source candidate persisted once"]
+      } as T;
+    }
+    return super.completeJson<T>(request);
+  }
+}
+
+class CaptureInputPlanner extends DeterministicLlmProvider {
+  override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
+    if (request.schemaName === "AetherOpsResearchPlan") {
+      return {
+        objective: "Capture auxiliary tool input arrays.",
+        targetQuestions: ["q1"],
+        targetHypotheses: ["h1"],
+        requiredTools: ["OpenCodeTool", "CaptureInputTool"],
+        expectedSources: ["tool log"],
+        expectedArtifacts: ["tool log"],
+        executionSteps: ["Run capture tool"],
+        stopCriteria: ["input arrays observed"]
+      } as T;
+    }
+    return super.completeJson<T>(request);
+  }
+}
+
 class PartialFailurePlanner extends DeterministicLlmProvider {
   override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
     if (request.schemaName === "AetherOpsResearchPlan") {
@@ -304,6 +386,38 @@ function sourceCandidateAdapter(): OpenCodeAdapter {
   };
 }
 
+function duplicateSourceAdapter(): OpenCodeAdapter {
+  return {
+    run: async (runInput: OpenCodeRunInput): Promise<OpenCodeRunOutput> => ({
+      ...completedOutput(runInput, "duplicate-source", nowIso()),
+      sources: [
+        {
+          id: "duplicate-source-primary",
+          projectId: runInput.project.id,
+          kind: "web",
+          title: "Duplicate source",
+          url: "https://example.edu/duplicate-source#first",
+          retrievedAt: nowIso(),
+          metadata: {},
+          createdAt: nowIso()
+        }
+      ],
+      sourceCandidates: [
+        {
+          id: "duplicate-source-candidate",
+          projectId: runInput.project.id,
+          kind: "web",
+          title: "Duplicate source candidate",
+          url: "https://example.edu/duplicate-source",
+          retrievedAt: nowIso(),
+          metadata: { sourceCandidateOnly: true },
+          createdAt: nowIso()
+        }
+      ]
+    })
+  };
+}
+
 function completedAdapter(): OpenCodeAdapter {
   return {
     run: async (runInput: OpenCodeRunInput): Promise<OpenCodeRunOutput> => completedOutput(runInput, "completed", nowIso())
@@ -340,6 +454,33 @@ function throwingTool(): ResearchTool {
     run: async () => {
       throw new Error("synthetic throw");
     }
+  };
+}
+
+function captureInputTool(): ResearchTool {
+  return {
+    name: "CaptureInputTool",
+    run: async (input: OpenCodeRunInput): Promise<ResearchToolResult> => ({
+      toolRun: {
+        id: "capture-input-tool",
+        projectId: input.project.id,
+        iteration: input.iteration,
+        toolName: "CaptureInputTool",
+        input: {},
+        output: {
+          hasNormalizedRecords: Array.isArray(input.normalizedRecords),
+          hasValidationResults: Array.isArray(input.validationResults),
+          hasProjectContextSnapshots: Array.isArray(input.projectContextSnapshots),
+          hasResults: Array.isArray(input.results)
+        },
+        status: "completed",
+        startedAt: nowIso(),
+        completedAt: nowIso()
+      },
+      evidence: [],
+      artifacts: [],
+      sources: []
+    })
   };
 }
 

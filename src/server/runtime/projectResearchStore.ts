@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, normalize, relative } from "node:p
 import { DatabaseSync } from "node:sqlite";
 import { createId, nowIso } from "../../core/ids.js";
 import type { ProjectStorage } from "../../core/projectStorage.js";
+import { dedupeSourcesByIdUrlDoi } from "../../core/sourceDedupe.js";
 import { ResearchLoopStep } from "../../core/types.js";
 import type {
   FinalResearchOutput,
@@ -125,7 +126,7 @@ export class NodeProjectStorage implements ProjectStorage {
     sources: ResearchSource[]
   ): Promise<ResearchSource[]> {
     const savedSources: ResearchSource[] = [];
-    for (const source of sources) {
+    for (const source of dedupeSourcesByIdUrlDoi(sources)) {
       const sourceWithPath = source.rawPath ? source : await writeSourceText(project, source);
       savedSources.push(sourceWithPath);
       const workspaceSource = isExternalSource(sourceWithPath) ? stripExternalRawPayload(sourceWithPath) : sourceWithPath;

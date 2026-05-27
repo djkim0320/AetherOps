@@ -109,7 +109,7 @@ describe("NodeProjectStorage", () => {
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.createResearchDb(snapshot.project.id);
     const createdAt = "2026-05-20T00:00:00.000Z";
-    const [source] = await projectStorage.writeSources(snapshot.project, snapshot.database!, [
+    const savedSources = await projectStorage.writeSources(snapshot.project, snapshot.database!, [
       {
         id: "source-web-main",
         projectId: snapshot.project.id,
@@ -119,8 +119,19 @@ describe("NodeProjectStorage", () => {
         retrievedAt: createdAt,
         metadata: { rawText: "full fetched page body", fetchStatus: "fetched" },
         createdAt
+      },
+      {
+        id: "source-web-main-duplicate",
+        projectId: snapshot.project.id,
+        kind: "web",
+        title: "Duplicate fetched external page",
+        url: "https://example.edu/pomodoro#section",
+        retrievedAt: createdAt,
+        metadata: { sourceCandidateOnly: true },
+        createdAt
       }
     ]);
+    const [source] = savedSources;
     const [artifact] = await projectStorage.writeArtifacts(snapshot.project, snapshot.database!, 1, [
       {
         id: "artifact-local",
@@ -136,6 +147,8 @@ describe("NodeProjectStorage", () => {
     ]);
 
     expect(source?.rawPath).toContain(join(tempDir, "main", "files", "sources", "web"));
+    expect(savedSources).toHaveLength(1);
+    expect(source?.metadata.sourceCandidateOnly).toBe(true);
     expect(source?.rawPath).not.toContain(join(snapshot.project.projectRoot, "sources", "web"));
     expect(source?.rawPath && existsSync(source.rawPath)).toBe(true);
     expect(artifact?.rawPath).toContain(join(snapshot.project.projectRoot, "artifacts"));

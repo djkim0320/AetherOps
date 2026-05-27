@@ -95,7 +95,11 @@ export class ToolRunner {
       sourceCandidates: [...(input.sourceCandidates ?? [])],
       claims: [...(input.claims ?? [])],
       observations: [...(input.observations ?? [])],
-      toolRuns: [...(input.toolRuns ?? [])]
+      toolRuns: [...(input.toolRuns ?? [])],
+      normalizedRecords: [...(input.normalizedRecords ?? [])],
+      validationResults: [...(input.validationResults ?? [])],
+      projectContextSnapshots: [...(input.projectContextSnapshots ?? [])],
+      results: [...(input.results ?? [])]
     };
     const toolMap = new Map(this.tools.map((tool) => [normalizeToolName(tool.name), tool]));
     const requiredTools = orderToolNames(input.researchPlan?.requiredTools ?? [])
@@ -119,7 +123,11 @@ export class ToolRunner {
         sourceCandidates: [...(rollingInput.sourceCandidates ?? [])],
         claims: [...(rollingInput.claims ?? [])],
         observations: [...(rollingInput.observations ?? [])],
-        toolRuns: [...(rollingInput.toolRuns ?? [])]
+        toolRuns: [...(rollingInput.toolRuns ?? [])],
+        normalizedRecords: [...(rollingInput.normalizedRecords ?? [])],
+        validationResults: [...(rollingInput.validationResults ?? [])],
+        projectContextSnapshots: [...(rollingInput.projectContextSnapshots ?? [])],
+        results: [...(rollingInput.results ?? [])]
       };
       let result: ResearchToolResult;
       try {

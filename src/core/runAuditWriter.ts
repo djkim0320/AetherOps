@@ -55,6 +55,10 @@ export function buildRunAuditOutput(snapshot: ResearchSnapshot, failure?: { step
     continuationDecisionIds: snapshot.continuationDecisions.map((decision) => decision.id),
     evidenceGaps: [...new Set(evidenceGaps)].slice(0, 24),
     recoverableNextActions,
+    unmetRequirements: snapshot.runtimeBlockers.slice(-12).map((blocker) => ({
+      requirementKey: blocker.requirementKey,
+      message: blocker.message
+    })),
     createdAt: nowIso()
   };
   return {
@@ -91,7 +95,9 @@ function renderRunAuditMarkdown(snapshot: ResearchSnapshot, output: Omit<RunAudi
   return [
     "# Research Run Audit",
     "",
-    "**This is not a final research conclusion.**",
+    snapshot.project.status === "blocked"
+      ? "**This is not a final research conclusion. The run was blocked before execution could proceed.**"
+      : "**This is not a final research conclusion.**",
     "",
     "## Failure Summary",
     `- Project ID: ${output.projectId}`,
@@ -116,6 +122,11 @@ function renderRunAuditMarkdown(snapshot: ResearchSnapshot, output: Omit<RunAudi
     "",
     "## Evidence Gaps",
     ...(output.evidenceGaps.length ? output.evidenceGaps.map((gap) => `- ${gap}`) : ["- No evidence gaps recorded."]),
+    "",
+    "## Unmet Requirements",
+    ...(output.unmetRequirements?.length
+      ? output.unmetRequirements.map((requirement) => `- ${requirement.requirementKey}: ${requirement.message}`)
+      : ["- No unmet runtime requirements recorded."]),
     "",
     "## Recoverable Next Actions",
     ...(output.recoverableNextActions.length ? output.recoverableNextActions.map((action) => `- ${action}`) : ["- Inspect the failed step error and resume from the failed step after configuration/data repair."]),

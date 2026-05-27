@@ -11,6 +11,25 @@ export interface LlmProvider {
   completeJson<T>(request: LlmJsonRequest): Promise<T>;
 }
 
+export class LlmTimeoutError extends Error {
+  constructor(
+    message: string,
+    readonly metadata: {
+      provider: string;
+      model?: string;
+      timeoutMs: number;
+      promptLength: number;
+      promptTokenEstimate: number;
+      retryAttempt: number;
+      step?: string;
+      schemaName?: string;
+    }
+  ) {
+    super(message);
+    this.name = "LlmTimeoutError";
+  }
+}
+
 export function extractJsonObject(text: string): unknown {
   const trimmed = text.trim();
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {

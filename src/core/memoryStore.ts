@@ -5,6 +5,7 @@ import type {
   ContinuationDecision,
   FinalResearchOutput,
   GlobalMemoryItem,
+  BenchmarkPlan,
   HybridContext,
   LoopIteration,
   NormalizedResearchRecord,
@@ -27,6 +28,7 @@ import type {
   ResearchSnapshot,
   ResearchStore,
   ProjectContextSnapshot,
+  RunAuditOutput,
   RuntimeBlocker,
   StepError,
   ToolRun,
@@ -60,6 +62,8 @@ export class InMemoryResearchStore implements ResearchStore {
   private validationResults: import("./types.js").ValidationResult[] = [];
   private continuationDecisions: ContinuationDecision[] = [];
   private finalOutputs: FinalResearchOutput[] = [];
+  private runAuditOutputs: RunAuditOutput[] = [];
+  private benchmarkPlans: BenchmarkPlan[] = [];
   private globalMemoryItems: GlobalMemoryItem[] = [];
   private runtimeBlockers: RuntimeBlocker[] = [];
   private stepErrors: StepError[] = [];
@@ -179,6 +183,14 @@ export class InMemoryResearchStore implements ResearchStore {
     this.finalOutputs = this.upsertMany(this.finalOutputs, [output]);
   }
 
+  async saveRunAuditOutput(output: RunAuditOutput): Promise<void> {
+    this.runAuditOutputs = this.upsertMany(this.runAuditOutputs, [output]);
+  }
+
+  async saveBenchmarkPlan(plan: BenchmarkPlan): Promise<void> {
+    this.benchmarkPlans = this.upsertMany(this.benchmarkPlans, [plan]);
+  }
+
   async saveGlobalMemoryItems(items: GlobalMemoryItem[]): Promise<void> {
     this.globalMemoryItems = this.upsertMany(this.globalMemoryItems, items);
   }
@@ -241,6 +253,8 @@ export class InMemoryResearchStore implements ResearchStore {
       validationResults: this.validationResults.filter((item) => item.projectId === projectId),
       continuationDecisions: this.continuationDecisions.filter((item) => item.projectId === projectId),
       finalOutputs: this.finalOutputs.filter((item) => item.projectId === projectId),
+      runAuditOutputs: this.runAuditOutputs.filter((item) => item.projectId === projectId),
+      benchmarkPlans: this.benchmarkPlans.filter((item) => item.projectId === projectId),
       globalMemoryItems: visibleInProject(this.globalMemoryItems, projectId),
       runtimeBlockers: this.runtimeBlockers.filter((item) => item.projectId === projectId),
       stepErrors: this.stepErrors.filter((item) => item.projectId === projectId),

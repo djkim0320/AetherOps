@@ -21,13 +21,16 @@ export class ResultSynthesizer {
     const nextQuestions = needsMoreEvidence
       ? input.validationResults.flatMap((result) => result.evidenceGaps.map((gap) => `How can we resolve this evidence gap: ${gap}`)).slice(0, 5)
       : [];
+    const validationSynthesisMismatch = input.validationResults.some((result) => result.status === "supported") && needsMoreEvidence
+      ? "At least one validation result is supported, but synthesis still needs more evidence because another hypothesis remains inconclusive/not_tested or has evidence gaps."
+      : undefined;
 
     return {
       id: createId("result"),
       projectId: input.snapshot.project.id,
       iteration: input.hybridContext.iteration,
       answer: [
-        `${input.snapshot.project.topic} 연구의 현재 결론은 근거 수준에 따라 제한적으로 판단해야 합니다.`,
+        `${input.snapshot.project.topic} 연구의 현재 결론은 근거 추적 상태에 따라 제한적으로 판단해야 합니다.`,
         `검증 결과 ${input.validationResults.length}건 중 supported=${count(input.validationResults, "supported")}, partially_supported=${count(input.validationResults, "partially_supported")}, contradicted=${count(input.validationResults, "contradicted")}, inconclusive=${count(input.validationResults, "inconclusive")}, not_tested=${count(input.validationResults, "not_tested")}입니다.`,
         input.hybridContext.citations.length
           ? `사용 가능한 citation/source는 ${input.hybridContext.citations.length}개입니다.`
@@ -39,7 +42,10 @@ export class ResultSynthesizer {
           hypothesisId: hypothesis.id,
           status: mapHypothesisStatus(validation?.status),
           confidence: validation?.confidence ?? Math.max(0.2, hypothesis.confidence * 0.8),
-          rationale: validation?.reasoningSummary ?? "No validation result was produced for this hypothesis."
+          rationale: [
+            validation?.reasoningSummary ?? "No validation result was produced for this hypothesis.",
+            validationSynthesisMismatch ? `Synthesis downgrade note: ${validationSynthesisMismatch}` : ""
+          ].filter(Boolean).join(" ")
         };
       }),
       quantitativeResults: [
@@ -60,6 +66,7 @@ export class ResultSynthesizer {
       needsMoreAnalysis,
       validationResultIds: input.validationResults.map((result) => result.id),
       hybridContextId: input.hybridContext.id,
+      metadata: validationSynthesisMismatch ? { validationSynthesisMismatch } : {},
       createdAt: nowIso()
     };
   }

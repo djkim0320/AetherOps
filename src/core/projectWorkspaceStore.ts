@@ -1,10 +1,12 @@
 import type {
   ContinuationDecision,
   FinalResearchOutput,
+  BenchmarkPlan,
   ProjectContextSnapshot,
   ResearchInput,
   ResearchPlan,
   ResearchSpecification,
+  RunAuditOutput,
   ValidationResult
 } from "./types.js";
 
@@ -19,4 +21,6 @@ export interface ProjectWorkspaceStore {
   saveValidationResults(results: ValidationResult[]): Promise<void>;
   saveContinuationDecision(decision: ContinuationDecision): Promise<void>;
   saveFinalResearchOutput(output: FinalResearchOutput): Promise<void>;
+  saveRunAuditOutput(output: RunAuditOutput): Promise<void>;
+  saveBenchmarkPlan(plan: BenchmarkPlan): Promise<void>;
 }

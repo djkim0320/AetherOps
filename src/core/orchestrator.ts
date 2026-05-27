@@ -4,7 +4,7 @@ import { EvidenceNormalizer } from "./evidenceNormalizer.js";
 import { FinalOutputWriter } from "./finalOutputWriter.js";
 import { HybridRetrievalEngine } from "./hybridRetrievalEngine.js";
 import { createId, createStableId, nowIso } from "./ids.js";
-import type { LlmProvider } from "./llm.js";
+import { LlmTimeoutError, type LlmProvider } from "./llm.js";
 import { deriveResultWithLlm } from "./llmPlanning.js";
 import { LoopDecisionEngine } from "./loopDecision.js";
 import { MemoryPromotionEngine } from "./memoryPromotion.js";
@@ -15,6 +15,7 @@ import { ReasoningEngine } from "./reasoningEngine.js";
 import { createResearchInput, type ResearchInputPayload } from "./researchInput.js";
 import { buildResearchReport } from "./report.js";
 import { ResearchPlanner } from "./researchPlanner.js";
+import { buildBenchmarkPlan, RunAuditWriter } from "./runAuditWriter.js";
 import { createDefaultSessions } from "./researchSeed.js";
 import { ResearchSpecificationBuilder } from "./researchSpecification.js";
 import { RuntimeRequirementChecker, RuntimeRequirementError } from "./runtimeRequirements.js";
@@ -33,6 +34,7 @@ import {
   type FlowKind,
   type LoopIteration,
   type OpenCodeAdapter,
+  type OpenCodeRunInput,
   type OpenCodeRunOutput,
   type RagContext,
   type RagEngine,
@@ -100,7 +102,12 @@ export class AetherOpsOrchestrator {
     private readonly toolRunner?: ToolRunner
   ) {
     this.specificationBuilder = new ResearchSpecificationBuilder(llm);
-    this.planner = new ResearchPlanner(llm);
+    this.planner = new ResearchPlanner(llm, async (projectId, error, retryAttempt) => {
+      await this.saveStepError(projectId, ResearchLoopStep.PlanResearch, error.message, "llm_timeout", {
+        ...error.metadata,
+        retryAttempt
+      });
+    });
   }
 
   async listProjects(): Promise<ResearchProject[]> {
@@ -408,17 +415,21 @@ export class AetherOpsOrchestrator {
     const activeIteration = iteration ?? nextIteration(snapshot);
     await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
     await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", `Iteration ${activeIteration} 도구 실행 및 연구 수행을 시작합니다.`);
-    const runInput = {
+    const researchPlan = snapshot.researchPlans.at(-1);
+    const projectContextSnapshot = snapshot.projectContextSnapshots.at(-1);
+    const continuationSources = sourceCandidatesFromPlan(projectId, activeIteration, researchPlan, projectContextSnapshot);
+    const runInput: OpenCodeRunInput = {
       project: snapshot.project,
       questions: snapshot.questions,
       hypotheses: snapshot.hypotheses,
       evidence: snapshot.evidence,
       artifacts: snapshot.artifacts,
-      sources: snapshot.sources,
+      sources: [...snapshot.sources, ...continuationSources],
       ragContext: snapshot.ragContexts.at(-1),
       hybridContext: snapshot.hybridContexts.at(-1),
       specification: snapshot.specifications.at(-1),
-      researchPlan: snapshot.researchPlans.at(-1),
+      researchPlan,
+      projectContextSnapshot,
       iteration: activeIteration
     };
     try {
@@ -625,8 +636,8 @@ export class AetherOpsOrchestrator {
       iteration: activeIteration,
       store: this.store
     });
-    if (!contextSnapshot.selectedRecordIds.length) {
-      throw new Error("ProjectContextSnapshot could not select any Main Research Memory records for validation.");
+    if (!contextSnapshot.selectedRecordIds.length && !contextSnapshot.selectedChunkIds.length && !contextSnapshot.selectedEntityIds.length && !contextSnapshot.selectedRelationIds.length) {
+      throw new Error("ProjectContextSnapshot could not select any Main Research Memory context for validation.");
     }
     await this.store.saveProjectContextSnapshot(contextSnapshot);
     const afterContext = await this.store.getSnapshot(projectId);
@@ -733,6 +744,7 @@ export class AetherOpsOrchestrator {
     const promotionSnapshot = await this.store.getSnapshot(projectId);
     const promoted = this.memoryPromotion.promote(promotionSnapshot);
     if (promoted.length) await this.store.saveGlobalMemoryItems(promoted);
+    await this.store.saveBenchmarkPlan(buildBenchmarkPlan(promotionSnapshot));
     await this.moveProject(projectId, ResearchLoopStep.FinalizeOutputs, "completed");
     await this.record(projectId, ResearchLoopStep.FinalizeOutputs, "Output Flow", `최종 보고서, 지식 자산, 그래프 export, artifact package가 생성되었습니다. 승격된 memory item=${promoted.length}.`);
     return this.store.getSnapshot(projectId);
@@ -945,8 +957,21 @@ export class AetherOpsOrchestrator {
 
   private async failProject(projectId: string, step: ResearchLoopStep, error: unknown): Promise<void> {
     await this.moveProject(projectId, step, "failed");
-    await this.saveStepError(projectId, step, formatError(error), "step_failed", {});
+    await this.saveStepError(projectId, step, formatError(error), "step_failed", errorMetadata(error, step));
     await this.record(projectId, step, "Error Flow", `연구 단계 실패: ${formatError(error)}`);
+    await this.writeRunAudit(projectId, step, formatError(error));
+  }
+
+  private async writeRunAudit(projectId: string, step: ResearchLoopStep, reason: string): Promise<void> {
+    try {
+      const snapshot = await this.store.getSnapshot(projectId);
+      const database = await this.requireDatabase(projectId);
+      const output = await new RunAuditWriter(this.projectStorage).write(snapshot, database, { step, reason });
+      await this.store.saveRunAuditOutput(output);
+      await this.store.saveBenchmarkPlan(buildBenchmarkPlan(snapshot));
+    } catch {
+      // A failed audit must not mask the original failed research step.
+    }
   }
 
   private async saveStepError(
@@ -1339,6 +1364,59 @@ function resolveSafetyCapIterations(maxLoopIterations: number | undefined): numb
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function errorMetadata(error: unknown, step: ResearchLoopStep): Record<string, unknown> {
+  if (error instanceof LlmTimeoutError) {
+    return {
+      ...error.metadata,
+      step,
+      timeout: true
+    };
+  }
+  return {};
+}
+
+function sourceCandidatesFromPlan(
+  projectId: string,
+  iteration: number,
+  plan: ResearchPlan | undefined,
+  context: ResearchSnapshot["projectContextSnapshots"][number] | undefined
+): ResearchSource[] {
+  const urls = new Map<string, string>();
+  for (const url of plan?.fetchCandidateUrls ?? []) {
+    const normalized = normalizePublicHttpUrl(url);
+    if (normalized) urls.set(normalized, normalized);
+  }
+  return [...urls.values()].map((url, index) => ({
+    id: createStableId("source", `${projectId}:${iteration}:fetch-candidate:${url}`),
+    projectId,
+    kind: "web",
+    title: `Continuation fetch candidate ${index + 1}`,
+    url,
+    retrievedAt: nowIso(),
+    metadata: {
+      fromContinuationDecision: true,
+      fromResearchPlan: plan?.id,
+      fromProjectContextSnapshotId: context?.id,
+      memoryScope: "project_only",
+      sourceCandidateOnly: true,
+      canSupportHypothesis: false
+    },
+    createdAt: nowIso()
+  }));
+}
+
+function normalizePublicHttpUrl(value: string): string | undefined {
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+    parsed.hash = "";
+    parsed.hostname = parsed.hostname.toLowerCase();
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeToolNameForPlan(value: string): string {

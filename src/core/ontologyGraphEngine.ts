@@ -218,6 +218,16 @@ export class OntologyGraphEngine {
         confidence: 0.76
       });
       builder.relation({ subjectId: evidenceId, predicate: "cites", objectId: sourceId, sourceEvidenceId: evidence.id, confidence: 0.76 });
+      const citationId = builder.entity({
+        type: "Citation",
+        label: evidence.citation ?? evidence.sourceUri ?? evidence.doi ?? evidence.title,
+        key: `citation:${evidence.id}:${evidence.citation ?? evidence.sourceUri ?? evidence.doi}`,
+        description: [evidence.quote, evidence.sourceUri, evidence.doi].filter(Boolean).join(" / "),
+        sourceEvidenceId: evidence.id,
+        confidence: 0.78
+      });
+      builder.relation({ subjectId: evidenceId, predicate: "cites", objectId: citationId, sourceEvidenceId: evidence.id, confidence: 0.78 });
+      builder.relation({ subjectId: sourceId, predicate: "hasCitation", objectId: citationId, sourceEvidenceId: evidence.id, confidence: 0.76 });
     }
     for (const hypothesisId of evidence.linkedHypothesisIds) {
       const targetId = builder.entityId("Hypothesis", hypothesisId);
@@ -318,6 +328,23 @@ export class OntologyGraphEngine {
         sourceRecordId: record.id,
         sourceEvidenceId: record.evidenceId,
         confidence: 0.7
+      });
+      const citationId = builder.entity({
+        type: "Citation",
+        label: record.citation ?? record.sourceUri ?? record.title,
+        key: `record-citation:${record.id}:${record.citation ?? record.sourceUri}`,
+        description: record.sourceUri,
+        sourceRecordId: record.id,
+        sourceEvidenceId: record.evidenceId,
+        confidence: 0.68
+      });
+      builder.relation({
+        subjectId: sourceId,
+        predicate: "hasCitation",
+        objectId: citationId,
+        sourceRecordId: record.id,
+        sourceEvidenceId: record.evidenceId,
+        confidence: 0.68
       });
     }
     for (const hypothesisId of readStringArray(record.metadata.linkedHypothesisIds)) {
@@ -611,7 +638,8 @@ class GraphBuilder {
 function entityTypeForRecord(record: NormalizedResearchRecord): OntologyEntityType {
   if (record.kind === "claim") return "Claim";
   if (record.kind === "evidence") return "Evidence";
-  if (record.kind === "source" || record.kind === "citation") return "Source";
+  if (record.kind === "source") return "Source";
+  if (record.kind === "citation") return "Citation";
   if (record.kind === "artifact") return "Artifact";
   if (record.kind === "observation") return "Result";
   return "Result";

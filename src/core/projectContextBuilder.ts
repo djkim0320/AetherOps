@@ -1,4 +1,5 @@
 import { createId, nowIso } from "./ids.js";
+import { graphPathForEvidence, isSupportEligibleEvidenceRecord } from "./evidenceEligibility.js";
 import { normalizeMemoryScope } from "./researchMemory.js";
 import type { ProjectContextSnapshot, ResearchSnapshot, ResearchStore } from "./types.js";
 
@@ -108,12 +109,12 @@ export class ProjectContextBuilder {
       .filter(({ relation, relevance }) => normalizeMemoryScope(relation.memoryScope) !== "global" || relevance > 0 || selectedEntitySet.has(relation.subjectId) || selectedEntitySet.has(relation.objectId))
       .sort((left, right) => right.score - left.score)
       .slice(0, 24);
-    const selectedRelationIds = rankedRelations.map(({ relation }) => relation.id);
+    const selectedRelationIds = new Set(rankedRelations.map(({ relation }) => relation.id));
     for (const { relation } of rankedRelations) {
       if (relation.sourceRecordId && eligibleRecordById.has(relation.sourceRecordId)) selectedRecordIds.add(relation.sourceRecordId);
     }
 
-    if (!selectedRecordIds.size && !selectedChunkIds.length && !selectedEntityIds.length && !selectedRelationIds.length) {
+    if (!selectedRecordIds.size && !selectedChunkIds.length && !selectedEntityIds.length && !selectedRelationIds.size) {
       throw new ProjectContextSelectionError(snapshot.project.id, iteration, query);
     }
     const selectedRecords = [...selectedRecordIds].map((id) => eligibleRecordById.get(id)).filter((record): record is NonNullable<typeof record> => Boolean(record));
@@ -123,13 +124,13 @@ export class ProjectContextBuilder {
     ]);
     const eligibleEvidenceIds = new Set(
       [...eligibleRecordById.values()]
-        .filter(isSupportEligibleEvidenceRecord)
+        .filter((record) => isSupportEligibleEvidenceRecord(record, graphPathForEvidence(snapshot, record.evidenceId ?? ""), { requireGraphPath: false }))
         .map((record) => record.evidenceId)
         .filter((id): id is string => Boolean(id))
     );
     const selectedEvidenceIds = new Set(
       selectedRecords
-        .filter(isSupportEligibleEvidenceRecord)
+        .filter((record) => isSupportEligibleEvidenceRecord(record, graphPathForEvidence(snapshot, record.evidenceId ?? ""), { requireGraphPath: false }))
         .map((record) => record.evidenceId)
         .filter((id): id is string => Boolean(id))
     );
@@ -141,6 +142,11 @@ export class ProjectContextBuilder {
     }
     for (const { relation } of rankedRelations) {
       if (relation.sourceEvidenceId && eligibleEvidenceIds.has(relation.sourceEvidenceId)) selectedEvidenceIds.add(relation.sourceEvidenceId);
+    }
+    for (const evidenceId of selectedEvidenceIds) {
+      for (const relationId of graphPathForEvidence(snapshot, evidenceId).relationIds) {
+        selectedRelationIds.add(relationId);
+      }
     }
     const citations = new Set<string>();
     for (const record of selectedRecords) {
@@ -173,13 +179,13 @@ export class ProjectContextBuilder {
       selectedEvidenceIds: [...selectedEvidenceIds],
       selectedChunkIds,
       selectedEntityIds,
-      selectedRelationIds,
+      selectedRelationIds: [...selectedRelationIds],
       citations: [...citations],
       selectionReason: [
         selectionPrefix,
         `Candidates: global=${candidateGlobalRecords}, project=${candidateProjectRecords}.`,
         `Context candidates: records=${scopedRecords.length}, chunks=${candidateChunks}, entities=${candidateEntities}, relations=${candidateRelations}.`,
-        `Selected context: records=${selectedRecordIds.size}, chunks=${selectedChunkIds.length}, entities=${selectedEntityIds.length}, relations=${selectedRelationIds.length}, evidence=${selectedEvidenceIds.size}.`,
+        `Selected context: records=${selectedRecordIds.size}, chunks=${selectedChunkIds.length}, entities=${selectedEntityIds.length}, relations=${selectedRelationIds.size}, evidence=${selectedEvidenceIds.size}.`,
         `Selected records: global=${selectedGlobalRecords}, project=${selectedProjectRecords}.`,
         `Reverse-included parents: fromChunks=${rankedChunks.filter(({ chunk }) => chunk.recordId && selectedRecordIds.has(chunk.recordId)).length}, fromGraphRecords=${[...rankedEntities.map(({ entity }) => entity.sourceRecordId), ...rankedRelations.map(({ relation }) => relation.sourceRecordId)].filter((id) => id && selectedRecordIds.has(id)).length}, fromGraphEvidence=${[...rankedEntities.map(({ entity }) => entity.sourceEvidenceId), ...rankedRelations.map(({ relation }) => relation.sourceEvidenceId)].filter((id) => id && selectedEvidenceIds.has(id)).length}.`,
         `Excluded records: ephemeral=${excludedEphemeral}, error=${excludedError}, rejected=${excludedRejected}, unsupportedInternal=${excludedUnsupportedInternal}, weakSupport=${excludedWeakSupport}, lowRelevanceGlobal=${excludedLowRelevanceGlobal}.`,
@@ -195,17 +201,6 @@ function isEligibleRecord(record: ResearchSnapshot["normalizedRecords"][number])
     record.validationStatus !== "rejected" &&
     !(record.kind === "evidence" && ["weak", "excluded", "general_web"].includes(String(record.metadata.sourceQualityTier ?? ""))) &&
     !((record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") && record.metadata.canSupportHypothesis !== true);
-}
-
-function isSupportEligibleEvidenceRecord(record: ResearchSnapshot["normalizedRecords"][number]): boolean {
-  const traceabilityKind = String(record.metadata.traceabilityKind ?? "");
-  const sourceQualityTier = String(record.metadata.sourceQualityTier ?? "");
-  return record.kind === "evidence" &&
-    record.metadata.canSupportHypothesis === true &&
-    (traceabilityKind === "external_source" || traceabilityKind === "tool_observation") &&
-    !["weak", "excluded", "general_web"].includes(sourceQualityTier) &&
-    normalizeMemoryScope(record.memoryScope) !== "ephemeral" &&
-    record.validationStatus !== "rejected";
 }
 
 function buildProjectQuery(snapshot: ResearchSnapshot): string {

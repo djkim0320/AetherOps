@@ -1,5 +1,5 @@
 import { createId, nowIso } from "./ids.js";
-import type { LlmProvider } from "./llm.js";
+import { LlmTimeoutError, type LlmProvider } from "./llm.js";
 import { normalizeToolName, orderToolNames } from "./toolRunner.js";
 import type {
   AppSettings,
@@ -18,10 +18,14 @@ interface PlanLlmResponse {
   expectedArtifacts?: string[];
   executionSteps?: string[];
   stopCriteria?: string[];
+  fetchCandidateUrls?: string[];
 }
 
 export class ResearchPlanner {
-  constructor(private readonly llm?: LlmProvider) {}
+  constructor(
+    private readonly llm?: LlmProvider,
+    private readonly onTimeout?: (projectId: string, error: LlmTimeoutError, retryAttempt: number) => void | Promise<void>
+  ) {}
 
   async plan(input: {
     snapshot: ResearchSnapshot;
@@ -36,7 +40,63 @@ export class ResearchPlanner {
       throw new Error("LLM provider is required to create a research plan.");
     }
 
-    const response = await this.llm.completeJson<PlanLlmResponse>({
+    const response = await this.requestPlanJson(input, false);
+
+    const fetchCandidateUrls = strings(response.fetchCandidateUrls, defaultPlan.fetchCandidateUrls ?? []);
+    const expectedSources = strings(response.expectedSources, defaultPlan.expectedSources);
+    const expectedSourcesWithFetchCandidates = fetchCandidateUrls.length
+      ? [...new Set([...expectedSources, ...fetchCandidateUrls.map((url) => `Fetch candidate URL: ${url}`)])]
+      : expectedSources;
+    const requiredTools = orderToolNames(ensureHintTools(strings(response.requiredTools, defaultPlan.requiredTools), { ...input, fetchCandidateUrls }));
+    return {
+      ...defaultPlan,
+      objective: clean(response.objective) || defaultPlan.objective,
+      targetQuestions: selectIdsOrText(response.targetQuestions, defaultPlan.targetQuestions),
+      targetHypotheses: selectIdsOrText(response.targetHypotheses, defaultPlan.targetHypotheses),
+      requiredTools,
+      expectedSources: expectedSourcesWithFetchCandidates,
+      expectedArtifacts: strings(response.expectedArtifacts, defaultPlan.expectedArtifacts),
+      executionSteps: strings(response.executionSteps, defaultPlan.executionSteps),
+      steps: strings(response.executionSteps, defaultPlan.executionSteps),
+      stopCriteria: strings(response.stopCriteria, defaultPlan.stopCriteria),
+      fetchCandidateUrls
+    };
+  }
+
+  private async requestPlanJson(input: {
+    snapshot: ResearchSnapshot;
+    specification: ResearchSpecification;
+    iteration: number;
+    settings: AppSettings;
+    availableTools: string[];
+    continuationDecision?: ContinuationDecision;
+  }, compact: boolean): Promise<PlanLlmResponse> {
+    try {
+      return await this.requestPlanJsonOnce(input, compact);
+    } catch (error) {
+      if (!compact && error instanceof LlmTimeoutError) {
+        await this.onTimeout?.(input.snapshot.project.id, error, 0);
+        return this.requestPlanJson(input, true);
+      }
+      if (compact && error instanceof LlmTimeoutError) {
+        const retryError = new LlmTimeoutError(error.message, { ...error.metadata, retryAttempt: 1 });
+        await this.onTimeout?.(input.snapshot.project.id, retryError, 1);
+        throw retryError;
+      }
+      throw error;
+    }
+  }
+
+  private requestPlanJsonOnce(input: {
+    snapshot: ResearchSnapshot;
+    specification: ResearchSpecification;
+    iteration: number;
+    settings: AppSettings;
+    availableTools: string[];
+    continuationDecision?: ContinuationDecision;
+  }, compact: boolean): Promise<PlanLlmResponse> {
+    const latestContext = input.snapshot.projectContextSnapshots.at(-1);
+    return this.llm!.completeJson<PlanLlmResponse>({
       schemaName: "AetherOpsResearchPlan",
       system: [
         "Create an executable research plan for one iteration.",
@@ -44,7 +104,38 @@ export class ResearchPlanner {
         "Do not claim unavailable sources were collected.",
         "Choose requiredTools only from the provided availableTools list. Return only JSON."
       ].join("\n"),
-      user: [
+      user: compact ? [
+        "The previous planning request timed out. Produce a compact executable plan.",
+        `Specification summary: ${JSON.stringify({
+          researchQuestions: input.specification.researchQuestions.slice(0, 5),
+          refinedHypotheses: input.specification.refinedHypotheses.slice(0, 5),
+          requiredEvidenceTypes: input.specification.requiredEvidenceTypes.slice(0, 6),
+          evaluationMetrics: input.specification.evaluationMetrics.slice(0, 6)
+        })}`,
+        `Previous continuation decision: ${JSON.stringify({
+          nextObjective: input.continuationDecision?.nextObjective,
+          evidenceGaps: input.continuationDecision?.evidenceGaps?.slice(0, 8),
+          planRevisionHints: input.continuationDecision?.planRevisionHints?.slice(0, 8),
+          fetchCandidateUrls: input.continuationDecision?.fetchCandidateUrls?.slice(0, 8)
+        })}`,
+        `Latest ProjectContextSnapshot summary: ${JSON.stringify(latestContext ? {
+          id: latestContext.id,
+          iteration: latestContext.iteration,
+          selectedRecordCount: latestContext.selectedRecordIds.length,
+          selectedSourceCount: latestContext.selectedSourceIds.length,
+          selectedEvidenceCount: latestContext.selectedEvidenceIds.length,
+          citationCount: latestContext.citations.length,
+          citations: latestContext.citations.slice(0, 8)
+        } : undefined)}`,
+        `Settings and executable tools: ${JSON.stringify({
+          allowExternalSearch: input.settings.allowExternalSearch,
+          allowCodeExecution: input.settings.allowCodeExecution,
+          webSearchProvider: input.settings.webSearch.provider,
+          openCodeEnabled: input.settings.openCode.enabled,
+          availableTools: input.availableTools
+        })}`,
+        "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria, fetchCandidateUrls."
+      ].join("\n\n") : [
         `Specification: ${JSON.stringify(input.specification)}`,
         `Previous validation: ${JSON.stringify(input.snapshot.validationResults.slice(-8))}`,
         `Previous continuation decision: ${JSON.stringify(input.continuationDecision)}`,
@@ -55,24 +146,10 @@ export class ResearchPlanner {
           openCodeEnabled: input.settings.openCode.enabled,
           availableTools: input.availableTools
         })}`,
-        "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria."
+        "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria, fetchCandidateUrls."
       ].join("\n\n"),
       timeoutMs: 120_000
     });
-
-    const requiredTools = orderToolNames(ensureHintTools(strings(response.requiredTools, defaultPlan.requiredTools), input));
-    return {
-      ...defaultPlan,
-      objective: clean(response.objective) || defaultPlan.objective,
-      targetQuestions: selectIdsOrText(response.targetQuestions, defaultPlan.targetQuestions),
-      targetHypotheses: selectIdsOrText(response.targetHypotheses, defaultPlan.targetHypotheses),
-      requiredTools,
-      expectedSources: strings(response.expectedSources, defaultPlan.expectedSources),
-      expectedArtifacts: strings(response.expectedArtifacts, defaultPlan.expectedArtifacts),
-      executionSteps: strings(response.executionSteps, defaultPlan.executionSteps),
-      steps: strings(response.executionSteps, defaultPlan.executionSteps),
-      stopCriteria: strings(response.stopCriteria, defaultPlan.stopCriteria)
-    };
   }
 
   private buildDefaultPlan(input: {
@@ -84,15 +161,19 @@ export class ResearchPlanner {
     continuationDecision?: ContinuationDecision;
   }): ResearchPlan {
     const available = new Set(input.availableTools.map(normalizeToolName));
-    const hasFetchHint = (input.continuationDecision?.planRevisionHints ?? []).some((hint) => /webfetchtool|fetch selected source urls/i.test(hint));
+    const fetchCandidateUrls = input.continuationDecision?.fetchCandidateUrls ?? [];
+    const hasPdfTargets = fetchCandidateUrls.some((url) => /\.pdf($|[?#])/i.test(url) || /arxiv\.org\/abs\//i.test(url));
+    const hasFetchHint = fetchCandidateUrls.length > 0 || (input.continuationDecision?.planRevisionHints ?? []).some((hint) => /webfetchtool|fetch selected source urls/i.test(hint));
     const hasExternalUrls =
       input.snapshot.evidence.some((item) => typeof item.sourceUri === "string" && /^https?:\/\//i.test(item.sourceUri)) ||
       input.snapshot.sources.some((source) => typeof source.url === "string" && /^https?:\/\//i.test(source.url));
-    const externalSearchReady = input.settings.allowExternalSearch && input.settings.webSearch.provider !== "disabled";
+    const externalNetworkReady = input.settings.allowExternalSearch;
+    const webSearchReady = input.settings.allowExternalSearch && input.settings.webSearch.provider !== "disabled";
     const candidateTools = [
       "OpenCodeTool",
-      ...(externalSearchReady ? ["WebSearchTool"] : []),
-      ...(externalSearchReady && (hasFetchHint || hasExternalUrls || available.has(normalizeToolName("WebSearchTool"))) ? ["WebFetchTool"] : []),
+      ...(webSearchReady ? ["WebSearchTool"] : []),
+      ...(externalNetworkReady && (hasFetchHint || hasExternalUrls || available.has(normalizeToolName("WebSearchTool"))) ? ["WebFetchTool"] : []),
+      ...(hasPdfTargets ? ["PdfIngestionTool"] : []),
       ...(input.settings.browserUse.enabled && input.settings.allowExternalSearch ? ["BackgroundBrowserTool"] : []),
       ...(input.settings.allowCodeExecution ? ["CodeExecutionTool"] : []),
       "ArtifactWriterTool",
@@ -134,6 +215,7 @@ export class ResearchPlanner {
         "No new evidence/artifact/chunk/entity/relation is produced.",
         "The internal runaway-prevention safety cap is reached."
       ],
+      fetchCandidateUrls,
       createdAt: nowIso()
     };
   }
@@ -144,10 +226,11 @@ function ensureHintTools(
   input: {
     availableTools: string[];
     continuationDecision?: ContinuationDecision;
+    fetchCandidateUrls?: string[];
   }
 ): string[] {
   const available = new Set(input.availableTools.map(normalizeToolName));
-  const needsFetch = (input.continuationDecision?.planRevisionHints ?? []).some((hint) => /webfetchtool|fetch selected source urls/i.test(hint));
+  const needsFetch = Boolean(input.fetchCandidateUrls?.length) || (input.continuationDecision?.planRevisionHints ?? []).some((hint) => /webfetchtool|fetch selected source urls/i.test(hint));
   const result = [...tools];
   if (needsFetch && available.has(normalizeToolName("WebFetchTool")) && !result.some((tool) => normalizeToolName(tool) === normalizeToolName("WebFetchTool"))) {
     result.push("WebFetchTool");

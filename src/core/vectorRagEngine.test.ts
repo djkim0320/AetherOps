@@ -62,6 +62,8 @@ describe("VectorRagEngine", () => {
       validationResults: [],
       continuationDecisions: [],
       finalOutputs: [],
+      runAuditOutputs: [],
+      benchmarkPlans: [],
       runtimeBlockers: [],
       stepErrors: [],
       openCodeRuns: [],

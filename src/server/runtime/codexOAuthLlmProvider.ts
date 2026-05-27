@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { extractJsonObject, type LlmJsonRequest, type LlmProvider } from "../../core/llm.js";
+import { extractJsonObject, LlmTimeoutError, type LlmJsonRequest, type LlmProvider } from "../../core/llm.js";
 
 interface CodexOAuthLlmProviderOptions {
   codexHome?: string;
@@ -51,7 +51,7 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     ].join("\n");
 
     try {
-      const raw = await this.runCodexExec(prompt, outputPath, request.timeoutMs ?? this.timeoutMs);
+      const raw = await this.runCodexExec(prompt, outputPath, request.timeoutMs ?? this.timeoutMs, request.schemaName);
       const finalMessage = readFileIfExists(outputPath) || raw;
       try {
         return extractJsonObject(finalMessage) as T;
@@ -102,7 +102,7 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     }
   }
 
-  private async runCodexExec(prompt: string, outputPath: string, timeoutMs: number): Promise<string> {
+  private async runCodexExec(prompt: string, outputPath: string, timeoutMs: number, schemaName?: string): Promise<string> {
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, "", "utf8");
 
@@ -120,7 +120,7 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     if (model) {
       args.splice(1, 0, "--model", model);
     }
-    return this.runCommand(args, prompt, timeoutMs);
+    return this.runCommand(args, prompt, timeoutMs, schemaName, model);
   }
 
   private async resolveModel(): Promise<string | undefined> {
@@ -151,7 +151,7 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     ].join("\n");
 
     try {
-      const raw = await this.runCodexExec(repairPrompt, repairOutputPath, Math.min(timeoutMs, 120_000));
+      const raw = await this.runCodexExec(repairPrompt, repairOutputPath, Math.min(timeoutMs, 120_000), request.schemaName);
       return readFileIfExists(repairOutputPath) || raw;
     } catch (repairError) {
       throw new Error(`LLM JSON parsing failed and repair failed: ${formatParseError(parseError)}; ${formatParseError(repairError)}`);
@@ -160,7 +160,7 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     }
   }
 
-  private runCommand(args: string[], stdin: string, timeoutMs: number): Promise<string> {
+  private runCommand(args: string[], stdin: string, timeoutMs: number, schemaName?: string, model?: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const command = process.platform === "win32" ? "cmd.exe" : "codex";
       const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", "codex", ...args] : args;
@@ -168,7 +168,10 @@ export class CodexOAuthLlmProvider implements LlmProvider {
         cwd: this.cwd,
         env: {
           ...process.env,
-          CODEX_HOME: this.codexHome
+          CODEX_HOME: this.codexHome,
+          PYTHONIOENCODING: "utf-8",
+          LANG: process.env.LANG ?? "C.UTF-8",
+          LC_ALL: process.env.LC_ALL ?? "C.UTF-8"
         },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true
@@ -179,7 +182,16 @@ export class CodexOAuthLlmProvider implements LlmProvider {
       let stderr = "";
       const timer = setTimeout(() => {
         child.kill();
-        reject(new Error(`Codex LLM request timed out after ${timeoutMs}ms.`));
+        reject(new LlmTimeoutError(`Codex LLM request timed out after ${timeoutMs}ms.`, {
+          provider: this.name,
+          model,
+          timeoutMs,
+          promptLength: stdin.length,
+          promptTokenEstimate: Math.ceil(stdin.length / 4),
+          retryAttempt: 0,
+          step: schemaName === "AetherOpsResearchPlan" ? "PLAN_RESEARCH" : undefined,
+          schemaName
+        }));
       }, timeoutMs);
 
       child.stdout.setEncoding("utf8");

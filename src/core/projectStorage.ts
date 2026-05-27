@@ -11,6 +11,7 @@ import type {
   ResearchReport,
   ResearchSnapshot,
   ResearchSource,
+  RunAuditOutput,
   RuntimeBlocker,
   StepError,
   ToolRun
@@ -59,6 +60,11 @@ export interface ProjectStorage {
     evidenceCitations: unknown,
     hypothesisVerification: unknown
   ): Promise<{ reportPath: string; knowledgePath: string; ontologyExportPath: string; artifactPackagePath: string }>;
+  writeRunAuditFiles?(
+    project: ResearchProject,
+    database: ResearchDatabase,
+    output: RunAuditOutput
+  ): Promise<{ reportPath: string; jsonPath: string }>;
   writeRuntimeBlocker?(project: ResearchProject, blocker: RuntimeBlocker): Promise<void>;
   writeStepError?(project: ResearchProject, error: StepError): Promise<void>;
   writeProjectState(snapshot: ResearchSnapshot): Promise<void>;

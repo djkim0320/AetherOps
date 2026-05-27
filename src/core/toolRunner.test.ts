@@ -289,6 +289,42 @@ describe("ToolRunner web tool pipeline", () => {
     });
   });
 
+  it("fetches from ResearchPlan.fetchCandidateUrls before source and citation candidates", async () => {
+    const input = {
+      ...runInput(["WebFetchTool"]),
+      researchPlan: {
+        ...runInput(["WebFetchTool"]).researchPlan!,
+        fetchCandidateUrls: ["https://example.edu/from-plan"]
+      },
+      sources: [webSource("s1", "https://example.edu/from-source")],
+      evidence: [
+        { id: "e1", projectId: "project-1", category: "web_source" as const, title: "Citation URL", summary: "Summary", citation: "See https://example.edu/from-citation", keywords: [], linkedHypothesisIds: [], createdAt }
+      ]
+    };
+    const fetched: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        fetched.push(url);
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          url,
+          headers: new Headers({ "content-type": "text/html" }),
+          text: async () => `<html><title>${url}</title><body>Readable text for ${url}</body></html>`
+        };
+      })
+    );
+
+    const result = await new WebFetchTool().run(input, settings);
+
+    expect(result.toolRun.status).toBe("completed");
+    expect(fetched[0]).toBe("https://example.edu/from-plan");
+    expect(fetched).toContain("https://example.edu/from-source");
+    expect(fetched).toContain("https://example.edu/from-citation");
+  });
+
   it("blocks internal WebFetch URLs before fetch and records failure reasons", async () => {
     const input = {
       ...runInput(["WebFetchTool"]),

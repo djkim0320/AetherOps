@@ -1,6 +1,7 @@
 ﻿import { describe, expect, it } from "vitest";
 import { EvidenceNormalizer } from "./evidenceNormalizer.js";
 import { HybridRetrievalEngine } from "./hybridRetrievalEngine.js";
+import { LlmTimeoutError, type LlmJsonRequest, type LlmProvider } from "./llm.js";
 import { LoopDecisionEngine } from "./loopDecision.js";
 import { MemoryPromotionEngine } from "./memoryPromotion.js";
 import { OntologyGraphEngine } from "./ontologyGraphEngine.js";
@@ -159,6 +160,8 @@ function snapshot(): ResearchSnapshot {
     validationResults: [],
     continuationDecisions: [],
     finalOutputs: [],
+    runAuditOutputs: [],
+    benchmarkPlans: [],
     runtimeBlockers: [],
     stepErrors: [],
     openCodeRuns: [],
@@ -222,6 +225,65 @@ describe("12-step research architecture modules", () => {
     expect(plan.requiredTools.length).toBeGreaterThan(0);
     expect(plan.expectedSources.length).toBeGreaterThan(0);
     expect(plan.stopCriteria.length).toBeGreaterThan(0);
+  });
+
+  it("retries PlanResearch LLM timeout with a compact prompt and preserves fetch candidates", async () => {
+    const base = snapshot();
+    const spec = base.specifications[0]!;
+    const prompts: string[] = [];
+    const timeoutMetadata: Array<{ retryAttempt: number; promptLength: number }> = [];
+    const decision = {
+      id: "decision-retry",
+      projectId: base.project.id,
+      iteration: 2,
+      shouldContinue: true,
+      reason: "Need PDF span evidence.",
+      nextObjective: "Fetch GraphRAG PDF spans.",
+      nextQuestions: [],
+      evidenceGaps: ["Need page/span evidence"],
+      planRevisionHints: ["Use WebFetchTool to fetch selected source URLs from previous ProjectContextSnapshot."],
+      fetchCandidateUrls: ["https://arxiv.org/abs/2404.16130"],
+      createdAt
+    };
+    const llm: LlmProvider = {
+      name: "timeout-test",
+      isAvailable: async () => true,
+      completeJson: async <T,>(request: LlmJsonRequest): Promise<T> => {
+        prompts.push(request.user);
+        if (prompts.length === 1) {
+          throw new LlmTimeoutError("Codex LLM request timed out after 120000ms.", {
+            provider: "timeout-test",
+            timeoutMs: 120_000,
+            promptLength: request.user.length,
+            promptTokenEstimate: Math.ceil(request.user.length / 4),
+            retryAttempt: 0,
+            step: "PLAN_RESEARCH",
+            schemaName: request.schemaName
+          });
+        }
+        return {
+          objective: "Retry with compact context.",
+          requiredTools: ["WebFetchTool", "ArtifactWriterTool"],
+          fetchCandidateUrls: ["https://arxiv.org/abs/2404.16130"]
+        } as T;
+      }
+    };
+    const plan = await new ResearchPlanner(llm, (_projectId, error, retryAttempt) => {
+      timeoutMetadata.push({ retryAttempt, promptLength: error.metadata.promptLength });
+    }).plan({
+      snapshot: { ...base, continuationDecisions: [decision] },
+      specification: spec,
+      iteration: 3,
+      settings,
+      availableTools: ["WebFetchTool", "ArtifactWriterTool", "DataAnalysisTool"],
+      continuationDecision: decision
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]!.length).toBeLessThan(prompts[0]!.length);
+    expect(timeoutMetadata).toEqual([{ retryAttempt: 0, promptLength: prompts[0]!.length }]);
+    expect(plan.fetchCandidateUrls).toContain("https://arxiv.org/abs/2404.16130");
+    expect(plan.requiredTools).toContain("WebFetchTool");
   });
 
   it("normalizes, indexes, builds ontology, retrieves hybrid context, validates, and decides continuation", async () => {
@@ -619,7 +681,11 @@ describe("12-step research architecture modules", () => {
 
     expect(decision.shouldContinue).toBe(true);
     expect(decision.evidenceGaps).toContain("Source candidates found but not fetched into citation-backed evidence");
-    expect(decision.planRevisionHints).toContain("Use WebFetchTool to fetch selected source URLs.");
+    expect(decision.planRevisionHints).toContain("Use WebFetchTool to fetch selected source URLs from previous ProjectContextSnapshot.");
+    expect(decision.projectContextSnapshotId).toBe("context-fetch");
+    expect(decision.selectedSourceIds).toContain("s1");
+    expect(decision.selectedCitationUrls).toContain("https://arxiv.org/abs/2401.00001");
+    expect(decision.fetchCandidateUrls).toContain("https://arxiv.org/abs/2401.00001");
   });
 
   it("does not turn web search snippets or internal artifacts into support evidence", async () => {

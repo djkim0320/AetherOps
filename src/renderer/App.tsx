@@ -1257,6 +1257,7 @@ function AetherOpsTab({
   const latestPlan = snapshot.researchPlans.at(-1);
   const latestSpec = snapshot.specifications.at(-1);
   const latestDecision = snapshot.continuationDecisions.at(-1);
+  const latestAudit = snapshot.runAuditOutputs.at(-1);
   const memoryItems = [
     { label: "Raw Sources", value: snapshot.sources.length },
     { label: "Artifacts", value: snapshot.artifacts.length },
@@ -1264,7 +1265,7 @@ function AetherOpsTab({
     { label: "Evidence Ledger", value: snapshot.evidence.length + snapshot.normalizedRecords.filter((record) => record.kind === "evidence").length },
     { label: "Vector DB", value: snapshot.chunks.length },
     { label: "Ontology Graph DB", value: snapshot.ontologyEntities.length + snapshot.ontologyRelations.length },
-    { label: "Projects & Reports", value: snapshot.finalOutputs.length + (snapshot.report ? 1 : 0) },
+    { label: "Projects & Reports", value: snapshot.finalOutputs.length + snapshot.runAuditOutputs.length + (snapshot.report ? 1 : 0) },
     { label: "Errors / Blockers", value: snapshot.stepErrors.length + snapshot.runtimeBlockers.length }
   ];
   const renderStepTile = (step: ResearchLoopStep): ReactElement => {
@@ -1484,9 +1485,19 @@ function AetherOpsTab({
             <h2>최종 결과 도출</h2>
           </div>
           <div className="finalGrid">
-            <FinalItem title="Answer" value={snapshot.report?.answer} />
-            <FinalItem title="Hypothesis verification" value={snapshot.report?.hypothesisVerification} />
-            <FinalItem title="Quantitative / qualitative" value={snapshot.report?.quantitativeQualitativeResults} />
+            {snapshot.project.status === "failed" && latestAudit ? (
+              <>
+                <FinalItem title="Run audit" value={latestAudit.markdownReport} />
+                <FinalItem title="Failure reason" value={latestAudit.failureReason} />
+                <FinalItem title="Completed iterations" value={String(latestAudit.completedIterations)} />
+              </>
+            ) : (
+              <>
+                <FinalItem title="Answer" value={snapshot.report?.answer} />
+                <FinalItem title="Hypothesis verification" value={snapshot.report?.hypothesisVerification} />
+                <FinalItem title="Quantitative / qualitative" value={snapshot.report?.quantitativeQualitativeResults} />
+              </>
+            )}
             <FinalItem title="Continuation decision" value={latestDecision ? (latestDecision.shouldContinue ? "Continue - " : "Finalize - ") + latestDecision.reason : undefined} />
             <FinalItem title="Comprehensive report" value={snapshot.report?.comprehensiveReport} />
             <FinalItem title="Reusable knowledge" value={snapshot.report?.reusableKnowledgeAsset} />
@@ -1899,7 +1910,7 @@ function StorageList({ snapshot }: { snapshot: ResearchSnapshot }): ReactElement
     { icon: MessageSquare, label: "Evidence Ledger", value: snapshot.evidence.length },
     { icon: Search, label: "Vector DB", value: snapshot.chunks.length },
     { icon: Workflow, label: "Ontology Graph DB", value: snapshot.ontologyEntities.length + snapshot.ontologyRelations.length },
-    { icon: Database, label: "Projects & Reports", value: snapshot.finalOutputs.length || (snapshot.report ? 1 : 0) }
+    { icon: Database, label: "Projects & Reports", value: snapshot.finalOutputs.length + snapshot.runAuditOutputs.length || (snapshot.report ? 1 : 0) }
   ];
 
   return (

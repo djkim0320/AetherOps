@@ -80,6 +80,7 @@ export type OntologyEntityType =
   | "Claim"
   | "Evidence"
   | "Source"
+  | "Citation"
   | "Artifact"
   | "Method"
   | "Tool"
@@ -110,6 +111,7 @@ export type OntologyRelationType =
   | "affects"
   | "requires"
   | "hasLimitation"
+  | "hasCitation"
   | "blockedBy"
   | "failedAt";
 
@@ -219,6 +221,7 @@ export interface ResearchPlan {
   expectedArtifacts: string[];
   executionSteps: string[];
   stopCriteria: string[];
+  fetchCandidateUrls?: string[];
   createdAt: string;
   steps?: string[];
 }
@@ -521,6 +524,7 @@ export interface EvidenceBasedResult {
   needsMoreAnalysis: boolean;
   validationResultIds?: string[];
   hybridContextId?: string;
+  metadata?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -534,6 +538,13 @@ export interface ContinuationDecision {
   nextQuestions: string[];
   evidenceGaps: string[];
   planRevisionHints: string[];
+  selectedSourceIds?: string[];
+  selectedRecordIds?: string[];
+  selectedEvidenceIds?: string[];
+  selectedChunkIds?: string[];
+  selectedCitationUrls?: string[];
+  fetchCandidateUrls?: string[];
+  projectContextSnapshotId?: string;
   forceStop?: boolean;
   createdAt: string;
 }
@@ -573,6 +584,47 @@ export interface FinalResearchOutput {
   reusableKnowledgeAsset: string;
   ontologyExportPath?: string;
   artifactPackagePath?: string;
+  createdAt: string;
+}
+
+export interface RunAuditOutput {
+  id: string;
+  projectId: string;
+  finalStatus: LoopStatus;
+  failedStep?: ResearchLoopStep;
+  failureReason?: string;
+  completedIterations: number;
+  sourceCount: number;
+  evidenceCount: number;
+  artifactCount: number;
+  chunkCount: number;
+  ontologyEntityCount: number;
+  ontologyRelationCount: number;
+  latestProjectContextSnapshotIds: string[];
+  latestValidationResultIds: string[];
+  latestResultIds: string[];
+  continuationDecisionIds: string[];
+  evidenceGaps: string[];
+  recoverableNextActions: string[];
+  markdownReport: string;
+  reportPath?: string;
+  jsonPath?: string;
+  createdAt: string;
+}
+
+export interface BenchmarkPlan {
+  id: string;
+  projectId: string;
+  queries: string[];
+  conditions: Array<"vector_only" | "hybrid">;
+  metrics: {
+    citationCoverage: boolean;
+    traceabilityPathCompleteness: boolean;
+    unsupportedClaimDetection: boolean;
+    evidenceGapRecall: boolean;
+    latency: boolean;
+    toolCostEstimate: boolean;
+  };
   createdAt: string;
 }
 
@@ -616,6 +668,8 @@ export interface ResearchSnapshot {
   validationResults: ValidationResult[];
   continuationDecisions: ContinuationDecision[];
   finalOutputs: FinalResearchOutput[];
+  runAuditOutputs: RunAuditOutput[];
+  benchmarkPlans: BenchmarkPlan[];
   globalMemoryItems?: GlobalMemoryItem[];
   runtimeBlockers: RuntimeBlocker[];
   stepErrors: StepError[];
@@ -641,6 +695,7 @@ export interface OpenCodeRunInput {
   hybridContext?: HybridContext;
   specification?: ResearchSpecification;
   researchPlan?: ResearchPlan;
+  projectContextSnapshot?: ProjectContextSnapshot;
   iteration: number;
 }
 
@@ -781,6 +836,8 @@ export interface ResearchStore {
   saveValidationResults(results: ValidationResult[]): Promise<void>;
   saveContinuationDecision(decision: ContinuationDecision): Promise<void>;
   saveFinalResearchOutput(output: FinalResearchOutput): Promise<void>;
+  saveRunAuditOutput(output: RunAuditOutput): Promise<void>;
+  saveBenchmarkPlan(plan: BenchmarkPlan): Promise<void>;
   saveGlobalMemoryItems(items: GlobalMemoryItem[]): Promise<void>;
   saveRuntimeBlocker(blocker: RuntimeBlocker): Promise<void>;
   saveStepError(error: StepError): Promise<void>;

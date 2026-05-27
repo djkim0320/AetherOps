@@ -32,6 +32,8 @@ import {
   type ResearchSource,
   type ResearchSnapshot,
   type ResearchStore,
+  type RunAuditOutput,
+  type BenchmarkPlan,
   type ProjectContextSnapshot,
   type RuntimeBlocker,
   type StepError,
@@ -214,6 +216,16 @@ export class SqliteResearchStore implements ResearchStore {
     this.upsertManyProject(output.projectId, "final_outputs", [output]);
   }
 
+  async saveRunAuditOutput(output: RunAuditOutput): Promise<void> {
+    this.upsertMany("run_audit_outputs", [output]);
+    this.upsertManyProject(output.projectId, "run_audit_outputs", [output]);
+  }
+
+  async saveBenchmarkPlan(plan: BenchmarkPlan): Promise<void> {
+    this.upsertMany("benchmark_plans", [plan]);
+    this.upsertManyProject(plan.projectId, "benchmark_plans", [plan]);
+  }
+
   async saveGlobalMemoryItems(items: GlobalMemoryItem[]): Promise<void> {
     this.upsertMany("global_memory_items", items);
     this.upsertManyMain("global_memory_items", items);
@@ -277,6 +289,8 @@ export class SqliteResearchStore implements ResearchStore {
       validationResults: this.byProject<ValidationResult>("validation_results", projectId),
       continuationDecisions: this.byProject<ContinuationDecision>("continuation_decisions", projectId),
       finalOutputs: this.byProject<FinalResearchOutput>("final_outputs", projectId),
+      runAuditOutputs: this.byProject<RunAuditOutput>("run_audit_outputs", projectId),
+      benchmarkPlans: this.byProject<BenchmarkPlan>("benchmark_plans", projectId),
       globalMemoryItems: this.byProjectOrGlobalVisible<GlobalMemoryItem>("global_memory_items", projectId),
       runtimeBlockers: this.byProject<RuntimeBlocker>("runtime_blockers", projectId),
       stepErrors: this.byProject<StepError>("step_errors", projectId),
@@ -369,6 +383,8 @@ export class SqliteResearchStore implements ResearchStore {
       "validation_results",
       "continuation_decisions",
       "final_outputs",
+      "run_audit_outputs",
+      "benchmark_plans",
       "global_memory_items",
       "runtime_blockers",
       "step_errors",
@@ -481,7 +497,9 @@ export class SqliteResearchStore implements ResearchStore {
       "hybrid_contexts",
       "validation_results",
       "continuation_decisions",
-      "final_outputs"
+      "final_outputs",
+      "run_audit_outputs",
+      "benchmark_plans"
     ]);
     this.projectDbs.set(projectId, db);
     return db;

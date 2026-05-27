@@ -71,6 +71,8 @@ const snapshot: ResearchSnapshot = {
   validationResults: [],
   continuationDecisions: [],
   finalOutputs: [],
+  runAuditOutputs: [],
+  benchmarkPlans: [],
   runtimeBlockers: [],
   stepErrors: [],
   openCodeRuns: [],

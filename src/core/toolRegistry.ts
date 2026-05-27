@@ -13,6 +13,7 @@ import type {
 
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_FETCH_BYTES = 2 * 1024 * 1024;
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const ALLOWED_FETCH_CONTENT_TYPES = new Set(["text/html", "text/plain", "application/xhtml+xml"]);
 const BLOCKED_HOST_SUFFIXES = [".local", ".localhost", ".internal"];
 
@@ -99,7 +100,7 @@ export class WebFetchTool implements ResearchTool {
     }
     const { urls, skippedUrls, duplicateUrls } = selectFetchTargets(input);
     if (!urls.length) {
-      throw new Error("WebFetchTool requires at least one external source URL from previous evidence.");
+      throw new Error("WebFetchTool requires at least one external source URL from ResearchPlan.fetchCandidateUrls, input.sources, citation URLs, or previous ProjectContextSnapshot.");
     }
     const settledPages: Array<PromiseSettledResult<{ url: string; title: string; text: string; contentType: string; status: number }>> = [];
     for (const url of urls) {
@@ -132,25 +133,47 @@ export class WebFetchTool implements ResearchTool {
         sources: []
       };
     }
-    const sources: ResearchSource[] = pages.map((page) => ({
-      id: createId("source"),
-      projectId: input.project.id,
-      kind: "web",
-      title: page.title,
-      url: page.url,
-      retrievedAt: completedAt,
-      metadata: {
-        contentType: page.contentType,
-        status: page.status,
-        excerpt: page.text.slice(0, 1_000),
-        rawText: page.text,
-        fetchedAt: completedAt,
-        fetchStatus: "fetched",
-        characterCount: page.text.length,
-        ...sourceQualityMetadata(page.url, page.title)
-      },
-      createdAt: completedAt
-    }));
+    const sources: ResearchSource[] = pages.flatMap((page) => {
+      const pdfUrl = arxivPdfUrl(page.url);
+      const source: ResearchSource = {
+        id: createId("source"),
+        projectId: input.project.id,
+        kind: "web",
+        title: page.title,
+        url: page.url,
+        retrievedAt: completedAt,
+        metadata: {
+          contentType: page.contentType,
+          status: page.status,
+          excerpt: page.text.slice(0, 1_000),
+          rawText: page.text,
+          fetchedAt: completedAt,
+          fetchStatus: "fetched",
+          characterCount: page.text.length,
+          ...(pdfUrl ? { pdfUrl } : {}),
+          ...sourceQualityMetadata(page.url, page.title)
+        },
+        createdAt: completedAt
+      };
+      const pdfSource: ResearchSource | undefined = pdfUrl ? {
+        id: createId("source"),
+        projectId: input.project.id,
+        kind: "paper",
+        title: `${page.title} PDF`,
+        url: pdfUrl,
+        retrievedAt: completedAt,
+        metadata: {
+          provider: "arxiv",
+          pdfUrl,
+          sourceCandidateOnly: true,
+          canSupportHypothesis: false,
+          traceabilityKind: "external_source",
+          ...sourceQualityMetadata(pdfUrl, `${page.title} PDF`)
+        },
+        createdAt: completedAt
+      } : undefined;
+      return pdfSource ? [source, pdfSource] : [source];
+    });
     const evidence: EvidenceItem[] = pages.map((page, index) => {
       const quality = assessSourceQuality(page.url, page.title);
       return {
@@ -256,8 +279,104 @@ export class ArtifactWriterTool implements ResearchTool {
 export class PdfIngestionTool implements ResearchTool {
   name = "PdfIngestionTool";
 
-  async run(): Promise<ResearchToolResult> {
-    throw new Error("PdfIngestionTool requires explicit PDF file paths; none were provided.");
+  async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
+    const startedAt = nowIso();
+    if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
+      throw new Error("PdfIngestionTool requires external network access for PDF URLs, but external search is disabled by project autonomy or app settings.");
+    }
+    const targets = selectPdfTargets(input);
+    const completedAt = nowIso();
+    if (!targets.length) {
+      return {
+        toolRun: failedToolRun(input, this.name, startedAt, completedAt, { targets }, { failedUrls: [], failureReasons: { input: "No PDF URL or PDF source candidate was available." } }, "PdfIngestionTool requires a PDF URL or local PDF path with extractable text."),
+        evidence: [],
+        artifacts: [],
+        sources: []
+      };
+    }
+    const evidence: EvidenceItem[] = [];
+    const sources: ResearchSource[] = [];
+    const failedUrls: string[] = [];
+    const failureReasons: Record<string, string> = {};
+    for (const target of targets.slice(0, 3)) {
+      try {
+        const pdf = await fetchPdfText(target);
+        const span = selectRelevantPdfSpan(pdf.pages, input);
+        if (!span.quote) {
+          failureReasons[target] = "PDF text was fetched but no relevant quote/span could be extracted.";
+          failedUrls.push(target);
+          continue;
+        }
+        const quality = assessSourceQuality(target, pdf.title);
+        const source: ResearchSource = {
+          id: createId("source"),
+          projectId: input.project.id,
+          kind: "paper",
+          title: pdf.title,
+          url: target,
+          retrievedAt: completedAt,
+          metadata: {
+            pdfUrl: target,
+            pageCount: pdf.pages.length,
+            excerpt: span.quote.slice(0, 1_000),
+            rawText: pdf.pages.map((page) => page.text).join("\n\n"),
+            fetchedAt: completedAt,
+            fetchStatus: "fetched",
+            contentType: "application/pdf",
+            characterCount: pdf.pages.reduce((sum, page) => sum + page.text.length, 0),
+            ...sourceQualityMetadata(target, pdf.title)
+          },
+          createdAt: completedAt
+        };
+        sources.push(source);
+        evidence.push({
+          id: createId("evidence"),
+          projectId: input.project.id,
+          category: "paper_reference",
+          title: `${pdf.title} page ${span.page}`,
+          summary: span.quote,
+          sourceId: source.id,
+          sourceUri: target,
+          citation: `${pdf.title}, p. ${span.page} - ${target}`,
+          quote: span.quote,
+          keywords: ["pdf", "span", quality.tier, ...input.project.topic.split(/\s+/).slice(0, 5)],
+          linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
+          reliabilityScore: quality.reliabilityScore,
+          relevanceScore: 0.78,
+          evidenceStrength: quality.evidenceStrength,
+          limitations: ["PDF text was extracted automatically; verify page/span against the source PDF.", ...quality.limitations],
+          metadata: {
+            page: span.page,
+            spanStart: span.spanStart,
+            spanEnd: span.spanEnd,
+            extractionMethod: "pdf_text_span",
+            pdfUrl: target
+          },
+          createdAt: completedAt
+        });
+      } catch (error) {
+        failedUrls.push(target);
+        failureReasons[target] = error instanceof Error ? error.message : String(error);
+      }
+    }
+    const status = evidence.length ? "completed" : "failed";
+    return {
+      toolRun: {
+        id: createId("tool"),
+        projectId: input.project.id,
+        iteration: input.iteration,
+        toolName: this.name,
+        input: { targets },
+        output: { fetchedPdfs: evidence.length, failedUrls, failureReasons },
+        status,
+        error: status === "failed" ? "PdfIngestionTool failed to extract any page/span-backed evidence." : undefined,
+        startedAt,
+        completedAt
+      },
+      evidence,
+      artifacts: [],
+      sources
+    };
   }
 }
 
@@ -378,10 +497,18 @@ function selectFetchTargets(input: OpenCodeRunInput): { urls: string[]; skippedU
       .filter((url): url is string => Boolean(url))
   );
   const candidates = [
+    ...(input.researchPlan?.fetchCandidateUrls ?? []),
     ...(input.sources ?? [])
       .filter((source) => source.kind === "web" && !source.rawPath && source.metadata.fetchStatus !== "fetched")
-      .map((source) => source.url),
-    ...(input.evidence ?? []).map((item) => item.sourceUri)
+      .flatMap((source) => [
+        source.url,
+        (source as ResearchSource & { sourceUri?: string }).sourceUri,
+        readString(source.metadata.url),
+        readString(source.metadata.sourceUri),
+        readString(source.metadata.pdfUrl)
+      ]),
+    ...(input.evidence ?? []).flatMap((item) => [item.sourceUri, ...extractHttpUrls(item.citation)]),
+    ...(input.projectContextSnapshot?.citations ?? []).flatMap(extractHttpUrls)
   ];
   const selected = new Map<string, string>();
   const skippedUrls: string[] = [];
@@ -400,6 +527,41 @@ function selectFetchTargets(input: OpenCodeRunInput): { urls: string[]; skippedU
     if (selected.size >= 3) break;
   }
   return { urls: [...selected.values()], skippedUrls, duplicateUrls };
+}
+
+function selectPdfTargets(input: OpenCodeRunInput): string[] {
+  const urls = new Map<string, string>();
+  const candidates = [
+    ...(input.researchPlan?.fetchCandidateUrls ?? []),
+    ...(input.sources ?? []).flatMap((source) => [source.url, readString(source.metadata.pdfUrl)]),
+    ...(input.evidence ?? []).flatMap((item) => [item.sourceUri, ...extractHttpUrls(item.citation)]),
+    ...(input.projectContextSnapshot?.citations ?? [])
+  ];
+  for (const candidate of candidates) {
+    const pdf = normalizeHttpUrl(arxivPdfUrl(candidate) ?? candidate);
+    if (pdf && (/\.pdf($|[?#])/i.test(pdf) || /arxiv\.org\/pdf\//i.test(pdf))) urls.set(pdf, pdf);
+  }
+  return [...urls.values()];
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function extractHttpUrls(value: string | undefined): string[] {
+  return value?.match(/https?:\/\/[^\s)<>"']+/gi) ?? [];
+}
+
+function arxivPdfUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value);
+    if (parsed.hostname.replace(/^www\./, "").toLowerCase() !== "arxiv.org") return undefined;
+    const match = parsed.pathname.match(/^\/abs\/([^/?#]+)/i);
+    return match?.[1] ? `https://arxiv.org/pdf/${match[1]}` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeHttpUrl(value: string | undefined): string | undefined {
@@ -478,6 +640,101 @@ async function fetchPage(url: string): Promise<{ url: string; title: string; tex
     throw new Error(`fetch produced no readable text for ${url}`);
   }
   return { url: response.url || url, title, text, contentType, status: response.status };
+}
+
+async function fetchPdfText(url: string): Promise<{ url: string; title: string; pages: Array<{ page: number; text: string }> }> {
+  await assertPublicHttpUrl(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: "application/pdf" }, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+  await assertPublicHttpUrl(response.url || url);
+  if (!response.ok) throw new Error(`PDF fetch failed for ${url}: ${response.status} ${response.statusText}`);
+  const contentType = response.headers.get("content-type") ?? "unknown";
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mediaType && mediaType !== "application/pdf" && mediaType !== "application/octet-stream") {
+    throw new Error(`unsupported PDF content-type for ${url}: ${contentType}`);
+  }
+  const contentLength = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
+    throw new Error(`PDF content-length exceeds 20MB for ${url}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_PDF_BYTES) {
+    throw new Error(`PDF body exceeds 20MB for ${url}`);
+  }
+  const text = extractPdfTextFallback(bytes);
+  if (!text.trim()) {
+    throw new Error(`PDF text extraction produced no readable text for ${url}`);
+  }
+  return {
+    url: response.url || url,
+    title: titleFromPdfUrl(response.url || url),
+    pages: splitPdfPages(text)
+  };
+}
+
+function extractPdfTextFallback(bytes: Uint8Array): string {
+  const latin = new TextDecoder("latin1").decode(bytes);
+  const strings = [...latin.matchAll(/\(([^()]{12,})\)\s*Tj/g)].map((match) => match[1] ?? "");
+  const arrayStrings = [...latin.matchAll(/\[((?:.|\n){20,}?)\]\s*TJ/g)].flatMap((match) =>
+    [...(match[1] ?? "").matchAll(/\(([^()]{4,})\)/g)].map((part) => part[1] ?? "")
+  );
+  const decoded = [...strings, ...arrayStrings].map((value) => decodePdfString(value)).join(" ");
+  return normalizePageText(decoded || latin.replace(/[^\x09\x0A\x0D\x20-\x7E가-힣]/g, " "));
+}
+
+function decodePdfString(value: string): string {
+  return value
+    .replace(/\\n/g, " ")
+    .replace(/\\r/g, " ")
+    .replace(/\\t/g, " ")
+    .replace(/\\\(/g, "(")
+    .replace(/\\\)/g, ")")
+    .replace(/\\\\/g, "\\");
+}
+
+function splitPdfPages(text: string): Array<{ page: number; text: string }> {
+  const pages = text.split(/\f|\bPage\s+\d+\b/gi).map((page) => page.trim()).filter(Boolean);
+  return (pages.length ? pages : [text]).slice(0, 80).map((pageText, index) => ({ page: index + 1, text: pageText }));
+}
+
+function selectRelevantPdfSpan(pages: Array<{ page: number; text: string }>, input: OpenCodeRunInput): { page: number; quote: string; spanStart: number; spanEnd: number } {
+  const query = [
+    input.researchPlan?.objective,
+    ...(input.researchPlan?.targetQuestions ?? []),
+    ...(input.researchPlan?.targetHypotheses ?? []),
+    input.project.topic
+  ].filter(Boolean).join(" ");
+  const queryTokens = new Set(tokens(query));
+  let best = { page: pages[0]?.page ?? 1, quote: "", spanStart: 0, spanEnd: 0, score: -1 };
+  for (const page of pages) {
+    const sentences = page.text.match(/[^.!?。！？]{40,500}[.!?。！？]?/g) ?? [page.text.slice(0, 500)];
+    let offset = 0;
+    for (const sentence of sentences) {
+      const start = page.text.indexOf(sentence, offset);
+      offset = start + sentence.length;
+      const score = tokens(sentence).reduce((sum, token) => sum + (queryTokens.has(token) ? 1 : 0), 0);
+      if (score > best.score && sentence.trim().length >= 40) {
+        best = { page: page.page, quote: sentence.trim().slice(0, 900), spanStart: Math.max(0, start), spanEnd: Math.max(0, start) + sentence.length, score };
+      }
+    }
+  }
+  return best;
+}
+
+function titleFromPdfUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const file = parsed.pathname.split("/").filter(Boolean).at(-1) ?? parsed.hostname;
+    return decodeURIComponent(file.replace(/\.pdf$/i, "")) || url;
+  } catch {
+    return url;
+  }
 }
 
 async function assertPublicHttpUrl(value: string): Promise<void> {
@@ -604,4 +861,8 @@ function countBy(values: string[]): Record<string, number> {
 
 function stringMetadata(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function tokens(text: string): string[] {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").split(/\s+/).filter(Boolean);
 }

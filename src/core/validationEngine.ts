@@ -1,4 +1,5 @@
 import { createId, nowIso } from "./ids.js";
+import { graphPathForEvidence, isSupportEligibleEvidenceRecord } from "./evidenceEligibility.js";
 import type { HybridContext, ResearchSnapshot, ValidationResult } from "./types.js";
 import type { ReasoningSummary } from "./reasoningEngine.js";
 
@@ -6,16 +7,7 @@ export class ValidationEngine {
   validate(snapshot: ResearchSnapshot, hybridContext: HybridContext, reasoning: ReasoningSummary[]): ValidationResult[] {
     const supportEligibleEvidenceIds = new Set(
       snapshot.normalizedRecords
-        .filter((record) =>
-          record.kind === "evidence" &&
-          record.evidenceId &&
-          record.metadata.canSupportHypothesis === true &&
-          record.metadata.sourceCanSupportHypothesis !== false &&
-          record.metadata.sourceQualityTier !== "weak" &&
-          record.metadata.sourceQualityTier !== "excluded" &&
-          record.metadata.sourceQualityTier !== "general_web" &&
-          (record.metadata.traceabilityKind === "external_source" || record.metadata.traceabilityKind === "tool_observation")
-        )
+        .filter((record) => record.evidenceId && isSupportEligibleEvidenceRecord(record, graphPathForEvidence(snapshot, record.evidenceId), { requireGraphPath: true }))
         .map((record) => record.evidenceId as string)
     );
     return reasoning.map((item) => {

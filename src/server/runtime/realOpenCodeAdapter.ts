@@ -92,6 +92,13 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
       `Questions: ${JSON.stringify(input.questions)}`,
       `Hypotheses: ${JSON.stringify(input.hypotheses)}`,
       `RAG Context: ${JSON.stringify(input.ragContext)}`,
+      `ResearchPlan: ${JSON.stringify(input.researchPlan)}`,
+      `ProjectContextSnapshot: ${JSON.stringify(input.projectContextSnapshot ? {
+        id: input.projectContextSnapshot.id,
+        iteration: input.projectContextSnapshot.iteration,
+        citations: input.projectContextSnapshot.citations.slice(0, 12),
+        selectedSourceIds: input.projectContextSnapshot.selectedSourceIds.slice(0, 12)
+      } : undefined)}`,
       `Iteration: ${input.iteration}`
     ].join("\n");
   }
@@ -167,7 +174,13 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
     const child = spawn(command, args, {
       windowsHide: true,
       shell: isWindowsShellCommand(command),
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: "utf-8",
+        LANG: process.env.LANG ?? "C.UTF-8",
+        LC_ALL: process.env.LC_ALL ?? "C.UTF-8"
+      }
     });
     let stdout = "";
     let stderr = "";
@@ -175,11 +188,13 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
       child.kill();
       reject(new Error(`OpenCode CLI timeout after ${timeoutMs}ms`));
     }, timeoutMs);
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
     });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
     });
     child.on("error", (error) => {
       clearTimeout(timer);

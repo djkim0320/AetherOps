@@ -71,7 +71,7 @@ export class ToolRunner {
     return orderToolNames([
       ...include("WebSearchTool", externalAllowed && webSearchConfigured),
       ...include("BackgroundBrowserTool", externalAllowed && context.settings.browserUse.enabled),
-      ...include("WebFetchTool", externalAllowed || hasFetchCandidates),
+      ...include("WebFetchTool", externalAllowed && (hasFetchCandidates || webSearchConfigured || context.settings.browserUse.enabled)),
       ...include("PdfIngestionTool", hasPdfInputs),
       ...include("CodeExecutionTool", codeAllowed),
       ...include("ArtifactWriterTool", true),
@@ -239,27 +239,35 @@ export function dedupeResearchTools(tools: ResearchTool[]): ResearchTool[] {
 }
 
 function hasFetchCandidateUrls(snapshot: ResearchSnapshot): boolean {
-  return snapshot.sources.some((source) => source.kind === "web" && Boolean(source.url) && !source.rawPath && source.metadata.fetchStatus !== "fetched") ||
-    snapshot.evidence.some((evidence) => Boolean(evidence.sourceUri));
+  return Boolean((snapshot.researchPlans ?? []).at(-1)?.fetchCandidateUrls?.length) ||
+    Boolean((snapshot.continuationDecisions ?? []).at(-1)?.fetchCandidateUrls?.length) ||
+    (snapshot.sources ?? []).some((source) => source.kind === "web" && Boolean(source.url) && !source.rawPath && source.metadata.fetchStatus !== "fetched") ||
+    (snapshot.evidence ?? []).some((evidence) => Boolean(evidence.sourceUri)) ||
+    Boolean((snapshot.projectContextSnapshots ?? []).at(-1)?.citations.some((citation) => /^https?:\/\//i.test(citation)));
 }
 
 function hasContinuationFetchHint(snapshot: ResearchSnapshot): boolean {
-  const decision = snapshot.continuationDecisions.at(-1);
+  const decision = (snapshot.continuationDecisions ?? []).at(-1);
   return Boolean(decision?.planRevisionHints.some((hint) => /webfetch|fetch selected source|citation-backed evidence/i.test(hint)));
 }
 
 function hasPdfInput(snapshot: ResearchSnapshot): boolean {
-  return snapshot.sources.some((source) => /\.pdf($|[?#])/i.test(source.url ?? source.rawPath ?? "") || source.metadata.mimeType === "application/pdf") ||
-    snapshot.artifacts.some((artifact) => artifact.mimeType === "application/pdf" || /\.pdf$/i.test(artifact.relativePath));
+  return (snapshot.sources ?? []).some((source) => /\.pdf($|[?#])/i.test(source.url ?? source.rawPath ?? String(source.metadata.pdfUrl ?? "")) || source.metadata.mimeType === "application/pdf") ||
+    Boolean((snapshot.researchPlans ?? []).at(-1)?.fetchCandidateUrls?.some((url) => /\.pdf($|[?#])/i.test(url) || /arxiv\.org\/abs\//i.test(url))) ||
+    (snapshot.artifacts ?? []).some((artifact) => artifact.mimeType === "application/pdf" || /\.pdf$/i.test(artifact.relativePath));
 }
 
 function candidateUrlCount(input: OpenCodeRunInput): number {
   const urls = new Set<string>();
+  for (const url of input.researchPlan?.fetchCandidateUrls ?? []) urls.add(url);
   for (const source of input.sources ?? []) {
     if (source.kind === "web" && source.url) urls.add(source.url);
   }
   for (const evidence of input.evidence ?? []) {
     if (evidence.sourceUri) urls.add(evidence.sourceUri);
+  }
+  for (const citation of input.projectContextSnapshot?.citations ?? []) {
+    if (/https?:\/\//i.test(citation)) urls.add(citation);
   }
   return urls.size;
 }

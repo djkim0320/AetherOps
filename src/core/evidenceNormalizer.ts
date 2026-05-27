@@ -85,6 +85,7 @@ function recordFromPlan(plan: ResearchPlan, iteration: number): NormalizedResear
     ...plan.targetQuestions.map((question) => `Target question: ${question}`),
     ...plan.targetHypotheses.map((hypothesis) => `Target hypothesis: ${hypothesis}`),
     ...plan.requiredTools.map((tool) => `Required tool: ${tool}`),
+    ...(plan.fetchCandidateUrls ?? []).map((url) => `Fetch candidate URL: ${url}`),
     ...plan.executionSteps.map((step) => `Execution step: ${step}`),
     ...plan.stopCriteria.map((criterion) => `Stop criterion: ${criterion}`)
   ].join("\n");
@@ -189,6 +190,7 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
     citation: canSupportHypothesis ? evidence.citation || evidence.sourceUri || evidence.doi : undefined,
     sourceUri: evidence.sourceUri,
     metadata: metadata(traceabilityKind, canSupportHypothesis && !isGeneratedArtifact, content, {
+      ...(evidence.metadata ?? {}),
       category: evidence.category,
       linkedHypothesisIds: evidence.linkedHypothesisIds,
       reliabilityScore: evidence.reliabilityScore,
@@ -221,6 +223,7 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
       title: `Citation for ${evidence.title}`,
       content: evidence.citation ?? evidence.sourceUri ?? evidence.doi ?? evidence.title,
       metadata: metadata(traceabilityKind, false, content, {
+        ...(evidence.metadata ?? {}),
         category: evidence.category,
         sourceKind: source?.kind,
         doi: evidence.doi
@@ -237,6 +240,7 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
     content: evidence.summary,
     citation: undefined,
     metadata: metadata(traceabilityKind, false, evidence.summary, {
+      ...(evidence.metadata ?? {}),
       category: evidence.category,
       linkedHypothesisIds: evidence.linkedHypothesisIds
     }),

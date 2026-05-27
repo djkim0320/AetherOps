@@ -17,6 +17,7 @@ import type {
   ResearchReport,
   ResearchSnapshot,
   ResearchSource,
+  RunAuditOutput,
   RuntimeBlocker,
   StepError,
   ToolRun
@@ -213,6 +214,22 @@ export class NodeProjectStorage implements ProjectStorage {
     const saved = { ...output, reportPath, ontologyExportPath, artifactPackagePath };
     upsertJson(database.sqlitePath, "final_outputs", output.id, project.id, output.createdAt, saved);
     return { reportPath, knowledgePath, ontologyExportPath, artifactPackagePath };
+  }
+
+  async writeRunAuditFiles(
+    project: ResearchProject,
+    database: ResearchDatabase,
+    output: RunAuditOutput
+  ): Promise<{ reportPath: string; jsonPath: string }> {
+    const reportPath = safeJoin(project.projectRoot, "reports/run-audit.md");
+    const jsonPath = safeJoin(project.projectRoot, "exports/run-audit.json");
+    mkdirSync(dirname(reportPath), { recursive: true });
+    mkdirSync(dirname(jsonPath), { recursive: true });
+    const saved = { ...output, reportPath, jsonPath };
+    writeFileSync(reportPath, output.markdownReport, "utf8");
+    writeFileSync(jsonPath, `${JSON.stringify(saved, null, 2)}\n`, "utf8");
+    upsertJson(database.sqlitePath, "run_audit_outputs", output.id, project.id, output.createdAt, saved);
+    return { reportPath, jsonPath };
   }
 
   async writeRuntimeBlocker(project: ResearchProject, blocker: RuntimeBlocker): Promise<void> {
@@ -430,6 +447,8 @@ function migrateResearchDb(path: string): void {
     "validation_results",
     "continuation_decisions",
     "final_outputs",
+    "run_audit_outputs",
+    "benchmark_plans",
     "runtime_blockers",
     "step_errors",
     "reports"

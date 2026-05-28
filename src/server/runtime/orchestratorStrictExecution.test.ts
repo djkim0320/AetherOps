@@ -83,6 +83,49 @@ describe("AetherOps strict execution loop", () => {
     expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
   });
 
+  it("blocks at BuildVectorIndex when the embedding API key is missing while preserving partial outputs", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-loop-"));
+    const orchestrator = createStrictTestOrchestrator({
+      storage: new NodeProjectStorage(),
+      projectRootBase: join(tempDir, "projects"),
+      settings: {
+        ...strictTestSettings,
+        embedding: {
+          provider: "openai",
+          model: "text-embedding-3-small",
+          dimensions: 64,
+          apiKeyConfigured: false
+        }
+      }
+    });
+
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.project.status).toBe("blocked");
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.BuildVectorIndex);
+    expect(snapshot.runtimeBlockers.some((blocker) => blocker.requirementKey === "embedding.apiKey")).toBe(true);
+    expect(snapshot.stepErrors.at(-1)).toMatchObject({
+      step: ResearchLoopStep.BuildVectorIndex,
+      cause: "runtime_requirement"
+    });
+    expect(snapshot.runAuditOutputs).toHaveLength(1);
+    expect(snapshot.runAuditOutputs[0]).toMatchObject({
+      finalStatus: "blocked",
+      failedStep: ResearchLoopStep.BuildVectorIndex
+    });
+    expect(snapshot.runAuditOutputs[0]?.unmetRequirements?.some((item) => item.requirementKey === "embedding.apiKey")).toBe(true);
+    expect(snapshot.finalOutputs).toHaveLength(0);
+    expect(snapshot.openCodeRuns.length).toBeGreaterThan(0);
+    expect(snapshot.sources.length).toBeGreaterThan(0);
+    expect(snapshot.artifacts.length).toBeGreaterThan(0);
+    expect(snapshot.normalizedRecords.length).toBeGreaterThan(0);
+    expect(snapshot.evidence.some((item) => !item.sourceUri && !item.citation && !item.quote)).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "run-audit.md"))).toBe(true);
+    expect(existsSync(join(snapshot.project.projectRoot, "exports", "run-audit.json"))).toBe(true);
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
+  });
+
   it("blocks at PlanResearch when the LLM requests an unregistered tool", async () => {
     const orchestrator = createStrictTestOrchestrator({ llm: new UnregisteredToolPlanner() });
     let snapshot = await createInputProject(orchestrator, input);

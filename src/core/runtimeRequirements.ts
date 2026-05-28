@@ -55,7 +55,7 @@ export class RuntimeRequirementChecker {
           "Embedding provider",
           step,
           providerConfigured,
-          "실제 embedding provider와 모델이 필요합니다. 로컬 해시 임베딩은 production index에 사용할 수 없습니다."
+          "실제 embedding provider와 모델이 필요합니다. local/local-hash embedding은 production index에 사용할 수 없습니다."
         )
       );
       requirements.push(requirement("embedding.apiKey", "Embedding API key", step, keyConfigured, "Embedding API key가 필요합니다."));

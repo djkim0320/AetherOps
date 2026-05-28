@@ -17,7 +17,11 @@
     "web:build": "npm run clean && tsc -p tsconfig.app.json && vite build && npm run server:build",
     "build": "npm run web:build",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "doctor": "node scripts/doctor.mjs",
+    "selftest": "node scripts/selftest.mjs",
+    "selftest:blocked": "node scripts/selftest.mjs --mode=blocked",
+    "selftest:live": "node scripts/selftest.mjs --mode=live"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

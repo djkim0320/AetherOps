@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, relative, resolve } from "node:path";
@@ -36,6 +36,9 @@ const defaultPort = 5179;
 export async function startWebServer(options: WebServerOptions = {}): Promise<void> {
   const appRoot = resolve(options.appRoot ?? process.cwd());
   const dataRoot = resolve(options.dataRoot ?? process.env.AETHEROPS_DATA_DIR ?? join(appRoot, ".aetherops"));
+  const startedAt = new Date().toISOString();
+  const version = readPackageVersion(appRoot);
+  let actualPort = options.port ?? defaultPort;
   mkdirSync(dataRoot, { recursive: true });
   console.log(`[AetherOps] web storage root: ${dataRoot}`);
 
@@ -78,7 +81,7 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
 
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
       if (url.pathname === "/api/health") {
-        sendJson(response, 200, { ok: true, mode: "web", dataRoot });
+        sendJson(response, 200, { ok: true, mode: "web", dataRoot, port: actualPort, pid: process.pid, startedAt, version });
         return;
       }
       if (url.pathname === "/api/rpc" && request.method === "POST") {
@@ -104,9 +107,18 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   process.once("SIGTERM", shutdown);
   server.listen(options.port ?? defaultPort, options.host ?? defaultHost, () => {
     const address = server.address();
-    const port = typeof address === "object" && address ? address.port : options.port ?? defaultPort;
-    console.log(`[AetherOps] web backend listening on http://${options.host ?? defaultHost}:${port}`);
+    actualPort = typeof address === "object" && address ? address.port : options.port ?? defaultPort;
+    console.log(`[AetherOps] web backend listening on http://${options.host ?? defaultHost}:${actualPort} dataRoot=${dataRoot} pid=${process.pid} startedAt=${startedAt}`);
   });
+}
+
+function readPackageVersion(appRoot: string): string {
+  try {
+    const parsed = JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8")) as { version?: unknown };
+    return typeof parsed.version === "string" ? parsed.version : "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 async function handleRpc(

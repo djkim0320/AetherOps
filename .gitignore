@@ -9,6 +9,7 @@ dist-server/
 
 # Local app data
 .aetherops/
+.tmp/
 
 # Logs
 *.log

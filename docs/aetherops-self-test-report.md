@@ -1,97 +1,118 @@
 ﻿# AetherOps Self-Test Report
 
-Generated: 2026-06-07T00:09:44.383Z
+Generated: 2026-06-07T18:19:55.632Z
 Workspace: `D:\AI\AetherOps`
 Data root: `D:\AI\AetherOps\.tmp\aetherops-selftest`
 
 ## 1. Environment
 
-- Commit hash: `8eaa580`
-- Branch: `main`
+- Commit hash: `c1611fc`
+- Branch: `codex/aetherops-integration-verification`
 - Node.js: `v22.22.2`
 - npm: `10.9.7`
 - OS: `win32 x64`
 - Package engine: `>=22.16.0`
 - Engine check: PASS
-- Static mode: skipped (--skip-static)
+- Static mode: typecheck + test + build
 
 ### Dirty files before self-test
 
 - `modified README.md`
 - `modified docs/aetherops-self-test-report.md`
-- `modified package.json`
-- `modified scripts/doctor.mjs`
+- `modified scripts/research-metadata-verify.mjs`
 - `modified scripts/selftest.mjs`
-- `modified src/core/chunking.ts`
-- `modified src/core/embeddingProvider.ts`
-- `modified src/core/evidenceEligibility.ts`
-- `modified src/core/evidenceNormalizer.ts`
-- `modified src/core/finalOutputWriter.ts`
-- `modified src/core/hybridRetrievalEngine.ts`
-- `modified src/core/koreanCopy.test.ts`
-- `modified src/core/llmPlanning.ts`
-- `modified src/core/loopDecision.ts`
-- `modified src/core/memoryPromotion.ts`
-- `modified src/core/memoryStore.ts`
-- `modified src/core/ontologyGraphEngine.ts`
-- `modified src/core/orchestrator.test.ts`
-- `modified src/core/orchestrator.ts`
-- `modified src/core/orchestratorTestHarness.test.ts`
-- `modified src/core/projectContextBuilder.ts`
-- `modified src/core/reasoningEngine.ts`
-- `modified src/core/report.ts`
-- `modified src/core/researchArchitecture.test.ts`
-- `modified src/core/researchInput.ts`
-- `modified src/core/researchMemory.ts`
-- `modified src/core/researchPlanner.ts`
-- `modified src/core/researchSeed.ts`
-- `modified src/core/researchSpecification.ts`
-- `modified src/core/resultSynthesizer.ts`
-- `modified src/core/runAuditWriter.ts`
-- `modified src/core/runtimeRequirements.ts`
-- `modified src/core/simpleRagEngine.test.ts`
-- `modified src/core/simpleRagEngine.ts`
-- `modified src/core/sourceDedupe.ts`
-- `modified src/core/sourceQuality.ts`
-- `modified src/core/toolRegistry.ts`
-- `modified src/core/toolRunner.test.ts`
-- `modified src/core/toolRunner.ts`
-- `modified src/core/types.ts`
-- `modified src/core/validationEngine.ts`
-- `modified src/core/vectorIndexEngine.ts`
-- `modified src/core/vectorRagEngine.test.ts`
-- `modified src/core/vectorRagEngine.ts`
+- `deleted src/core/chunking.ts`
+- `deleted src/core/embeddingProvider.test.ts`
+- `deleted src/core/embeddingProvider.ts`
+- `deleted src/core/engineeringProgramTool.ts`
+- `deleted src/core/evidenceEligibility.ts`
+- `deleted src/core/evidenceNormalizer.ts`
+- `deleted src/core/finalOutputWriter.ts`
+- `deleted src/core/hybridRetrievalEngine.ts`
+- `deleted src/core/ids.ts`
+- `deleted src/core/koreanCopy.test.ts`
+- `deleted src/core/llm.ts`
+- `deleted src/core/llmPlanning.ts`
+- `deleted src/core/loopDecision.ts`
+- `deleted src/core/mainResearchMemoryStore.ts`
+- `deleted src/core/memoryPromotion.ts`
+- `deleted src/core/memoryStore.ts`
+- `deleted src/core/ontologyGraphEngine.ts`
+- `deleted src/core/orchestrator.test.ts`
+- `deleted src/core/orchestrator.ts`
+- `deleted src/core/orchestratorTestHarness.test.ts`
+- `deleted src/core/projectContextBuilder.ts`
+- `deleted src/core/projectStorage.ts`
+- `deleted src/core/projectWorkspaceStore.ts`
+- `deleted src/core/reasoningEngine.ts`
+- `deleted src/core/report.ts`
+- `deleted src/core/researchArchitecture.test.ts`
+- `deleted src/core/researchInput.ts`
+- `deleted src/core/researchMemory.ts`
+- `deleted src/core/researchMetadataTool.ts`
+- `deleted src/core/researchPlanner.ts`
+- `deleted src/core/researchSeed.ts`
+- `deleted src/core/researchSpecification.ts`
+- `deleted src/core/resultSynthesizer.ts`
+- `deleted src/core/runAuditWriter.ts`
+- `deleted src/core/runtimeRequirements.ts`
+- `deleted src/core/runtimeToolDiagnostics.ts`
+- `deleted src/core/simpleRagEngine.test.ts`
+- `deleted src/core/simpleRagEngine.ts`
+- `deleted src/core/sourceDedupe.ts`
+- `deleted src/core/sourceQuality.test.ts`
+- `deleted src/core/sourceQuality.ts`
+- `deleted src/core/stateMachine.test.ts`
+- `deleted src/core/stateMachine.ts`
+- `deleted src/core/toolRegistry.ts`
+- `deleted src/core/toolRunner.test.ts`
+- `deleted src/core/toolRunner.ts`
+- `deleted src/core/types.ts`
+- `deleted src/core/validationEngine.ts`
+- `deleted src/core/vectorIndexEngine.ts`
+- `deleted src/core/vectorRagEngine.test.ts`
+- `deleted src/core/vectorRagEngine.ts`
 - `modified src/renderer/App.tsx`
-- `modified src/renderer/aetherClient.ts`
-- `modified src/renderer/styles.css`
-- `modified src/server/runtime/backgroundBrowserRuntime.ts`
-- `modified src/server/runtime/browserResearchTool.test.ts`
-- `modified src/server/runtime/browserResearchTool.ts`
-- `modified src/server/runtime/codexOAuthLlmProvider.ts`
-- `modified src/server/runtime/opencodeAuth.ts`
-- `modified src/server/runtime/opencodeResolver.ts`
-- `modified src/server/runtime/orchestratorStrictExecution.test.ts`
-- `modified src/server/runtime/projectResearchStore.test.ts`
-- `modified src/server/runtime/projectResearchStore.ts`
-- `modified src/server/runtime/realOpenCodeAdapter.test.ts`
-- `modified src/server/runtime/realOpenCodeAdapter.ts`
-- `modified src/server/runtime/settingsStore.test.ts`
-- `modified src/server/runtime/settingsStore.ts`
-- `modified src/server/runtime/sqliteStore.test.ts`
-- `modified src/server/runtime/sqliteStore.ts`
+- `deleted src/server/runtime/backgroundBrowserRuntime.ts`
+- `deleted src/server/runtime/browserResearchTool.test.ts`
+- `deleted src/server/runtime/browserResearchTool.ts`
+- `deleted src/server/runtime/codexOAuthLlmProvider.ts`
+- `deleted src/server/runtime/opencodeAuth.ts`
+- `deleted src/server/runtime/opencodeResolver.test.ts`
+- `deleted src/server/runtime/opencodeResolver.ts`
+- `deleted src/server/runtime/orchestratorStrictExecution.test.ts`
+- `deleted src/server/runtime/projectResearchStore.test.ts`
+- `deleted src/server/runtime/projectResearchStore.ts`
+- `deleted src/server/runtime/realOpenCodeAdapter.test.ts`
+- `deleted src/server/runtime/realOpenCodeAdapter.ts`
+- `deleted src/server/runtime/settingsStore.test.ts`
+- `deleted src/server/runtime/settingsStore.ts`
+- `deleted src/server/runtime/sqliteStore.test.ts`
+- `deleted src/server/runtime/sqliteStore.ts`
+- `deleted src/server/runtime/strictUtf8.test.ts`
+- `deleted src/server/runtime/strictUtf8.ts`
 - `modified src/server/webServer.ts`
 - `modified src/vite-env.d.ts`
-- `untracked .github/`
-- `untracked AGENTS.md`
 - `untracked output/`
-- `untracked scripts/lib/`
-- `untracked scripts/research-metadata-verify.mjs`
-- `untracked scripts/ui-layout-verify.mjs`
-- `untracked src/core/engineeringProgramTool.ts`
-- `untracked src/core/researchMetadataTool.ts`
-- `untracked src/core/runtimeToolDiagnostics.ts`
-- `untracked src/server/runtime/strictUtf8.test.ts`
-- `untracked src/server/runtime/strictUtf8.ts`
+- `untracked src/core/evidence/`
+- `untracked src/core/input/`
+- `untracked src/core/integration/`
+- `untracked src/core/memory/`
+- `untracked src/core/orchestration/`
+- `untracked src/core/output/`
+- `untracked src/core/planning/`
+- `untracked src/core/providers/`
+- `untracked src/core/reasoning/`
+- `untracked src/core/retrieval/`
+- `untracked src/core/shared/`
+- `untracked src/core/storage/`
+- `untracked src/core/testing/`
+- `untracked src/core/tools/`
+- `untracked src/server/runtime/browser/`
+- `untracked src/server/runtime/opencode/`
+- `untracked src/server/runtime/orchestration/`
+- `untracked src/server/runtime/storage/`
+- `untracked src/server/runtime/support/`
 
 ### Files generated by self-test
 
@@ -101,79 +122,100 @@ Data root: `D:\AI\AetherOps\.tmp\aetherops-selftest`
 
 - `modified README.md`
 - `modified docs/aetherops-self-test-report.md`
-- `modified package.json`
-- `modified scripts/doctor.mjs`
+- `modified scripts/research-metadata-verify.mjs`
 - `modified scripts/selftest.mjs`
-- `modified src/core/chunking.ts`
-- `modified src/core/embeddingProvider.ts`
-- `modified src/core/evidenceEligibility.ts`
-- `modified src/core/evidenceNormalizer.ts`
-- `modified src/core/finalOutputWriter.ts`
-- `modified src/core/hybridRetrievalEngine.ts`
-- `modified src/core/koreanCopy.test.ts`
-- `modified src/core/llmPlanning.ts`
-- `modified src/core/loopDecision.ts`
-- `modified src/core/memoryPromotion.ts`
-- `modified src/core/memoryStore.ts`
-- `modified src/core/ontologyGraphEngine.ts`
-- `modified src/core/orchestrator.test.ts`
-- `modified src/core/orchestrator.ts`
-- `modified src/core/orchestratorTestHarness.test.ts`
-- `modified src/core/projectContextBuilder.ts`
-- `modified src/core/reasoningEngine.ts`
-- `modified src/core/report.ts`
-- `modified src/core/researchArchitecture.test.ts`
-- `modified src/core/researchInput.ts`
-- `modified src/core/researchMemory.ts`
-- `modified src/core/researchPlanner.ts`
-- `modified src/core/researchSeed.ts`
-- `modified src/core/researchSpecification.ts`
-- `modified src/core/resultSynthesizer.ts`
-- `modified src/core/runAuditWriter.ts`
-- `modified src/core/runtimeRequirements.ts`
-- `modified src/core/simpleRagEngine.test.ts`
-- `modified src/core/simpleRagEngine.ts`
-- `modified src/core/sourceDedupe.ts`
-- `modified src/core/sourceQuality.ts`
-- `modified src/core/toolRegistry.ts`
-- `modified src/core/toolRunner.test.ts`
-- `modified src/core/toolRunner.ts`
-- `modified src/core/types.ts`
-- `modified src/core/validationEngine.ts`
-- `modified src/core/vectorIndexEngine.ts`
-- `modified src/core/vectorRagEngine.test.ts`
-- `modified src/core/vectorRagEngine.ts`
+- `deleted src/core/chunking.ts`
+- `deleted src/core/embeddingProvider.test.ts`
+- `deleted src/core/embeddingProvider.ts`
+- `deleted src/core/engineeringProgramTool.ts`
+- `deleted src/core/evidenceEligibility.ts`
+- `deleted src/core/evidenceNormalizer.ts`
+- `deleted src/core/finalOutputWriter.ts`
+- `deleted src/core/hybridRetrievalEngine.ts`
+- `deleted src/core/ids.ts`
+- `deleted src/core/koreanCopy.test.ts`
+- `deleted src/core/llm.ts`
+- `deleted src/core/llmPlanning.ts`
+- `deleted src/core/loopDecision.ts`
+- `deleted src/core/mainResearchMemoryStore.ts`
+- `deleted src/core/memoryPromotion.ts`
+- `deleted src/core/memoryStore.ts`
+- `deleted src/core/ontologyGraphEngine.ts`
+- `deleted src/core/orchestrator.test.ts`
+- `deleted src/core/orchestrator.ts`
+- `deleted src/core/orchestratorTestHarness.test.ts`
+- `deleted src/core/projectContextBuilder.ts`
+- `deleted src/core/projectStorage.ts`
+- `deleted src/core/projectWorkspaceStore.ts`
+- `deleted src/core/reasoningEngine.ts`
+- `deleted src/core/report.ts`
+- `deleted src/core/researchArchitecture.test.ts`
+- `deleted src/core/researchInput.ts`
+- `deleted src/core/researchMemory.ts`
+- `deleted src/core/researchMetadataTool.ts`
+- `deleted src/core/researchPlanner.ts`
+- `deleted src/core/researchSeed.ts`
+- `deleted src/core/researchSpecification.ts`
+- `deleted src/core/resultSynthesizer.ts`
+- `deleted src/core/runAuditWriter.ts`
+- `deleted src/core/runtimeRequirements.ts`
+- `deleted src/core/runtimeToolDiagnostics.ts`
+- `deleted src/core/simpleRagEngine.test.ts`
+- `deleted src/core/simpleRagEngine.ts`
+- `deleted src/core/sourceDedupe.ts`
+- `deleted src/core/sourceQuality.test.ts`
+- `deleted src/core/sourceQuality.ts`
+- `deleted src/core/stateMachine.test.ts`
+- `deleted src/core/stateMachine.ts`
+- `deleted src/core/toolRegistry.ts`
+- `deleted src/core/toolRunner.test.ts`
+- `deleted src/core/toolRunner.ts`
+- `deleted src/core/types.ts`
+- `deleted src/core/validationEngine.ts`
+- `deleted src/core/vectorIndexEngine.ts`
+- `deleted src/core/vectorRagEngine.test.ts`
+- `deleted src/core/vectorRagEngine.ts`
 - `modified src/renderer/App.tsx`
-- `modified src/renderer/aetherClient.ts`
-- `modified src/renderer/styles.css`
-- `modified src/server/runtime/backgroundBrowserRuntime.ts`
-- `modified src/server/runtime/browserResearchTool.test.ts`
-- `modified src/server/runtime/browserResearchTool.ts`
-- `modified src/server/runtime/codexOAuthLlmProvider.ts`
-- `modified src/server/runtime/opencodeAuth.ts`
-- `modified src/server/runtime/opencodeResolver.ts`
-- `modified src/server/runtime/orchestratorStrictExecution.test.ts`
-- `modified src/server/runtime/projectResearchStore.test.ts`
-- `modified src/server/runtime/projectResearchStore.ts`
-- `modified src/server/runtime/realOpenCodeAdapter.test.ts`
-- `modified src/server/runtime/realOpenCodeAdapter.ts`
-- `modified src/server/runtime/settingsStore.test.ts`
-- `modified src/server/runtime/settingsStore.ts`
-- `modified src/server/runtime/sqliteStore.test.ts`
-- `modified src/server/runtime/sqliteStore.ts`
+- `deleted src/server/runtime/backgroundBrowserRuntime.ts`
+- `deleted src/server/runtime/browserResearchTool.test.ts`
+- `deleted src/server/runtime/browserResearchTool.ts`
+- `deleted src/server/runtime/codexOAuthLlmProvider.ts`
+- `deleted src/server/runtime/opencodeAuth.ts`
+- `deleted src/server/runtime/opencodeResolver.test.ts`
+- `deleted src/server/runtime/opencodeResolver.ts`
+- `deleted src/server/runtime/orchestratorStrictExecution.test.ts`
+- `deleted src/server/runtime/projectResearchStore.test.ts`
+- `deleted src/server/runtime/projectResearchStore.ts`
+- `deleted src/server/runtime/realOpenCodeAdapter.test.ts`
+- `deleted src/server/runtime/realOpenCodeAdapter.ts`
+- `deleted src/server/runtime/settingsStore.test.ts`
+- `deleted src/server/runtime/settingsStore.ts`
+- `deleted src/server/runtime/sqliteStore.test.ts`
+- `deleted src/server/runtime/sqliteStore.ts`
+- `deleted src/server/runtime/strictUtf8.test.ts`
+- `deleted src/server/runtime/strictUtf8.ts`
 - `modified src/server/webServer.ts`
 - `modified src/vite-env.d.ts`
-- `untracked .github/`
-- `untracked AGENTS.md`
 - `untracked output/`
-- `untracked scripts/lib/`
-- `untracked scripts/research-metadata-verify.mjs`
-- `untracked scripts/ui-layout-verify.mjs`
-- `untracked src/core/engineeringProgramTool.ts`
-- `untracked src/core/researchMetadataTool.ts`
-- `untracked src/core/runtimeToolDiagnostics.ts`
-- `untracked src/server/runtime/strictUtf8.test.ts`
-- `untracked src/server/runtime/strictUtf8.ts`
+- `untracked src/core/evidence/`
+- `untracked src/core/input/`
+- `untracked src/core/integration/`
+- `untracked src/core/memory/`
+- `untracked src/core/orchestration/`
+- `untracked src/core/output/`
+- `untracked src/core/planning/`
+- `untracked src/core/providers/`
+- `untracked src/core/reasoning/`
+- `untracked src/core/retrieval/`
+- `untracked src/core/shared/`
+- `untracked src/core/storage/`
+- `untracked src/core/testing/`
+- `untracked src/core/tools/`
+- `untracked src/server/runtime/browser/`
+- `untracked src/server/runtime/opencode/`
+- `untracked src/server/runtime/orchestration/`
+- `untracked src/server/runtime/storage/`
+- `untracked src/server/runtime/support/`
 
 Expected self-test report update: `docs/aetherops-self-test-report.md`
 
@@ -181,16 +223,18 @@ Expected self-test report update: `docs/aetherops-self-test-report.md`
 
 | Check | Result | Seconds |
 | --- | --- | --- |
-| static checks | SKIPPED (--skip-static) | 0 |
+| npm run typecheck | PASS | 4.25 |
+| npm test | PASS | 6.23 |
+| npm run build | PASS | 9.43 |
 
 ### Grep Invariants
 
 - PASS: production synthetic-substitute adapters
 - PASS: legacy RPC gate - src/server/webServer.ts:233: if (process.env.AETHEROPS_ENABLE_LEGACY_RPC !== "true") { src/server/webServer.ts:236: console.warn(`[AetherOps] Legacy RPC method ${method} was called. Set AETHEROPS_ENABLE_LEGACY_RPC=false to block old clients
-- PASS: WebSearchTool no evidence policy - src/core/toolRegistry.ts:38:export class WebSearchTool implements ResearchTool { src/core/toolRegistry.ts:68: evidence: [], src/core/toolRegistry.ts:141: evidence: [], src/core/toolRegistry.ts:245: evidence: [], src/core/toolRegistry.ts:295
-- PASS: ProjectContextSnapshot enforcement - src/core/orchestrator.ts:690: await this.record(projectId, ResearchLoopStep.ReasonAndValidate, "Agent Control", "ProjectContextSnapshot 선택과 추론/검증을 시작합니다."); src/core/orchestrator.ts:699: throw new Error("ProjectContextSnapshot could not sel
-- PASS: DataAnalysis tool input availability - src/core/orchestrator.ts:474: normalizedRecords: snapshot.normalizedRecords, src/core/orchestrator.ts:475: validationResults: snapshot.validationResults, src/core/orchestrator.ts:476: projectContextSnapshots: snapshot.projectContextSnapshot
-- PASS: WebFetch hardening markers - src/core/toolRegistry.ts:793: const controller = new AbortController(); src/core/toolRegistry.ts:813: const contentLength = Number(response.headers.get("content-length") ?? "0"); src/core/toolRegistry.ts:815: throw new Error(`content-length
+- PASS: WebSearchTool no evidence policy - src/core/tools/toolRegistry.ts:38:export class WebSearchTool implements ResearchTool { src/core/tools/toolRegistry.ts:68: evidence: [], src/core/tools/toolRegistry.ts:141: evidence: [], src/core/tools/toolRegistry.ts:245: evidence: [], src/
+- PASS: ProjectContextSnapshot enforcement - src/core/orchestration/orchestrator.ts:808: await this.record(projectId, ResearchLoopStep.ReasonAndValidate, "Agent Control", "ProjectContextSnapshot 선택과 추론/검증을 시작합니다."); src/core/orchestration/orchestrator.ts:817: throw new Error("ProjectC
+- PASS: DataAnalysis tool input availability - src/core/orchestration/orchestrator.ts:490: normalizedRecords: snapshot.normalizedRecords, src/core/orchestration/orchestrator.ts:491: validationResults: snapshot.validationResults, src/core/orchestration/orchestrator.ts:492: projectContext
+- PASS: WebFetch hardening markers - src/core/tools/toolRegistry.ts:793: const controller = new AbortController(); src/core/tools/toolRegistry.ts:813: const contentLength = Number(response.headers.get("content-length") ?? "0"); src/core/tools/toolRegistry.ts:815: throw new Err
 - PASS: rawText sanitization markers - scripts\selftest.mjs:170: { label: "rawText sanitization markers", pattern: /rawText/, paths: ["scripts", "src/server", "src/core"], passWhen: (result) => result.exitCode === 0 }, scripts\selftest.mjs:429: let rawTextHits = 0; scripts\selft
 - PASS: old previous-evidence WebFetch message removed
 
@@ -198,7 +242,7 @@ Expected self-test report update: `docs/aetherops-self-test-report.md`
 
 - Health status: 200
 - Health content type: `application/json; charset=utf-8`
-- Health body: `{"ok":true,"mode":"web","dataRoot":"D:\\AI\\AetherOps\\.tmp\\aetherops-selftest","port":62386,"pid":19076,"startedAt":"2026-06-07T00:09:40.984Z","version":"0.1.0"}`
+- Health body: `{"ok":true,"mode":"web","dataRoot":"D:\\AI\\AetherOps\\.tmp\\aetherops-selftest","port":52266,"pid":23988,"startedAt":"2026-06-07T18:17:59.903Z","version":"0.1.0"}`
 - settings.get summary:
   - LLM: `codex-oauth` / `gpt-5.5`
   - OpenCode: enabled=`true`, command=`opencode`
@@ -216,28 +260,31 @@ Expected self-test report update: `docs/aetherops-self-test-report.md`
 
 - Status: `PASS`
 - Exit code: `0`
-- Seconds: `2.48`
-- Stdout sample: `AetherOps UI layout verification: PASS [ { "viewport": "desktop-1920x1080", "initial": { "viewport": { "width": 1920, "height": 1080 }, "shell": { "x": 0, "y": 0, "width": 1920, "height": 1080, "gridTemplateColumns": "300px 1620px", "gridTemplateRows": "1080px" }, "sidebar": { "x": 0, "y": 0, "width": 300, "height": 1080, "gridTemplateColumns": "275px", "gridTemplateRows": "26px 170px 774px 38px" }, "runtimeErrorVisible": false, "sidebarLeft": true, "sidebarTop": false, "horizontalOverflow": false, "scrollWidths": { "body": 1920, "documentElement": 1920 } }, "settings": { "visible": true, "activeSettings": true, "requestContractRows": 9, "su2Text": "Run SU2 caseCode execution is disabled in app set`
+- Seconds: `4.74`
+- Stdout sample: `AetherOps UI layout verification: PASS [ { "viewport": "desktop-1920x1080", "initial": { "viewport": { "width": 1920, "height": 1080 }, "shell": { "x": 0, "y": 0, "width": 1920, "height": 1080, "gridTemplateColumns": "300px 1620px", "gridTemplateRows": "1080px" }, "sidebar": { "x": 0, "y": 0, "width": 300, "height": 1080, "gridTemplateColumns": "275px", "gridTemplateRows": "26px 170px 774px 38px" }, "loopLimitVisible": true, "loopLimitValue": "1", "runtimeErrorVisible": false, "sidebarLeft": true, "sidebarTop": false, "horizontalOverflow": false, "scrollWidths": { "body": 1920, "documentElement": 1920 } }, "settings": { "visible": true, "activeSettings": true, "requestContractRows": 9, "su2T`
 - Stderr sample: ``
 
 ## 5. Blocked-path E2E
 
-- Status: `failed`
-- Project ID: `project_7c3bc628-d712-48be-a7b4-d7c31cf23e74`
-- Current step: `INPUT_RESEARCH_QUESTION_HYPOTHESIS`
-- RuntimeBlockers: 0
+- Status: `blocked`
+- Project ID: `project_2381209a-9b6e-4f99-96e0-d9c1519e59e2`
+- Current step: `BUILD_VECTOR_INDEX`
+- RuntimeBlockers: 1
 - StepErrors: 1
 - RunAuditOutputs: 1
 - FinalOutputs: 0
 - Bad evidence count: 0
-- Latest blocker: `{}`
-- Counts: `{"sources":0,"evidence":0,"artifacts":1,"normalizedRecords":0,"chunks":0,"ontologyEntities":0,"ontologyRelations":0,"projectContextSnapshots":0,"validationResults":0}`
+- Latest blocker: `{"id":"blocker_224a3be4-6c30-48e3-b99d-288f60a59e7a","projectId":"project_2381209a-9b6e-4f99-96e0-d9c1519e59e2","step":"BUILD_VECTOR_INDEX","requirementKey":"embedding.apiKey","message":"Embedding API key가 필요합니다.","createdAt":"2026-06-07T18:19:55.251Z"}`
+- Counts: `{"sources":17,"evidence":4,"artifacts":9,"normalizedRecords":46,"chunks":0,"ontologyEntities":0,"ontologyRelations":0,"projectContextSnapshots":0,"validationResults":0}`
 
 ### Evidence Policy Table
 
 | Evidence ID | traceabilityKind | canSupportHypothesis | citation | quote | sourceQualityTier | generatedBy | verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| none | n/a | false | no | no | n/a | n/a | PASS: no evidence rows to inspect |
+| evidence_d7c2da70-7f59-4ab4-b771-428bda55d658 | external_source | true | yes | yes | scholarly | unknown | PASS |
+| evidence_d352a469-9c1a-46a0-b185-5d431086ea76 | external_source | true | yes | yes | scholarly | unknown | PASS |
+| evidence_9598c672-a759-4f4d-854b-e7faf57054a5 | external_source | true | yes | yes | scholarly | unknown | PASS |
+| evidence_05a3b12b-d0ec-428f-ab52-90a1fd73f4c7 | external_source | true | yes | yes | scholarly | unknown | PASS |
 
 ## 6. Live-path E2E
 
@@ -250,9 +297,9 @@ Expected self-test report update: `docs/aetherops-self-test-report.md`
 
 - Required paths: PASS main/main.sqlite; PASS main/vector.sqlite; PASS main/ontology.sqlite; PASS main/files/sources; PASS projects
 - rawText SQLite hits: 0
-- Main source files: 0
+- Main source files: 5
 - Project web source files: 0
-- DB summaries: `[{"path":"aetherops.sqlite","counts":{"agent_plans":0,"artifacts":1,"benchmark_plans":1,"chunks":0,"continuation_decisions":0,"evidence":0,"final_outputs":0,"global_memory_items":0,"hybrid_contexts":0,"hypotheses":3,"iterations":5,"normalized_records":0,"ontology_constraints":0,"ontology_entities":0,"ontology_relations":0,"opencode_runs":0,"project_context_snapshots":0,"projects":1,"questions":1,"rag_contexts":0,"reports":0,"research_databases":1,"research_inputs":1,"research_plans":0,"research_specifications":0,"results":0,"run_audit_outputs":1,"runtime_blockers":0,"sessions":1,"sources":0,"step_errors":1,"tool_runs":0,"validation_results":0}},{"path":"main\\main.sqlite","counts":{"global_artifacts":1,"global_citations":0,"global_claims":0,"global_evidence":0,"global_memory_items":0,"global_normalized_records":0,"global_observations":0,"global_provenance":0,"global_sources":0,"global_tool_runs":0}},{"path":"main\\vector.sqlite","counts":{"global_chunks":0,"global_embeddings":0}},{"path":"main\\ontology.sqlite","counts":{"global_constraints":0,"global_entities":0,"global_relations":0}},{"path":"projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\project.sqlite","counts":{"agent_plans":0,"artifacts":1,"benchmark_plans":1,"continuation_decisions":0,"final_outputs":0,"hybrid_contexts":0,"normalized_records":0,"project_chunk_links":0,"project_constraint_links":0,"project_context_snapshots":0,"project_entity_links":0,"project_record_links":0,"project_relation_links":0,"reports":0,"research_inputs":1,"research_plans":0,"research_specifications":0,"run_audit_outputs":1,"runtime_blockers":0,"sources":0,"step_errors":0,"tool_runs":0,"validation_results":0}}]`
+- DB summaries: `[{"path":"aetherops.sqlite","counts":{"agent_plans":1,"artifacts":10,"benchmark_plans":1,"chunks":0,"continuation_decisions":0,"evidence":4,"final_outputs":0,"global_memory_items":0,"hybrid_contexts":0,"hypotheses":3,"iterations":14,"normalized_records":46,"ontology_constraints":0,"ontology_entities":0,"ontology_relations":0,"opencode_runs":1,"project_context_snapshots":0,"projects":2,"questions":1,"rag_contexts":0,"reports":0,"research_databases":2,"research_inputs":1,"research_plans":1,"research_specifications":1,"results":0,"run_audit_outputs":1,"runtime_blockers":1,"sessions":2,"sources":17,"step_errors":1,"tool_runs":4,"validation_results":0}},{"path":"main\\main.sqlite","counts":{"global_artifacts":10,"global_citations":0,"global_claims":0,"global_evidence":4,"global_memory_items":0,"global_normalized_records":46,"global_observations":0,"global_provenance":3,"global_sources":17,"global_tool_runs":4}},{"path":"main\\vector.sqlite","counts":{"global_chunks":0,"global_embeddings":0}},{"path":"main\\ontology.sqlite","counts":{"global_constraints":0,"global_entities":0,"global_relations":0}},{"path":"projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\project.sqlite","counts":{"agent_plans":0,"artifacts":9,"benchmark_plans":1,"continuation_decisions":0,"final_outputs":0,"hybrid_contexts":0,"normalized_records":0,"project_chunk_links":0,"project_constraint_links":0,"project_context_snapshots":0,"project_entity_links":0,"project_record_links":46,"project_relation_links":0,"reports":0,"research_inputs":1,"research_plans":1,"research_specifications":1,"run_audit_outputs":1,"runtime_blockers":0,"sources":17,"step_errors":0,"tool_runs":4,"validation_results":0}},{"path":"projects\\새-연구-프로젝트-1-2026-06-07\\project.sqlite","counts":{"agent_plans":0,"artifacts":1,"benchmark_plans":0,"continuation_decisions":0,"final_outputs":0,"hybrid_contexts":0,"normalized_records":0,"project_chunk_links":0,"project_context_snapshots":0,"project_entity_links":0,"project_record_links":0,"project_relation_links":0,"reports":0,"research_inputs":0,"research_plans":0,"research_specifications":0,"run_audit_outputs":0,"runtime_blockers":0,"sources":0,"step_errors":0,"tool_runs":0,"validation_results":0}}]`
 
 ## 8. Security Tests
 
@@ -264,12 +311,12 @@ Expected self-test report update: `docs/aetherops-self-test-report.md`
 ## 9. UTF-8 Test
 
 - Korean blocked-path input preserved: PASS
-- Korean blocked-path sentinels: `{"한글 질문":true,"근거 추적성":true,"설정 부족":true,"검색 snippet은 evidence가 아님":true}`
+- Korean blocked-path sentinels: `{"서술형 질문":false,"근거 추적성":true,"설정 부족":true,"검색 snippet은 evidence가 아님":true}`
 - Blocked-path JSON fatal UTF-8 decode: PASS (first bytes: `7b0a2020`)
-- Audit markdown Korean preserved: not run/fail
-- Audit markdown Korean sentinels: `{"한글 질문":false,"근거 추적성":false,"설정 부족":false,"검색 snippet은 evidence가 아님":false}`
-- Generated text files fatal UTF-8 decode: PASS (10 files)
-- Generated text BOM files: `[".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\aetherops-loop.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\project.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\reports\\run-audit.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\chat\\session_f9f5341f-e420-4c8e-9cda-b61d1d4e7ab1-1780790984194-iteration_b3296cd8-6448-42b3-8a05-dd444dbeb398-assistant.md"]`
+- Audit markdown Korean preserved: PASS
+- Audit markdown Korean sentinels: `{"서술형 질문":false,"근거 추적성":false,"설정 부족":false,"검색 snippet은 evidence가 아님":false}`
+- Generated text files fatal UTF-8 decode: PASS (34 files)
+- Generated text BOM files: `[".tmp\\aetherops-selftest\\projects\\새-연구-프로젝트-1-2026-06-07\\aetherops-loop.md",".tmp\\aetherops-selftest\\projects\\새-연구-프로젝트-1-2026-06-07\\project.md",".tmp\\aetherops-selftest\\projects\\새-연구-프로젝트-1-2026-06-07\\artifacts\\chat\\session_4582b31d-5439-4d40-82ac-b9eaa44c17a0-1780856281949-iteration_4b96c7e0-dda1-4011-99e3-a450d1fa33b1-assistant.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\aetherops-loop.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\project.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\reports\\run-audit.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\iteration-1\\research-note.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\chat\\session_b7b9bc26-a04f-422b-847e-99d8358d0a1c-1780856334096-iteration_34967abb-ac3d-4693-b922-f80ba1f8e34d-assistant.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\chat\\session_b7b9bc26-a04f-422b-847e-99d8358d0a1c-1780856370038-iteration_33b2b9b7-3192-4987-9823-177da09081f1-assistant.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\chat\\session_b7b9bc26-a04f-422b-847e-99d8358d0a1c-1780856371274-iteration_c4d8f9b5-784d-4293-956a-e92810879e4d-assistant.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\chat\\session_b7b9bc26-a04f-422b-847e-99d8358d0a1c-1780856395061-iteration_1858a77b-a03f-42ca-8b17-99a0887238de-assistant.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\chat\\session_b7b9bc26-a04f-422b-847e-99d8358d0a1c-1780856395104-iteration_c87098c9-d2ed-472c-aa66-d3c1bc780852-assistant.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\chat\\session_b7b9bc26-a04f-422b-847e-99d8358d0a1c-1780856395188-iteration_69292e66-da76-4d55-aa97-f2aaa5e42b6d-assistant.md",".tmp\\aetherops-selftest\\projects\\vector-rag-vs-hybrid-rag-테스트-2026-06-07\\artifacts\\chat\\session_b7b9bc26-a04f-422b-847e-99d8358d0a1c-1780856395270-iteration_dbbc4f82-2f75-40ec-ac3a-65a3b6a7b775-assistant.md"]`
 - Generated text fatal failures: `[]`
 - Contains `??`: NO
 - Contains replacement char: NO
@@ -288,7 +335,7 @@ Windows PowerShell note: if default `Get-Content <path>` displays Korean as garb
 - None.
 
 ### Medium
-- None.
+- Blocked-path JSON is missing one or more Korean UTF-8 sentinel strings.
 
 ### Low
 - None.
@@ -299,4 +346,4 @@ Windows PowerShell note: if default `Get-Content <path>` displays Korean as garb
 
 ## 12. Verdict
 
-`PASS`
+`PASS_WITH_WARNINGS`

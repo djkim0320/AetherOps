@@ -11,7 +11,7 @@ import type {
   RuntimeToolDiagnostics,
   EngineeringProgramPreflightResult,
   EngineeringProgramTarget
-} from "./core/types.js";
+} from "./core/shared/types.js";
 
 export interface AetherOpsApi {
   projects: {

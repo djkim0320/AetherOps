@@ -1,0 +1,534 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { nowIso } from "../../../core/shared/ids.js";
+import type {
+  AppSettings,
+  EmbeddingSettings,
+  EngineeringProgramSettings,
+  OpenCodeApiLlmSettings,
+  OpenCodeLlmSettings,
+  ResearchMetadataSettings,
+  WebSearchSettings
+} from "../../../core/shared/types.js";
+
+interface PersistedSettings {
+  openCodeLlm?: Omit<OpenCodeApiLlmSettings, "apiKey" | "apiKeyConfigured"> | Extract<OpenCodeLlmSettings, { source: "codex-oauth" }>;
+  openCode?: AppSettings["openCode"];
+  webSearch?: Omit<WebSearchSettings, "apiKey" | "apiKeyConfigured">;
+  embedding?: Omit<EmbeddingSettings, "apiKey" | "apiKeyConfigured">;
+  browserUse?: AppSettings["browserUse"];
+  researchMetadata?: ResearchMetadataSettings;
+  engineeringTools?: EngineeringProgramSettings;
+  allowExternalSearch?: boolean;
+  allowCodeExecution?: boolean;
+  /** @deprecated 반복 횟수는 에이전트의 계속 연구 판단이 결정하며 저장값은 무시됩니다. */
+  maxLoopIterations?: number;
+  ontologyExtractionMode?: AppSettings["ontologyExtractionMode"];
+  finalOutputExport?: AppSettings["finalOutputExport"];
+  encryptedApiKey?: string;
+  encryptedWebSearchKey?: string;
+  encryptedEmbeddingKey?: string;
+  updatedAt: string;
+}
+
+export interface AppSettingsStore {
+  getSettings(): Promise<AppSettings>;
+  getRuntimeSettings(): Promise<AppSettings>;
+  saveSettings(settings: AppSettings): Promise<AppSettings>;
+}
+
+export const defaultSettings: AppSettings = {
+  openCodeLlm: {
+    source: "codex-oauth",
+    model: "gpt-5.5"
+  },
+  openCode: {
+    enabled: true,
+    command: "opencode",
+    provider: "openai",
+    model: "gpt-5.5",
+    timeoutMs: 180_000
+  },
+  webSearch: {
+    provider: "disabled"
+  },
+  embedding: {
+    provider: "openai",
+    model: "text-embedding-3-small",
+    dimensions: 1536
+  },
+  browserUse: {
+    enabled: true,
+    mode: "background",
+    maxPages: 2,
+    timeoutMs: 30_000,
+    captureScreenshots: true
+  },
+  researchMetadata: {
+    enabled: true,
+    provider: "openalex",
+    maxResults: 5,
+    timeoutMs: 15_000
+  },
+  engineeringTools: {
+    enabled: false,
+    xfoil: {
+      enabled: false,
+      command: "",
+      timeoutMs: 30_000
+    },
+    modeling: {
+      enabled: false,
+      artifactRoot: "",
+      maxMeshBytes: 20 * 1024 * 1024
+    },
+    openFoam: {
+      enabled: false,
+      command: "",
+      caseRoot: "",
+      workingDirectory: "",
+      probeArgs: ["-help"],
+      runArgsTemplate: ["-case", "{case}"],
+      timeoutMs: 30 * 60_000
+    },
+    su2: {
+      enabled: false,
+      command: "",
+      caseRoot: "",
+      configFile: "",
+      workingDirectory: "",
+      probeArgs: ["--help"],
+      runArgsTemplate: ["{config}"],
+      timeoutMs: 30 * 60_000
+    },
+    freeCad: {
+      enabled: false,
+      command: "",
+      scriptPath: "",
+      workingDirectory: "",
+      probeArgs: ["--version"],
+      runArgsTemplate: ["{script}", "--output", "{output}"],
+      timeoutMs: 30 * 60_000
+    },
+    openVsp: {
+      enabled: false,
+      command: "",
+      scriptPath: "",
+      workingDirectory: "",
+      probeArgs: ["-help"],
+      runArgsTemplate: ["-script", "{script}", "-output", "{output}"],
+      timeoutMs: 30 * 60_000
+    },
+    commercialCfd: {
+      flightStreamConfigured: false,
+      starCcmConfigured: false,
+      flightStreamCommand: "",
+      flightStreamWorkingDirectory: "",
+      flightStreamProbeArgs: ["--version"],
+      flightStreamRunArgsTemplate: [],
+      flightStreamTimeoutMs: 120_000,
+      starCcmCommand: "",
+      starCcmWorkingDirectory: "",
+      starCcmProbeArgs: ["-version"],
+      starCcmRunArgsTemplate: [],
+      starCcmTimeoutMs: 120_000,
+      notes: ""
+    }
+  },
+  allowExternalSearch: true,
+  allowCodeExecution: false,
+  ontologyExtractionMode: "rule_based",
+  finalOutputExport: {
+    markdown: true,
+    json: true,
+    ontologyGraph: true,
+    artifactPackage: true
+  },
+  updatedAt: nowIso()
+};
+
+export class JsonAppSettingsStore implements AppSettingsStore {
+  constructor(private readonly settingsPath: string) {}
+
+  async getSettings(): Promise<AppSettings> {
+    return this.toPublicSettings(this.readPersisted());
+  }
+
+  async getRuntimeSettings(): Promise<AppSettings> {
+    const persisted = this.readPersisted();
+    const publicSettings = this.toPublicSettings(persisted);
+    return {
+      ...publicSettings,
+      openCodeLlm:
+        publicSettings.openCodeLlm.source === "api"
+          ? {
+              ...publicSettings.openCodeLlm,
+              apiKey: this.decryptKey(persisted.encryptedApiKey)
+            }
+          : publicSettings.openCodeLlm,
+      webSearch: {
+        ...publicSettings.webSearch,
+        apiKey: this.decryptKey(persisted.encryptedWebSearchKey)
+      },
+      embedding: {
+        ...publicSettings.embedding,
+        apiKey: this.decryptKey(persisted.encryptedEmbeddingKey)
+      }
+    };
+  }
+
+  async saveSettings(settings: AppSettings): Promise<AppSettings> {
+    const current = this.readPersisted();
+    const updatedAt = nowIso();
+    const currentApiKey = this.usableEncryptedKey(current.encryptedApiKey);
+    const currentWebSearchKey = this.usableEncryptedKey(current.encryptedWebSearchKey);
+    const currentEmbeddingKey = this.usableEncryptedKey(current.encryptedEmbeddingKey);
+    const persisted: PersistedSettings = {
+      openCodeLlm:
+        settings.openCodeLlm.source === "api"
+          ? {
+              source: "api",
+              provider: settings.openCodeLlm.provider,
+              model: settings.openCodeLlm.model,
+              baseUrl: settings.openCodeLlm.baseUrl
+            }
+          : {
+              source: "codex-oauth",
+              model: settings.openCodeLlm.model
+            },
+      openCode: settings.openCode,
+      webSearch: {
+        provider: settings.webSearch.provider,
+        endpoint: settings.webSearch.endpoint
+      },
+      embedding: {
+        provider: settings.embedding.provider,
+        model: settings.embedding.model,
+        baseUrl: settings.embedding.baseUrl,
+        dimensions: settings.embedding.dimensions
+      },
+      browserUse: normalizeBrowserUse(settings.browserUse),
+      researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
+      engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
+      allowExternalSearch: settings.allowExternalSearch,
+      allowCodeExecution: settings.allowCodeExecution,
+      ontologyExtractionMode: settings.ontologyExtractionMode,
+      finalOutputExport: settings.finalOutputExport,
+      encryptedApiKey: settings.openCodeLlm.source === "api" ? currentApiKey : undefined,
+      encryptedWebSearchKey: currentWebSearchKey,
+      encryptedEmbeddingKey: currentEmbeddingKey,
+      updatedAt
+    };
+
+    if (settings.openCodeLlm.source === "api") {
+      persisted.encryptedApiKey = updateEncryptedKey(settings.openCodeLlm.apiKey, currentApiKey, (key) => this.encryptKey(key));
+    }
+    persisted.encryptedWebSearchKey = updateEncryptedKey(settings.webSearch.apiKey, currentWebSearchKey, (key) => this.encryptKey(key));
+    persisted.encryptedEmbeddingKey = updateEncryptedKey(settings.embedding.apiKey, currentEmbeddingKey, (key) => this.encryptKey(key));
+
+    this.writePersisted(persisted);
+    return this.toPublicSettings(persisted);
+  }
+
+  private readPersisted(): PersistedSettings {
+    if (!existsSync(this.settingsPath)) {
+      return this.toPersisted(defaultSettings);
+    }
+
+    try {
+      const parsed = JSON.parse(readFileSync(this.settingsPath, "utf8")) as PersistedSettings;
+      return normalizePersisted(parsed);
+    } catch {
+      return this.toPersisted(defaultSettings);
+    }
+  }
+
+  private writePersisted(settings: PersistedSettings): void {
+    mkdirSync(dirname(this.settingsPath), { recursive: true });
+    writeFileSync(this.settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  }
+
+  private toPersisted(settings: AppSettings): PersistedSettings {
+    return {
+      openCodeLlm:
+        settings.openCodeLlm.source === "api"
+          ? {
+              source: "api",
+              provider: settings.openCodeLlm.provider,
+              model: settings.openCodeLlm.model,
+              baseUrl: settings.openCodeLlm.baseUrl
+            }
+          : settings.openCodeLlm,
+      openCode: settings.openCode,
+      webSearch: {
+        provider: settings.webSearch.provider,
+        endpoint: settings.webSearch.endpoint
+      },
+      embedding: {
+        provider: settings.embedding.provider,
+        model: settings.embedding.model,
+        baseUrl: settings.embedding.baseUrl,
+        dimensions: settings.embedding.dimensions
+      },
+      browserUse: normalizeBrowserUse(settings.browserUse),
+      researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
+      engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
+      allowExternalSearch: settings.allowExternalSearch,
+      allowCodeExecution: settings.allowCodeExecution,
+      ontologyExtractionMode: settings.ontologyExtractionMode,
+      finalOutputExport: settings.finalOutputExport,
+      updatedAt: settings.updatedAt
+    };
+  }
+
+  private toPublicSettings(settings: PersistedSettings): AppSettings {
+    const normalized = normalizePersisted(settings);
+    return {
+      openCodeLlm:
+        normalized.openCodeLlm?.source === "api"
+          ? {
+              ...normalized.openCodeLlm,
+              apiKeyConfigured: this.isEncryptedKeyUsable(normalized.encryptedApiKey)
+            }
+          : {
+              source: "codex-oauth",
+              model: normalized.openCodeLlm?.source === "codex-oauth" ? normalized.openCodeLlm.model : "gpt-5.5"
+            },
+      openCode: normalized.openCode ?? defaultSettings.openCode,
+      webSearch: {
+        ...(normalized.webSearch ?? defaultSettings.webSearch),
+        apiKeyConfigured: this.isEncryptedKeyUsable(normalized.encryptedWebSearchKey)
+      },
+      embedding: {
+        ...(normalized.embedding ?? defaultSettings.embedding),
+        apiKeyConfigured: this.isEncryptedKeyUsable(normalized.encryptedEmbeddingKey)
+      },
+      browserUse: normalizeBrowserUse(normalized.browserUse),
+      researchMetadata: normalizeResearchMetadata(normalized.researchMetadata),
+      engineeringTools: normalizeEngineeringTools(normalized.engineeringTools),
+      allowExternalSearch: normalized.allowExternalSearch ?? defaultSettings.allowExternalSearch,
+      allowCodeExecution: normalized.allowCodeExecution ?? defaultSettings.allowCodeExecution,
+      ontologyExtractionMode: normalized.ontologyExtractionMode ?? defaultSettings.ontologyExtractionMode,
+      finalOutputExport: normalized.finalOutputExport ?? defaultSettings.finalOutputExport,
+      updatedAt: normalized.updatedAt
+    };
+  }
+
+  private encryptKey(apiKey: string): string {
+    return `plain:${Buffer.from(apiKey, "utf8").toString("base64")}`;
+  }
+
+  private decryptKey(encryptedApiKey?: string): string | undefined {
+    if (!encryptedApiKey) {
+      return undefined;
+    }
+    if (encryptedApiKey.startsWith("plain:")) {
+      return Buffer.from(encryptedApiKey.slice(6), "base64").toString("utf8");
+    }
+    return undefined;
+  }
+
+  private isEncryptedKeyUsable(encryptedApiKey?: string): boolean {
+    return Boolean(this.decryptKey(encryptedApiKey));
+  }
+
+  private usableEncryptedKey(encryptedApiKey?: string): string | undefined {
+    return this.isEncryptedKeyUsable(encryptedApiKey) ? encryptedApiKey : undefined;
+  }
+}
+
+function normalizePersisted(settings: PersistedSettings): PersistedSettings {
+  const openCodeLlm =
+    settings.openCodeLlm?.source === "api"
+      ? {
+          ...settings.openCodeLlm,
+          provider: normalizeApiProvider(settings.openCodeLlm.provider)
+        }
+      : settings.openCodeLlm;
+  const openCode = {
+    ...defaultSettings.openCode,
+    ...(settings.openCode ?? {}),
+    provider: normalizeRuntimeProvider(settings.openCode?.provider ?? defaultSettings.openCode.provider)
+  };
+  const embedding = {
+    ...defaultSettings.embedding,
+    ...(settings.embedding ?? {}),
+    provider: normalizeEmbeddingProvider(settings.embedding?.provider ?? defaultSettings.embedding.provider)
+  };
+  return {
+    ...settings,
+    openCodeLlm: openCodeLlm ?? defaultSettings.openCodeLlm,
+    openCode,
+    webSearch: {
+      ...defaultSettings.webSearch,
+      ...(settings.webSearch ?? {})
+    },
+    embedding,
+    browserUse: normalizeBrowserUse(settings.browserUse),
+    researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
+    engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
+    allowExternalSearch: settings.allowExternalSearch ?? defaultSettings.allowExternalSearch,
+    allowCodeExecution: settings.allowCodeExecution ?? defaultSettings.allowCodeExecution,
+    ontologyExtractionMode:
+      settings.ontologyExtractionMode === "llm" || settings.ontologyExtractionMode === "rule_based" || settings.ontologyExtractionMode === "hybrid"
+        ? settings.ontologyExtractionMode
+        : defaultSettings.ontologyExtractionMode,
+    finalOutputExport: {
+      markdown: settings.finalOutputExport?.markdown ?? defaultSettings.finalOutputExport?.markdown ?? true,
+      json: settings.finalOutputExport?.json ?? defaultSettings.finalOutputExport?.json ?? true,
+      ontologyGraph: settings.finalOutputExport?.ontologyGraph ?? defaultSettings.finalOutputExport?.ontologyGraph ?? true,
+      artifactPackage: settings.finalOutputExport?.artifactPackage ?? defaultSettings.finalOutputExport?.artifactPackage ?? true
+    },
+    updatedAt: settings.updatedAt ?? nowIso()
+  };
+}
+
+function normalizeBrowserUse(settings: unknown): AppSettings["browserUse"] {
+  const input = settings && typeof settings === "object" ? (settings as Partial<AppSettings["browserUse"]>) : {};
+  return {
+    enabled: input.enabled ?? defaultSettings.browserUse.enabled,
+    mode: input.mode === "visible" ? "visible" : "background",
+    maxPages: clampNumber(input.maxPages, 1, 5, defaultSettings.browserUse.maxPages),
+    timeoutMs: clampNumber(input.timeoutMs, 5_000, 120_000, defaultSettings.browserUse.timeoutMs),
+    captureScreenshots: input.captureScreenshots ?? defaultSettings.browserUse.captureScreenshots
+  };
+}
+
+function normalizeResearchMetadata(settings: unknown): ResearchMetadataSettings {
+  const input = settings && typeof settings === "object" ? (settings as Partial<ResearchMetadataSettings>) : {};
+  return {
+    enabled: input.enabled ?? defaultSettings.researchMetadata.enabled,
+    provider: "openalex",
+    mailto: typeof input.mailto === "string" && input.mailto.trim() ? input.mailto.trim() : undefined,
+    maxResults: clampNumber(input.maxResults, 1, 25, defaultSettings.researchMetadata.maxResults),
+    timeoutMs: clampNumber(input.timeoutMs, 5_000, 60_000, defaultSettings.researchMetadata.timeoutMs)
+  };
+}
+
+function normalizeEngineeringTools(settings: unknown): EngineeringProgramSettings {
+  const input = settings && typeof settings === "object" ? (settings as Partial<EngineeringProgramSettings>) : {};
+  const xfoil = (input.xfoil ?? {}) as Partial<EngineeringProgramSettings["xfoil"]>;
+  const modeling = (input.modeling ?? {}) as Partial<EngineeringProgramSettings["modeling"]>;
+  const openFoam = (input.openFoam ?? {}) as Partial<EngineeringProgramSettings["openFoam"]>;
+  const su2 = (input.su2 ?? {}) as Partial<EngineeringProgramSettings["su2"]>;
+  const freeCad = (input.freeCad ?? {}) as Partial<EngineeringProgramSettings["freeCad"]>;
+  const openVsp = (input.openVsp ?? {}) as Partial<EngineeringProgramSettings["openVsp"]>;
+  const commercialCfd = (input.commercialCfd ?? {}) as Partial<EngineeringProgramSettings["commercialCfd"]>;
+  return {
+    enabled: input.enabled ?? defaultSettings.engineeringTools.enabled,
+    xfoil: {
+      enabled: xfoil.enabled ?? defaultSettings.engineeringTools.xfoil.enabled,
+      command: typeof xfoil.command === "string" ? xfoil.command.trim() : defaultSettings.engineeringTools.xfoil.command,
+      timeoutMs: clampNumber(xfoil.timeoutMs, 5_000, 120_000, defaultSettings.engineeringTools.xfoil.timeoutMs)
+    },
+    modeling: {
+      enabled: modeling.enabled ?? defaultSettings.engineeringTools.modeling.enabled,
+      artifactRoot: typeof modeling.artifactRoot === "string" ? modeling.artifactRoot.trim() : defaultSettings.engineeringTools.modeling.artifactRoot,
+      maxMeshBytes: clampNumber(modeling.maxMeshBytes, 1024, 200 * 1024 * 1024, defaultSettings.engineeringTools.modeling.maxMeshBytes)
+    },
+    openFoam: {
+      enabled: openFoam.enabled ?? defaultSettings.engineeringTools.openFoam.enabled,
+      command: typeof openFoam.command === "string" ? openFoam.command.trim() : defaultSettings.engineeringTools.openFoam.command,
+      caseRoot: typeof openFoam.caseRoot === "string" ? openFoam.caseRoot.trim() : defaultSettings.engineeringTools.openFoam.caseRoot,
+      workingDirectory:
+        typeof openFoam.workingDirectory === "string" ? openFoam.workingDirectory.trim() : defaultSettings.engineeringTools.openFoam.workingDirectory,
+      probeArgs: normalizeArgList(openFoam.probeArgs, defaultSettings.engineeringTools.openFoam.probeArgs),
+      runArgsTemplate: normalizeArgList(openFoam.runArgsTemplate, defaultSettings.engineeringTools.openFoam.runArgsTemplate),
+      timeoutMs: clampNumber(openFoam.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.openFoam.timeoutMs)
+    },
+    su2: {
+      enabled: su2.enabled ?? defaultSettings.engineeringTools.su2.enabled,
+      command: typeof su2.command === "string" ? su2.command.trim() : defaultSettings.engineeringTools.su2.command,
+      caseRoot: typeof su2.caseRoot === "string" ? su2.caseRoot.trim() : defaultSettings.engineeringTools.su2.caseRoot,
+      configFile: typeof su2.configFile === "string" ? su2.configFile.trim() : defaultSettings.engineeringTools.su2.configFile,
+      workingDirectory:
+        typeof su2.workingDirectory === "string" ? su2.workingDirectory.trim() : defaultSettings.engineeringTools.su2.workingDirectory,
+      probeArgs: normalizeArgList(su2.probeArgs, defaultSettings.engineeringTools.su2.probeArgs),
+      runArgsTemplate: normalizeArgList(su2.runArgsTemplate, defaultSettings.engineeringTools.su2.runArgsTemplate),
+      timeoutMs: clampNumber(su2.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.su2.timeoutMs)
+    },
+    freeCad: {
+      enabled: freeCad.enabled ?? defaultSettings.engineeringTools.freeCad.enabled,
+      command: typeof freeCad.command === "string" ? freeCad.command.trim() : defaultSettings.engineeringTools.freeCad.command,
+      scriptPath: typeof freeCad.scriptPath === "string" ? freeCad.scriptPath.trim() : defaultSettings.engineeringTools.freeCad.scriptPath,
+      workingDirectory:
+        typeof freeCad.workingDirectory === "string" ? freeCad.workingDirectory.trim() : defaultSettings.engineeringTools.freeCad.workingDirectory,
+      probeArgs: normalizeArgList(freeCad.probeArgs, defaultSettings.engineeringTools.freeCad.probeArgs),
+      runArgsTemplate: normalizeArgList(freeCad.runArgsTemplate, defaultSettings.engineeringTools.freeCad.runArgsTemplate),
+      timeoutMs: clampNumber(freeCad.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.freeCad.timeoutMs)
+    },
+    openVsp: {
+      enabled: openVsp.enabled ?? defaultSettings.engineeringTools.openVsp.enabled,
+      command: typeof openVsp.command === "string" ? openVsp.command.trim() : defaultSettings.engineeringTools.openVsp.command,
+      scriptPath: typeof openVsp.scriptPath === "string" ? openVsp.scriptPath.trim() : defaultSettings.engineeringTools.openVsp.scriptPath,
+      workingDirectory:
+        typeof openVsp.workingDirectory === "string" ? openVsp.workingDirectory.trim() : defaultSettings.engineeringTools.openVsp.workingDirectory,
+      probeArgs: normalizeArgList(openVsp.probeArgs, defaultSettings.engineeringTools.openVsp.probeArgs),
+      runArgsTemplate: normalizeArgList(openVsp.runArgsTemplate, defaultSettings.engineeringTools.openVsp.runArgsTemplate),
+      timeoutMs: clampNumber(openVsp.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.openVsp.timeoutMs)
+    },
+    commercialCfd: {
+      flightStreamConfigured: commercialCfd.flightStreamConfigured ?? defaultSettings.engineeringTools.commercialCfd.flightStreamConfigured,
+      starCcmConfigured: commercialCfd.starCcmConfigured ?? defaultSettings.engineeringTools.commercialCfd.starCcmConfigured,
+      flightStreamCommand: typeof commercialCfd.flightStreamCommand === "string" ? commercialCfd.flightStreamCommand.trim() : defaultSettings.engineeringTools.commercialCfd.flightStreamCommand,
+      flightStreamWorkingDirectory:
+        typeof commercialCfd.flightStreamWorkingDirectory === "string" ? commercialCfd.flightStreamWorkingDirectory.trim() : defaultSettings.engineeringTools.commercialCfd.flightStreamWorkingDirectory,
+      flightStreamProbeArgs: normalizeArgList(commercialCfd.flightStreamProbeArgs, defaultSettings.engineeringTools.commercialCfd.flightStreamProbeArgs),
+      flightStreamRunArgsTemplate: normalizeArgList(commercialCfd.flightStreamRunArgsTemplate, defaultSettings.engineeringTools.commercialCfd.flightStreamRunArgsTemplate),
+      flightStreamTimeoutMs: clampNumber(commercialCfd.flightStreamTimeoutMs, 5_000, 30 * 60_000, defaultSettings.engineeringTools.commercialCfd.flightStreamTimeoutMs),
+      starCcmCommand: typeof commercialCfd.starCcmCommand === "string" ? commercialCfd.starCcmCommand.trim() : defaultSettings.engineeringTools.commercialCfd.starCcmCommand,
+      starCcmWorkingDirectory:
+        typeof commercialCfd.starCcmWorkingDirectory === "string" ? commercialCfd.starCcmWorkingDirectory.trim() : defaultSettings.engineeringTools.commercialCfd.starCcmWorkingDirectory,
+      starCcmProbeArgs: normalizeArgList(commercialCfd.starCcmProbeArgs, defaultSettings.engineeringTools.commercialCfd.starCcmProbeArgs),
+      starCcmRunArgsTemplate: normalizeArgList(commercialCfd.starCcmRunArgsTemplate, defaultSettings.engineeringTools.commercialCfd.starCcmRunArgsTemplate),
+      starCcmTimeoutMs: clampNumber(commercialCfd.starCcmTimeoutMs, 5_000, 30 * 60_000, defaultSettings.engineeringTools.commercialCfd.starCcmTimeoutMs),
+      notes: typeof commercialCfd.notes === "string" ? commercialCfd.notes.trim() : defaultSettings.engineeringTools.commercialCfd.notes
+    }
+  };
+}
+
+function normalizeArgList(value: unknown, defaultValue: string[]): string[] {
+  if (!Array.isArray(value)) return [...defaultValue];
+  const normalized: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const cleaned = item.trim();
+    if (!cleaned) continue;
+    normalized.push(cleaned);
+    if (normalized.length >= 24) break;
+  }
+  return normalized;
+}
+
+function clampNumber(value: unknown, min: number, max: number, defaultValue: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : defaultValue;
+}
+
+function normalizeApiProvider(provider: unknown): OpenCodeApiLlmSettings["provider"] {
+  return provider === "openai" || provider === "anthropic" || provider === "google" || provider === "custom" ? provider : "google";
+}
+
+function normalizeRuntimeProvider(provider: unknown): string {
+  return provider === "openrouter" ? "google" : typeof provider === "string" && provider ? provider : "openai";
+}
+
+function normalizeEmbeddingProvider(provider: unknown): EmbeddingSettings["provider"] {
+  if (provider === "openai" || provider === "google" || provider === "custom") {
+    return provider;
+  }
+  return provider === "openrouter" ? "google" : "openai";
+}
+
+function updateEncryptedKey(
+  incoming: string | undefined,
+  current: string | undefined,
+  encrypt: (value: string) => string
+): string | undefined {
+  if (incoming === undefined) {
+    return current;
+  }
+  if (incoming.trim() === "") {
+    return undefined;
+  }
+  return encrypt(incoming.trim());
+}

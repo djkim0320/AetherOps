@@ -71,7 +71,7 @@ Windows PowerShell에서 markdown, JSON, JSONL, NT 또는 source 파일의 한�
 ```powershell
 Get-Content -Encoding UTF8 docs/aetherops-self-test-report.md
 Get-Content -Encoding UTF8 .tmp/aetherops-selftest/blocked-path-result.json
-Get-Content -Encoding UTF8 src/core/koreanCopy.test.ts
+Get-Content -Encoding UTF8 src/core/integration/koreanCopy.test.ts
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 npm run doctor | Out-File -Encoding utf8 doctor-output.txt
 ```
@@ -230,7 +230,7 @@ JSONL, NT, or source files if the console shows mojibake:
 ```powershell
 Get-Content -Encoding UTF8 docs/aetherops-self-test-report.md
 Get-Content -Encoding UTF8 .tmp/aetherops-selftest/blocked-path-result.json
-Get-Content -Encoding UTF8 src/core/koreanCopy.test.ts
+Get-Content -Encoding UTF8 src/core/integration/koreanCopy.test.ts
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 npm run doctor | Out-File -Encoding utf8 doctor-output.txt
 ```

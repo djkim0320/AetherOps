@@ -41,8 +41,8 @@ import {
   type RuntimeToolDiagnostics,
   type EngineeringProgramPreflightResult,
   type EngineeringProgramTarget
-} from "../core/types.js";
-import { buildResearchInputPayloadFromBrief } from "../core/researchInput.js";
+} from "../core/shared/types.js";
+import { buildResearchInputPayloadFromBrief } from "../core/input/researchInput.js";
 import { getAetherOpsApi, getMissingAetherOpsApiMessage, waitForAetherOpsApi } from "./aetherClient.js";
 
 const api = getAetherOpsApi();

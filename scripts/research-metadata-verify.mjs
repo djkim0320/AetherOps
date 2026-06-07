@@ -14,7 +14,7 @@ try {
   process.exit(1);
 }
 
-const { ResearchMetadataTool } = await import("../dist-server/core/researchMetadataTool.js");
+const { ResearchMetadataTool } = await import("../dist-server/core/tools/researchMetadataTool.js");
 
 const timestamp = new Date().toISOString();
 const projectId = "metadata-verify-project";

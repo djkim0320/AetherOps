@@ -163,10 +163,10 @@ async function runGrepChecks() {
       passWhen: (result) => result.exitCode !== 0 || !hasForbiddenProductionAdapterLine(result.stdout, /README\.md:.*(policy|synthetic|substitute|adapter|none)/i)
     },
     { label: "legacy RPC gate", pattern: /AETHEROPS_ENABLE_LEGACY_RPC/, paths: ["src/server/webServer.ts"], passWhen: (result) => result.exitCode === 0 },
-    { label: "WebSearchTool no evidence policy", pattern: /class WebSearchTool|evidence:\s*\[\]/, paths: ["src/core/toolRegistry.ts"], passWhen: (result) => result.exitCode === 0 && result.stdout.includes("evidence: []") },
-    { label: "ProjectContextSnapshot enforcement", pattern: /ProjectContextSnapshot|buildContextFromProjectContext/, paths: ["src/core/orchestrator.ts", "src/core/hybridRetrievalEngine.ts", "src/core/projectContextBuilder.ts"], passWhen: (result) => result.exitCode === 0 },
-    { label: "DataAnalysis tool input availability", pattern: /normalizedRecords:|validationResults:|projectContextSnapshots:/, paths: ["src/core/orchestrator.ts"], passWhen: (result) => result.exitCode === 0 },
-    { label: "WebFetch hardening markers", pattern: /AbortController|content-length|body read timeout|fc00|fe80|ff00|::ffff/, paths: ["src/core/toolRegistry.ts"], passWhen: (result) => result.exitCode === 0 },
+    { label: "WebSearchTool no evidence policy", pattern: /class WebSearchTool|evidence:\s*\[\]/, paths: ["src/core/tools/toolRegistry.ts"], passWhen: (result) => result.exitCode === 0 && result.stdout.includes("evidence: []") },
+    { label: "ProjectContextSnapshot enforcement", pattern: /ProjectContextSnapshot|buildContextFromProjectContext/, paths: ["src/core/orchestration/orchestrator.ts", "src/core/retrieval/hybridRetrievalEngine.ts", "src/core/retrieval/projectContextBuilder.ts"], passWhen: (result) => result.exitCode === 0 },
+    { label: "DataAnalysis tool input availability", pattern: /normalizedRecords:|validationResults:|projectContextSnapshots:/, paths: ["src/core/orchestration/orchestrator.ts"], passWhen: (result) => result.exitCode === 0 },
+    { label: "WebFetch hardening markers", pattern: /AbortController|content-length|body read timeout|fc00|fe80|ff00|::ffff/, paths: ["src/core/tools/toolRegistry.ts"], passWhen: (result) => result.exitCode === 0 },
     { label: "rawText sanitization markers", pattern: /rawText/, paths: ["scripts", "src/server", "src/core"], passWhen: (result) => result.exitCode === 0 },
     { label: "old previous-evidence WebFetch message removed", pattern: /requires at least one external source URL from previous evidence/, paths: ["src"], passWhen: (result) => result.exitCode !== 0 }
   ];
@@ -469,7 +469,7 @@ async function validateArtifactsAndDb() {
 }
 
 async function runSecurityHarness() {
-  const { WebFetchTool } = await import(new URL("../dist-server/core/toolRegistry.js", import.meta.url).href);
+  const { WebFetchTool } = await import(new URL("../dist-server/core/tools/toolRegistry.js", import.meta.url).href);
   const now = new Date().toISOString();
   const settings = {
     openCodeLlm: { source: "codex-oauth", model: "gpt-5.5" },

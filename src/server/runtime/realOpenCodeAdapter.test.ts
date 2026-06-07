@@ -1,4 +1,4 @@
-﻿import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -61,6 +61,14 @@ describe("RealOpenCodeAdapter", () => {
     expect(output.sourceCandidates?.[0]).toMatchObject({ url: "https://example.com/source", metadata: expect.objectContaining({ sourceCandidateOnly: true }) });
     expect(output.toolRuns?.[0]?.toolName).toBe("OpenCodeStructuredOutput");
   });
+
+  it("rejects invalid UTF-8 OpenCode output before parsing", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-real-opencode-invalid-"));
+    const command = createInvalidUtf8OpenCodeCommand(tempDir);
+    const adapter = new RealOpenCodeAdapter(() => settings(command));
+
+    await expect(adapter.run(input())).rejects.toThrow("OpenCode stdout is not valid UTF-8");
+  });
 });
 
 function createFakeOpenCodeCommand(root: string, payload?: Record<string, unknown>): string {
@@ -90,6 +98,20 @@ function createFakeOpenCodeCommand(root: string, payload?: Record<string, unknow
 
   const command = join(root, "fake-opencode");
   writeFileSync(command, `#!/bin/sh\nprintf '%s\\n' '${event.replace(/'/g, "'\\''")}'\n`, "utf8");
+  chmodSync(command, 0o755);
+  return command;
+}
+
+function createInvalidUtf8OpenCodeCommand(root: string): string {
+  mkdirSync(root, { recursive: true });
+  if (process.platform === "win32") {
+    const command = join(root, "fake-invalid-opencode.cmd");
+    writeFileSync(command, `@echo off\r\nnode -e "process.stdout.write(Buffer.from([255,123,125]));"\r\nexit /b 0\r\n`, "utf8");
+    return command;
+  }
+
+  const command = join(root, "fake-invalid-opencode");
+  writeFileSync(command, "#!/bin/sh\nnode -e 'process.stdout.write(Buffer.from([255,123,125]))'\n", "utf8");
   chmodSync(command, 0o755);
   return command;
 }

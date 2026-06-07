@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_live:
+        description: "Run the manual live self-test job"
+        required: false
+        type: boolean
+        default: false
+      strict_live:
+        description: "Fail live self-test when live credentials are missing"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  qa:
+    name: QA self-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Blocked-path self-test
+        run: npm run selftest:blocked
+
+      - name: Upload self-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aetherops-selftest-evidence
+          if-no-files-found: warn
+          path: |
+            docs/aetherops-self-test-report.md
+            .tmp/aetherops-selftest/blocked-path-result.json
+            .tmp/aetherops-selftest/**/*.json
+            .tmp/aetherops-selftest/**/*.jsonl
+            .tmp/aetherops-selftest/**/*.md
+            .tmp/aetherops-selftest/**/*.sqlite
+
+  live:
+    name: Live self-test
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Live self-test
+        shell: bash
+        run: |
+          args=(--full-static)
+          if [[ "${{ inputs.strict_live }}" == "true" ]]; then
+            args+=(--strict-live)
+          fi
+          npm run selftest:live -- "${args[@]}"
+
+      - name: Upload live self-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aetherops-live-selftest-evidence
+          if-no-files-found: warn
+          path: |
+            docs/aetherops-self-test-report.md
+            .tmp/aetherops-selftest/**/*.json
+            .tmp/aetherops-selftest/**/*.jsonl
+            .tmp/aetherops-selftest/**/*.md
+            .tmp/aetherops-selftest/**/*.sqlite

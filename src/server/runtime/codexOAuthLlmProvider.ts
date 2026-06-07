@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { extractJsonObject, LlmTimeoutError, type LlmJsonRequest, type LlmProvider } from "../../core/llm.js";
+import { decodeStrictUtf8Chunks, readStrictUtf8File } from "./strictUtf8.js";
 
 interface CodexOAuthLlmProviderOptions {
   codexHome?: string;
@@ -108,6 +109,10 @@ export class CodexOAuthLlmProvider implements LlmProvider {
 
     const args = [
       "exec",
+      "-c",
+      'service_tier="fast"',
+      "-c",
+      'model_reasoning_effort="xhigh"',
       "--skip-git-repo-check",
       "--ephemeral",
       "--sandbox",
@@ -178,8 +183,8 @@ export class CodexOAuthLlmProvider implements LlmProvider {
       });
       this.activeChildren.add(child);
 
-      let stdout = "";
-      let stderr = "";
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
       const timer = setTimeout(() => {
         child.kill();
         reject(new LlmTimeoutError(`Codex LLM request timed out after ${timeoutMs}ms.`, {
@@ -194,13 +199,11 @@ export class CodexOAuthLlmProvider implements LlmProvider {
         }));
       }, timeoutMs);
 
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk) => {
-        stdout += chunk;
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdoutChunks.push(chunk);
       });
-      child.stderr.on("data", (chunk) => {
-        stderr += sanitizeCodexOutput(chunk);
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderrChunks.push(chunk);
       });
       child.on("error", (error) => {
         clearTimeout(timer);
@@ -210,11 +213,15 @@ export class CodexOAuthLlmProvider implements LlmProvider {
       child.on("close", (code) => {
         clearTimeout(timer);
         this.activeChildren.delete(child);
+        let stdout = "";
+        let stderr = "";
+        stdout = decodeCodexCliStream(stdoutChunks, "Codex stdout");
+        stderr = sanitizeCodexOutput(decodeCodexCliStream(stderrChunks, "Codex stderr"));
         if (code === 0) {
           resolve(stdout);
-        } else {
-          reject(new Error(`Codex CLI exited with code ${code}: ${stderr || "no stderr"}`));
+          return;
         }
+        reject(new Error(`Codex CLI exited with code ${code}: ${stderr || "no stderr"}`));
       });
       child.stdin.end(stdin);
     });
@@ -222,10 +229,18 @@ export class CodexOAuthLlmProvider implements LlmProvider {
 }
 
 function readFileIfExists(path: string): string {
-  try {
-    return readFileSync(path, "utf8").trim();
-  } catch {
+  if (!existsSync(path)) {
     return "";
+  }
+  return readStrictUtf8File(path, `Codex output file ${path}`).trim();
+}
+
+function decodeCodexCliStream(chunks: Buffer[], label: string): string {
+  try {
+    return decodeStrictUtf8Chunks(chunks, label);
+  } catch {
+    const decoded = Buffer.concat(chunks).toString("utf8").replace(/\uFFFD/g, "");
+    return decoded.trim() ? decoded : `${label} was not valid UTF-8.`;
   }
 }
 

@@ -15,43 +15,64 @@ export class FinalOutputWriter {
       constraints: snapshot.ontologyConstraints,
       exportedAt: nowIso()
     };
-    const artifactPackage = {
-      projectId: snapshot.project.id,
-      artifacts: snapshot.artifacts.map((artifact) => ({
+    const artifactSummaries = [];
+    for (const artifact of snapshot.artifacts) {
+      artifactSummaries.push({
         id: artifact.id,
         title: artifact.title,
         relativePath: artifact.relativePath,
         rawPath: artifact.rawPath,
         mimeType: artifact.mimeType,
         summary: artifact.summary
-      })),
+      });
+    }
+    const artifactPackage = {
+      projectId: snapshot.project.id,
+      artifacts: artifactSummaries,
       toolRuns: snapshot.toolRuns,
       sources: snapshot.sources,
       exportedAt: nowIso()
     };
-    const evidenceCitations = snapshot.evidence.map((evidence) => ({
-      id: evidence.id,
-      title: evidence.title,
-      citation: evidence.citation,
-      sourceUri: evidence.sourceUri,
-      sourceId: evidence.sourceId,
-      reliabilityScore: evidence.reliabilityScore,
-      limitations: evidence.limitations
-    }));
-    const hypothesisVerification = snapshot.hypotheses.map((hypothesis) => ({
-      id: hypothesis.id,
-      statement: hypothesis.statement,
-      status: hypothesis.status,
-      confidence: hypothesis.confidence,
-      validations: snapshot.validationResults.filter((validation) => validation.hypothesisId === hypothesis.id)
-    }));
+    const evidenceCitations = [];
+    const evidenceCitationList: string[] = [];
+    for (const evidence of snapshot.evidence) {
+      evidenceCitations.push({
+        id: evidence.id,
+        title: evidence.title,
+        citation: evidence.citation,
+        sourceUri: evidence.sourceUri,
+        sourceId: evidence.sourceId,
+        reliabilityScore: evidence.reliabilityScore,
+        limitations: evidence.limitations
+      });
+      evidenceCitationList.push(evidence.citation ?? evidence.sourceUri ?? evidence.sourceId ?? evidence.title);
+    }
+    const validationsByHypothesisId = new Map<string | undefined, typeof snapshot.validationResults>();
+    for (const validation of snapshot.validationResults) {
+      let validations = validationsByHypothesisId.get(validation.hypothesisId);
+      if (!validations) {
+        validations = [];
+        validationsByHypothesisId.set(validation.hypothesisId, validations);
+      }
+      validations.push(validation);
+    }
+    const hypothesisVerification = [];
+    for (const hypothesis of snapshot.hypotheses) {
+      hypothesisVerification.push({
+        id: hypothesis.id,
+        statement: hypothesis.statement,
+        status: hypothesis.status,
+        confidence: hypothesis.confidence,
+        validations: validationsByHypothesisId.get(hypothesis.id) ?? []
+      });
+    }
     const output: FinalResearchOutput = {
       id: createId("final"),
       projectId: snapshot.project.id,
       finalAnswer: report.answer,
       markdownReport: report.markdown ?? report.comprehensiveReport,
       hypothesisSummary: report.hypothesisVerification,
-      evidenceCitationList: evidenceCitations.map((item) => item.citation ?? item.sourceUri ?? item.sourceId ?? item.title),
+      evidenceCitationList,
       reusableKnowledgeAsset: report.reusableKnowledgeAsset,
       createdAt: nowIso()
     };

@@ -1,4 +1,4 @@
-﻿import {
+import {
   AlertTriangle,
   Bot,
   Boxes,
@@ -37,8 +37,12 @@ import {
   type LoopIteration,
   type OpenCodeApiLlmSettings,
   type ResearchProject,
-  type ResearchSnapshot
+  type ResearchSnapshot,
+  type RuntimeToolDiagnostics,
+  type EngineeringProgramPreflightResult,
+  type EngineeringProgramTarget
 } from "../core/types.js";
+import { buildResearchInputPayloadFromBrief } from "../core/researchInput.js";
 import { getAetherOpsApi, getMissingAetherOpsApiMessage, waitForAetherOpsApi } from "./aetherClient.js";
 
 const api = getAetherOpsApi();
@@ -57,6 +61,21 @@ interface PendingChatMessage {
   createdAt: string;
   startedAt: number;
 }
+interface SnapshotStats {
+  results: number;
+  evidence: number;
+  normalizedRecords: number;
+  chunks: number;
+  graphItems: number;
+  validationResults: number;
+  rawSources: number;
+  artifacts: number;
+  toolLogs: number;
+  evidenceLedger: number;
+  memoryProjectsAndReports: number;
+  storageProjectsAndReports: number;
+  errorsAndBlockers: number;
+}
 
 const defaultInput: ResearchProjectInput = {
   goal: "근거 기반 반복 연구 루프가 질문, 가설, 자료, 산출물을 스스로 개선하는지 검증한다.",
@@ -66,9 +85,13 @@ const defaultInput: ResearchProjectInput = {
   autonomyPolicy: {
     toolApproval: "suggested",
     allowExternalSearch: true,
-    allowCodeExecution: false
+    allowCodeExecution: false,
+    maxLoopIterations: 1
   }
 };
+
+const defaultGuiLoopLimit = 1;
+const maxGuiLoopLimit = 8;
 
 const providerLabels: Record<OpenCodeApiLlmSettings["provider"], string> = {
   openai: "OpenAI",
@@ -98,6 +121,58 @@ const openCodeCommandOptions = ["opencode", "opencode.cmd"];
 const openCodeProviderOptions = ["openai", "anthropic", "google", "custom"];
 const openCodeOAuthProviderOptions = ["대화형 선택", "openai", "anthropic", "github-copilot", "google", "opencode"];
 const openCodeTimeoutOptions = [60_000, 120_000, 180_000, 300_000, 600_000];
+const openCodeLlmBaseUrlOptions = ["", "https://api.openai.com/v1", "https://generativelanguage.googleapis.com/v1beta/openai", "http://localhost:11434/v1"];
+const webSearchEndpointOptions = ["", "https://api.tavily.com/search", "https://api.search.brave.com/res/v1/web/search"];
+const researchMetadataMaxResultOptions = [3, 5, 8, 12, 20];
+const researchMetadataTimeoutOptions = [5_000, 10_000, 15_000, 30_000, 60_000];
+const xfoilCommandOptions = ["", "xfoil", "xfoil.exe"];
+const openFoamCommandOptions = ["", "simpleFoam", "icoFoam", "pimpleFoam", "rhoSimpleFoam"];
+const su2CommandOptions = ["", "SU2_CFD", "SU2_CFD.exe", "SU2_SOL", "SU2_SOL.exe"];
+const freeCadCommandOptions = ["", "FreeCADCmd", "FreeCADCmd.exe", "freecadcmd"];
+const openVspCommandOptions = ["", "vsp", "vsp.exe", "vsp_aero", "vsp_aero.exe"];
+const engineeringTimeoutOptions = [10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000];
+const meshByteLimitOptions = [5 * 1024 * 1024, 20 * 1024 * 1024, 50 * 1024 * 1024, 100 * 1024 * 1024];
+const homeModelProviderRows: Array<{ id: OpenCodeApiLlmSettings["provider"] | "codex-oauth"; label: string; source: string }> = [
+  { id: "codex-oauth", label: "Codex OAuth", source: "OAuth" },
+  { id: "openai", label: "OpenAI", source: "API" },
+  { id: "anthropic", label: "Anthropic", source: "API" },
+  { id: "google", label: "Google", source: "API" },
+  { id: "custom", label: "기타 모델", source: "API" }
+];
+const emptySessions: ResearchSnapshot["sessions"] = [];
+const emptyRunLogs = ["아직 실행 로그가 없습니다."];
+const emptySnapshotStats: SnapshotStats = {
+  results: 0,
+  evidence: 0,
+  normalizedRecords: 0,
+  chunks: 0,
+  graphItems: 0,
+  validationResults: 0,
+  rawSources: 0,
+  artifacts: 0,
+  toolLogs: 0,
+  evidenceLedger: 0,
+  memoryProjectsAndReports: 0,
+  storageProjectsAndReports: 0,
+  errorsAndBlockers: 0
+};
+const projectStatusLabels: Record<ResearchProject["status"], string> = {
+  idle: "대기",
+  running: "실행 중",
+  paused: "일시정지",
+  aborted: "중단됨",
+  completed: "완료",
+  failed: "실패",
+  blocked: "설정 필요"
+};
+const sidebarTabLabels: Record<SidebarTab, string> = {
+  aetherops: "AetherOps",
+  "new-chat": "새 채팅",
+  search: "검색",
+  plugins: "플러그인",
+  automation: "자동화",
+  settings: "설정"
+};
 const embeddingModelOptions: Record<AppSettings["embedding"]["provider"], string[]> = {
   local: ["text-embedding-3-small", "text-embedding-3-large"],
   openai: ["text-embedding-3-small", "text-embedding-3-large"],
@@ -138,6 +213,7 @@ const loopSteps = [
 ];
 
 const decisionSteps = [ResearchLoopStep.DecideContinuation, ResearchLoopStep.FinalizeOutputs];
+const legacyStructuredSessionTitles = new Set(["질문/가설 세션", "근거/RAG 세션", "실행/분석 세션"]);
 
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<SidebarTab>("aetherops");
@@ -155,6 +231,9 @@ export function App(): ReactElement {
   const [events, setEvents] = useState<LoopIteration[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>();
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>();
+  const [toolDiagnostics, setToolDiagnostics] = useState<RuntimeToolDiagnostics>();
+  const [engineeringPreflightResult, setEngineeringPreflightResult] = useState<EngineeringProgramPreflightResult>();
+  const [engineeringPreflightBusy, setEngineeringPreflightBusy] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [webKeyInput, setWebKeyInput] = useState("");
   const [embeddingKeyInput, setEmbeddingKeyInput] = useState("");
@@ -193,6 +272,7 @@ export function App(): ReactElement {
           const normalized = normalizeSettings(settings);
           setAppSettings(normalized);
           setSettingsDraft(normalized);
+          void refreshToolDiagnostics(() => disposed);
         })
         .catch((error: unknown) => {
           if (!disposed) {
@@ -214,17 +294,36 @@ export function App(): ReactElement {
     };
   }, []);
 
-  const metrics = useMemo(
-    () => [
-      { label: "반복", value: snapshot?.results.length ?? 0 },
-      { label: "근거", value: snapshot?.evidence.length ?? 0 },
-      { label: "정규화", value: snapshot?.normalizedRecords.length ?? 0 },
-      { label: "Vector chunk", value: snapshot?.chunks.length ?? 0 },
-      { label: "Graph", value: (snapshot?.ontologyEntities.length ?? 0) + (snapshot?.ontologyRelations.length ?? 0) },
-      { label: "검증", value: snapshot?.validationResults.length ?? 0 }
-    ],
-    [snapshot]
-  );
+  useEffect(() => {
+    if (activeTab !== "settings") {
+      return;
+    }
+
+    let disposed = false;
+    void api.settings
+      .get()
+      .then((settings) => {
+        if (disposed) {
+          return;
+        }
+        const normalized = normalizeSettings(settings);
+        setAppSettings(normalized);
+        setSettingsDraft((current) => current ?? normalized);
+        void refreshToolDiagnostics(() => disposed);
+      })
+      .catch((error: unknown) => {
+        if (!disposed) {
+          setSettingsMessage(`설정 갱신 실패: ${formatError(error)}`);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeTab]);
+
+  const snapshotStats = useMemo(() => (snapshot ? buildSnapshotStats(snapshot) : emptySnapshotStats), [snapshot]);
+  const metrics = useMemo(() => metricRows(snapshotStats), [snapshotStats]);
 
   async function refreshProjects(): Promise<ResearchProject[]> {
     const list = await api.projects.list();
@@ -536,17 +635,15 @@ export function App(): ReactElement {
     }
     setBusy(true);
     try {
-      let prepared = await api.projects.update(snapshot.project.id, input);
+      const runInput = normalizeRunInput(input);
+      setInput(runInput);
+      let prepared = await api.projects.update(snapshot.project.id, runInput);
       setSnapshot(prepared);
       setEvents(prepared.iterations.slice(-16));
-      if (!prepared.researchInputs.length) {
-        const payload = buildResearchInputPayload(input);
-        if (payload.initialHypotheses.length) {
-          prepared = await api.research.inputResearchQuestionHypothesis(snapshot.project.id, payload);
-          setSnapshot(prepared);
-          setEvents(prepared.iterations.slice(-16));
-        }
-      }
+      const payload = buildResearchInputPayloadFromBrief(runInput);
+      prepared = await api.research.inputResearchQuestionHypothesis(snapshot.project.id, payload);
+      setSnapshot(prepared);
+      setEvents(prepared.iterations.slice(-16));
       const next = await api.loop.start(prepared.project.id);
       setSnapshot(next);
       setEvents(next.iterations.slice(-16));
@@ -589,42 +686,68 @@ export function App(): ReactElement {
     if (!settingsDraft) {
       return;
     }
-    const toSave: AppSettings = {
-      ...settingsDraft,
-      openCodeLlm:
-        settingsDraft.openCodeLlm.source === "api"
-          ? {
-              ...settingsDraft.openCodeLlm,
-              apiKey: apiKeyInput.trim() || undefined
-            }
-          : settingsDraft.openCodeLlm,
-      webSearch: {
-        ...settingsDraft.webSearch,
-        apiKey: webKeyInput.trim() || undefined
-      },
-      embedding: {
-        ...settingsDraft.embedding,
-        apiKey: embeddingKeyInput.trim() || undefined
-      }
-    };
-    const saved = normalizeSettings(await api.settings.save(toSave));
+    const saved = normalizeSettings(await api.settings.save(settingsToSave(settingsDraft)));
     setAppSettings(saved);
     setSettingsDraft(saved);
     setApiKeyInput("");
     setWebKeyInput("");
     setEmbeddingKeyInput("");
-    setSettingsMessage("설정이 저장되었습니다.");
+    const diagnosticsReady = await refreshToolDiagnostics(undefined, "설정이 저장되었습니다.");
+    if (diagnosticsReady) {
+      setSettingsMessage("설정이 저장되었습니다.");
+    }
   }
 
   async function loginOpenCodeOAuth(): Promise<void> {
     const provider = openCodeAuthProvider === "대화형 선택" ? undefined : openCodeAuthProvider;
     const result = await api.opencode.authLogin(provider);
-    setOpenCodeAuthOutput([result.message, result.output].filter(Boolean).join("\n"));
+    setOpenCodeAuthOutput(joinPresent("\n", result.message, result.output));
   }
 
   async function refreshOpenCodeAuthList(): Promise<void> {
     const result = await api.opencode.authList();
-    setOpenCodeAuthOutput([result.message, result.output].filter(Boolean).join("\n"));
+    setOpenCodeAuthOutput(joinPresent("\n", result.message, result.output));
+  }
+
+  async function runEngineeringPreflight(target: EngineeringProgramTarget = "all"): Promise<void> {
+    if (engineeringPreflightBusy) {
+      return;
+    }
+    setEngineeringPreflightBusy(true);
+    const startedAt = new Date().toISOString();
+    try {
+      if (settingsDraft) {
+        const saved = normalizeSettings(await api.settings.save(settingsToSave(settingsDraft)));
+        setAppSettings(saved);
+        setSettingsDraft(saved);
+        setApiKeyInput("");
+        setWebKeyInput("");
+        setEmbeddingKeyInput("");
+      }
+      const result = await api.tools.preflightEngineering(target);
+      setEngineeringPreflightResult(result);
+      let diagnosticsReady = true;
+      if (result.diagnostics) {
+        setToolDiagnostics(result.diagnostics);
+      } else {
+        diagnosticsReady = await refreshToolDiagnostics();
+      }
+      if (diagnosticsReady) {
+        setSettingsMessage("설정을 저장한 뒤 preflight를 실행했습니다.");
+      }
+    } catch (error) {
+      const message = formatError(error);
+      setEngineeringPreflightResult({
+        target,
+        status: "failed",
+        error: message,
+        startedAt,
+        completedAt: new Date().toISOString()
+      });
+      setSettingsMessage(`Preflight 실패: ${message}`);
+    } finally {
+      setEngineeringPreflightBusy(false);
+    }
   }
 
   async function selectHomeModel(selection: HomeModelSelection): Promise<void> {
@@ -666,8 +789,50 @@ export function App(): ReactElement {
     const saved = normalizeSettings(await api.settings.save(next));
     setAppSettings(saved);
     setSettingsDraft(saved);
-    setSettingsMessage("모델 설정이 저장되었습니다.");
+    const diagnosticsReady = await refreshToolDiagnostics(undefined, "모델 설정이 저장되었습니다.");
+    if (diagnosticsReady) {
+      setSettingsMessage("모델 설정이 저장되었습니다.");
+    }
   }
+
+  function settingsToSave(draft: AppSettings): AppSettings {
+    return {
+      ...draft,
+      openCodeLlm:
+        draft.openCodeLlm.source === "api"
+          ? {
+              ...draft.openCodeLlm,
+              apiKey: apiKeyInput.trim() || undefined
+            }
+          : draft.openCodeLlm,
+      webSearch: {
+        ...draft.webSearch,
+        apiKey: webKeyInput.trim() || undefined
+      },
+      embedding: {
+        ...draft.embedding,
+        apiKey: embeddingKeyInput.trim() || undefined
+      }
+    };
+  }
+
+  async function refreshToolDiagnostics(disposed?: () => boolean, savedMessage?: string): Promise<boolean> {
+    try {
+      const diagnostics = await api.tools.diagnostics();
+      if (!disposed?.()) {
+        setToolDiagnostics(diagnostics);
+      }
+      return true;
+    } catch (error) {
+      if (!disposed?.()) {
+        const prefix = savedMessage ? `${savedMessage} ` : "";
+        setSettingsMessage(`${prefix}진단 갱신 실패: ${formatError(error)}`);
+      }
+      return false;
+    }
+  }
+
+  const visibleChatSessions = useMemo(() => (snapshot ? chatSessionsFor(snapshot) : emptySessions), [snapshot]);
 
   if (runtimeError) {
     return (
@@ -689,6 +854,7 @@ export function App(): ReactElement {
         activeTab={activeTab}
         projects={projects}
         snapshot={snapshot}
+        visibleChatSessions={visibleChatSessions}
         selectedSessionId={selectedSessionId}
         projectView={projectView}
         sessionTitle={sessionTitle}
@@ -723,6 +889,9 @@ export function App(): ReactElement {
           input={input}
           setInput={setInput}
           snapshot={snapshot}
+          settings={appSettings}
+          toolDiagnostics={toolDiagnostics}
+          stats={snapshotStats}
           events={events}
           metrics={metrics}
           busy={busy}
@@ -736,6 +905,7 @@ export function App(): ReactElement {
       {activeTab === "aetherops" && snapshot && projectView === "chat" ? (
         <ProjectChatTab
           snapshot={snapshot}
+          chatSessions={visibleChatSessions}
           selectedSessionId={selectedSessionId}
           prompt={chatPrompt}
           error={chatError}
@@ -754,18 +924,23 @@ export function App(): ReactElement {
           appSettings={appSettings}
           settingsDraft={settingsDraft}
           settingsMessage={settingsMessage}
+          toolDiagnostics={toolDiagnostics}
           apiKeyInput={apiKeyInput}
           webKeyInput={webKeyInput}
           embeddingKeyInput={embeddingKeyInput}
           openCodeAuthProvider={openCodeAuthProvider}
           openCodeAuthOutput={openCodeAuthOutput}
+          engineeringPreflightResult={engineeringPreflightResult}
+          engineeringPreflightBusy={engineeringPreflightBusy}
           onSave={saveSettings}
+          onEngineeringPreflight={runEngineeringPreflight}
           onOpenCodeAuthProviderChange={setOpenCodeAuthProvider}
           onOpenCodeOAuthLogin={loginOpenCodeOAuth}
           onOpenCodeAuthList={refreshOpenCodeAuthList}
           onSettingsDraftChange={(next) => {
             setSettingsDraft(next);
             setSettingsMessage("");
+            setEngineeringPreflightResult(undefined);
           }}
           onApiKeyInputChange={setApiKeyInput}
           onWebKeyInputChange={setWebKeyInput}
@@ -780,6 +955,7 @@ function CodexSidebar({
   activeTab,
   projects,
   snapshot,
+  visibleChatSessions,
   selectedSessionId,
   projectView,
   sessionTitle,
@@ -797,6 +973,7 @@ function CodexSidebar({
   activeTab: SidebarTab;
   projects: ResearchProject[];
   snapshot?: ResearchSnapshot;
+  visibleChatSessions: ResearchSnapshot["sessions"];
   selectedSessionId?: string;
   projectView: ProjectView;
   sessionTitle: string;
@@ -853,7 +1030,7 @@ function CodexSidebar({
                         <span>전체 관제 화면</span>
                         <small>{projectAge(project.createdAt)}</small>
                       </button>
-                      {chatSessionsFor(snapshot).map((session) => (
+                      {visibleChatSessions.map((session) => (
                         <div
                           key={session.id}
                           className={`sessionRow ${projectView === "chat" && selectedSessionId === session.id ? "active" : ""}`}
@@ -898,7 +1075,16 @@ function CodexSidebar({
         </div>
       </section>
 
-      <button className={`codexSettings ${activeTab === "settings" ? "active" : ""}`} type="button" onClick={() => onTabChange("settings")}>
+      <button
+        className={`codexSettings ${activeTab === "settings" ? "active" : ""}`}
+        type="button"
+        onPointerDown={(event) => {
+          if (event.button === 0) onTabChange("settings");
+        }}
+        onMouseDown={() => onTabChange("settings")}
+        onTouchStart={() => onTabChange("settings")}
+        onClick={() => onTabChange("settings")}
+      >
         <Settings size={17} />
         설정
       </button>
@@ -1019,6 +1205,7 @@ function CodexHome({
 
 function ProjectChatTab({
   snapshot,
+  chatSessions,
   selectedSessionId,
   prompt,
   error,
@@ -1031,6 +1218,7 @@ function ProjectChatTab({
   onSubmit
 }: {
   snapshot: ResearchSnapshot;
+  chatSessions: ResearchSnapshot["sessions"];
   selectedSessionId?: string;
   prompt: string;
   error: string;
@@ -1043,9 +1231,17 @@ function ProjectChatTab({
   onSubmit: () => Promise<void>;
 }): ReactElement {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const session = selectedSessionId ? chatSessionsFor(snapshot).find((item) => item.id === selectedSessionId) : undefined;
-  const messages = session ? chatMessagesFor(snapshot, session.id, session.title) : [];
+  const session = useMemo(
+    () => (selectedSessionId ? chatSessions.find((item) => item.id === selectedSessionId) : undefined),
+    [chatSessions, selectedSessionId]
+  );
+  const messages = useMemo(() => (session ? chatMessagesFor(snapshot, session.id, session.title) : []), [session, snapshot]);
+  const renderedMessages = useMemo(() => chatMessageViews(messages), [messages]);
   const pendingForSession = session && pendingMessage?.sessionId === session.id ? pendingMessage : undefined;
+  const pendingCreatedLabel = useMemo(
+    () => (pendingForSession ? new Date(pendingForSession.createdAt).toLocaleString() : ""),
+    [pendingForSession?.createdAt]
+  );
   const [now, setNow] = useState(Date.now());
   const memoCount = messages.length;
   const hasConversation = messages.length > 0 || Boolean(pendingForSession);
@@ -1072,11 +1268,11 @@ function ProjectChatTab({
           <h1>{session?.title ?? "채팅 세션"}</h1>
         </div>
         <div className="chatTranscript">
-          {messages.length ? (
-            messages.map((message) => (
-              <article key={message.id} className={`chatBubble ${chatMessageRole(message)}`}>
-                <p>{message.content ?? message.summary}</p>
-                <small>{new Date(message.createdAt).toLocaleString()}</small>
+          {renderedMessages.length ? (
+            renderedMessages.map((message) => (
+              <article key={message.id} className={`chatBubble ${message.role}`}>
+                <p>{message.text}</p>
+                <small>{message.createdLabel}</small>
               </article>
             ))
           ) : pendingForSession ? null : (
@@ -1089,7 +1285,7 @@ function ProjectChatTab({
             <>
               <article className="chatBubble user pending">
                 <p>{pendingForSession.content}</p>
-                <small>{new Date(pendingForSession.createdAt).toLocaleString()} · 전송 중</small>
+                <small>{pendingCreatedLabel} · 전송 중</small>
               </article>
               <div className="chatWorking">
                 <span>{formatWorkingLabel(now, pendingForSession.startedAt)}</span>
@@ -1163,20 +1359,13 @@ function HomeModelPicker({
   const [provider, setProvider] = useState<OpenCodeApiLlmSettings["provider"] | "codex-oauth">(
     activeSource === "codex-oauth" ? "codex-oauth" : activeProvider
   );
-  const providerRows: Array<{ id: OpenCodeApiLlmSettings["provider"] | "codex-oauth"; label: string; source: string }> = [
-    { id: "codex-oauth", label: "Codex OAuth", source: "OAuth" },
-    { id: "openai", label: "OpenAI", source: "API" },
-    { id: "anthropic", label: "Anthropic", source: "API" },
-    { id: "google", label: "Google", source: "API" },
-    { id: "custom", label: "기타 모델", source: "API" }
-  ];
   const models = provider === "codex-oauth" ? codexOAuthModels : modelOptions[provider];
 
   return (
     <div className="modelPickerPopover">
       <div className="modelPickerPanel">
         <p className="modelPickerTitle">연결</p>
-        {providerRows.map((row) => (
+        {homeModelProviderRows.map((row) => (
           <button
             key={row.id}
             className={`modelPickerRow ${provider === row.id ? "selected" : ""}`}
@@ -1231,6 +1420,9 @@ function AetherOpsTab({
   input,
   setInput,
   snapshot,
+  settings,
+  toolDiagnostics,
+  stats,
   events,
   metrics,
   busy,
@@ -1240,6 +1432,9 @@ function AetherOpsTab({
   input: ResearchProjectInput;
   setInput: (input: ResearchProjectInput) => void;
   snapshot: ResearchSnapshot;
+  settings?: AppSettings;
+  toolDiagnostics?: RuntimeToolDiagnostics;
+  stats: SnapshotStats;
   events: LoopIteration[];
   metrics: Array<{ label: string; value: number }>;
   busy: boolean;
@@ -1258,29 +1453,36 @@ function AetherOpsTab({
   const latestSpec = snapshot.specifications.at(-1);
   const latestDecision = snapshot.continuationDecisions.at(-1);
   const latestAudit = snapshot.runAuditOutputs.at(-1);
-  const memoryItems = [
-    { label: "Raw Sources", value: snapshot.sources.length },
-    { label: "Artifacts", value: snapshot.artifacts.length },
-    { label: "Tool Logs", value: snapshot.toolRuns.length + snapshot.openCodeRuns.length },
-    { label: "Evidence Ledger", value: snapshot.evidence.length + snapshot.normalizedRecords.filter((record) => record.kind === "evidence").length },
-    { label: "Vector DB", value: snapshot.chunks.length },
-    { label: "Ontology Graph DB", value: snapshot.ontologyEntities.length + snapshot.ontologyRelations.length },
-    { label: "Projects & Reports", value: snapshot.finalOutputs.length + snapshot.runAuditOutputs.length + (snapshot.report ? 1 : 0) },
-    { label: "Errors / Blockers", value: snapshot.stepErrors.length + snapshot.runtimeBlockers.length }
-  ];
-  const renderStepTile = (step: ResearchLoopStep): ReactElement => {
-    const meta = stepLabels[step];
-    const Icon = meta.icon;
-    const active = currentStep === step;
-    const visited = snapshot.iterations.some((iteration) => iteration.step === step);
-    return (
-      <div key={step} className={`stepTile ${meta.flow} ${active ? "active" : ""} ${visited ? "visited" : ""}`}>
-        <div className="stepIndex">{meta.index}</div>
-        <Icon size={21} />
-        <span>{meta.label}</span>
-      </div>
-    );
-  };
+  const visitedSteps = useMemo(() => visitedStepSet(snapshot.iterations), [snapshot.iterations]);
+  const memoryItems = useMemo(() => memoryRows(stats), [stats]);
+  const researchQuestionPreview = useMemo(() => joinFirstStrings(latestSpec?.researchQuestions ?? [], 3, " / "), [latestSpec]);
+  const blockerMessages = useMemo(() => recentBlockerMessages(snapshot), [snapshot]);
+  const recentToolRuns = useMemo(() => lastItems(snapshot.toolRuns, 4), [snapshot.toolRuns]);
+  const researchToolReadiness = useMemo(() => buildRuntimeResearchToolReadiness(settings, snapshot, toolDiagnostics), [settings, snapshot, toolDiagnostics]);
+  const recentResearchProgramRuns = useMemo(() => recentIntegratedToolRuns(snapshot.toolRuns), [snapshot.toolRuns]);
+  const appExternalAccess = Boolean(settings?.allowExternalSearch);
+  const appCodeExecution = Boolean(settings?.allowCodeExecution);
+  const activeRunLogs = activeRun?.logs ?? emptyRunLogs;
+  const stepTileGroups = useMemo(() => {
+    const renderStepTile = (step: ResearchLoopStep): ReactElement => {
+      const meta = stepLabels[step];
+      const Icon = meta.icon;
+      const active = currentStep === step;
+      const visited = visitedSteps.has(step);
+      return (
+        <div key={step} className={`stepTile ${meta.flow} ${active ? "active" : ""} ${visited ? "visited" : ""}`}>
+          <div className="stepIndex">{meta.index}</div>
+          <Icon size={21} />
+          <span>{meta.label}</span>
+        </div>
+      );
+    };
+    return {
+      design: designSteps.map(renderStepTile),
+      loop: loopSteps.map(renderStepTile),
+      decision: decisionSteps.map(renderStepTile)
+    };
+  }, [currentStep, visitedSteps]);
 
   return (
     <section className="codexContent">
@@ -1330,6 +1532,58 @@ function AetherOpsTab({
               <option value="automatic">자동</option>
             </select>
           </label>
+          <label className="loopLimitControl">
+            최대 반복
+            <input
+              aria-label="Maximum loop iterations"
+              type="number"
+              min={1}
+              max={maxGuiLoopLimit}
+              step={1}
+              value={input.autonomyPolicy.maxLoopIterations ?? defaultGuiLoopLimit}
+              onChange={(event) =>
+                setInput({
+                  ...input,
+                  autonomyPolicy: {
+                    ...input.autonomyPolicy,
+                    maxLoopIterations: normalizeLoopLimit(event.target.value)
+                  }
+                })
+              }
+            />
+          </label>
+          <label className={`policyToggle ${appExternalAccess ? "ready" : "blocked"}`}>
+            <input
+              type="checkbox"
+              checked={input.autonomyPolicy.allowExternalSearch}
+              onChange={(event) =>
+                setInput({
+                  ...input,
+                  autonomyPolicy: { ...input.autonomyPolicy, allowExternalSearch: event.target.checked }
+                })
+              }
+            />
+            <span>
+              <strong>외부 자료 접근</strong>
+              <small>{appExternalAccess ? "OpenAlex, Browser, Fetch 허용" : "앱 설정에서 외부 접근 꺼짐"}</small>
+            </span>
+          </label>
+          <label className={`policyToggle ${appCodeExecution ? "ready" : "blocked"}`}>
+            <input
+              type="checkbox"
+              checked={input.autonomyPolicy.allowCodeExecution}
+              onChange={(event) =>
+                setInput({
+                  ...input,
+                  autonomyPolicy: { ...input.autonomyPolicy, allowCodeExecution: event.target.checked }
+                })
+              }
+            />
+            <span>
+              <strong>코드/프로그램 실행</strong>
+              <small>{appCodeExecution ? "CodeExecution, engineering tools 허용" : "앱 설정에서 코드 실행 꺼짐"}</small>
+            </span>
+          </label>
           <button className="primaryButton" onClick={onStart} disabled={busy} type="button">
             {busy ? <Loader2 className="spin" size={17} /> : <FolderKanban size={17} />}
             연구 루프 시작
@@ -1340,18 +1594,18 @@ function AetherOpsTab({
       <section className="flowBoard flowBoardStructured">
         <div className="flowGroup design">
           <h2>연구 설계</h2>
-          <div className="flowGroupGrid">{designSteps.map(renderStepTile)}</div>
+          <div className="flowGroupGrid">{stepTileGroups.design}</div>
         </div>
         <div className="flowGroup loop">
           <div className="flowGroupHeader">
             <h2>연구 실행 및 분석 반복 루프</h2>
             <span>11에서 계속이면 4번 연구 계획 수립으로 복귀</span>
           </div>
-          <div className="flowGroupGrid loopGrid">{loopSteps.map(renderStepTile)}</div>
+          <div className="flowGroupGrid loopGrid">{stepTileGroups.loop}</div>
         </div>
         <div className="flowGroup decision">
           <h2>루프 판단 및 최종 산출</h2>
-          <div className="flowGroupGrid decisionGrid">{decisionSteps.map(renderStepTile)}</div>
+          <div className="flowGroupGrid decisionGrid">{stepTileGroups.decision}</div>
         </div>
         <div className="memoryLayer">
           <div>
@@ -1397,11 +1651,44 @@ function AetherOpsTab({
           </div>
           <div className="latestResult">
             <h3>현재 연구 명세</h3>
-            <p>{latestSpec ? latestSpec.researchQuestions.slice(0, 3).join(" / ") : "아직 연구 명세가 없습니다."}</p>
+            <p>{researchQuestionPreview ?? "아직 연구 명세가 없습니다."}</p>
           </div>
           <div className="latestResult">
             <h3>현재 연구 계획</h3>
             <p>{latestPlan ? latestPlan.objective : "아직 연구 계획이 없습니다."}</p>
+          </div>
+        </section>
+
+        <section className="panel wide">
+          <div className="panelTitle">
+            <FlaskConical size={17} />
+            <h2>연구 메타데이터 / 프로그램 도구</h2>
+          </div>
+          <div className="toolReadinessGrid">
+            {researchToolReadiness.map((item) => {
+              const Icon = item.icon;
+              return (
+                <article key={item.id} className={`toolReadinessItem ${item.status}`}>
+                  <div className="toolReadinessHeader">
+                    <Icon size={18} />
+                    <strong>{item.label}</strong>
+                    <span>{item.badge}</span>
+                  </div>
+                  <p>{item.detail}</p>
+                </article>
+              );
+            })}
+          </div>
+          <div className="toolRunStrip">
+            {recentResearchProgramRuns.length ? (
+              recentResearchProgramRuns.map((toolRun) => (
+                <span key={toolRun.id} className={toolRun.status}>
+                  {toolRun.toolName}: {toolRun.status}
+                </span>
+              ))
+            ) : (
+              <span className="skipped">ResearchMetadataTool / EngineeringProgramTool 실행 기록 없음</span>
+            )}
           </div>
         </section>
 
@@ -1412,7 +1699,7 @@ function AetherOpsTab({
           </div>
           <div className="runBox">
             {snapshot.runtimeBlockers.length || snapshot.stepErrors.length ? (
-              [...snapshot.runtimeBlockers.slice(-4).map((blocker) => `blocked · ${blocker.requirementKey}: ${blocker.message}`), ...snapshot.stepErrors.slice(-4).map((error) => `failed · ${error.step}: ${error.message}`)].map((message, index) => (
+              blockerMessages.map((message, index) => (
                 <p key={`${index}-${message}`}>{message}</p>
               ))
             ) : (
@@ -1445,7 +1732,7 @@ function AetherOpsTab({
             <Database size={17} />
             <h2>연구 DB 저장 내용</h2>
           </div>
-          <StorageList snapshot={snapshot} />
+          <StorageList stats={stats} />
         </section>
 
         <section className="panel">
@@ -1455,10 +1742,10 @@ function AetherOpsTab({
           </div>
           <div className="runBox">
             <h3>{activeRun?.toolPlan.join(" / ") || "대기"}</h3>
-            {(activeRun?.logs ?? ["아직 실행 로그가 없습니다."]).map((log) => (
+            {activeRunLogs.map((log) => (
               <p key={log}>{log}</p>
             ))}
-            {snapshot.toolRuns.slice(-4).map((toolRun) => (
+            {recentToolRuns.map((toolRun) => (
               <p key={toolRun.id}>
                 [{toolRun.status}] {toolRun.toolName} {toolRun.error ? `- ${toolRun.error}` : ""}
               </p>
@@ -1509,18 +1796,10 @@ function AetherOpsTab({
 }
 
 function CodexPlaceholder({ activeTab }: { activeTab: SidebarTab }): ReactElement {
-  const labels: Record<SidebarTab, string> = {
-    aetherops: "AetherOps",
-    "new-chat": "새 채팅",
-    search: "검색",
-    plugins: "플러그인",
-    automation: "자동화",
-    settings: "설정"
-  };
   return (
     <section className="codexPlaceholder">
       <div className="placeholderCard">
-        <h1>{labels[activeTab]}</h1>
+        <h1>{sidebarTabLabels[activeTab]}</h1>
         <p>이 영역은 이후 AetherOps 프로젝트 자료와 연결될 예정입니다. 연구 프로젝트는 왼쪽 사이드바 또는 첫 화면에서 생성할 수 있습니다.</p>
       </div>
     </section>
@@ -1531,12 +1810,16 @@ function SettingsTab({
   appSettings,
   settingsDraft,
   settingsMessage,
+  toolDiagnostics,
   apiKeyInput,
   webKeyInput,
   embeddingKeyInput,
   openCodeAuthProvider,
   openCodeAuthOutput,
+  engineeringPreflightResult,
+  engineeringPreflightBusy,
   onSave,
+  onEngineeringPreflight,
   onOpenCodeAuthProviderChange,
   onOpenCodeOAuthLogin,
   onOpenCodeAuthList,
@@ -1548,12 +1831,16 @@ function SettingsTab({
   appSettings?: AppSettings;
   settingsDraft: AppSettings;
   settingsMessage: string;
+  toolDiagnostics?: RuntimeToolDiagnostics;
   apiKeyInput: string;
   webKeyInput: string;
   embeddingKeyInput: string;
   openCodeAuthProvider: string;
   openCodeAuthOutput: string;
+  engineeringPreflightResult?: EngineeringProgramPreflightResult;
+  engineeringPreflightBusy: boolean;
   onSave: () => Promise<void>;
+  onEngineeringPreflight: (target?: EngineeringProgramTarget) => Promise<void>;
   onOpenCodeAuthProviderChange: (provider: string) => void;
   onOpenCodeOAuthLogin: () => Promise<void>;
   onOpenCodeAuthList: () => Promise<void>;
@@ -1562,6 +1849,9 @@ function SettingsTab({
   onWebKeyInputChange: (value: string) => void;
   onEmbeddingKeyInputChange: (value: string) => void;
 }): ReactElement {
+  const engineeringArtifactCandidates = toolDiagnostics?.engineeringArtifactCandidates ?? [];
+  const readyEngineeringArtifactCandidates = engineeringArtifactCandidates.filter((candidate) => candidate.ready).length;
+  const showEngineeringArtifactCandidates = Boolean(settingsDraft.engineeringTools.modeling.artifactRoot?.trim() || engineeringArtifactCandidates.length);
   return (
     <section className="codexContent settingsTab">
       <header className="settingsWindowHeader">
@@ -1590,7 +1880,7 @@ function SettingsTab({
                 Base URL
                 <StringSelect
                   value={settingsDraft.openCodeLlm.baseUrl ?? ""}
-                  options={["", "https://api.openai.com/v1", "https://generativelanguage.googleapis.com/v1beta/openai", "http://localhost:11434/v1"]}
+                  options={openCodeLlmBaseUrlOptions}
                   onChange={(baseUrl) =>
                     onSettingsDraftChange({
                       ...settingsDraft,
@@ -1737,10 +2027,971 @@ function SettingsTab({
             Custom endpoint
             <StringSelect
               value={settingsDraft.webSearch.endpoint ?? ""}
-              options={["", "https://api.tavily.com/search", "https://api.search.brave.com/res/v1/web/search"]}
+              options={webSearchEndpointOptions}
               onChange={(endpoint) => onSettingsDraftChange({ ...settingsDraft, webSearch: { ...settingsDraft.webSearch, endpoint } })}
             />
           </label>
+        </section>
+
+        <section className="settingsGroup">
+          <div className="panelTitle">
+            <FlaskConical size={17} />
+            <h3>Research metadata</h3>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              OpenAlex
+              <select
+                value={settingsDraft.researchMetadata.enabled ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    researchMetadata: { ...settingsDraft.researchMetadata, enabled: event.target.value === "true" }
+                  })
+                }
+              >
+                <option value="true">enabled</option>
+                <option value="false">disabled</option>
+              </select>
+            </label>
+            <label>
+              Max results
+              <NumberSelect
+                value={settingsDraft.researchMetadata.maxResults}
+                options={researchMetadataMaxResultOptions}
+                onChange={(maxResults) =>
+                  onSettingsDraftChange({ ...settingsDraft, researchMetadata: { ...settingsDraft.researchMetadata, maxResults } })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              Timeout(ms)
+              <NumberSelect
+                value={settingsDraft.researchMetadata.timeoutMs}
+                options={researchMetadataTimeoutOptions}
+                onChange={(timeoutMs) =>
+                  onSettingsDraftChange({ ...settingsDraft, researchMetadata: { ...settingsDraft.researchMetadata, timeoutMs } })
+                }
+              />
+            </label>
+            <label>
+              Mailto
+              <StringSelect
+                value={settingsDraft.researchMetadata.mailto ?? ""}
+                options={[""]}
+                onChange={(mailto) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    researchMetadata: { ...settingsDraft.researchMetadata, mailto: mailto || undefined }
+                  })
+                }
+              />
+            </label>
+          </div>
+        </section>
+
+        <section className="settingsGroup settingsGroupWide">
+          <div className="panelTitle">
+            <Wrench size={17} />
+            <h3>Engineering programs</h3>
+          </div>
+          <div className="preflightPanel">
+            <button
+              type="button"
+              className="primaryButton iconButtonText"
+              disabled={engineeringPreflightBusy}
+              onClick={() => void onEngineeringPreflight("all")}
+            >
+              {engineeringPreflightBusy ? <Loader2 size={16} className="spin" /> : <Gauge size={16} />}
+              <span>Save & run preflight</span>
+            </button>
+            <div className={`preflightResult ${engineeringPreflightResult?.status ?? "idle"}`}>
+              <strong>{engineeringPreflightStatusLabel(engineeringPreflightResult, engineeringPreflightBusy)}</strong>
+              <span>{engineeringPreflightSummary(engineeringPreflightResult)}</span>
+            </div>
+          </div>
+          {engineeringPreflightResult?.output ? (
+            <pre className="preflightOutput">{engineeringPreflightOutput(engineeringPreflightResult.output)}</pre>
+          ) : null}
+          {showEngineeringArtifactCandidates ? (
+            <div className="artifactCandidateList">
+              <div className="requestContractHeader">
+                <strong>Modeling artifact candidates</strong>
+                <span>
+                  {readyEngineeringArtifactCandidates}/{engineeringArtifactCandidates.length} usable
+                </span>
+              </div>
+              {engineeringArtifactCandidates.length ? (
+                engineeringArtifactCandidates.slice(0, 8).map((candidate) => (
+                  <div key={candidate.relativePath} className={`artifactCandidateItem ${candidate.ready ? "ready" : "blocked"}`}>
+                    <span>{candidate.relativePath}</span>
+                    <strong>
+                      {candidate.ready
+                        ? `${candidate.format.toUpperCase()} ${formatByteSize(candidate.byteLength)}`
+                        : (candidate.blockedReason ?? "blocked")}
+                    </strong>
+                  </div>
+                ))
+              ) : (
+                <p className="artifactCandidateEmpty">No OBJ/STL files are visible under the configured modeling artifact root.</p>
+              )}
+              {engineeringArtifactCandidates.length > 8 ? (
+                <p className="artifactCandidateEmpty">+{engineeringArtifactCandidates.length - 8} more candidate files are hidden from this view.</p>
+              ) : null}
+            </div>
+          ) : null}
+          {toolDiagnostics?.engineeringProgramRequestTemplates.length ? (
+            <div className="requestContractList">
+              <div className="requestContractHeader">
+                <strong>LLM request contract</strong>
+                <span>{toolDiagnostics.engineeringProgramRequestTemplates.filter((template) => template.ready).length} ready</span>
+              </div>
+              {toolDiagnostics.engineeringProgramRequestTemplates.map((template) => (
+                <details key={template.id} className={`requestContractItem ${template.ready ? "ready" : "blocked"}`}>
+                  <summary>
+                    <span>{template.label}</span>
+                    <small>{template.ready ? template.description : template.blockedReason ?? template.description}</small>
+                    <strong>{template.ready ? "ready" : "blocked"}</strong>
+                  </summary>
+                  <p>{template.ready ? template.description : template.blockedReason ?? template.description}</p>
+                  <code>{engineeringRequestTemplatePreview(template.request)}</code>
+                </details>
+              ))}
+            </div>
+          ) : null}
+          <div className="fieldGrid three">
+            <label>
+              Program tools
+              <select
+                value={settingsDraft.engineeringTools.enabled ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: { ...settingsDraft.engineeringTools, enabled: event.target.value === "true" }
+                  })
+                }
+              >
+                <option value="false">disabled</option>
+                <option value="true">enabled</option>
+              </select>
+            </label>
+            <label>
+              XFOIL
+              <select
+                value={settingsDraft.engineeringTools.xfoil.enabled ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      xfoil: { ...settingsDraft.engineeringTools.xfoil, enabled: event.target.value === "true" }
+                    }
+                  })
+                }
+              >
+                <option value="false">disabled</option>
+                <option value="true">enabled</option>
+              </select>
+            </label>
+            <label>
+              XFOIL timeout(ms)
+              <NumberSelect
+                value={settingsDraft.engineeringTools.xfoil.timeoutMs}
+                options={engineeringTimeoutOptions}
+                onChange={(timeoutMs) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      xfoil: { ...settingsDraft.engineeringTools.xfoil, timeoutMs }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <label>
+            XFOIL command
+            <input
+              value={settingsDraft.engineeringTools.xfoil.command ?? ""}
+              list="xfoil-command-options"
+              onChange={(event) =>
+                onSettingsDraftChange({
+                  ...settingsDraft,
+                  engineeringTools: {
+                    ...settingsDraft.engineeringTools,
+                    xfoil: { ...settingsDraft.engineeringTools.xfoil, command: event.target.value }
+                  }
+                })
+              }
+            />
+            <datalist id="xfoil-command-options">
+              {xfoilCommandOptions.map((option) => (
+                <option key={option || "empty"} value={option} />
+              ))}
+            </datalist>
+          </label>
+          <div className="fieldGrid">
+            <label>
+              Modeling artifacts
+              <select
+                value={settingsDraft.engineeringTools.modeling.enabled ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      modeling: { ...settingsDraft.engineeringTools.modeling, enabled: event.target.value === "true" }
+                    }
+                  })
+                }
+              >
+                <option value="false">disabled</option>
+                <option value="true">enabled</option>
+              </select>
+            </label>
+            <label>
+              Mesh byte limit
+              <NumberSelect
+                value={settingsDraft.engineeringTools.modeling.maxMeshBytes}
+                options={meshByteLimitOptions}
+                onChange={(maxMeshBytes) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      modeling: { ...settingsDraft.engineeringTools.modeling, maxMeshBytes }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <label>
+            Modeling artifact root
+            <input
+              value={settingsDraft.engineeringTools.modeling.artifactRoot ?? ""}
+              onChange={(event) =>
+                onSettingsDraftChange({
+                  ...settingsDraft,
+                  engineeringTools: {
+                    ...settingsDraft.engineeringTools,
+                    modeling: { ...settingsDraft.engineeringTools.modeling, artifactRoot: event.target.value }
+                  }
+                })
+              }
+            />
+          </label>
+          <div className="fieldGrid">
+            <label>
+              OpenFOAM
+              <select
+                value={settingsDraft.engineeringTools.openFoam.enabled ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openFoam: { ...settingsDraft.engineeringTools.openFoam, enabled: event.target.value === "true" }
+                    }
+                  })
+                }
+              >
+                <option value="false">disabled</option>
+                <option value="true">enabled</option>
+              </select>
+            </label>
+            <label>
+              OpenFOAM timeout(ms)
+              <NumberSelect
+                value={settingsDraft.engineeringTools.openFoam.timeoutMs}
+                options={engineeringTimeoutOptions}
+                onChange={(timeoutMs) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openFoam: { ...settingsDraft.engineeringTools.openFoam, timeoutMs }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              OpenFOAM command
+              <input
+                value={settingsDraft.engineeringTools.openFoam.command ?? ""}
+                list="openfoam-command-options"
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openFoam: { ...settingsDraft.engineeringTools.openFoam, command: event.target.value }
+                    }
+                  })
+                }
+              />
+              <datalist id="openfoam-command-options">
+                {openFoamCommandOptions.map((option) => (
+                  <option key={option || "empty"} value={option} />
+                ))}
+              </datalist>
+            </label>
+            <label>
+              OpenFOAM case root
+              <input
+                value={settingsDraft.engineeringTools.openFoam.caseRoot ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openFoam: { ...settingsDraft.engineeringTools.openFoam, caseRoot: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <label>
+            OpenFOAM workdir
+            <input
+              value={settingsDraft.engineeringTools.openFoam.workingDirectory ?? ""}
+              onChange={(event) =>
+                onSettingsDraftChange({
+                  ...settingsDraft,
+                  engineeringTools: {
+                    ...settingsDraft.engineeringTools,
+                    openFoam: { ...settingsDraft.engineeringTools.openFoam, workingDirectory: event.target.value }
+                  }
+                })
+              }
+            />
+          </label>
+          <div className="fieldGrid">
+            <label>
+              OpenFOAM args template
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.openFoam.runArgsTemplate)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openFoam: { ...settingsDraft.engineeringTools.openFoam, runArgsTemplate: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              OpenFOAM probe args
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.openFoam.probeArgs)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openFoam: { ...settingsDraft.engineeringTools.openFoam, probeArgs: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              SU2
+              <select
+                value={settingsDraft.engineeringTools.su2.enabled ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      su2: { ...settingsDraft.engineeringTools.su2, enabled: event.target.value === "true" }
+                    }
+                  })
+                }
+              >
+                <option value="false">disabled</option>
+                <option value="true">enabled</option>
+              </select>
+            </label>
+            <label>
+              SU2 timeout(ms)
+              <NumberSelect
+                value={settingsDraft.engineeringTools.su2.timeoutMs}
+                options={engineeringTimeoutOptions}
+                onChange={(timeoutMs) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      su2: { ...settingsDraft.engineeringTools.su2, timeoutMs }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              SU2 command
+              <input
+                value={settingsDraft.engineeringTools.su2.command ?? ""}
+                list="su2-command-options"
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      su2: { ...settingsDraft.engineeringTools.su2, command: event.target.value }
+                    }
+                  })
+                }
+              />
+              <datalist id="su2-command-options">
+                {su2CommandOptions.map((option) => (
+                  <option key={option || "empty"} value={option} />
+                ))}
+              </datalist>
+            </label>
+            <label>
+              SU2 case root
+              <input
+                value={settingsDraft.engineeringTools.su2.caseRoot ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      su2: { ...settingsDraft.engineeringTools.su2, caseRoot: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              SU2 config file
+              <input
+                value={settingsDraft.engineeringTools.su2.configFile ?? ""}
+                placeholder="case.cfg"
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      su2: { ...settingsDraft.engineeringTools.su2, configFile: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              SU2 workdir
+              <input
+                value={settingsDraft.engineeringTools.su2.workingDirectory ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      su2: { ...settingsDraft.engineeringTools.su2, workingDirectory: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              SU2 args template
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.su2.runArgsTemplate)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      su2: { ...settingsDraft.engineeringTools.su2, runArgsTemplate: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              SU2 probe args
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.su2.probeArgs)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      su2: { ...settingsDraft.engineeringTools.su2, probeArgs: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              FreeCAD
+              <select
+                value={settingsDraft.engineeringTools.freeCad.enabled ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      freeCad: { ...settingsDraft.engineeringTools.freeCad, enabled: event.target.value === "true" }
+                    }
+                  })
+                }
+              >
+                <option value="false">disabled</option>
+                <option value="true">enabled</option>
+              </select>
+            </label>
+            <label>
+              FreeCAD timeout(ms)
+              <NumberSelect
+                value={settingsDraft.engineeringTools.freeCad.timeoutMs}
+                options={engineeringTimeoutOptions}
+                onChange={(timeoutMs) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      freeCad: { ...settingsDraft.engineeringTools.freeCad, timeoutMs }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              FreeCAD command
+              <input
+                value={settingsDraft.engineeringTools.freeCad.command ?? ""}
+                list="freecad-command-options"
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      freeCad: { ...settingsDraft.engineeringTools.freeCad, command: event.target.value }
+                    }
+                  })
+                }
+              />
+              <datalist id="freecad-command-options">
+                {freeCadCommandOptions.map((option) => (
+                  <option key={option || "empty"} value={option} />
+                ))}
+              </datalist>
+            </label>
+            <label>
+              FreeCAD script path
+              <input
+                value={settingsDraft.engineeringTools.freeCad.scriptPath ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      freeCad: { ...settingsDraft.engineeringTools.freeCad, scriptPath: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <label>
+            FreeCAD workdir
+            <input
+              value={settingsDraft.engineeringTools.freeCad.workingDirectory ?? ""}
+              onChange={(event) =>
+                onSettingsDraftChange({
+                  ...settingsDraft,
+                  engineeringTools: {
+                    ...settingsDraft.engineeringTools,
+                    freeCad: { ...settingsDraft.engineeringTools.freeCad, workingDirectory: event.target.value }
+                  }
+                })
+              }
+            />
+          </label>
+          <div className="fieldGrid">
+            <label>
+              FreeCAD args template
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.freeCad.runArgsTemplate)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      freeCad: { ...settingsDraft.engineeringTools.freeCad, runArgsTemplate: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              FreeCAD probe args
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.freeCad.probeArgs)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      freeCad: { ...settingsDraft.engineeringTools.freeCad, probeArgs: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              OpenVSP
+              <select
+                value={settingsDraft.engineeringTools.openVsp.enabled ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openVsp: { ...settingsDraft.engineeringTools.openVsp, enabled: event.target.value === "true" }
+                    }
+                  })
+                }
+              >
+                <option value="false">disabled</option>
+                <option value="true">enabled</option>
+              </select>
+            </label>
+            <label>
+              OpenVSP timeout(ms)
+              <NumberSelect
+                value={settingsDraft.engineeringTools.openVsp.timeoutMs}
+                options={engineeringTimeoutOptions}
+                onChange={(timeoutMs) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openVsp: { ...settingsDraft.engineeringTools.openVsp, timeoutMs }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              OpenVSP command
+              <input
+                value={settingsDraft.engineeringTools.openVsp.command ?? ""}
+                list="openvsp-command-options"
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openVsp: { ...settingsDraft.engineeringTools.openVsp, command: event.target.value }
+                    }
+                  })
+                }
+              />
+              <datalist id="openvsp-command-options">
+                {openVspCommandOptions.map((option) => (
+                  <option key={option || "empty"} value={option} />
+                ))}
+              </datalist>
+            </label>
+            <label>
+              OpenVSP script path
+              <input
+                value={settingsDraft.engineeringTools.openVsp.scriptPath ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openVsp: { ...settingsDraft.engineeringTools.openVsp, scriptPath: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <label>
+            OpenVSP workdir
+            <input
+              value={settingsDraft.engineeringTools.openVsp.workingDirectory ?? ""}
+              onChange={(event) =>
+                onSettingsDraftChange({
+                  ...settingsDraft,
+                  engineeringTools: {
+                    ...settingsDraft.engineeringTools,
+                    openVsp: { ...settingsDraft.engineeringTools.openVsp, workingDirectory: event.target.value }
+                  }
+                })
+              }
+            />
+          </label>
+          <div className="fieldGrid">
+            <label>
+              OpenVSP args template
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.openVsp.runArgsTemplate)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openVsp: { ...settingsDraft.engineeringTools.openVsp, runArgsTemplate: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              OpenVSP probe args
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.openVsp.probeArgs)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      openVsp: { ...settingsDraft.engineeringTools.openVsp, probeArgs: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              FlightStream
+              <select
+                value={settingsDraft.engineeringTools.commercialCfd.flightStreamConfigured ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: {
+                        ...settingsDraft.engineeringTools.commercialCfd,
+                        flightStreamConfigured: event.target.value === "true"
+                      }
+                    }
+                  })
+                }
+              >
+                <option value="false">not configured</option>
+                <option value="true">licensed externally</option>
+              </select>
+            </label>
+            <label>
+              STAR-CCM+
+              <select
+                value={settingsDraft.engineeringTools.commercialCfd.starCcmConfigured ? "true" : "false"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: {
+                        ...settingsDraft.engineeringTools.commercialCfd,
+                        starCcmConfigured: event.target.value === "true"
+                      }
+                    }
+                  })
+                }
+              >
+                <option value="false">not configured</option>
+                <option value="true">licensed externally</option>
+              </select>
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              FlightStream command
+              <input
+                value={settingsDraft.engineeringTools.commercialCfd.flightStreamCommand ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamCommand: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              STAR-CCM+ command
+              <input
+                value={settingsDraft.engineeringTools.commercialCfd.starCcmCommand ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmCommand: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              FlightStream workdir
+              <input
+                value={settingsDraft.engineeringTools.commercialCfd.flightStreamWorkingDirectory ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamWorkingDirectory: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              STAR-CCM+ workdir
+              <input
+                value={settingsDraft.engineeringTools.commercialCfd.starCcmWorkingDirectory ?? ""}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmWorkingDirectory: event.target.value }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              FlightStream timeout(ms)
+              <NumberSelect
+                value={settingsDraft.engineeringTools.commercialCfd.flightStreamTimeoutMs}
+                options={engineeringTimeoutOptions}
+                onChange={(flightStreamTimeoutMs) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamTimeoutMs }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              STAR-CCM+ timeout(ms)
+              <NumberSelect
+                value={settingsDraft.engineeringTools.commercialCfd.starCcmTimeoutMs}
+                options={engineeringTimeoutOptions}
+                onChange={(starCcmTimeoutMs) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmTimeoutMs }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              FlightStream args template
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.commercialCfd.flightStreamRunArgsTemplate)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamRunArgsTemplate: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              STAR-CCM+ args template
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.commercialCfd.starCcmRunArgsTemplate)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmRunArgsTemplate: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              FlightStream probe args
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.commercialCfd.flightStreamProbeArgs)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamProbeArgs: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+            <label>
+              STAR-CCM+ probe args
+              <textarea
+                value={joinArgTemplate(settingsDraft.engineeringTools.commercialCfd.starCcmProbeArgs)}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    engineeringTools: {
+                      ...settingsDraft.engineeringTools,
+                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmProbeArgs: splitArgTemplate(event.target.value) }
+                    }
+                  })
+                }
+              />
+            </label>
+          </div>
         </section>
 
         <section className="settingsGroup">
@@ -1868,7 +3119,7 @@ function SettingsTab({
 }
 
 function StringSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }): ReactElement {
-  const normalizedOptions = value && !options.includes(value) ? [value, ...options] : options;
+  const normalizedOptions = useMemo(() => normalizedStringOptions(value, options), [value, options]);
   return (
     <select value={value} onChange={(event) => onChange(event.target.value)}>
       {normalizedOptions.map((option) => (
@@ -1881,7 +3132,7 @@ function StringSelect({ value, options, onChange }: { value: string; options: st
 }
 
 function NumberSelect({ value, options, onChange }: { value: number; options: number[]; onChange: (value: number) => void }): ReactElement {
-  const normalizedOptions = options.includes(value) ? options : [value, ...options].sort((left, right) => left - right);
+  const normalizedOptions = useMemo(() => normalizedNumberOptions(value, options), [value, options]);
   return (
     <select value={value} onChange={(event) => onChange(Number(event.target.value))}>
       {normalizedOptions.map((option) => (
@@ -1893,6 +3144,282 @@ function NumberSelect({ value, options, onChange }: { value: number; options: nu
   );
 }
 
+function normalizedStringOptions(value: string, options: string[]): string[] {
+  if (!value || includesString(options, value)) return options;
+  const normalized = [value];
+  for (const option of options) normalized.push(option);
+  return normalized;
+}
+
+function normalizedNumberOptions(value: number, options: number[]): number[] {
+  if (includesNumber(options, value)) return options;
+  const normalized = [value];
+  for (const option of options) normalized.push(option);
+  normalized.sort((left, right) => left - right);
+  return normalized;
+}
+
+function includesString(values: string[], target: string): boolean {
+  for (const value of values) {
+    if (value === target) return true;
+  }
+  return false;
+}
+
+function includesNumber(values: number[], target: number): boolean {
+  for (const value of values) {
+    if (value === target) return true;
+  }
+  return false;
+}
+
+function splitArgTemplate(value: string): string[] {
+  const args: string[] = [];
+  for (const line of value.split(/\r?\n/)) {
+    const cleaned = line.trim();
+    if (cleaned) args.push(cleaned);
+    if (args.length >= 24) break;
+  }
+  return args;
+}
+
+function joinArgTemplate(values: string[] | undefined): string {
+  return (values ?? []).join("\n");
+}
+
+function engineeringPreflightStatusLabel(result: EngineeringProgramPreflightResult | undefined, busy: boolean): string {
+  if (busy) return "Running";
+  if (!result) return "Not run";
+  return result.status === "completed" ? "Completed" : "Failed";
+}
+
+function engineeringPreflightSummary(result: EngineeringProgramPreflightResult | undefined): string {
+  if (!result) return "Saved settings only";
+  if (result.status === "failed") return result.error ?? "Preflight failed";
+  const output = result.output as { checked?: unknown; unavailable?: unknown } | undefined;
+  const checked = Array.isArray(output?.checked) ? output.checked.map(String).join(", ") : result.target;
+  const unavailable = Array.isArray(output?.unavailable) && output.unavailable.length ? `; unavailable ${output.unavailable.length}` : "";
+  return `checked ${checked || result.target}${unavailable}`;
+}
+
+function engineeringPreflightOutput(output: unknown): string {
+  const text = JSON.stringify(output, null, 2);
+  return text.length > 2_000 ? `${text.slice(0, 2_000)}\n...` : text;
+}
+
+function engineeringRequestTemplatePreview(request: unknown): string {
+  const text = JSON.stringify(request);
+  return text.length > 360 ? `${text.slice(0, 360)}...` : text;
+}
+
+function formatByteSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+type ToolReadinessStatus = "ready" | "blocked" | "idle";
+
+interface ToolReadinessItem {
+  id: string;
+  label: string;
+  badge: string;
+  detail: string;
+  status: ToolReadinessStatus;
+  icon: IconComponent;
+}
+
+function buildResearchToolReadiness(
+  settings: AppSettings | undefined,
+  snapshot: ResearchSnapshot,
+  diagnostics?: RuntimeToolDiagnostics
+): ToolReadinessItem[] {
+  const externalAllowed = Boolean(settings?.allowExternalSearch && snapshot.project.autonomyPolicy.allowExternalSearch);
+  const codeAllowed = Boolean(settings?.allowCodeExecution && snapshot.project.autonomyPolicy.allowCodeExecution);
+  const metadataReady = Boolean(externalAllowed && (diagnostics ? diagnostics.researchMetadata.ready : settings?.researchMetadata.enabled));
+  const xfoilCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "xfoil-polar");
+  const modelingCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "mesh-inspect");
+  const openFoamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "openfoam-case-run");
+  const su2Capability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "su2-case-run");
+  const freeCadCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "cad-script-run");
+  const openVspCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "vsp-script-run");
+  const flightStreamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "flightstream");
+  const starCcmCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "starccm");
+  const xfoilConfigured = diagnostics ? Boolean(codeAllowed && xfoilCapability?.ready) : Boolean(settings?.engineeringTools.xfoil.enabled && settings.engineeringTools.xfoil.command?.trim());
+  const modelingConfigured = diagnostics
+    ? Boolean(codeAllowed && modelingCapability?.ready)
+    : Boolean(settings?.engineeringTools.modeling.enabled && settings.engineeringTools.modeling.artifactRoot?.trim());
+  const openFoamConfigured = diagnostics
+    ? Boolean(codeAllowed && openFoamCapability?.ready)
+    : Boolean(settings?.engineeringTools.openFoam.enabled && settings.engineeringTools.openFoam.command?.trim() && settings.engineeringTools.openFoam.caseRoot?.trim());
+  const su2Configured = diagnostics
+    ? Boolean(codeAllowed && su2Capability?.ready)
+    : Boolean(settings?.engineeringTools.su2.enabled && settings.engineeringTools.su2.command?.trim() && settings.engineeringTools.su2.caseRoot?.trim() && settings.engineeringTools.su2.configFile?.trim());
+  const freeCadConfigured = diagnostics
+    ? Boolean(codeAllowed && freeCadCapability?.ready)
+    : Boolean(settings?.engineeringTools.freeCad.enabled && settings.engineeringTools.freeCad.command?.trim() && settings.engineeringTools.freeCad.scriptPath?.trim());
+  const openVspConfigured = diagnostics
+    ? Boolean(codeAllowed && openVspCapability?.ready)
+    : Boolean(settings?.engineeringTools.openVsp.enabled && settings.engineeringTools.openVsp.command?.trim() && settings.engineeringTools.openVsp.scriptPath?.trim());
+  const flightStreamConfigured = Boolean(codeAllowed && flightStreamCapability?.ready);
+  const starCcmConfigured = Boolean(codeAllowed && starCcmCapability?.ready);
+  const engineeringReady = Boolean(codeAllowed && (xfoilConfigured || modelingConfigured || openFoamConfigured || su2Configured || freeCadConfigured || openVspConfigured));
+  const commercialConfigured = diagnostics
+    ? Boolean(flightStreamConfigured || starCcmConfigured)
+    : Boolean(
+        (settings?.engineeringTools.commercialCfd.flightStreamConfigured && settings.engineeringTools.commercialCfd.flightStreamCommand?.trim()) ||
+          (settings?.engineeringTools.commercialCfd.starCcmConfigured && settings.engineeringTools.commercialCfd.starCcmCommand?.trim())
+      );
+  const metadataBlockedReason = !snapshot.project.autonomyPolicy.allowExternalSearch
+    ? "Project autonomy blocks external search."
+    : (diagnostics?.researchMetadata.blockedReason ?? "외부 접근 또는 metadata 설정 필요");
+  const engineeringBlockedReason = !snapshot.project.autonomyPolicy.allowCodeExecution
+    ? "Project autonomy blocks code execution."
+    : (diagnostics?.engineeringPrograms.find((capability) => capability.target === "all")?.blockedReason ??
+      "코드 실행 허용과 XFOIL command 또는 modeling artifact root 필요");
+  const commercialBlockedReason = !snapshot.project.autonomyPolicy.allowCodeExecution
+    ? "Project autonomy blocks code execution."
+    : joinPresent(
+        " / ",
+        flightStreamCapability?.ready ? "FlightStream adapter ready" : flightStreamCapability?.blockedReason,
+        starCcmCapability?.ready ? "STAR-CCM+ adapter ready" : starCcmCapability?.blockedReason
+      ) || "FlightStream / STAR-CCM+ command adapter 설정 전까지 차단";
+
+  return [
+    {
+      id: "metadata",
+      label: "OpenAlex metadata",
+      badge: metadataReady ? "활성" : "대기",
+      detail: metadataReady ? `최대 ${settings?.researchMetadata.maxResults ?? 0}개 논문 메타데이터 수집 가능` : "외부 접근 또는 metadata 설정 필요",
+      status: metadataReady ? "ready" : "blocked",
+      icon: Globe2
+    },
+    {
+      id: "headless-programs",
+      label: "Headless program tools",
+      badge: engineeringReady ? "실행 가능" : "설정 필요",
+      detail: engineeringReady
+        ? `XFOIL ${xfoilConfigured ? "on" : "off"} / mesh ${modelingConfigured ? "on" : "off"} / OpenFOAM ${openFoamConfigured ? "on" : "off"} / SU2 ${su2Configured ? "on" : "off"} / FreeCAD ${freeCadConfigured ? "on" : "off"} / OpenVSP ${openVspConfigured ? "on" : "off"}`
+        : "코드 실행 허용과 XFOIL, parser-valid mesh, OpenFOAM/SU2 case, FreeCAD script, 또는 OpenVSP script 설정 필요",
+      status: engineeringReady ? "ready" : "blocked",
+      icon: Wrench
+    },
+    {
+      id: "commercial-cfd",
+      label: "Commercial CFD",
+      badge: commercialConfigured ? "라이선스 확인 필요" : "미설정",
+      detail: commercialConfigured ? "설정된 adapter command만 LLM 계획에서 실행 가능" : "FlightStream / STAR-CCM+는 command adapter 설정 전까지 차단",
+      status: commercialConfigured ? "ready" : "blocked",
+      icon: HardDrive
+    }
+  ];
+}
+
+function buildRuntimeResearchToolReadiness(
+  settings: AppSettings | undefined,
+  snapshot: ResearchSnapshot,
+  diagnostics?: RuntimeToolDiagnostics
+): ToolReadinessItem[] {
+  const projectExternalAllowed = snapshot.project.autonomyPolicy.allowExternalSearch;
+  const projectCodeAllowed = snapshot.project.autonomyPolicy.allowCodeExecution;
+  const appExternalAllowed = Boolean(settings?.allowExternalSearch);
+  const appCodeAllowed = Boolean(settings?.allowCodeExecution);
+  const externalAllowed = appExternalAllowed && projectExternalAllowed;
+  const codeAllowed = appCodeAllowed && projectCodeAllowed;
+  const metadataReady = Boolean(externalAllowed && (diagnostics ? diagnostics.researchMetadata.ready : settings?.researchMetadata.enabled));
+  const flightStreamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "flightstream");
+  const starCcmCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "starccm");
+  const xfoilTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-polar:xfoil");
+  const modelingTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "mesh-inspect:modeling");
+  const openFoamTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "openfoam-case-run:openfoam");
+  const su2Template = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "su2-case-run:su2");
+  const freeCadTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "cad-script-run:freecad");
+  const openVspTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "vsp-script-run:openvsp");
+  const flightStreamTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "commercial-cfd-run:flightstream");
+  const starCcmTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "commercial-cfd-run:starccm");
+  const xfoilReady = diagnostics ? Boolean(codeAllowed && xfoilTemplate?.ready) : Boolean(codeAllowed && settings?.engineeringTools.xfoil.enabled && settings.engineeringTools.xfoil.command?.trim());
+  const modelingReady = diagnostics
+    ? Boolean(codeAllowed && modelingTemplate?.ready)
+    : Boolean(codeAllowed && settings?.engineeringTools.modeling.enabled && settings.engineeringTools.modeling.artifactRoot?.trim());
+  const openFoamReady = diagnostics
+    ? Boolean(codeAllowed && openFoamTemplate?.ready)
+    : Boolean(codeAllowed && settings?.engineeringTools.openFoam.enabled && settings.engineeringTools.openFoam.command?.trim() && settings.engineeringTools.openFoam.caseRoot?.trim());
+  const su2Ready = diagnostics
+    ? Boolean(codeAllowed && su2Template?.ready)
+    : Boolean(codeAllowed && settings?.engineeringTools.su2.enabled && settings.engineeringTools.su2.command?.trim() && settings.engineeringTools.su2.caseRoot?.trim() && settings.engineeringTools.su2.configFile?.trim());
+  const freeCadReady = diagnostics
+    ? Boolean(codeAllowed && freeCadTemplate?.ready)
+    : Boolean(codeAllowed && settings?.engineeringTools.freeCad.enabled && settings.engineeringTools.freeCad.command?.trim() && settings.engineeringTools.freeCad.scriptPath?.trim());
+  const openVspReady = diagnostics
+    ? Boolean(codeAllowed && openVspTemplate?.ready)
+    : Boolean(codeAllowed && settings?.engineeringTools.openVsp.enabled && settings.engineeringTools.openVsp.command?.trim() && settings.engineeringTools.openVsp.scriptPath?.trim());
+  const flightStreamReady = diagnostics
+    ? Boolean(codeAllowed && flightStreamTemplate?.ready)
+    : Boolean(codeAllowed && settings?.engineeringTools.commercialCfd.flightStreamConfigured && settings.engineeringTools.commercialCfd.flightStreamCommand?.trim());
+  const starCcmReady = diagnostics
+    ? Boolean(codeAllowed && starCcmTemplate?.ready)
+    : Boolean(codeAllowed && settings?.engineeringTools.commercialCfd.starCcmConfigured && settings.engineeringTools.commercialCfd.starCcmCommand?.trim());
+  const engineeringReady = xfoilReady || modelingReady || openFoamReady || su2Ready || freeCadReady || openVspReady;
+  const commercialReady = flightStreamReady || starCcmReady;
+  const engineeringArtifactBlockedReason = diagnostics?.blockers.find((blocker) => blocker.key === "engineeringArtifacts")?.message;
+  const metadataBlockedReason = projectExternalAllowed
+    ? (diagnostics?.researchMetadata.blockedReason ?? "외부 접근 또는 OpenAlex metadata 설정이 필요합니다.")
+    : "Project autonomy blocks external search.";
+  const engineeringBlockedReason = projectCodeAllowed
+    ? (engineeringArtifactBlockedReason ?? diagnostics?.engineeringPrograms.find((capability) => capability.target === "all")?.blockedReason ??
+      "XFOIL command 또는 modeling artifact root가 필요합니다.")
+    : "Project autonomy blocks code execution.";
+  const commercialBlockedReason = projectCodeAllowed
+    ? joinPresent(
+        " / ",
+        flightStreamCapability?.ready ? "FlightStream adapter ready" : flightStreamCapability?.blockedReason,
+        starCcmCapability?.ready ? "STAR-CCM+ adapter ready" : starCcmCapability?.blockedReason
+      ) || "FlightStream / STAR-CCM+ command adapter 설정이 필요합니다."
+    : "Project autonomy blocks code execution.";
+
+  return [
+    {
+      id: "metadata",
+      label: "OpenAlex metadata",
+      badge: metadataReady ? "Ready" : "Blocked",
+      detail: metadataReady
+        ? `최대 ${diagnostics?.researchMetadata.maxResults ?? settings?.researchMetadata.maxResults ?? 0}개 논문 메타데이터 수집 가능`
+        : metadataBlockedReason,
+      status: metadataReady ? "ready" : "blocked",
+      icon: Globe2
+    },
+    {
+      id: "headless-programs",
+      label: "Headless program tools",
+      badge: engineeringReady ? "Ready" : "Blocked",
+      detail: engineeringReady
+        ? `XFOIL ${xfoilReady ? "ready" : "blocked"} / mesh ${modelingReady ? "ready" : "blocked"} / OpenFOAM ${openFoamReady ? "ready" : "blocked"} / SU2 ${su2Ready ? "ready" : "blocked"} / FreeCAD ${freeCadReady ? "ready" : "blocked"} / OpenVSP ${openVspReady ? "ready" : "blocked"}`
+        : engineeringBlockedReason,
+      status: engineeringReady ? "ready" : "blocked",
+      icon: Wrench
+    },
+    {
+      id: "commercial-cfd",
+      label: "Commercial CFD",
+      badge: commercialReady ? "Adapter ready" : "Blocked",
+      detail: commercialReady
+        ? `FlightStream ${flightStreamReady ? "ready" : "blocked"} / STAR-CCM+ ${starCcmReady ? "ready" : "blocked"}`
+        : commercialBlockedReason,
+      status: commercialReady ? "ready" : "blocked",
+      icon: HardDrive
+    }
+  ];
+}
+
+function recentIntegratedToolRuns(toolRuns: ResearchSnapshot["toolRuns"]): ResearchSnapshot["toolRuns"] {
+  const integrated: ResearchSnapshot["toolRuns"] = [];
+  for (const toolRun of toolRuns) {
+    if (toolRun.toolName === "ResearchMetadataTool" || toolRun.toolName === "EngineeringProgramTool") integrated.push(toolRun);
+  }
+  return lastItems(integrated, 4);
+}
+
 function AgentDuty({ icon: Icon, label }: { icon: IconComponent; label: string }): ReactElement {
   return (
     <div className="duty">
@@ -1902,16 +3429,19 @@ function AgentDuty({ icon: Icon, label }: { icon: IconComponent; label: string }
   );
 }
 
-function StorageList({ snapshot }: { snapshot: ResearchSnapshot }): ReactElement {
-  const rows = [
-    { icon: FileText, label: "Raw Sources", value: snapshot.sources.length },
-    { icon: Boxes, label: "Artifacts", value: snapshot.artifacts.length },
-    { icon: Gauge, label: "Tool Logs", value: snapshot.toolRuns.length },
-    { icon: MessageSquare, label: "Evidence Ledger", value: snapshot.evidence.length },
-    { icon: Search, label: "Vector DB", value: snapshot.chunks.length },
-    { icon: Workflow, label: "Ontology Graph DB", value: snapshot.ontologyEntities.length + snapshot.ontologyRelations.length },
-    { icon: Database, label: "Projects & Reports", value: snapshot.finalOutputs.length + snapshot.runAuditOutputs.length || (snapshot.report ? 1 : 0) }
-  ];
+function StorageList({ stats }: { stats: SnapshotStats }): ReactElement {
+  const rows = useMemo(
+    () => [
+      { icon: FileText, label: "Raw Sources", value: stats.rawSources },
+      { icon: Boxes, label: "Artifacts", value: stats.artifacts },
+      { icon: Gauge, label: "Tool Logs", value: stats.toolLogs },
+      { icon: MessageSquare, label: "Evidence Ledger", value: stats.evidence },
+      { icon: Search, label: "Vector DB", value: stats.chunks },
+      { icon: Workflow, label: "Ontology Graph DB", value: stats.graphItems },
+      { icon: Database, label: "Projects & Reports", value: stats.storageProjectsAndReports }
+    ],
+    [stats]
+  );
 
   return (
     <div className="storageList">
@@ -1939,19 +3469,49 @@ function FinalItem({ title, value }: { title: string; value?: string }): ReactEl
 }
 
 function chatSessionsFor(snapshot: ResearchSnapshot): ResearchSnapshot["sessions"] {
-  return snapshot.sessions.filter((session) => !isLegacyStructuredSession(session.title));
+  const sessions: ResearchSnapshot["sessions"] = [];
+  for (const session of snapshot.sessions) {
+    if (!isLegacyStructuredSession(session.title)) sessions.push(session);
+  }
+  return sessions;
 }
 
 function chatMessagesFor(snapshot: ResearchSnapshot, sessionId: string, sessionTitle: string): ResearchSnapshot["artifacts"] {
-  return snapshot.artifacts
-    .filter((artifact) => {
-      const relativePath = artifact.relativePath.replace(/\\/g, "/");
-      return (
-        artifact.category === "conversation_memo" &&
-        (relativePath.includes(`/chat/${sessionId}-`) || artifact.title === `${sessionTitle} 메모`)
-      );
-    })
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const messages: ResearchSnapshot["artifacts"] = [];
+  for (const artifact of snapshot.artifacts) {
+    const relativePath = artifact.relativePath.replace(/\\/g, "/");
+    if (
+      artifact.category === "conversation_memo" &&
+      (relativePath.includes(`/chat/${sessionId}-`) || artifact.title === `${sessionTitle} 메모`)
+    ) {
+      messages.push(artifact);
+    }
+  }
+  messages.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return messages;
+}
+
+function chatMessageViews(messages: ResearchSnapshot["artifacts"]): Array<{
+  id: string;
+  role: "user" | "assistant";
+  text: string | undefined;
+  createdLabel: string;
+}> {
+  const views: Array<{
+    id: string;
+    role: "user" | "assistant";
+    text: string | undefined;
+    createdLabel: string;
+  }> = [];
+  for (const message of messages) {
+    views.push({
+      id: message.id,
+      role: chatMessageRole(message),
+      text: message.content ?? message.summary,
+      createdLabel: new Date(message.createdAt).toLocaleString()
+    });
+  }
+  return views;
 }
 
 function chatMessageRole(message: ResearchSnapshot["artifacts"][number]): "user" | "assistant" {
@@ -2020,29 +3580,51 @@ function formatError(error: unknown): string {
 }
 
 function isLegacyStructuredSession(title: string): boolean {
-  return ["질문/가설 세션", "근거/RAG 세션", "실행/분석 세션"].includes(title);
+  return legacyStructuredSessionTitles.has(title);
 }
 
 function normalizeSettings(settings: AppSettings): AppSettings {
+  const base = {
+    ...settings,
+    embedding: normalizeEmbedding(settings.embedding),
+    researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
+    engineeringTools: normalizeEngineeringTools(settings.engineeringTools)
+  };
   if (settings.openCodeLlm.source === "api") {
     const provider = settings.openCodeLlm.provider;
     return {
-      ...settings,
+      ...base,
       openCodeLlm: {
         ...settings.openCodeLlm,
         model: settings.openCodeLlm.model || modelOptions[provider][0]
-      },
-      embedding: normalizeEmbedding(settings.embedding)
+      }
     };
   }
   return {
-    ...settings,
+    ...base,
     openCodeLlm: {
       ...settings.openCodeLlm,
       model: settings.openCodeLlm.model || codexOAuthModels[0]
-    },
-    embedding: normalizeEmbedding(settings.embedding)
+    }
   };
+}
+
+function normalizeRunInput(input: ResearchProjectInput): ResearchProjectInput {
+  return {
+    ...input,
+    autonomyPolicy: {
+      ...input.autonomyPolicy,
+      maxLoopIterations: normalizeLoopLimit(input.autonomyPolicy.maxLoopIterations)
+    }
+  };
+}
+
+function normalizeLoopLimit(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return defaultGuiLoopLimit;
+  }
+  return Math.min(maxGuiLoopLimit, Math.floor(parsed));
 }
 
 function normalizeEmbedding(embedding: AppSettings["embedding"]): AppSettings["embedding"] {
@@ -2053,71 +3635,181 @@ function normalizeEmbedding(embedding: AppSettings["embedding"]): AppSettings["e
   };
 }
 
-function buildResearchInputPayload(input: ResearchProjectInput): {
-  researchQuestion: string;
-  initialHypotheses: string[];
-  constraints: string[];
-  expectedOutputs: string[];
-} {
-  const combined = [input.goal, input.scope, input.budget].filter(Boolean).join("\n");
+function normalizeResearchMetadata(metadata: AppSettings["researchMetadata"] | undefined): AppSettings["researchMetadata"] {
   return {
-    researchQuestion: input.goal.trim(),
-    initialHypotheses: extractExplicitSections(combined, /가설\s*[A-Za-z0-9가-힣-]*\s*[:：]\s*/g, /(?:제약|범위|최종\s*산출물|예상\s*산출물|조건)\s*[:：]/),
-    constraints: extractInlineList(combined, /제약\s*[:：]\s*([\s\S]*?)(?=(?:최종\s*산출물|예상\s*산출물)\s*[:：]|$)/),
-    expectedOutputs: extractInlineList(combined, /(?:최종\s*산출물|예상\s*산출물)\s*[:：]\s*([\s\S]*?)$/)
+    enabled: metadata?.enabled ?? true,
+    provider: "openalex",
+    mailto: metadata?.mailto,
+    maxResults: metadata?.maxResults || 5,
+    timeoutMs: metadata?.timeoutMs || 15_000
   };
 }
 
-function extractExplicitSections(text: string, marker: RegExp, stop: RegExp): string[] {
-  const matches = [...text.matchAll(marker)];
-  if (!matches.length) {
-    return [];
-  }
-  const values: string[] = [];
-  for (let index = 0; index < matches.length; index += 1) {
-    const current = matches[index];
-    const next = matches[index + 1];
-    const start = current.index === undefined ? 0 : current.index + current[0].length;
-    const after = text.slice(start, next?.index);
-    const stopMatch = after.match(stop);
-    const candidate = cleanHypothesisText(stopMatch?.index === undefined ? after : after.slice(0, stopMatch.index));
-    if (candidate) values.push(candidate);
-  }
-  return dedupeStrings(values).slice(0, 6);
-}
-
-function extractInlineList(text: string, pattern: RegExp): string[] {
-  const match = text.match(pattern);
-  if (!match?.[1]) {
-    return [];
-  }
-  return dedupeStrings(
-    match[1]
-      .split(/\n|;|,|ㆍ|·/)
-      .map((item) => item.replace(/^[-*\d.)\s]+/, "").trim())
-      .filter(Boolean)
-  ).slice(0, 8);
-}
-
-function cleanHypothesisText(value: string): string {
-  return value
-    .replace(/\s+/g, " ")
-    .replace(/^(?:[-*\d.)]\s*)+/, "")
-    .trim()
-    .replace(/\s+(?=(?:가설|제약|최종\s*산출물)\s*[:：]).*$/s, "")
-    .trim();
-}
-
-function dedupeStrings(values: string[]): string[] {
-  const seen = new Set<string>();
-  return values.filter((value) => {
-    const key = value.toLocaleLowerCase();
-    if (seen.has(key)) {
-      return false;
+function normalizeEngineeringTools(engineeringTools: AppSettings["engineeringTools"] | undefined): AppSettings["engineeringTools"] {
+  return {
+    enabled: engineeringTools?.enabled ?? false,
+    xfoil: {
+      enabled: engineeringTools?.xfoil?.enabled ?? false,
+      command: engineeringTools?.xfoil?.command ?? "",
+      timeoutMs: engineeringTools?.xfoil?.timeoutMs ?? 30_000
+    },
+    modeling: {
+      enabled: engineeringTools?.modeling?.enabled ?? false,
+      artifactRoot: engineeringTools?.modeling?.artifactRoot ?? "",
+      maxMeshBytes: engineeringTools?.modeling?.maxMeshBytes ?? 20 * 1024 * 1024
+    },
+    openFoam: {
+      enabled: engineeringTools?.openFoam?.enabled ?? false,
+      command: engineeringTools?.openFoam?.command ?? "",
+      caseRoot: engineeringTools?.openFoam?.caseRoot ?? "",
+      workingDirectory: engineeringTools?.openFoam?.workingDirectory ?? "",
+      probeArgs: engineeringTools?.openFoam?.probeArgs ?? ["-help"],
+      runArgsTemplate: engineeringTools?.openFoam?.runArgsTemplate ?? ["-case", "{case}"],
+      timeoutMs: engineeringTools?.openFoam?.timeoutMs ?? 30 * 60_000
+    },
+    su2: {
+      enabled: engineeringTools?.su2?.enabled ?? false,
+      command: engineeringTools?.su2?.command ?? "",
+      caseRoot: engineeringTools?.su2?.caseRoot ?? "",
+      configFile: engineeringTools?.su2?.configFile ?? "",
+      workingDirectory: engineeringTools?.su2?.workingDirectory ?? "",
+      probeArgs: engineeringTools?.su2?.probeArgs ?? ["--help"],
+      runArgsTemplate: engineeringTools?.su2?.runArgsTemplate ?? ["{config}"],
+      timeoutMs: engineeringTools?.su2?.timeoutMs ?? 30 * 60_000
+    },
+    freeCad: {
+      enabled: engineeringTools?.freeCad?.enabled ?? false,
+      command: engineeringTools?.freeCad?.command ?? "",
+      scriptPath: engineeringTools?.freeCad?.scriptPath ?? "",
+      workingDirectory: engineeringTools?.freeCad?.workingDirectory ?? "",
+      probeArgs: engineeringTools?.freeCad?.probeArgs ?? ["--version"],
+      runArgsTemplate: engineeringTools?.freeCad?.runArgsTemplate ?? ["{script}", "--output", "{output}"],
+      timeoutMs: engineeringTools?.freeCad?.timeoutMs ?? 30 * 60_000
+    },
+    openVsp: {
+      enabled: engineeringTools?.openVsp?.enabled ?? false,
+      command: engineeringTools?.openVsp?.command ?? "",
+      scriptPath: engineeringTools?.openVsp?.scriptPath ?? "",
+      workingDirectory: engineeringTools?.openVsp?.workingDirectory ?? "",
+      probeArgs: engineeringTools?.openVsp?.probeArgs ?? ["-help"],
+      runArgsTemplate: engineeringTools?.openVsp?.runArgsTemplate ?? ["-script", "{script}", "-output", "{output}"],
+      timeoutMs: engineeringTools?.openVsp?.timeoutMs ?? 30 * 60_000
+    },
+    commercialCfd: {
+      flightStreamConfigured: engineeringTools?.commercialCfd?.flightStreamConfigured ?? false,
+      starCcmConfigured: engineeringTools?.commercialCfd?.starCcmConfigured ?? false,
+      flightStreamCommand: engineeringTools?.commercialCfd?.flightStreamCommand ?? "",
+      flightStreamWorkingDirectory: engineeringTools?.commercialCfd?.flightStreamWorkingDirectory ?? "",
+      flightStreamProbeArgs: engineeringTools?.commercialCfd?.flightStreamProbeArgs ?? ["--version"],
+      flightStreamRunArgsTemplate: engineeringTools?.commercialCfd?.flightStreamRunArgsTemplate ?? [],
+      flightStreamTimeoutMs: engineeringTools?.commercialCfd?.flightStreamTimeoutMs ?? 120_000,
+      starCcmCommand: engineeringTools?.commercialCfd?.starCcmCommand ?? "",
+      starCcmWorkingDirectory: engineeringTools?.commercialCfd?.starCcmWorkingDirectory ?? "",
+      starCcmProbeArgs: engineeringTools?.commercialCfd?.starCcmProbeArgs ?? ["-version"],
+      starCcmRunArgsTemplate: engineeringTools?.commercialCfd?.starCcmRunArgsTemplate ?? [],
+      starCcmTimeoutMs: engineeringTools?.commercialCfd?.starCcmTimeoutMs ?? 120_000,
+      notes: engineeringTools?.commercialCfd?.notes ?? ""
     }
-    seen.add(key);
-    return true;
-  });
+  };
+}
+
+function lastItems<T>(values: T[], limit: number): T[] {
+  const output: T[] = [];
+  const start = Math.max(0, values.length - limit);
+  for (let index = start; index < values.length; index += 1) {
+    output.push(values[index]);
+  }
+  return output;
+}
+
+function joinPresent(separator: string, ...values: unknown[]): string {
+  const parts: string[] = [];
+  for (const value of values) {
+    if (value) parts.push(String(value));
+  }
+  return parts.join(separator);
+}
+
+function joinFirstStrings(values: string[], limit: number, separator: string): string {
+  const parts: string[] = [];
+  const count = Math.min(values.length, limit);
+  for (let index = 0; index < count; index += 1) {
+    parts.push(values[index]);
+  }
+  return parts.join(separator);
+}
+
+function visitedStepSet(iterations: LoopIteration[]): Set<ResearchLoopStep> {
+  const steps = new Set<ResearchLoopStep>();
+  for (const iteration of iterations) {
+    steps.add(iteration.step);
+  }
+  return steps;
+}
+
+function buildSnapshotStats(snapshot: ResearchSnapshot): SnapshotStats {
+  const graphItems = snapshot.ontologyEntities.length + snapshot.ontologyRelations.length;
+  const runAuditOutputs = snapshot.runAuditOutputs.length;
+  const finalOutputs = snapshot.finalOutputs.length;
+  const hasReport = snapshot.report ? 1 : 0;
+  return {
+    results: snapshot.results.length,
+    evidence: snapshot.evidence.length,
+    normalizedRecords: snapshot.normalizedRecords.length,
+    chunks: snapshot.chunks.length,
+    graphItems,
+    validationResults: snapshot.validationResults.length,
+    rawSources: snapshot.sources.length,
+    artifacts: snapshot.artifacts.length,
+    toolLogs: snapshot.toolRuns.length,
+    evidenceLedger: snapshot.evidence.length + countEvidenceRecords(snapshot),
+    memoryProjectsAndReports: finalOutputs + runAuditOutputs + hasReport,
+    storageProjectsAndReports: finalOutputs + runAuditOutputs || hasReport,
+    errorsAndBlockers: snapshot.stepErrors.length + snapshot.runtimeBlockers.length
+  };
+}
+
+function metricRows(stats: SnapshotStats): Array<{ label: string; value: number }> {
+  return [
+    { label: "반복", value: stats.results },
+    { label: "근거", value: stats.evidence },
+    { label: "정규화", value: stats.normalizedRecords },
+    { label: "Vector chunk", value: stats.chunks },
+    { label: "Graph", value: stats.graphItems },
+    { label: "검증", value: stats.validationResults }
+  ];
+}
+
+function memoryRows(stats: SnapshotStats): Array<{ label: string; value: number }> {
+  return [
+    { label: "Raw Sources", value: stats.rawSources },
+    { label: "Artifacts", value: stats.artifacts },
+    { label: "Tool Logs", value: stats.toolLogs },
+    { label: "Evidence Ledger", value: stats.evidenceLedger },
+    { label: "Vector DB", value: stats.chunks },
+    { label: "Ontology Graph DB", value: stats.graphItems },
+    { label: "Projects & Reports", value: stats.memoryProjectsAndReports },
+    { label: "Errors / Blockers", value: stats.errorsAndBlockers }
+  ];
+}
+
+function countEvidenceRecords(snapshot: ResearchSnapshot): number {
+  let count = 0;
+  for (const record of snapshot.normalizedRecords) {
+    if (record.kind === "evidence") count += 1;
+  }
+  return count;
+}
+
+function recentBlockerMessages(snapshot: ResearchSnapshot): string[] {
+  const messages: string[] = [];
+  for (const blocker of lastItems(snapshot.runtimeBlockers, 4)) {
+    messages.push(`blocked · ${blocker.requirementKey}: ${blocker.message}`);
+  }
+  for (const error of lastItems(snapshot.stepErrors, 4)) {
+    messages.push(`failed · ${error.step}: ${error.message}`);
+  }
+  return messages;
 }
 
 function describeLlm(settings?: AppSettings): string {
@@ -2148,20 +3840,19 @@ function settingsStatus(settings?: AppSettings): string {
 }
 
 function statusLabel(status: ResearchProject["status"]): string {
-  const labels: Record<ResearchProject["status"], string> = {
-    idle: "대기",
-    running: "실행 중",
-    paused: "일시정지",
-    aborted: "중단됨",
-    completed: "완료",
-    failed: "실패",
-    blocked: "설정 필요"
-  };
-  return labels[status];
+  return projectStatusLabels[status];
 }
 
 function deriveTopic(prompt: string): string {
-  const firstLine = prompt.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "새 연구 프로젝트";
+  let firstLine = "";
+  for (const line of prompt.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed) {
+      firstLine = trimmed;
+      break;
+    }
+  }
+  firstLine ||= "새 연구 프로젝트";
   return firstLine.length > 42 ? `${firstLine.slice(0, 42)}...` : firstLine;
 }
 

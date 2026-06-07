@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { EmbeddingProvider } from "./embeddingProvider.js";
 import type { LlmJsonRequest, LlmProvider } from "./llm.js";
 import { InMemoryResearchStore } from "./memoryStore.js";
@@ -28,6 +28,31 @@ export const strictTestSettings: AppSettings = {
   webSearch: { provider: "disabled" },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 64, apiKey: "test-key", apiKeyConfigured: true },
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
+  researchMetadata: { enabled: true, provider: "openalex", maxResults: 5, timeoutMs: 15_000 },
+  engineeringTools: {
+    enabled: false,
+    xfoil: { enabled: false, command: "", timeoutMs: 30_000 },
+    modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
+    openFoam: { enabled: false, command: "", caseRoot: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-case", "{case}"], timeoutMs: 30 * 60_000 },
+    su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 30 * 60_000 },
+    freeCad: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--version"], runArgsTemplate: ["{script}", "--output", "{output}"], timeoutMs: 30 * 60_000 },
+    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
+    commercialCfd: {
+      flightStreamConfigured: false,
+      starCcmConfigured: false,
+      flightStreamCommand: "",
+      flightStreamWorkingDirectory: "",
+      flightStreamProbeArgs: ["--version"],
+      flightStreamRunArgsTemplate: [],
+      flightStreamTimeoutMs: 120_000,
+      starCcmCommand: "",
+      starCcmWorkingDirectory: "",
+      starCcmProbeArgs: ["-version"],
+      starCcmRunArgsTemplate: [],
+      starCcmTimeoutMs: 120_000,
+      notes: ""
+    }
+  },
   allowExternalSearch: false,
   allowCodeExecution: false,
   ontologyExtractionMode: "rule_based",
@@ -168,7 +193,7 @@ export class DeterministicLlmProvider implements LlmProvider {
 
 export class DeterministicOpenCodeAdapter implements OpenCodeAdapter {
   async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
-    const createdAt = "2026-05-20T00:00:00.000Z";
+    const createdAt = nowIso();
     const artifact = {
       id: `artifact-${input.iteration}`,
       projectId: input.project.id,

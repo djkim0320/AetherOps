@@ -7,23 +7,52 @@ export interface EvidenceGraphPath {
   relationIds: string[];
 }
 
+export const EMPTY_EVIDENCE_GRAPH_PATH: EvidenceGraphPath = {
+  hasSourcePath: false,
+  hasCitationPath: false,
+  relationIds: []
+};
+
 export function graphPathForEvidence(snapshot: ResearchSnapshot, evidenceId: string): EvidenceGraphPath {
-  const relations = snapshot.ontologyRelations.filter((relation) => relation.sourceEvidenceId === evidenceId);
-  const hasSourcePath = relations.some((relation) => relation.predicate === "derivedFrom" || relation.predicate === "cites");
-  const hasCitationPath = relations.some((relation) => relation.predicate === "cites" || relation.predicate === "supports" || relation.predicate === "contradicts");
-  return {
-    hasSourcePath,
-    hasCitationPath,
-    relationIds: relations.map((relation) => relation.id)
-  };
+  const relationIds: string[] = [];
+  let hasSourcePath = false;
+  let hasCitationPath = false;
+  for (const relation of snapshot.ontologyRelations) {
+    if (relation.sourceEvidenceId !== evidenceId) continue;
+    relationIds.push(relation.id);
+    if (relation.predicate === "derivedFrom" || relation.predicate === "cites") hasSourcePath = true;
+    if (relation.predicate === "cites" || relation.predicate === "supports" || relation.predicate === "contradicts") hasCitationPath = true;
+  }
+  return { hasSourcePath, hasCitationPath, relationIds };
+}
+
+export function graphPathByEvidenceId(snapshot: ResearchSnapshot): Map<string, EvidenceGraphPath> {
+  const paths = new Map<string, EvidenceGraphPath>();
+  for (const relation of snapshot.ontologyRelations) {
+    if (relation.sourceEvidenceId === undefined) continue;
+    let path = paths.get(relation.sourceEvidenceId);
+    if (!path) {
+      path = { hasSourcePath: false, hasCitationPath: false, relationIds: [] };
+      paths.set(relation.sourceEvidenceId, path);
+    }
+    path.relationIds.push(relation.id);
+    if (relation.predicate === "derivedFrom" || relation.predicate === "cites") path.hasSourcePath = true;
+    if (relation.predicate === "cites" || relation.predicate === "supports" || relation.predicate === "contradicts") path.hasCitationPath = true;
+  }
+  return paths;
 }
 
 export function relationBackedEvidenceIds(relations: OntologyRelation[]): Set<string> {
-  return new Set(
-    relations
-      .filter((relation) => relation.sourceEvidenceId && (relation.predicate === "derivedFrom" || relation.predicate === "cites" || relation.predicate === "supports" || relation.predicate === "contradicts"))
-      .map((relation) => relation.sourceEvidenceId as string)
-  );
+  const evidenceIds = new Set<string>();
+  for (const relation of relations) {
+    if (
+      relation.sourceEvidenceId &&
+      (relation.predicate === "derivedFrom" || relation.predicate === "cites" || relation.predicate === "supports" || relation.predicate === "contradicts")
+    ) {
+      evidenceIds.add(relation.sourceEvidenceId);
+    }
+  }
+  return evidenceIds;
 }
 
 export function isSupportEligibleEvidenceRecord(
@@ -40,10 +69,12 @@ export function isSupportEligibleEvidenceRecord(
     record.metadata.canSupportHypothesis === true &&
     record.metadata.sourceCanSupportHypothesis !== false &&
     (traceabilityKind === "external_source" || traceabilityKind === "tool_observation") &&
-    !["weak", "excluded", "general_web"].includes(sourceQualityTier) &&
+    !SUPPORT_EXCLUDED_TIERS.has(sourceQualityTier) &&
     normalizeMemoryScope(record.memoryScope) !== "ephemeral" &&
     record.validationStatus !== "rejected" &&
     hasCitation &&
     (!options.preferSpan || hasSpan || traceabilityKind === "tool_observation") &&
     graphOk;
 }
+
+const SUPPORT_EXCLUDED_TIERS = new Set(["weak", "excluded", "general_web"]);

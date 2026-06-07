@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -63,9 +63,7 @@ export class SqliteResearchStore implements ResearchStore {
 
   constructor(private readonly sqlitePath: string) {
     const parent = dirname(sqlitePath);
-    if (!existsSync(parent)) {
-      mkdirSync(parent, { recursive: true });
-    }
+    mkdirSync(parent, { recursive: true });
     this.db = new DatabaseSync(sqlitePath);
     const mainRoot = join(parent, "main");
     mkdirSync(join(mainRoot, "files", "sources"), { recursive: true });
@@ -86,7 +84,12 @@ export class SqliteResearchStore implements ResearchStore {
   }
 
   async listProjects(): Promise<ResearchProject[]> {
-    return this.all("projects").map((row) => sanitizeProject(this.parse<ResearchProject>(row))).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const projects: ResearchProject[] = [];
+    for (const row of this.all("projects")) {
+      projects.push(sanitizeProject(this.parse<ResearchProject>(row)));
+    }
+    projects.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return projects;
   }
 
   async getProject(projectId: string): Promise<ResearchProject | undefined> {
@@ -130,15 +133,24 @@ export class SqliteResearchStore implements ResearchStore {
   }
 
   async saveSources(sources: ResearchSource[]): Promise<void> {
-    const normalized = sources.map((source) => sanitizeSourceForSqlite({ ...source, createdAt: source.createdAt ?? source.retrievedAt }));
+    if (!sources.length) return;
+    const normalized: ResearchSource[] = [];
+    for (const source of sources) {
+      normalized.push(sanitizeSourceForSqlite({ ...source, createdAt: source.createdAt ?? source.retrievedAt }));
+    }
     this.upsertMany("sources", normalized);
     this.upsertManyMain("global_sources", normalized);
   }
 
   async saveChunks(chunks: ResearchChunk[]): Promise<void> {
+    if (!chunks.length) return;
     this.upsertMany("chunks", chunks);
     this.upsertManyInto(this.mainVectorDb, "global_chunks", chunks);
-    this.linkProjectItems("project_chunk_links", chunks.map((chunk) => ({ projectId: chunk.workspaceProjectId ?? chunk.projectId, itemId: chunk.id, createdAt: chunk.createdAt })));
+    const links: Array<{ projectId: string; itemId: string; createdAt?: string }> = [];
+    for (const chunk of chunks) {
+      links.push({ projectId: chunk.workspaceProjectId ?? chunk.projectId, itemId: chunk.id, createdAt: chunk.createdAt });
+    }
+    this.linkProjectItems("project_chunk_links", links);
   }
 
   async saveToolRuns(toolRuns: ToolRun[]): Promise<void> {
@@ -162,33 +174,59 @@ export class SqliteResearchStore implements ResearchStore {
   }
 
   async saveNormalizedRecords(records: NormalizedResearchRecord[]): Promise<void> {
-    const normalized = records.map(normalizeRecord);
+    if (!records.length) return;
+    const normalized: NormalizedResearchRecord[] = [];
+    const provenance: NormalizedResearchRecord[] = [];
+    const links: Array<{ projectId: string; itemId: string; createdAt?: string }> = [];
+    for (const record of records) {
+      const normalizedRecord = normalizeRecord(record);
+      normalized.push(normalizedRecord);
+      if (normalizedRecord.metadata.traceabilityKind === "project_provenance") {
+        provenance.push(normalizedRecord);
+      }
+      links.push({ projectId: normalizedRecord.workspaceProjectId ?? normalizedRecord.projectId, itemId: normalizedRecord.id, createdAt: normalizedRecord.createdAt });
+    }
     this.upsertMany("normalized_records", normalized);
     this.upsertManyMain("global_normalized_records", normalized);
-    this.upsertManyMain("global_provenance", normalized.filter((record) => record.metadata.traceabilityKind === "project_provenance"));
-    this.linkProjectItems("project_record_links", normalized.map((record) => ({ projectId: record.workspaceProjectId ?? record.projectId, itemId: record.id, createdAt: record.createdAt })));
+    this.upsertManyMain("global_provenance", provenance);
+    this.linkProjectItems("project_record_links", links);
   }
 
   async saveOntologyEntities(entities: OntologyEntity[]): Promise<void> {
+    if (!entities.length) return;
     this.upsertMany("ontology_entities", entities);
     this.upsertManyInto(this.mainOntologyDb, "global_entities", entities);
-    this.linkProjectItems("project_entity_links", entities.map((entity) => ({ projectId: entity.workspaceProjectId ?? entity.projectId, itemId: entity.id, createdAt: entity.createdAt })));
+    const links: Array<{ projectId: string; itemId: string; createdAt?: string }> = [];
+    for (const entity of entities) {
+      links.push({ projectId: entity.workspaceProjectId ?? entity.projectId, itemId: entity.id, createdAt: entity.createdAt });
+    }
+    this.linkProjectItems("project_entity_links", links);
   }
 
   async saveOntologyRelations(relations: OntologyRelation[]): Promise<void> {
+    if (!relations.length) return;
     this.upsertMany("ontology_relations", relations);
     this.upsertManyInto(this.mainOntologyDb, "global_relations", relations);
-    this.linkProjectItems("project_relation_links", relations.map((relation) => ({ projectId: relation.workspaceProjectId ?? relation.projectId, itemId: relation.id, createdAt: relation.createdAt })));
+    const links: Array<{ projectId: string; itemId: string; createdAt?: string }> = [];
+    for (const relation of relations) {
+      links.push({ projectId: relation.workspaceProjectId ?? relation.projectId, itemId: relation.id, createdAt: relation.createdAt });
+    }
+    this.linkProjectItems("project_relation_links", links);
   }
 
   async saveOntologyConstraints(constraints: OntologyConstraint[]): Promise<void> {
+    if (!constraints.length) return;
     this.upsertMany("ontology_constraints", constraints);
     this.upsertManyInto(this.mainOntologyDb, "global_constraints", constraints);
-    this.linkProjectItems("project_constraint_links", constraints.map((constraint) => ({
-      projectId: constraint.workspaceProjectId ?? constraint.projectId,
-      itemId: constraint.id,
-      createdAt: constraint.createdAt
-    })));
+    const links: Array<{ projectId: string; itemId: string; createdAt?: string }> = [];
+    for (const constraint of constraints) {
+      links.push({
+        projectId: constraint.workspaceProjectId ?? constraint.projectId,
+        itemId: constraint.id,
+        createdAt: constraint.createdAt
+      });
+    }
+    this.linkProjectItems("project_constraint_links", links);
   }
 
   async saveProjectContextSnapshot(context: ProjectContextSnapshot): Promise<void> {
@@ -304,7 +342,7 @@ export class SqliteResearchStore implements ResearchStore {
 
   async searchGlobalRecords(query: string, options: MainMemorySearchOptions = {}): Promise<NormalizedResearchRecord[]> {
     return searchScopedItems(
-      this.allFrom(this.mainDb, "global_normalized_records").map((row) => this.parse<NormalizedResearchRecord>(row)),
+      this.allParsedFrom<NormalizedResearchRecord>(this.mainDb, "global_normalized_records"),
       query,
       options
     );
@@ -312,7 +350,7 @@ export class SqliteResearchStore implements ResearchStore {
 
   async searchGlobalChunks(query: string, options: MainMemorySearchOptions = {}): Promise<ResearchChunk[]> {
     return searchScopedItems(
-      this.allFrom(this.mainVectorDb, "global_chunks").map((row) => this.parse<ResearchChunk>(row)),
+      this.allParsedFrom<ResearchChunk>(this.mainVectorDb, "global_chunks"),
       query,
       options,
       (chunk) => `${chunk.text}\n${chunk.keywords.join(" ")}\n${chunk.citation ?? ""}`
@@ -325,20 +363,20 @@ export class SqliteResearchStore implements ResearchStore {
     constraints: OntologyConstraint[];
   }> {
     const entities = searchScopedItems(
-      this.allFrom(this.mainOntologyDb, "global_entities").map((row) => this.parse<OntologyEntity>(row)),
+      this.allParsedFrom<OntologyEntity>(this.mainOntologyDb, "global_entities"),
       query,
       options,
       (entity) => `${entity.label}\n${entity.description ?? ""}`
     );
-    const entityIds = new Set(entities.map((entity) => entity.id));
-    const relations = visibleScopedItems(
-      this.allFrom(this.mainOntologyDb, "global_relations").map((row) => this.parse<OntologyRelation>(row)),
-      options
-    )
-      .filter((relation) => entityIds.has(relation.subjectId) || entityIds.has(relation.objectId))
-      .slice(0, options.limit ?? 24);
+    const entityIds = new Set<string>();
+    for (const entity of entities) {
+      entityIds.add(entity.id);
+    }
+    const relations = entityIds.size
+      ? this.visibleRelationsForEntities(entityIds, options, options.limit ?? 24)
+      : [];
     const constraints = searchScopedItems(
-      this.allFrom(this.mainOntologyDb, "global_constraints").map((row) => this.parse<OntologyConstraint>(row)),
+      this.allParsedFrom<OntologyConstraint>(this.mainOntologyDb, "global_constraints"),
       query,
       options,
       (constraint) => `${constraint.label}\n${constraint.description}`
@@ -449,7 +487,11 @@ export class SqliteResearchStore implements ResearchStore {
     db.exec("begin");
     try {
       for (const item of items) {
-        targetStatement.run(item.id, item.projectId, item.createdAt ?? item.startedAt ?? new Date().toISOString(), JSON.stringify(item));
+        const createdAt = item.createdAt ?? item.startedAt;
+        if (!createdAt) {
+          throw new Error(`Cannot persist ${table}:${item.id} without createdAt or startedAt.`);
+        }
+        targetStatement.run(item.id, item.projectId, createdAt, JSON.stringify(item));
       }
       db.exec("commit");
     } catch (error) {
@@ -459,13 +501,20 @@ export class SqliteResearchStore implements ResearchStore {
   }
 
   private linkProjectItems(table: string, links: Array<{ projectId: string; itemId: string; createdAt?: string }>): void {
+    if (!links.length) return;
     const grouped = new Map<string, Array<{ id: string; projectId: string; itemId: string; createdAt: string }>>();
     for (const link of links) {
-      const createdAt = link.createdAt ?? new Date().toISOString();
+      if (!link.createdAt) {
+        throw new Error(`Cannot persist ${table}:${link.projectId}:${link.itemId} without createdAt.`);
+      }
+      const createdAt = link.createdAt;
       const item = { id: `${link.projectId}:${link.itemId}`, projectId: link.projectId, itemId: link.itemId, createdAt };
-      const list = grouped.get(link.projectId) ?? [];
+      let list = grouped.get(link.projectId);
+      if (!list) {
+        list = [];
+        grouped.set(link.projectId, list);
+      }
       list.push(item);
-      grouped.set(link.projectId, list);
     }
     for (const [projectId, items] of grouped) {
       this.upsertManyProject(projectId, table, items);
@@ -513,20 +562,50 @@ export class SqliteResearchStore implements ResearchStore {
     return db.prepare(`select id, project_id, created_at, data from ${table} order by created_at asc`).all() as JsonRecord[];
   }
 
+  private allParsedFrom<T>(db: DatabaseSync, table: string): T[] {
+    const rows = this.allFrom(db, table);
+    const items: T[] = [];
+    for (const row of rows) {
+      items.push(this.parse<T>(row));
+    }
+    return items;
+  }
+
   private byProject<T>(table: string, projectId: string): T[] {
     const rows = this.db
       .prepare(`select id, project_id, created_at, data from ${table} where project_id = ? order by created_at asc`)
       .all(projectId) as JsonRecord[];
-    return rows.map((row) => this.parse<T>(row));
+    const items: T[] = [];
+    for (const row of rows) {
+      items.push(this.parse<T>(row));
+    }
+    return items;
   }
 
   private byProjectOrGlobalVisible<T extends ScopedProjectItem>(table: string, projectId: string): T[] {
     const rows = this.db.prepare(`select id, project_id, created_at, data from ${table} order by created_at asc`).all() as JsonRecord[];
-    return rows.map((row) => this.parse<T>(row)).filter((item) =>
-      item.projectId === projectId ||
-      item.workspaceProjectId === projectId ||
-      normalizeMemoryScope(item.memoryScope) === "global"
-    );
+    const visible: T[] = [];
+    for (const row of rows) {
+      const item = this.parse<T>(row);
+      if (item.projectId === projectId || item.workspaceProjectId === projectId || normalizeMemoryScope(item.memoryScope) === "global") {
+        visible.push(item);
+      }
+    }
+    return visible;
+  }
+
+  private visibleRelationsForEntities(entityIds: Set<string>, options: MainMemorySearchOptions, limit: number): OntologyRelation[] {
+    if (limit <= 0) return [];
+    const rows = this.allFrom(this.mainOntologyDb, "global_relations");
+    const relations: OntologyRelation[] = [];
+    for (const row of rows) {
+      const relation = this.parse<OntologyRelation>(row);
+      if (!isVisibleScopedItem(relation, options)) continue;
+      if (!entityIds.has(relation.subjectId) && !entityIds.has(relation.objectId)) continue;
+      relations.push(relation);
+      if (relations.length >= limit) break;
+    }
+    return relations;
   }
 
   private parse<T>(row: JsonRecord): T {
@@ -580,9 +659,12 @@ function normalizeRecord(record: NormalizedResearchRecord): NormalizedResearchRe
 function groupByProject<T extends { projectId: string }>(items: T[]): Array<[string, T[]]> {
   const groups = new Map<string, T[]>();
   for (const item of items) {
-    const list = groups.get(item.projectId) ?? [];
+    let list = groups.get(item.projectId);
+    if (!list) {
+      list = [];
+      groups.set(item.projectId, list);
+    }
     list.push(item);
-    groups.set(item.projectId, list);
   }
   return [...groups.entries()];
 }
@@ -595,6 +677,7 @@ function sanitizeSourceForSqlite(source: ResearchSource): ResearchSource {
   if ((source.kind !== "web" && source.kind !== "paper") || (!source.url && !source.doi)) {
     return source;
   }
+  if (!Object.prototype.hasOwnProperty.call(source.metadata, "rawText")) return source;
   const metadata = { ...source.metadata };
   const rawText = typeof metadata.rawText === "string" ? metadata.rawText : undefined;
   delete metadata.rawText;
@@ -616,40 +699,65 @@ function searchScopedItems<T extends ScopedProjectItem>(
   }
 ): T[] {
   const limit = options.limit ?? 24;
-  return items
-    .filter((item) =>
-      !options.projectId ||
-      item.projectId === options.projectId ||
-      item.workspaceProjectId === options.projectId ||
-      normalizeMemoryScope(item.memoryScope) === "global"
-    )
-    .filter((item) => options.includeEphemeral || normalizeMemoryScope(item.memoryScope) !== "ephemeral")
-    .filter((item) => item.validationStatus !== "rejected")
-    .map((item) => ({ item, score: lexicalScore(query, textOf(item)) }))
-    .filter(({ item, score }) => normalizeMemoryScope(item.memoryScope) !== "global" || score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit)
-    .map(({ item }) => item);
-}
-
-function visibleScopedItems<T extends ScopedProjectItem>(items: T[], options: MainMemorySearchOptions): T[] {
-  return items
-    .filter((item) =>
-      !options.projectId ||
-      item.projectId === options.projectId ||
-      item.workspaceProjectId === options.projectId ||
-      normalizeMemoryScope(item.memoryScope) === "global"
-    )
-    .filter((item) => options.includeEphemeral || normalizeMemoryScope(item.memoryScope) !== "ephemeral")
-    .filter((item) => item.validationStatus !== "rejected");
-}
-
-function lexicalScore(query: string, text: string): number {
+  if (limit <= 0) return [];
   const queryTokens = new Set(tokens(query));
+  const scored: Array<{ item: T; score: number }> = [];
+  for (const item of items) {
+    const scope = normalizeMemoryScope(item.memoryScope);
+    if (!isVisibleScopedItemWithScope(item, options, scope)) continue;
+    const score = queryTokens.size ? lexicalScore(queryTokens, textOf(item)) : 0;
+    if (scope === "global" && score <= 0) continue;
+    insertTopScored(scored, { item, score }, limit);
+  }
+  const output: T[] = [];
+  for (const entry of scored) output.push(entry.item);
+  return output;
+}
+
+function isVisibleScopedItem<T extends ScopedProjectItem>(item: T, options: MainMemorySearchOptions): boolean {
+  return isVisibleScopedItemWithScope(item, options, normalizeMemoryScope(item.memoryScope));
+}
+
+function isVisibleScopedItemWithScope<T extends ScopedProjectItem>(
+  item: T,
+  options: MainMemorySearchOptions,
+  scope: import("../../core/types.js").MemoryScope
+): boolean {
+  if (
+    options.projectId &&
+    item.projectId !== options.projectId &&
+    item.workspaceProjectId !== options.projectId &&
+    scope !== "global"
+  ) {
+    return false;
+  }
+  if (!options.includeEphemeral && scope === "ephemeral") return false;
+  return item.validationStatus !== "rejected";
+}
+
+function insertTopScored<T>(scored: Array<{ item: T; score: number }>, entry: { item: T; score: number }, limit: number): void {
+  let insertAt = scored.length;
+  for (let index = 0; index < scored.length; index += 1) {
+    if (entry.score > scored[index].score) {
+      insertAt = index;
+      break;
+    }
+  }
+  if (insertAt >= limit) return;
+  scored.splice(insertAt, 0, entry);
+  if (scored.length > limit) scored.pop();
+}
+
+function lexicalScore(queryTokens: Set<string>, text: string): number {
   if (!queryTokens.size) return 0;
-  return tokens(text).reduce((score, token) => score + (queryTokens.has(token) ? 1 / queryTokens.size : 0), 0);
+  let score = 0;
+  const weight = 1 / queryTokens.size;
+  for (const token of tokens(text)) {
+    if (queryTokens.has(token)) score += weight;
+  }
+  return score;
 }
 
 function tokens(text: string): string[] {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").split(/\s+/).filter(Boolean);
+  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").match(/\S+/g) ?? [];
 }

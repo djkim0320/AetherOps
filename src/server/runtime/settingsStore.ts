@@ -4,8 +4,10 @@ import { nowIso } from "../../core/ids.js";
 import type {
   AppSettings,
   EmbeddingSettings,
+  EngineeringProgramSettings,
   OpenCodeApiLlmSettings,
   OpenCodeLlmSettings,
+  ResearchMetadataSettings,
   WebSearchSettings
 } from "../../core/types.js";
 
@@ -15,6 +17,8 @@ interface PersistedSettings {
   webSearch?: Omit<WebSearchSettings, "apiKey" | "apiKeyConfigured">;
   embedding?: Omit<EmbeddingSettings, "apiKey" | "apiKeyConfigured">;
   browserUse?: AppSettings["browserUse"];
+  researchMetadata?: ResearchMetadataSettings;
+  engineeringTools?: EngineeringProgramSettings;
   allowExternalSearch?: boolean;
   allowCodeExecution?: boolean;
   /** @deprecated 반복 횟수는 에이전트의 계속 연구 판단이 결정하며 저장값은 무시됩니다. */
@@ -59,6 +63,77 @@ export const defaultSettings: AppSettings = {
     maxPages: 2,
     timeoutMs: 30_000,
     captureScreenshots: true
+  },
+  researchMetadata: {
+    enabled: true,
+    provider: "openalex",
+    maxResults: 5,
+    timeoutMs: 15_000
+  },
+  engineeringTools: {
+    enabled: false,
+    xfoil: {
+      enabled: false,
+      command: "",
+      timeoutMs: 30_000
+    },
+    modeling: {
+      enabled: false,
+      artifactRoot: "",
+      maxMeshBytes: 20 * 1024 * 1024
+    },
+    openFoam: {
+      enabled: false,
+      command: "",
+      caseRoot: "",
+      workingDirectory: "",
+      probeArgs: ["-help"],
+      runArgsTemplate: ["-case", "{case}"],
+      timeoutMs: 30 * 60_000
+    },
+    su2: {
+      enabled: false,
+      command: "",
+      caseRoot: "",
+      configFile: "",
+      workingDirectory: "",
+      probeArgs: ["--help"],
+      runArgsTemplate: ["{config}"],
+      timeoutMs: 30 * 60_000
+    },
+    freeCad: {
+      enabled: false,
+      command: "",
+      scriptPath: "",
+      workingDirectory: "",
+      probeArgs: ["--version"],
+      runArgsTemplate: ["{script}", "--output", "{output}"],
+      timeoutMs: 30 * 60_000
+    },
+    openVsp: {
+      enabled: false,
+      command: "",
+      scriptPath: "",
+      workingDirectory: "",
+      probeArgs: ["-help"],
+      runArgsTemplate: ["-script", "{script}", "-output", "{output}"],
+      timeoutMs: 30 * 60_000
+    },
+    commercialCfd: {
+      flightStreamConfigured: false,
+      starCcmConfigured: false,
+      flightStreamCommand: "",
+      flightStreamWorkingDirectory: "",
+      flightStreamProbeArgs: ["--version"],
+      flightStreamRunArgsTemplate: [],
+      flightStreamTimeoutMs: 120_000,
+      starCcmCommand: "",
+      starCcmWorkingDirectory: "",
+      starCcmProbeArgs: ["-version"],
+      starCcmRunArgsTemplate: [],
+      starCcmTimeoutMs: 120_000,
+      notes: ""
+    }
   },
   allowExternalSearch: true,
   allowCodeExecution: false,
@@ -133,6 +208,8 @@ export class JsonAppSettingsStore implements AppSettingsStore {
         dimensions: settings.embedding.dimensions
       },
       browserUse: normalizeBrowserUse(settings.browserUse),
+      researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
+      engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
       allowExternalSearch: settings.allowExternalSearch,
       allowCodeExecution: settings.allowCodeExecution,
       ontologyExtractionMode: settings.ontologyExtractionMode,
@@ -194,6 +271,8 @@ export class JsonAppSettingsStore implements AppSettingsStore {
         dimensions: settings.embedding.dimensions
       },
       browserUse: normalizeBrowserUse(settings.browserUse),
+      researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
+      engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
       allowExternalSearch: settings.allowExternalSearch,
       allowCodeExecution: settings.allowCodeExecution,
       ontologyExtractionMode: settings.ontologyExtractionMode,
@@ -225,6 +304,8 @@ export class JsonAppSettingsStore implements AppSettingsStore {
         apiKeyConfigured: this.isEncryptedKeyUsable(normalized.encryptedEmbeddingKey)
       },
       browserUse: normalizeBrowserUse(normalized.browserUse),
+      researchMetadata: normalizeResearchMetadata(normalized.researchMetadata),
+      engineeringTools: normalizeEngineeringTools(normalized.engineeringTools),
       allowExternalSearch: normalized.allowExternalSearch ?? defaultSettings.allowExternalSearch,
       allowCodeExecution: normalized.allowCodeExecution ?? defaultSettings.allowCodeExecution,
       ontologyExtractionMode: normalized.ontologyExtractionMode ?? defaultSettings.ontologyExtractionMode,
@@ -284,6 +365,8 @@ function normalizePersisted(settings: PersistedSettings): PersistedSettings {
     },
     embedding,
     browserUse: normalizeBrowserUse(settings.browserUse),
+    researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
+    engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
     allowExternalSearch: settings.allowExternalSearch ?? defaultSettings.allowExternalSearch,
     allowCodeExecution: settings.allowCodeExecution ?? defaultSettings.allowCodeExecution,
     ontologyExtractionMode:
@@ -309,6 +392,112 @@ function normalizeBrowserUse(settings: unknown): AppSettings["browserUse"] {
     timeoutMs: clampNumber(input.timeoutMs, 5_000, 120_000, defaultSettings.browserUse.timeoutMs),
     captureScreenshots: input.captureScreenshots ?? defaultSettings.browserUse.captureScreenshots
   };
+}
+
+function normalizeResearchMetadata(settings: unknown): ResearchMetadataSettings {
+  const input = settings && typeof settings === "object" ? (settings as Partial<ResearchMetadataSettings>) : {};
+  return {
+    enabled: input.enabled ?? defaultSettings.researchMetadata.enabled,
+    provider: "openalex",
+    mailto: typeof input.mailto === "string" && input.mailto.trim() ? input.mailto.trim() : undefined,
+    maxResults: clampNumber(input.maxResults, 1, 25, defaultSettings.researchMetadata.maxResults),
+    timeoutMs: clampNumber(input.timeoutMs, 5_000, 60_000, defaultSettings.researchMetadata.timeoutMs)
+  };
+}
+
+function normalizeEngineeringTools(settings: unknown): EngineeringProgramSettings {
+  const input = settings && typeof settings === "object" ? (settings as Partial<EngineeringProgramSettings>) : {};
+  const xfoil = (input.xfoil ?? {}) as Partial<EngineeringProgramSettings["xfoil"]>;
+  const modeling = (input.modeling ?? {}) as Partial<EngineeringProgramSettings["modeling"]>;
+  const openFoam = (input.openFoam ?? {}) as Partial<EngineeringProgramSettings["openFoam"]>;
+  const su2 = (input.su2 ?? {}) as Partial<EngineeringProgramSettings["su2"]>;
+  const freeCad = (input.freeCad ?? {}) as Partial<EngineeringProgramSettings["freeCad"]>;
+  const openVsp = (input.openVsp ?? {}) as Partial<EngineeringProgramSettings["openVsp"]>;
+  const commercialCfd = (input.commercialCfd ?? {}) as Partial<EngineeringProgramSettings["commercialCfd"]>;
+  return {
+    enabled: input.enabled ?? defaultSettings.engineeringTools.enabled,
+    xfoil: {
+      enabled: xfoil.enabled ?? defaultSettings.engineeringTools.xfoil.enabled,
+      command: typeof xfoil.command === "string" ? xfoil.command.trim() : defaultSettings.engineeringTools.xfoil.command,
+      timeoutMs: clampNumber(xfoil.timeoutMs, 5_000, 120_000, defaultSettings.engineeringTools.xfoil.timeoutMs)
+    },
+    modeling: {
+      enabled: modeling.enabled ?? defaultSettings.engineeringTools.modeling.enabled,
+      artifactRoot: typeof modeling.artifactRoot === "string" ? modeling.artifactRoot.trim() : defaultSettings.engineeringTools.modeling.artifactRoot,
+      maxMeshBytes: clampNumber(modeling.maxMeshBytes, 1024, 200 * 1024 * 1024, defaultSettings.engineeringTools.modeling.maxMeshBytes)
+    },
+    openFoam: {
+      enabled: openFoam.enabled ?? defaultSettings.engineeringTools.openFoam.enabled,
+      command: typeof openFoam.command === "string" ? openFoam.command.trim() : defaultSettings.engineeringTools.openFoam.command,
+      caseRoot: typeof openFoam.caseRoot === "string" ? openFoam.caseRoot.trim() : defaultSettings.engineeringTools.openFoam.caseRoot,
+      workingDirectory:
+        typeof openFoam.workingDirectory === "string" ? openFoam.workingDirectory.trim() : defaultSettings.engineeringTools.openFoam.workingDirectory,
+      probeArgs: normalizeArgList(openFoam.probeArgs, defaultSettings.engineeringTools.openFoam.probeArgs),
+      runArgsTemplate: normalizeArgList(openFoam.runArgsTemplate, defaultSettings.engineeringTools.openFoam.runArgsTemplate),
+      timeoutMs: clampNumber(openFoam.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.openFoam.timeoutMs)
+    },
+    su2: {
+      enabled: su2.enabled ?? defaultSettings.engineeringTools.su2.enabled,
+      command: typeof su2.command === "string" ? su2.command.trim() : defaultSettings.engineeringTools.su2.command,
+      caseRoot: typeof su2.caseRoot === "string" ? su2.caseRoot.trim() : defaultSettings.engineeringTools.su2.caseRoot,
+      configFile: typeof su2.configFile === "string" ? su2.configFile.trim() : defaultSettings.engineeringTools.su2.configFile,
+      workingDirectory:
+        typeof su2.workingDirectory === "string" ? su2.workingDirectory.trim() : defaultSettings.engineeringTools.su2.workingDirectory,
+      probeArgs: normalizeArgList(su2.probeArgs, defaultSettings.engineeringTools.su2.probeArgs),
+      runArgsTemplate: normalizeArgList(su2.runArgsTemplate, defaultSettings.engineeringTools.su2.runArgsTemplate),
+      timeoutMs: clampNumber(su2.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.su2.timeoutMs)
+    },
+    freeCad: {
+      enabled: freeCad.enabled ?? defaultSettings.engineeringTools.freeCad.enabled,
+      command: typeof freeCad.command === "string" ? freeCad.command.trim() : defaultSettings.engineeringTools.freeCad.command,
+      scriptPath: typeof freeCad.scriptPath === "string" ? freeCad.scriptPath.trim() : defaultSettings.engineeringTools.freeCad.scriptPath,
+      workingDirectory:
+        typeof freeCad.workingDirectory === "string" ? freeCad.workingDirectory.trim() : defaultSettings.engineeringTools.freeCad.workingDirectory,
+      probeArgs: normalizeArgList(freeCad.probeArgs, defaultSettings.engineeringTools.freeCad.probeArgs),
+      runArgsTemplate: normalizeArgList(freeCad.runArgsTemplate, defaultSettings.engineeringTools.freeCad.runArgsTemplate),
+      timeoutMs: clampNumber(freeCad.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.freeCad.timeoutMs)
+    },
+    openVsp: {
+      enabled: openVsp.enabled ?? defaultSettings.engineeringTools.openVsp.enabled,
+      command: typeof openVsp.command === "string" ? openVsp.command.trim() : defaultSettings.engineeringTools.openVsp.command,
+      scriptPath: typeof openVsp.scriptPath === "string" ? openVsp.scriptPath.trim() : defaultSettings.engineeringTools.openVsp.scriptPath,
+      workingDirectory:
+        typeof openVsp.workingDirectory === "string" ? openVsp.workingDirectory.trim() : defaultSettings.engineeringTools.openVsp.workingDirectory,
+      probeArgs: normalizeArgList(openVsp.probeArgs, defaultSettings.engineeringTools.openVsp.probeArgs),
+      runArgsTemplate: normalizeArgList(openVsp.runArgsTemplate, defaultSettings.engineeringTools.openVsp.runArgsTemplate),
+      timeoutMs: clampNumber(openVsp.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.openVsp.timeoutMs)
+    },
+    commercialCfd: {
+      flightStreamConfigured: commercialCfd.flightStreamConfigured ?? defaultSettings.engineeringTools.commercialCfd.flightStreamConfigured,
+      starCcmConfigured: commercialCfd.starCcmConfigured ?? defaultSettings.engineeringTools.commercialCfd.starCcmConfigured,
+      flightStreamCommand: typeof commercialCfd.flightStreamCommand === "string" ? commercialCfd.flightStreamCommand.trim() : defaultSettings.engineeringTools.commercialCfd.flightStreamCommand,
+      flightStreamWorkingDirectory:
+        typeof commercialCfd.flightStreamWorkingDirectory === "string" ? commercialCfd.flightStreamWorkingDirectory.trim() : defaultSettings.engineeringTools.commercialCfd.flightStreamWorkingDirectory,
+      flightStreamProbeArgs: normalizeArgList(commercialCfd.flightStreamProbeArgs, defaultSettings.engineeringTools.commercialCfd.flightStreamProbeArgs),
+      flightStreamRunArgsTemplate: normalizeArgList(commercialCfd.flightStreamRunArgsTemplate, defaultSettings.engineeringTools.commercialCfd.flightStreamRunArgsTemplate),
+      flightStreamTimeoutMs: clampNumber(commercialCfd.flightStreamTimeoutMs, 5_000, 30 * 60_000, defaultSettings.engineeringTools.commercialCfd.flightStreamTimeoutMs),
+      starCcmCommand: typeof commercialCfd.starCcmCommand === "string" ? commercialCfd.starCcmCommand.trim() : defaultSettings.engineeringTools.commercialCfd.starCcmCommand,
+      starCcmWorkingDirectory:
+        typeof commercialCfd.starCcmWorkingDirectory === "string" ? commercialCfd.starCcmWorkingDirectory.trim() : defaultSettings.engineeringTools.commercialCfd.starCcmWorkingDirectory,
+      starCcmProbeArgs: normalizeArgList(commercialCfd.starCcmProbeArgs, defaultSettings.engineeringTools.commercialCfd.starCcmProbeArgs),
+      starCcmRunArgsTemplate: normalizeArgList(commercialCfd.starCcmRunArgsTemplate, defaultSettings.engineeringTools.commercialCfd.starCcmRunArgsTemplate),
+      starCcmTimeoutMs: clampNumber(commercialCfd.starCcmTimeoutMs, 5_000, 30 * 60_000, defaultSettings.engineeringTools.commercialCfd.starCcmTimeoutMs),
+      notes: typeof commercialCfd.notes === "string" ? commercialCfd.notes.trim() : defaultSettings.engineeringTools.commercialCfd.notes
+    }
+  };
+}
+
+function normalizeArgList(value: unknown, defaultValue: string[]): string[] {
+  if (!Array.isArray(value)) return [...defaultValue];
+  const normalized: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const cleaned = item.trim();
+    if (!cleaned) continue;
+    normalized.push(cleaned);
+    if (normalized.length >= 24) break;
+  }
+  return normalized;
 }
 
 function clampNumber(value: unknown, min: number, max: number, defaultValue: number): number {

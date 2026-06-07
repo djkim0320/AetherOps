@@ -178,6 +178,7 @@ export interface ResearchDatabase {
 export interface ResearchQuestion {
   id: string;
   projectId: string;
+  researchInputId?: string;
   text: string;
   status: "open" | "answered" | "deferred";
   createdAt: string;
@@ -186,6 +187,7 @@ export interface ResearchQuestion {
 export interface Hypothesis {
   id: string;
   projectId: string;
+  researchInputId?: string;
   questionId: string;
   statement: string;
   status: HypothesisStatus;
@@ -196,6 +198,9 @@ export interface Hypothesis {
 export interface ResearchSpecification {
   id: string;
   projectId: string;
+  sourceResearchInputId?: string;
+  sourceQuestionIds?: string[];
+  sourceHypothesisIds?: string[];
   researchQuestions: string[];
   initialHypotheses: string[];
   refinedHypotheses: string[];
@@ -209,9 +214,100 @@ export interface ResearchSpecification {
   createdAt: string;
 }
 
+export type EngineeringProgramRequestKind =
+  | "toolchain-check"
+  | "mesh-inspect"
+  | "xfoil-polar"
+  | "openfoam-case-run"
+  | "su2-case-run"
+  | "cad-script-run"
+  | "vsp-script-run"
+  | "commercial-cfd-run";
+export type EngineeringProgramTarget = "all" | "xfoil" | "modeling" | "openfoam" | "su2" | "freecad" | "openvsp" | "flightstream" | "starccm";
+
+export interface EngineeringProgramRequest {
+  kind: EngineeringProgramRequestKind;
+  target?: EngineeringProgramTarget;
+  artifactPath?: string;
+  outputFileName?: string;
+  naca?: string;
+  reynolds?: number;
+  mach?: number;
+  alphaStart?: number;
+  alphaEnd?: number;
+  alphaStep?: number;
+  reason?: string;
+}
+
+export interface EngineeringProgramCapability {
+  kind: EngineeringProgramRequestKind;
+  target: EngineeringProgramTarget;
+  ready: boolean;
+  requiredFields: string[];
+  optionalFields: string[];
+  description: string;
+  blockedReason?: string;
+}
+
+export interface EngineeringArtifactCandidate {
+  relativePath: string;
+  fileName: string;
+  format: "obj" | "stl";
+  byteLength: number;
+  validated: boolean;
+  ready: boolean;
+  blockedReason?: string;
+}
+
+export interface ResearchMetadataCapability {
+  provider: ResearchMetadataSettings["provider"];
+  ready: boolean;
+  maxResults: number;
+  requiredFields: string[];
+  optionalFields: string[];
+  description: string;
+  blockedReason?: string;
+}
+
+export interface RuntimeToolDiagnostics {
+  executableTools: string[];
+  researchMetadata: ResearchMetadataCapability;
+  engineeringPrograms: EngineeringProgramCapability[];
+  engineeringArtifactCandidates: EngineeringArtifactCandidate[];
+  engineeringProgramRequestTemplates: EngineeringProgramRequestTemplate[];
+  blockers: Array<{
+    key: string;
+    message: string;
+  }>;
+  generatedAt: string;
+}
+
+export interface EngineeringProgramRequestTemplate {
+  id: string;
+  label: string;
+  ready: boolean;
+  request: EngineeringProgramRequest;
+  requiredFields: string[];
+  optionalFields: string[];
+  description: string;
+  blockedReason?: string;
+}
+
+export interface EngineeringProgramPreflightResult {
+  target: EngineeringProgramTarget;
+  status: "completed" | "failed";
+  diagnostics?: RuntimeToolDiagnostics;
+  output?: unknown;
+  error?: string;
+  startedAt: string;
+  completedAt: string;
+}
+
 export interface ResearchPlan {
   id: string;
   projectId: string;
+  sourceResearchInputId?: string;
+  sourceSpecificationId?: string;
   iteration: number;
   objective: string;
   targetQuestions: string[];
@@ -222,6 +318,7 @@ export interface ResearchPlan {
   executionSteps: string[];
   stopCriteria: string[];
   fetchCandidateUrls?: string[];
+  programRequests?: EngineeringProgramRequest[];
   createdAt: string;
   steps?: string[];
 }
@@ -683,6 +780,8 @@ export interface ResearchSnapshot {
 
 export interface OpenCodeRunInput {
   project: ResearchProject;
+  openCodeRunId?: string;
+  executionBundleId?: string;
   questions: ResearchQuestion[];
   hypotheses: Hypothesis[];
   evidence?: EvidenceItem[];
@@ -754,12 +853,88 @@ export interface BrowserUseSettings {
   captureScreenshots: boolean;
 }
 
+export interface ResearchMetadataSettings {
+  enabled: boolean;
+  provider: "openalex";
+  mailto?: string;
+  maxResults: number;
+  timeoutMs: number;
+}
+
+export interface EngineeringProgramSettings {
+  enabled: boolean;
+  xfoil: {
+    enabled: boolean;
+    command?: string;
+    timeoutMs: number;
+  };
+  modeling: {
+    enabled: boolean;
+    artifactRoot?: string;
+    maxMeshBytes: number;
+  };
+  openFoam: {
+    enabled: boolean;
+    command?: string;
+    caseRoot?: string;
+    workingDirectory?: string;
+    probeArgs: string[];
+    runArgsTemplate: string[];
+    timeoutMs: number;
+  };
+  su2: {
+    enabled: boolean;
+    command?: string;
+    caseRoot?: string;
+    configFile?: string;
+    workingDirectory?: string;
+    probeArgs: string[];
+    runArgsTemplate: string[];
+    timeoutMs: number;
+  };
+  freeCad: {
+    enabled: boolean;
+    command?: string;
+    scriptPath?: string;
+    workingDirectory?: string;
+    probeArgs: string[];
+    runArgsTemplate: string[];
+    timeoutMs: number;
+  };
+  openVsp: {
+    enabled: boolean;
+    command?: string;
+    scriptPath?: string;
+    workingDirectory?: string;
+    probeArgs: string[];
+    runArgsTemplate: string[];
+    timeoutMs: number;
+  };
+  commercialCfd: {
+    flightStreamConfigured: boolean;
+    starCcmConfigured: boolean;
+    flightStreamCommand?: string;
+    flightStreamWorkingDirectory?: string;
+    flightStreamProbeArgs: string[];
+    flightStreamRunArgsTemplate: string[];
+    flightStreamTimeoutMs: number;
+    starCcmCommand?: string;
+    starCcmWorkingDirectory?: string;
+    starCcmProbeArgs: string[];
+    starCcmRunArgsTemplate: string[];
+    starCcmTimeoutMs: number;
+    notes?: string;
+  };
+}
+
 export interface AppSettings {
   openCodeLlm: OpenCodeLlmSettings;
   openCode: OpenCodeCliSettings;
   webSearch: WebSearchSettings;
   embedding: EmbeddingSettings;
   browserUse: BrowserUseSettings;
+  researchMetadata: ResearchMetadataSettings;
+  engineeringTools: EngineeringProgramSettings;
   allowExternalSearch: boolean;
   allowCodeExecution: boolean;
   ontologyExtractionMode?: "llm" | "rule_based" | "hybrid";
@@ -807,6 +982,7 @@ export interface OpenCodeObservation {
 
 export interface OpenCodeAdapter {
   preflight?(): Promise<void>;
+  createRunAttempt?(input: OpenCodeRunInput): Promise<OpenCodeRun>;
   run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput>;
 }
 

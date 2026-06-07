@@ -106,7 +106,7 @@ function completed(
       citation: `${page.title} - ${page.url}`,
       quote: excerpt.slice(0, 500),
       keywords: ["background_browser", "web_source", quality.tier, ...keywordSlice(input.project.topic)],
-      linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
+      linkedHypothesisIds: hypothesisIds(input),
       reliabilityScore: quality.reliabilityScore,
       relevanceScore: quality.preferredForSearch ? 0.78 : 0.58,
       evidenceStrength: quality.evidenceStrength,
@@ -127,7 +127,7 @@ function completed(
       input: { query },
       output: {
         collectedPages: pages.length,
-        urls: pages.map((page) => page.url),
+        urls: pageUrls(pages),
         mode: settings.browserUse.mode,
         headless: settings.browserUse.mode === "background"
       },
@@ -142,11 +142,32 @@ function completed(
 }
 
 function buildQuery(input: OpenCodeRunInput): string {
-  const plannedQuestion = input.researchPlan?.targetQuestions.find(Boolean);
-  const question = plannedQuestion ?? input.questions.find((item) => item.status === "open")?.text;
-  const hypotheses = input.hypotheses.map((item) => item.statement).join(" ");
+  const plannedQuestion = firstNonEmptyString(input.researchPlan?.targetQuestions);
+  const question = plannedQuestion ?? firstOpenQuestionText(input);
+  const hypotheses = hypothesisStatements(input);
   const academicKeywords = "Google Scholar Semantic Scholar Crossref arXiv DOI NIST OECD ISO systematic review framework standard report";
-  return compactSearchQuery([question, input.project.topic, input.project.goal, hypotheses, academicKeywords].filter(Boolean).join(" "));
+  const parts: string[] = [];
+  appendQueryPart(parts, question);
+  appendQueryPart(parts, input.project.topic);
+  appendQueryPart(parts, input.project.goal);
+  appendQueryPart(parts, hypotheses);
+  appendQueryPart(parts, academicKeywords);
+  return compactSearchQuery(parts.join(" "));
+}
+
+function firstNonEmptyString(values: string[] | undefined): string | undefined {
+  if (!values) return undefined;
+  for (const value of values) {
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function firstOpenQuestionText(input: OpenCodeRunInput): string | undefined {
+  for (const question of input.questions) {
+    if (question.status === "open") return question.text;
+  }
+  return undefined;
 }
 
 function compactSearchQuery(value: string): string {
@@ -160,15 +181,44 @@ function compactSearchQuery(value: string): string {
 }
 
 function extractHttpEvidenceUrls(input: OpenCodeRunInput): string[] {
-  const urls = (input.evidence ?? [])
-    .map((item) => item.sourceUri)
-    .filter((value): value is string => Boolean(value))
-    .filter((value) => value.startsWith("http://") || value.startsWith("https://"));
+  const urls: string[] = [];
+  for (const item of input.evidence ?? []) {
+    const value = item.sourceUri;
+    if (value?.startsWith("http://") || value?.startsWith("https://")) urls.push(value);
+  }
   return rankResearchUrls(urls);
 }
 
 function keywordSlice(value: string): string[] {
-  return value.split(/\s+/).map((item) => item.trim()).filter(Boolean).slice(0, 5);
+  const tokens = value.match(/\S+/g) ?? [];
+  const keywords: string[] = [];
+  for (const token of tokens) {
+    keywords.push(token);
+    if (keywords.length >= 5) break;
+  }
+  return keywords;
+}
+
+function hypothesisIds(input: OpenCodeRunInput): string[] {
+  const ids: string[] = [];
+  for (const hypothesis of input.hypotheses) ids.push(hypothesis.id);
+  return ids;
+}
+
+function pageUrls(pages: BrowserCollectedPage[]): string[] {
+  const urls: string[] = [];
+  for (const page of pages) urls.push(page.url);
+  return urls;
+}
+
+function hypothesisStatements(input: OpenCodeRunInput): string {
+  const statements: string[] = [];
+  for (const hypothesis of input.hypotheses) statements.push(hypothesis.statement);
+  return statements.join(" ");
+}
+
+function appendQueryPart(parts: string[], value: string | undefined): void {
+  if (value) parts.push(value);
 }
 
 function formatError(error: unknown): string {

@@ -82,7 +82,12 @@ export class InMemoryResearchStore implements ResearchStore {
   }
 
   async listProjects(): Promise<ResearchProject[]> {
-    return [...this.projects.values()].map(sanitizeProject).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const projects: ResearchProject[] = [];
+    for (const project of this.projects.values()) {
+      projects.push(sanitizeProject(project));
+    }
+    projects.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return projects;
   }
 
   async getProject(projectId: string): Promise<ResearchProject | undefined> {
@@ -95,7 +100,13 @@ export class InMemoryResearchStore implements ResearchStore {
   }
 
   async deleteSession(projectId: string, sessionId: string): Promise<void> {
-    this.sessions = this.sessions.filter((session) => session.projectId !== projectId || session.id !== sessionId);
+    const remaining: ResearchSession[] = [];
+    for (const session of this.sessions) {
+      if (session.projectId !== projectId || session.id !== sessionId) {
+        remaining.push(session);
+      }
+    }
+    this.sessions = remaining;
   }
 
   async saveDatabase(database: ResearchDatabase): Promise<void> {
@@ -231,37 +242,37 @@ export class InMemoryResearchStore implements ResearchStore {
 
     return {
       project,
-      sessions: this.sessions.filter((item) => item.projectId === projectId),
+      sessions: byProject(this.sessions, projectId),
       database: this.databases.get(projectId),
-      researchInputs: this.researchInputs.filter((item) => item.projectId === projectId),
-      questions: this.questions.filter((item) => item.projectId === projectId),
-      hypotheses: this.hypotheses.filter((item) => item.projectId === projectId),
-      evidence: this.evidence.filter((item) => item.projectId === projectId),
-      artifacts: this.artifacts.filter((item) => item.projectId === projectId),
-      sources: this.sources.filter((item) => item.projectId === projectId),
+      researchInputs: byProject(this.researchInputs, projectId),
+      questions: byProject(this.questions, projectId),
+      hypotheses: byProject(this.hypotheses, projectId),
+      evidence: byProject(this.evidence, projectId),
+      artifacts: byProject(this.artifacts, projectId),
+      sources: byProject(this.sources, projectId),
       chunks: visibleInProject(this.chunks, projectId),
-      toolRuns: this.toolRuns.filter((item) => item.projectId === projectId),
-      agentPlans: this.agentPlans.filter((item) => item.projectId === projectId),
-      researchPlans: this.researchPlans.filter((item) => item.projectId === projectId),
-      specifications: this.specifications.filter((item) => item.projectId === projectId),
+      toolRuns: byProject(this.toolRuns, projectId),
+      agentPlans: byProject(this.agentPlans, projectId),
+      researchPlans: byProject(this.researchPlans, projectId),
+      specifications: byProject(this.specifications, projectId),
       normalizedRecords: visibleInProject(this.normalizedRecords, projectId),
       ontologyEntities: visibleInProject(this.ontologyEntities, projectId),
       ontologyRelations: visibleInProject(this.ontologyRelations, projectId),
       ontologyConstraints: visibleInProject(this.ontologyConstraints, projectId),
-      projectContextSnapshots: this.projectContextSnapshots.filter((item) => item.projectId === projectId),
-      hybridContexts: this.hybridContexts.filter((item) => item.projectId === projectId),
-      validationResults: this.validationResults.filter((item) => item.projectId === projectId),
-      continuationDecisions: this.continuationDecisions.filter((item) => item.projectId === projectId),
-      finalOutputs: this.finalOutputs.filter((item) => item.projectId === projectId),
-      runAuditOutputs: this.runAuditOutputs.filter((item) => item.projectId === projectId),
-      benchmarkPlans: this.benchmarkPlans.filter((item) => item.projectId === projectId),
+      projectContextSnapshots: byProject(this.projectContextSnapshots, projectId),
+      hybridContexts: byProject(this.hybridContexts, projectId),
+      validationResults: byProject(this.validationResults, projectId),
+      continuationDecisions: byProject(this.continuationDecisions, projectId),
+      finalOutputs: byProject(this.finalOutputs, projectId),
+      runAuditOutputs: byProject(this.runAuditOutputs, projectId),
+      benchmarkPlans: byProject(this.benchmarkPlans, projectId),
       globalMemoryItems: visibleInProject(this.globalMemoryItems, projectId),
-      runtimeBlockers: this.runtimeBlockers.filter((item) => item.projectId === projectId),
-      stepErrors: this.stepErrors.filter((item) => item.projectId === projectId),
-      openCodeRuns: this.openCodeRuns.filter((item) => item.projectId === projectId),
-      ragContexts: this.ragContexts.filter((item) => item.projectId === projectId),
-      results: this.results.filter((item) => item.projectId === projectId),
-      iterations: this.iterations.filter((item) => item.projectId === projectId),
+      runtimeBlockers: byProject(this.runtimeBlockers, projectId),
+      stepErrors: byProject(this.stepErrors, projectId),
+      openCodeRuns: byProject(this.openCodeRuns, projectId),
+      ragContexts: byProject(this.ragContexts, projectId),
+      results: byProject(this.results, projectId),
+      iterations: byProject(this.iterations, projectId),
       report: this.reports.get(projectId)
     };
   }
@@ -280,18 +291,29 @@ export class InMemoryResearchStore implements ResearchStore {
     constraints: OntologyConstraint[];
   }> {
     const entities = searchItems(this.ontologyEntities, query, options, (entity) => `${entity.label}\n${entity.description ?? ""}`);
-    const entityIds = new Set(entities.map((entity) => entity.id));
-    const relations = searchItems(this.ontologyRelations, query, { ...options, limit: Math.max(options.limit ?? 24, 24) }, (relation) =>
+    const entityIds = new Set<string>();
+    for (const entity of entities) {
+      entityIds.add(entity.id);
+    }
+    const relationLimit = options.limit ?? 24;
+    const relationCandidates = searchItems(this.ontologyRelations, query, { ...options, limit: Math.max(relationLimit, 24) }, (relation) =>
       `${relation.subjectId} ${relation.predicate} ${relation.objectId}`
-    )
-      .filter((relation) => entityIds.has(relation.subjectId) || entityIds.has(relation.objectId))
-      .slice(0, options.limit ?? 24);
+    );
+    const relations: OntologyRelation[] = [];
+    for (const relation of relationCandidates) {
+      if (!entityIds.has(relation.subjectId) && !entityIds.has(relation.objectId)) continue;
+      relations.push(relation);
+      if (relations.length >= relationLimit) break;
+    }
     const constraints = searchItems(this.ontologyConstraints, query, options, (constraint) => `${constraint.label}\n${constraint.description}`);
     return { entities, relations, constraints };
   }
 
   private upsertMany<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
-    const merged = new Map(existing.map((item) => [item.id, item]));
+    const merged = new Map<string, T>();
+    for (const item of existing) {
+      merged.set(item.id, item);
+    }
     for (const item of incoming) {
       merged.set(item.id, item);
     }
@@ -303,8 +325,24 @@ function sanitizeProject(project: ResearchProject): ResearchProject {
   return project;
 }
 
+function byProject<T extends { projectId: string }>(items: T[], projectId: string): T[] {
+  const selected: T[] = [];
+  for (const item of items) {
+    if (item.projectId === projectId) {
+      selected.push(item);
+    }
+  }
+  return selected;
+}
+
 function visibleInProject<T extends ScopedProjectItem>(items: T[], projectId: string): T[] {
-  return items.filter((item) => item.projectId === projectId || item.workspaceProjectId === projectId || normalizeMemoryScope(item.memoryScope) === "global");
+  const visible: T[] = [];
+  for (const item of items) {
+    if (item.projectId === projectId || item.workspaceProjectId === projectId || normalizeMemoryScope(item.memoryScope) === "global") {
+      visible.push(item);
+    }
+  }
+  return visible;
 }
 
 function searchItems<T extends ScopedProjectItem>(
@@ -317,23 +355,42 @@ function searchItems<T extends ScopedProjectItem>(
   }
 ): T[] {
   const limit = options.limit ?? 24;
-  return items
-    .filter((item) => !options.projectId || item.projectId === options.projectId || item.workspaceProjectId === options.projectId || normalizeMemoryScope(item.memoryScope) === "global")
-    .filter((item) => options.includeEphemeral || normalizeMemoryScope(item.memoryScope) !== "ephemeral")
-    .filter((item) => (item as T & { validationStatus?: string }).validationStatus !== "rejected")
-    .map((item) => ({ item, score: lexicalScore(query, textOf(item)) }))
-    .filter(({ item, score }) => normalizeMemoryScope(item.memoryScope) !== "global" || score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit)
-    .map(({ item }) => item);
+  const queryTokens = new Set(tokens(query));
+  const scored: Array<{ item: T; score: number }> = [];
+  for (const item of items) {
+    const scope = normalizeMemoryScope(item.memoryScope);
+    if (
+      options.projectId &&
+      item.projectId !== options.projectId &&
+      item.workspaceProjectId !== options.projectId &&
+      scope !== "global"
+    ) {
+      continue;
+    }
+    if (!options.includeEphemeral && scope === "ephemeral") continue;
+    if ((item as T & { validationStatus?: string }).validationStatus === "rejected") continue;
+    const score = lexicalScore(queryTokens, textOf(item));
+    if (scope === "global" && score <= 0) continue;
+    scored.push({ item, score });
+  }
+  scored.sort((left, right) => right.score - left.score);
+  const output: T[] = [];
+  for (let index = 0; index < scored.length && index < limit; index += 1) {
+    output.push(scored[index].item);
+  }
+  return output;
 }
 
-function lexicalScore(query: string, text: string): number {
-  const queryTokens = new Set(tokens(query));
+function lexicalScore(queryTokens: Set<string>, text: string): number {
   if (!queryTokens.size) return 0;
-  return tokens(text).reduce((score, token) => score + (queryTokens.has(token) ? 1 / queryTokens.size : 0), 0);
+  let score = 0;
+  const weight = 1 / queryTokens.size;
+  for (const token of tokens(text)) {
+    if (queryTokens.has(token)) score += weight;
+  }
+  return score;
 }
 
 function tokens(text: string): string[] {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").split(/\s+/).filter(Boolean);
+  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").match(/\S+/g) ?? [];
 }

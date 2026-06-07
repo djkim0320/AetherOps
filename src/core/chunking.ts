@@ -3,16 +3,19 @@ import type { ResearchChunk, ResearchSnapshot, ResearchSource } from "./types.js
 
 const maxChunkChars = 1200;
 const overlapChars = 160;
+const whitespacePattern = /\s+/g;
+const nonKeywordTokenPattern = /[^\p{L}\p{N}\s-]/gu;
+const tokenPattern = /\S+/g;
 
 export function buildSourceText(source: ResearchSource, snapshot: ResearchSnapshot): string {
   const evidence = snapshot.evidence.find((item) => `source_${item.id}` === source.id || item.sourceId === source.id);
   if (evidence) {
-    return [evidence.title, evidence.summary, evidence.quote, evidence.citation, evidence.sourceUri].filter(Boolean).join("\n");
+    return joinPresent("\n", evidence.title, evidence.summary, evidence.quote, evidence.citation, evidence.sourceUri);
   }
 
   const artifact = snapshot.artifacts.find((item) => `source_${item.id}` === source.id);
   if (artifact) {
-    return [artifact.title, artifact.summary, artifact.content, artifact.relativePath].filter(Boolean).join("\n");
+    return joinPresent("\n", artifact.title, artifact.summary, artifact.content, artifact.relativePath);
   }
 
   const openCodeRun = snapshot.openCodeRuns.find((item) => `source_${item.id}` === source.id);
@@ -22,19 +25,20 @@ export function buildSourceText(source: ResearchSource, snapshot: ResearchSnapsh
 
   const toolRun = snapshot.toolRuns.find((item) => `source_${item.id}` === source.id);
   if (toolRun) {
-    return [
+    return joinPresent(
+      "\n",
       toolRun.toolName,
       JSON.stringify(toolRun.input),
       JSON.stringify(toolRun.output),
       toolRun.error
-    ].filter(Boolean).join("\n");
+    );
   }
 
-  return [source.title, source.url, source.doi, JSON.stringify(source.metadata)].filter(Boolean).join("\n");
+  return joinPresent("\n", source.title, source.url, source.doi, JSON.stringify(source.metadata));
 }
 
 export function chunkResearchSource(source: ResearchSource, text: string): ResearchChunk[] {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const normalized = text.replace(whitespacePattern, " ").trim();
   if (!normalized) {
     return [];
   }
@@ -73,16 +77,47 @@ export function extractKeywords(text: string, limit = 12): string[] {
     }
     counts.set(token, (counts.get(token) ?? 0) + 1);
   }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, limit)
-    .map(([token]) => token);
+  const ranked: Array<[string, number]> = [];
+  for (const entry of counts.entries()) {
+    insertTopKeyword(ranked, entry, limit);
+  }
+  const keywords: string[] = [];
+  for (let index = 0; index < ranked.length && index < limit; index += 1) {
+    const entry = ranked[index];
+    if (entry) keywords.push(entry[0]);
+  }
+  return keywords;
 }
 
 export function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
-    .split(/\s+/)
-    .filter(Boolean);
+  return (
+    text
+      .toLowerCase()
+      .replace(nonKeywordTokenPattern, " ")
+      .match(tokenPattern) ?? []
+  );
+}
+
+function insertTopKeyword(ranked: Array<[string, number]>, entry: [string, number], limit: number): void {
+  if (limit <= 0) return;
+  let insertAt = ranked.length;
+  for (let index = 0; index < ranked.length; index += 1) {
+    const current = ranked[index];
+    if (!current) continue;
+    if (entry[1] > current[1] || (entry[1] === current[1] && entry[0].localeCompare(current[0]) < 0)) {
+      insertAt = index;
+      break;
+    }
+  }
+  if (insertAt >= limit) return;
+  ranked.splice(insertAt, 0, entry);
+  if (ranked.length > limit) ranked.pop();
+}
+
+function joinPresent(separator: string, ...values: unknown[]): string {
+  const parts: string[] = [];
+  for (const value of values) {
+    if (value) parts.push(String(value));
+  }
+  return parts.join(separator);
 }

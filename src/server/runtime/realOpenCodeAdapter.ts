@@ -13,6 +13,7 @@ import type {
   ToolRun
 } from "../../core/types.js";
 import { isWindowsShellCommand, resolveOpenCodeCommand, type OpenCodeCommandOptions } from "./opencodeResolver.js";
+import { decodeStrictUtf8Chunks } from "./strictUtf8.js";
 
 type SettingsGetter = () => AppSettings | Promise<AppSettings>;
 
@@ -38,6 +39,33 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     }
   }
 
+  async createRunAttempt(input: OpenCodeRunInput): Promise<OpenCodeRunOutput["run"]> {
+    const settings = await this.getSettings();
+    const resolution = resolveOpenCodeCommand(settings.openCode.command, this.commandOptions);
+    const model = formatOpenCodeModel(settings);
+    const startedAt = nowIso();
+    return {
+      id: input.openCodeRunId ?? createId("opencode"),
+      projectId: input.project.id,
+      iteration: input.iteration,
+      prompt: this.buildPrompt(input),
+      toolPlan: ["OpenCodeTool"],
+      status: "running",
+      logs: ["OpenCode CLI attempt started."],
+      artifactIds: [],
+      evidenceIds: [],
+      metadata: {
+        command: resolution.command,
+        commandSource: resolution.source,
+        model,
+        provider: settings.openCode.provider,
+        timeoutMs: settings.openCode.timeoutMs,
+        executionBundleId: input.executionBundleId
+      },
+      startedAt
+    };
+  }
+
   async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
     const settings = await this.getSettings();
     const startedAt = nowIso();
@@ -49,11 +77,19 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     const raw = await runCommand(resolution.command, this.buildArgs(input, settings), settings.openCode.timeoutMs);
     const completedAt = nowIso();
     if (raw.exitCode !== 0) {
-      throw new Error(`OpenCode CLI exited with code ${raw.exitCode} using ${describeResolution(resolution)}: ${raw.stderr || raw.stdout || "no output"}`);
+      throw commandError(`OpenCode CLI exited with code ${raw.exitCode} using ${describeResolution(resolution)}: ${raw.stderr || raw.stdout || "no output"}`, {
+        exitCode: raw.exitCode,
+        stdoutTail: raw.stdout.slice(-2000),
+        stderrTail: sanitizeCommandOutput(raw.stderr.slice(-2000))
+      });
     }
     const parsed = parseOpenCodeJson(raw.stdout);
     if (!parsed) {
-      throw new Error(`OpenCode output JSON parsing failed using ${describeResolution(resolution)}: ${(raw.stdout || raw.stderr || "no output").slice(0, 2000)}`);
+      throw commandError(`OpenCode output JSON parsing failed using ${describeResolution(resolution)}: ${(raw.stdout || raw.stderr || "no output").slice(0, 2000)}`, {
+        parseFailure: true,
+        stdoutTail: raw.stdout.slice(-2000),
+        stderrTail: sanitizeCommandOutput(raw.stderr.slice(-2000))
+      });
     }
 
     return this.fromParsed(input, parsed, startedAt, completedAt, raw.stderr);
@@ -93,12 +129,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
       `Hypotheses: ${JSON.stringify(input.hypotheses)}`,
       `RAG Context: ${JSON.stringify(input.ragContext)}`,
       `ResearchPlan: ${JSON.stringify(input.researchPlan)}`,
-      `ProjectContextSnapshot: ${JSON.stringify(input.projectContextSnapshot ? {
-        id: input.projectContextSnapshot.id,
-        iteration: input.projectContextSnapshot.iteration,
-        citations: input.projectContextSnapshot.citations.slice(0, 12),
-        selectedSourceIds: input.projectContextSnapshot.selectedSourceIds.slice(0, 12)
-      } : undefined)}`,
+      `ProjectContextSnapshot: ${JSON.stringify(projectContextPromptSummary(input))}`,
       `Iteration: ${input.iteration}`
     ].join("\n");
   }
@@ -110,15 +141,18 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     completedAt: string,
     stderr: string
   ): OpenCodeRunOutput {
-    const artifacts = normalizeArtifacts(input, parsed, completedAt);
     const downgraded = downgradeLegacyEvidence(parsed);
-    const claims = [...normalizeClaimLike(parsed.claims), ...downgraded.claims];
-    const observations = [...normalizeClaimLike(parsed.observations), ...downgraded.observations];
-    const sources = normalizeSourceCandidates(input, [...(parsed.sourceCandidates ?? []), ...downgraded.sourceCandidates], completedAt);
+    const artifacts = normalizeArtifacts(input, parsed, completedAt);
+    const claims = normalizeClaimLike(parsed.claims);
+    claims.push(...downgraded.claims);
+    const observations = normalizeClaimLike(parsed.observations);
+    observations.push(...downgraded.observations);
+    const sourceCandidates = mergeSourceCandidateRecords(parsed.sourceCandidates, downgraded.sourceCandidates);
+    const sources = normalizeSourceCandidates(input, sourceCandidates, completedAt);
     const toolRuns = normalizeStructuredOutputToolRuns(input, claims, observations, sources, startedAt, completedAt);
     return {
       run: {
-        id: createId("opencode"),
+        id: input.openCodeRunId ?? createId("opencode"),
         projectId: input.project.id,
         iteration: input.iteration,
         prompt: this.buildPrompt(input),
@@ -130,7 +164,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
           downgraded.downgradedCount ? `Downgraded ${downgraded.downgradedCount} legacy evidence items to non-support claims/source candidates.` : "No legacy evidence items were returned.",
           stderr ? `stderr: ${stderr.slice(0, 2000)}` : "stderr: empty"
         ],
-        artifactIds: artifacts.map((item) => item.id),
+        artifactIds: collectIds(artifacts),
         evidenceIds: [],
         startedAt,
         completedAt
@@ -142,7 +176,7 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
       claims,
       observations,
       toolRuns,
-      nextActions: Array.isArray(parsed.nextActions) ? parsed.nextActions.filter((item): item is string => typeof item === "string") : [],
+      nextActions: collectStrings(parsed.nextActions),
       needsMoreEvidence: Boolean(parsed.needsMoreEvidence),
       needsMoreAnalysis: Boolean(parsed.needsMoreAnalysis)
     };
@@ -182,19 +216,22 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
         LC_ALL: process.env.LC_ALL ?? "C.UTF-8"
       }
     });
-    let stdout = "";
-    let stderr = "";
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error(`OpenCode CLI timeout after ${timeoutMs}ms`));
+      reject(commandError(`OpenCode CLI timeout after ${timeoutMs}ms`, {
+        timeout: true,
+        timeoutMs,
+        stdoutTail: decodeCommandTail(stdoutChunks),
+        stderrTail: sanitizeCommandOutput(decodeCommandTail(stderrChunks))
+      }));
     }, timeoutMs);
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
     });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderrChunks.push(chunk);
     });
     child.on("error", (error) => {
       clearTimeout(timer);
@@ -202,7 +239,15 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
     });
     child.on("close", (exitCode) => {
       clearTimeout(timer);
-      resolve({ stdout, stderr, exitCode: exitCode ?? 0 });
+      try {
+        resolve({
+          stdout: decodeStrictUtf8Chunks(stdoutChunks, "OpenCode stdout"),
+          stderr: decodeStrictUtf8Chunks(stderrChunks, "OpenCode stderr"),
+          exitCode: exitCode ?? 0
+        });
+      } catch (error) {
+        reject(error);
+      }
     });
   });
 }
@@ -218,6 +263,22 @@ function describeResolution(resolution: ReturnType<typeof resolveOpenCodeCommand
   return `system OpenCode (${resolution.command})${checked}`;
 }
 
+function commandError(message: string, metadata: Record<string, unknown>): Error {
+  const error = new Error(message) as Error & { metadata?: Record<string, unknown> };
+  error.metadata = metadata;
+  return error;
+}
+
+function decodeCommandTail(chunks: Buffer[]): string {
+  if (!chunks.length) return "";
+  const decoded = Buffer.concat(chunks).toString("utf8").replace(/\uFFFD/g, "");
+  return decoded.slice(-2000);
+}
+
+function sanitizeCommandOutput(text: string): string {
+  return text.replace(/(access_token|refresh_token|id_token)["'=:\s]+[A-Za-z0-9._-]+/gi, "$1=<redacted>");
+}
+
 function parseOpenCodeJson(stdout: string): OpenCodeSchema | undefined {
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -226,8 +287,10 @@ function parseOpenCodeJson(stdout: string): OpenCodeSchema | undefined {
   try {
     return schemaFromParsed(JSON.parse(trimmed));
   } catch {
-    const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    for (const line of [...lines].reverse()) {
+    const lines = trimmed.split(/\r?\n/);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index].trim();
+      if (!line) continue;
       try {
         const schema = schemaFromParsed(JSON.parse(line));
         if (schema) {
@@ -277,39 +340,60 @@ function extractJsonObject(text: string): unknown {
 }
 
 function normalizeArtifacts(input: OpenCodeRunInput, parsed: OpenCodeSchema, createdAt: string): ResearchArtifact[] {
-  return (parsed.artifacts ?? []).slice(0, 12).map((artifact, index) => ({
-    id: createId("artifact"),
-    projectId: input.project.id,
-    category: "generated_artifact",
-    title: cleanString(artifact.title) || `OpenCode artifact ${index + 1}`,
-    relativePath: cleanString(artifact.relativePath) || `artifacts/iteration-${input.iteration}/opencode-artifact-${index + 1}.md`,
-    mimeType: cleanString(artifact.mimeType) || "text/markdown",
-    summary: cleanString(artifact.summary) || "OpenCode generated artifact.",
-    content: cleanString(artifact.content) || cleanString(artifact.summary),
-    createdAt
-  }));
+  const artifacts: ResearchArtifact[] = [];
+  const items = parsed.artifacts ?? [];
+  const maxItems = Math.min(items.length, 12);
+  for (let index = 0; index < maxItems; index += 1) {
+    const artifact = items[index];
+    artifacts.push({
+      id: createId("artifact"),
+      projectId: input.project.id,
+      category: "generated_artifact",
+      title: cleanString(artifact.title) || `OpenCode artifact ${index + 1}`,
+      relativePath: cleanString(artifact.relativePath) || `artifacts/iteration-${input.iteration}/opencode-artifact-${index + 1}.md`,
+      mimeType: cleanString(artifact.mimeType) || "text/markdown",
+      summary: cleanString(artifact.summary) || "OpenCode generated artifact.",
+      content: cleanString(artifact.content) || cleanString(artifact.summary),
+      createdAt
+    });
+  }
+  return artifacts;
 }
 
 function normalizeClaimLike(items: Array<Record<string, unknown>> | undefined): OpenCodeClaim[] {
-  return (items ?? []).slice(0, 24).map((item, index) => ({
-    title: cleanString(item.title) || `OpenCode claim ${index + 1}`,
-    content: cleanString(item.content) || cleanString(item.summary) || cleanString(item.quote),
-    sourceUri: cleanString(item.sourceUri) || cleanString(item.url) || undefined,
-    citation: cleanString(item.citation) || undefined,
-    metadata: {
-      traceabilityKind: "tool_observation",
-      canSupportHypothesis: false,
-      downgradedFromEvidence: item.downgradedFromEvidence === true
-    }
-  })).filter((item) => item.content || item.sourceUri || item.citation);
+  const normalized: OpenCodeClaim[] = [];
+  const maxItems = Math.min(items?.length ?? 0, 24);
+  for (let index = 0; index < maxItems; index += 1) {
+    const item = items?.[index];
+    if (!item) continue;
+    const content = cleanString(item.content) || cleanString(item.summary) || cleanString(item.quote);
+    const sourceUri = cleanString(item.sourceUri) || cleanString(item.url) || undefined;
+    const citation = cleanString(item.citation) || undefined;
+    if (!content && !sourceUri && !citation) continue;
+    normalized.push({
+      title: cleanString(item.title) || `OpenCode claim ${index + 1}`,
+      content,
+      sourceUri,
+      citation,
+      metadata: {
+        traceabilityKind: "tool_observation",
+        canSupportHypothesis: false,
+        downgradedFromEvidence: item.downgradedFromEvidence === true
+      }
+    });
+  }
+  return normalized;
 }
 
 function normalizeSourceCandidates(input: OpenCodeRunInput, candidates: Array<Record<string, unknown>>, createdAt: string): ResearchSource[] {
-  return candidates.slice(0, 24).flatMap((item, index) => {
+  const sources: ResearchSource[] = [];
+  const maxItems = Math.min(candidates.length, 24);
+  for (let index = 0; index < maxItems; index += 1) {
+    const item = candidates[index];
     const url = cleanString(item.url) || cleanString(item.sourceUri);
     const doi = cleanString(item.doi);
-    if (!url && !doi) return [];
-    return [{
+    if (!url && !doi) continue;
+    sources.push({
       id: createId("source"),
       projectId: input.project.id,
       kind: doi && !url ? "paper" as const : "web" as const,
@@ -326,8 +410,9 @@ function normalizeSourceCandidates(input: OpenCodeRunInput, candidates: Array<Re
         sourceCandidateOnly: true
       },
       createdAt
-    }];
-  });
+    });
+  }
+  return sources;
 }
 
 function normalizeStructuredOutputToolRuns(
@@ -339,17 +424,70 @@ function normalizeStructuredOutputToolRuns(
   completedAt: string
 ): ToolRun[] {
   if (!claims.length && !observations.length && !sources.length) return [];
+  const sourceCandidateIds: string[] = [];
+  for (const source of sources) sourceCandidateIds.push(source.id);
   return [{
     id: createId("tool"),
     projectId: input.project.id,
     iteration: input.iteration,
     toolName: "OpenCodeStructuredOutput",
     input: { iteration: input.iteration },
-    output: { claims, observations, sourceCandidateIds: sources.map((source) => source.id) },
+    output: { claims, observations, sourceCandidateIds },
     status: "completed",
     startedAt,
     completedAt
   }];
+}
+
+function projectContextPromptSummary(input: OpenCodeRunInput): {
+  id: string;
+  iteration: number;
+  citations: string[];
+  selectedSourceIds: string[];
+} | undefined {
+  const context = input.projectContextSnapshot;
+  if (!context) return undefined;
+  return {
+    id: context.id,
+    iteration: context.iteration,
+    citations: collectLimitedStrings(context.citations, 12),
+    selectedSourceIds: collectLimitedStrings(context.selectedSourceIds, 12)
+  };
+}
+
+function mergeSourceCandidateRecords(
+  parsedCandidates: Array<Record<string, unknown>> | undefined,
+  downgradedCandidates: Array<Record<string, unknown>>
+): Array<Record<string, unknown>> {
+  if (!parsedCandidates?.length) return downgradedCandidates;
+  const merged: Array<Record<string, unknown>> = [];
+  for (const candidate of parsedCandidates) merged.push(candidate);
+  for (const candidate of downgradedCandidates) merged.push(candidate);
+  return merged;
+}
+
+function collectIds(items: Array<{ id: string }>): string[] {
+  const ids: string[] = [];
+  for (const item of items) ids.push(item.id);
+  return ids;
+}
+
+function collectStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const strings: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string") strings.push(item);
+  }
+  return strings;
+}
+
+function collectLimitedStrings(values: string[], limit: number): string[] {
+  const output: string[] = [];
+  const count = Math.min(values.length, limit);
+  for (let index = 0; index < count; index += 1) {
+    output.push(values[index]);
+  }
+  return output;
 }
 
 function downgradeLegacyEvidence(parsed: OpenCodeSchema): {
@@ -361,7 +499,10 @@ function downgradeLegacyEvidence(parsed: OpenCodeSchema): {
   const claims: OpenCodeClaim[] = [];
   const observations: OpenCodeObservation[] = [];
   const sourceCandidates: Array<Record<string, unknown>> = [];
-  for (const item of (parsed.evidence ?? []).slice(0, 24)) {
+  const evidence = parsed.evidence ?? [];
+  const maxItems = Math.min(evidence.length, 24);
+  for (let index = 0; index < maxItems; index += 1) {
+    const item = evidence[index];
     const title = cleanString(item.title) || "Downgraded OpenCode claim";
     const content = cleanString(item.summary) || cleanString(item.quote) || cleanString(item.citation) || cleanString(item.sourceUri);
     const sourceUri = cleanString(item.sourceUri);
@@ -398,18 +539,6 @@ function formatOpenCodeModel(settings: AppSettings): string | undefined {
 function normalizeCategory(value: unknown): EvidenceItem["category"] {
   const allowed: EvidenceItem["category"][] = ["generated_artifact", "paper_reference", "web_source", "experiment_log", "conversation_memo"];
   return allowed.includes(value as EvidenceItem["category"]) ? (value as EvidenceItem["category"]) : "experiment_log";
-}
-
-function normalizeStrength(value: unknown): EvidenceItem["evidenceStrength"] {
-  return value === "medium" || value === "strong" || value === "weak" ? value : "weak";
-}
-
-function normalizeScore(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : undefined;
-}
-
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(cleanString).filter(Boolean).slice(0, 12) : [];
 }
 
 function cleanString(value: unknown): string {

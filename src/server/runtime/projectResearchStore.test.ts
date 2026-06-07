@@ -1,5 +1,6 @@
-﻿import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -161,6 +162,57 @@ describe("NodeProjectStorage", () => {
       expect(JSON.parse(row?.data ?? "{}").metadata.rawText).toBeUndefined();
     } finally {
       projectDb.close();
+    }
+  });
+
+  it("writes markdown artifacts with optional UTF-8 BOM for Windows PowerShell readability", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-storage-"));
+    store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
+    const projectStorage = new NodeProjectStorage();
+    const orchestrator = createStrictTestOrchestrator({ store, storage: projectStorage, projectRootBase: join(tempDir, "projects") });
+    const previousBomSetting = process.env.AETHEROPS_MARKDOWN_BOM;
+
+    try {
+      process.env.AETHEROPS_MARKDOWN_BOM = "true";
+      let snapshot = await orchestrator.createProject(input);
+      snapshot = await orchestrator.createResearchDb(snapshot.project.id);
+      const [withBom] = await projectStorage.writeArtifacts(snapshot.project, snapshot.database!, 1, [
+        {
+          id: "artifact-korean-bom",
+          projectId: snapshot.project.id,
+          category: "generated_artifact",
+          title: "한글 보고서",
+          relativePath: "artifacts/iteration-1/korean-report.md",
+          mimeType: "text/markdown",
+          summary: "한글 요약",
+          content: "# 한글 보고서\n\n근거 추적성 차이를 검증한다.",
+          createdAt: "2026-05-20T00:00:00.000Z"
+        }
+      ]);
+      expect(readFileSync(withBom!.rawPath!).subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+
+      process.env.AETHEROPS_MARKDOWN_BOM = "false";
+      const [withoutBom] = await projectStorage.writeArtifacts(snapshot.project, snapshot.database!, 1, [
+        {
+          id: "artifact-korean-no-bom",
+          projectId: snapshot.project.id,
+          category: "generated_artifact",
+          title: "한글 보고서 no bom",
+          relativePath: "artifacts/iteration-1/korean-report-no-bom.md",
+          mimeType: "text/markdown",
+          summary: "한글 요약",
+          content: "# 한글 보고서\n\n근거 추적성 차이를 검증한다.",
+          createdAt: "2026-05-20T00:00:00.000Z"
+        }
+      ]);
+      expect(readFileSync(withoutBom!.rawPath!).subarray(0, 3)).not.toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+      expect(readFileSync(withoutBom!.rawPath!, "utf8")).toContain("근거 추적성");
+    } finally {
+      if (previousBomSetting === undefined) {
+        delete process.env.AETHEROPS_MARKDOWN_BOM;
+      } else {
+        process.env.AETHEROPS_MARKDOWN_BOM = previousBomSetting;
+      }
     }
   });
 });

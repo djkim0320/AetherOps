@@ -19,7 +19,10 @@ import type {
 export class EvidenceNormalizer {
   normalize(snapshot: ResearchSnapshot, iteration: number): NormalizedResearchRecord[] {
     const records: NormalizedResearchRecord[] = [];
-    const sourceById = new Map(snapshot.sources.map((source) => [source.id, source]));
+    const sourceById = new Map<string, ResearchSource>();
+    for (const source of snapshot.sources) {
+      sourceById.set(source.id, source);
+    }
 
     for (const input of snapshot.researchInputs) {
       records.push(recordFromResearchInput(input, iteration));
@@ -42,32 +45,45 @@ export class EvidenceNormalizer {
       records.push(recordFromArtifact(artifact, iteration));
     }
     for (const evidence of snapshot.evidence) {
-      records.push(...recordsFromEvidence(evidence, iteration, sourceById.get(evidence.sourceId ?? "")));
+      appendRecordsFromEvidence(records, evidence, iteration, sourceById.get(evidence.sourceId ?? ""));
     }
     for (const toolRun of snapshot.toolRuns) {
-      records.push(...recordsFromToolRun(toolRun));
+      appendRecordsFromToolRun(records, toolRun);
     }
     return dedupe(records);
   }
 }
 
 function recordFromResearchInput(input: ResearchInput, iteration: number): NormalizedResearchRecord {
-  const content = [
-    input.researchQuestion,
-    ...input.initialHypotheses.map((hypothesis) => `Hypothesis: ${hypothesis}`),
-    ...input.constraints.map((constraint) => `Constraint: ${constraint}`),
-    ...input.expectedOutputs.map((output) => `Expected output: ${output}`)
-  ].join("\n");
+  const lines = [input.researchQuestion];
+  for (const hypothesis of input.initialHypotheses) {
+    lines.push(`Hypothesis: ${hypothesis}`);
+  }
+  for (const constraint of input.constraints) {
+    lines.push(`Constraint: ${constraint}`);
+  }
+  for (const output of input.expectedOutputs) {
+    lines.push(`Expected output: ${output}`);
+  }
+  const content = lines.join("\n");
   return provenanceRecord(input.projectId, iteration, `research-input:${input.id}`, "Research input", content, `project://research-input/${input.id}`, input.createdAt);
 }
 
 function recordFromSpecification(specification: ResearchSpecification, iteration: number): NormalizedResearchRecord {
-  const content = [
-    ...specification.researchQuestions.map((question) => `Question: ${question}`),
-    ...specification.refinedHypotheses.map((hypothesis) => `Refined hypothesis: ${hypothesis}`),
-    ...specification.competencyQuestions.map((question) => `Competency question: ${question}`),
-    ...specification.successCriteria.map((criterion) => `Success criterion: ${criterion}`)
-  ].join("\n");
+  const lines: string[] = [];
+  for (const question of specification.researchQuestions) {
+    lines.push(`Question: ${question}`);
+  }
+  for (const hypothesis of specification.refinedHypotheses) {
+    lines.push(`Refined hypothesis: ${hypothesis}`);
+  }
+  for (const question of specification.competencyQuestions) {
+    lines.push(`Competency question: ${question}`);
+  }
+  for (const criterion of specification.successCriteria) {
+    lines.push(`Success criterion: ${criterion}`);
+  }
+  const content = lines.join("\n");
   return provenanceRecord(
     specification.projectId,
     iteration,
@@ -80,15 +96,26 @@ function recordFromSpecification(specification: ResearchSpecification, iteration
 }
 
 function recordFromPlan(plan: ResearchPlan, iteration: number): NormalizedResearchRecord {
-  const content = [
-    plan.objective,
-    ...plan.targetQuestions.map((question) => `Target question: ${question}`),
-    ...plan.targetHypotheses.map((hypothesis) => `Target hypothesis: ${hypothesis}`),
-    ...plan.requiredTools.map((tool) => `Required tool: ${tool}`),
-    ...(plan.fetchCandidateUrls ?? []).map((url) => `Fetch candidate URL: ${url}`),
-    ...plan.executionSteps.map((step) => `Execution step: ${step}`),
-    ...plan.stopCriteria.map((criterion) => `Stop criterion: ${criterion}`)
-  ].join("\n");
+  const lines = [plan.objective];
+  for (const question of plan.targetQuestions) {
+    lines.push(`Target question: ${question}`);
+  }
+  for (const hypothesis of plan.targetHypotheses) {
+    lines.push(`Target hypothesis: ${hypothesis}`);
+  }
+  for (const tool of plan.requiredTools) {
+    lines.push(`Required tool: ${tool}`);
+  }
+  for (const url of plan.fetchCandidateUrls ?? []) {
+    lines.push(`Fetch candidate URL: ${url}`);
+  }
+  for (const step of plan.executionSteps) {
+    lines.push(`Execution step: ${step}`);
+  }
+  for (const criterion of plan.stopCriteria) {
+    lines.push(`Stop criterion: ${criterion}`);
+  }
+  const content = lines.join("\n");
   return provenanceRecord(plan.projectId, iteration, `research-plan:${plan.id}`, `Research plan ${plan.iteration}`, content, `project://research-plan/${plan.id}`, plan.createdAt);
 }
 
@@ -117,7 +144,7 @@ function provenanceRecord(
 }
 
 function recordFromSource(source: ResearchSource, iteration: number): NormalizedResearchRecord {
-  const content = [source.title, source.url, source.doi, source.rawPath, JSON.stringify(source.metadata)].filter(Boolean).join("\n");
+  const content = joinPresent("\n", source.title, source.url, source.doi, source.rawPath, JSON.stringify(source.metadata));
   const traceabilityKind = sourceTraceability(source);
   const quality = assessSourceQuality(source.url ?? source.rawPath, source.title);
   const sourceCandidateOnly = source.metadata.sourceCandidateOnly === true || source.metadata.canSupportHypothesis === false;
@@ -146,7 +173,7 @@ function recordFromSource(source: ResearchSource, iteration: number): Normalized
 }
 
 function recordFromArtifact(artifact: ResearchArtifact, iteration: number): NormalizedResearchRecord {
-  const content = [artifact.title, artifact.summary, artifact.content, artifact.relativePath].filter(Boolean).join("\n");
+  const content = joinPresent("\n", artifact.title, artifact.summary, artifact.content, artifact.relativePath);
   return tagMemoryScope({
     id: createStableId("record", `${artifact.id}:artifact`),
     projectId: artifact.projectId,
@@ -168,14 +195,15 @@ function recordFromArtifact(artifact: ResearchArtifact, iteration: number): Norm
   }, "project_only");
 }
 
-function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?: ResearchSource): NormalizedResearchRecord[] {
-  const content = [evidence.title, evidence.summary, evidence.quote, evidence.citation, evidence.sourceUri, evidence.doi].filter(Boolean).join("\n");
-  const traceabilityKind = evidenceTraceability(evidence, source);
+function appendRecordsFromEvidence(records: NormalizedResearchRecord[], evidence: EvidenceItem, iteration: number, source?: ResearchSource): void {
+  const content = joinPresent("\n", evidence.title, evidence.summary, evidence.quote, evidence.citation, evidence.sourceUri, evidence.doi);
+  const keywordFlags = evidenceKeywordFlags(evidence.keywords);
+  const traceabilityKind = evidenceTraceability(evidence, source, keywordFlags);
   const canSupportHypothesis =
     (traceabilityKind === "external_source" || (traceabilityKind === "tool_observation" && hasNonInternalTrace(evidence))) &&
     canEvidenceSupportHypothesis(evidence, source);
   const confidence = confidenceFromEvidence(evidence, canSupportHypothesis);
-  const isError = evidence.keywords.some((keyword) => keyword.includes("error") || keyword.includes("failed") || keyword.includes("tool_unavailable"));
+  const isError = keywordFlags.recordError;
   const isGeneratedArtifact = evidence.category === "generated_artifact";
   const kind: NormalizedRecordKind = isError ? "error" : canSupportHypothesis && !isGeneratedArtifact ? "evidence" : isGeneratedArtifact ? "observation" : "claim";
   const memoryScope = memoryScopeForTraceability(traceabilityKind);
@@ -205,15 +233,13 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
     validationStatus: validationStatusFor(traceabilityKind, canSupportHypothesis && !isGeneratedArtifact, kind),
     createdAt: evidence.createdAt
   };
-  const records: NormalizedResearchRecord[] = [
-    tagMemoryScope({
-      ...base,
-      id: createStableId("record", `${evidence.id}:${kind}`),
-      kind,
-      title: evidence.title,
-      content
-    }, memoryScope)
-  ];
+  records.push(tagMemoryScope({
+    ...base,
+    id: createStableId("record", `${evidence.id}:${kind}`),
+    kind,
+    title: evidence.title,
+    content
+  }, memoryScope));
 
   if (canSupportHypothesis && (evidence.citation || evidence.sourceUri || evidence.doi)) {
     records.push(tagMemoryScope({
@@ -247,19 +273,19 @@ function recordsFromEvidence(evidence: EvidenceItem, iteration: number, source?:
     confidence: Math.max(0.1, confidence - 0.15),
     validationStatus: "raw"
   }, memoryScope));
-  return records;
 }
 
-function recordsFromToolRun(toolRun: ToolRun): NormalizedResearchRecord[] {
-  const content = [
+function appendRecordsFromToolRun(records: NormalizedResearchRecord[], toolRun: ToolRun): void {
+  const content = joinPresent(
+    "\n",
     toolRun.toolName,
     toolRun.status,
     JSON.stringify(toolRun.input),
     JSON.stringify(toolRun.output),
     toolRun.error
-  ].filter(Boolean).join("\n");
+  );
   const isError = toolRun.status === "failed";
-  const records: NormalizedResearchRecord[] = [tagMemoryScope({
+  records.push(tagMemoryScope({
     id: createStableId("record", `${toolRun.id}:${isError ? "error" : "observation"}`),
     projectId: toolRun.projectId,
     iteration: toolRun.iteration,
@@ -276,34 +302,38 @@ function recordsFromToolRun(toolRun: ToolRun): NormalizedResearchRecord[] {
     confidence: toolRun.status === "completed" ? 0.65 : 0.2,
     validationStatus: isError ? "rejected" : "raw",
     createdAt: toolRun.completedAt || nowIso()
-  }, isError ? "ephemeral" : "project_only")];
+  }, isError ? "ephemeral" : "project_only"));
 
   if (toolRun.toolName === "OpenCodeStructuredOutput" && toolRun.status === "completed") {
-    records.push(...recordsFromOpenCodeStructuredOutput(toolRun));
+    appendRecordsFromOpenCodeStructuredOutput(records, toolRun);
   }
-  return records;
 }
 
-function recordsFromOpenCodeStructuredOutput(toolRun: ToolRun): NormalizedResearchRecord[] {
+function appendRecordsFromOpenCodeStructuredOutput(records: NormalizedResearchRecord[], toolRun: ToolRun): void {
   const output = toolRun.output as { claims?: unknown; observations?: unknown } | undefined;
-  return [
-    ...structuredItems(output?.claims, "claim", toolRun),
-    ...structuredItems(output?.observations, "observation", toolRun)
-  ];
+  appendStructuredItems(records, output?.claims, "claim", toolRun);
+  appendStructuredItems(records, output?.observations, "observation", toolRun);
 }
 
-function structuredItems(value: unknown, kind: Extract<NormalizedRecordKind, "claim" | "observation">, toolRun: ToolRun): NormalizedResearchRecord[] {
-  if (!Array.isArray(value)) return [];
-  return value.slice(0, 48).flatMap((item, index) => {
-    if (!item || typeof item !== "object") return [];
+function appendStructuredItems(
+  records: NormalizedResearchRecord[],
+  value: unknown,
+  kind: Extract<NormalizedRecordKind, "claim" | "observation">,
+  toolRun: ToolRun
+): void {
+  if (!Array.isArray(value)) return;
+  const limit = Math.min(value.length, 48);
+  for (let index = 0; index < limit; index += 1) {
+    const item = value[index];
+    if (!item || typeof item !== "object") continue;
     const record = item as { title?: unknown; content?: unknown; sourceUri?: unknown; citation?: unknown; metadata?: unknown };
     const title = typeof record.title === "string" && record.title.trim() ? record.title.trim() : `OpenCode ${kind} ${index + 1}`;
     const content = typeof record.content === "string" ? record.content.trim() : "";
-    if (!content && typeof record.sourceUri !== "string" && typeof record.citation !== "string") return [];
+    if (!content && typeof record.sourceUri !== "string" && typeof record.citation !== "string") continue;
     const metadataExtra = record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata)
       ? record.metadata as Record<string, unknown>
       : {};
-    return [tagMemoryScope({
+    records.push(tagMemoryScope({
       id: createStableId("record", `${toolRun.id}:${kind}:${index}:${title}:${content.slice(0, 120)}`),
       projectId: toolRun.projectId,
       iteration: toolRun.iteration,
@@ -321,8 +351,8 @@ function structuredItems(value: unknown, kind: Extract<NormalizedRecordKind, "cl
       confidence: 0.4,
       validationStatus: "raw",
       createdAt: toolRun.completedAt || nowIso()
-    }, "project_only")];
-  });
+    }, "project_only"));
+  }
 }
 
 function metadata(traceabilityKind: TraceabilityKind, canSupportHypothesis: boolean, text: string, extra: Record<string, unknown>): Record<string, unknown> {
@@ -335,6 +365,14 @@ function metadata(traceabilityKind: TraceabilityKind, canSupportHypothesis: bool
     inferredKeywords: keywords.slice(0, 12),
     domainTags: keywords.slice(0, 8)
   };
+}
+
+function joinPresent(separator: string, ...values: unknown[]): string {
+  const parts: string[] = [];
+  for (const value of values) {
+    if (value) parts.push(String(value));
+  }
+  return parts.join(separator);
 }
 
 function validationStatusFor(traceabilityKind: TraceabilityKind, canSupportHypothesis: boolean, kind: NormalizedRecordKind): "raw" | "normalized" | "rejected" {
@@ -355,8 +393,8 @@ function sourceTraceability(source: ResearchSource): TraceabilityKind {
   return "project_provenance";
 }
 
-function evidenceTraceability(evidence: EvidenceItem, source?: ResearchSource): TraceabilityKind {
-  if (evidence.keywords.some((keyword) => keyword.includes("error") || keyword.includes("failed"))) {
+function evidenceTraceability(evidence: EvidenceItem, source?: ResearchSource, keywordFlags = evidenceKeywordFlags(evidence.keywords)): TraceabilityKind {
+  if (keywordFlags.traceabilityError) {
     return "error";
   }
   if (evidence.category === "generated_artifact") {
@@ -388,7 +426,23 @@ function isExternalCitation(value: string | undefined): boolean {
 }
 
 function isInternalUri(value: string): boolean {
-  return /^(project:\/\/|artifacts\/|logs\/|reports\/|knowledge\/|ontology\/|exports\/)/i.test(value.replace(/\\/g, "/"));
+  const normalized = value.includes("\\") ? value.replace(/\\/g, "/") : value;
+  return /^(project:\/\/|artifacts\/|logs\/|reports\/|knowledge\/|ontology\/|exports\/)/i.test(normalized);
+}
+
+function evidenceKeywordFlags(keywords: string[]): { traceabilityError: boolean; recordError: boolean } {
+  let traceabilityError = false;
+  let recordError = false;
+  for (const keyword of keywords) {
+    if (keyword.includes("error") || keyword.includes("failed")) {
+      traceabilityError = true;
+      recordError = true;
+    } else if (keyword.includes("tool_unavailable")) {
+      recordError = true;
+    }
+    if (traceabilityError && recordError) break;
+  }
+  return { traceabilityError, recordError };
 }
 
 function hasNonInternalTrace(evidence: EvidenceItem): boolean {

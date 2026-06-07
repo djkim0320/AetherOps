@@ -1,17 +1,43 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import {
+  PRODUCTION_ADAPTER_PATHS,
+  PRODUCTION_ADAPTER_PATTERN,
+  canListen,
+  hasForbiddenProductionAdapterLine,
+  scanTextForPattern,
+  satisfiesNodeEngine
+} from "./lib/checks.mjs";
 
 const repoRoot = process.cwd();
 const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 const args = parseArgs(process.argv.slice(2));
 const mode = args.mode ?? "full";
 const strictLive = args.strictLive;
+const skipStatic = args.skipStatic;
+const fullStatic = args.fullStatic;
 const dataRoot = resolve(args.dataRoot ?? process.env.AETHEROPS_DATA_DIR ?? join(repoRoot, ".tmp", "aetherops-selftest"));
 const reportPath = resolve(repoRoot, "docs", "aetherops-self-test-report.md");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const GIT_STATUS_LABELS = {
+  "??": "untracked",
+  " M": "modified",
+  "M ": "modified-index",
+  "A ": "added-index",
+  "D ": "deleted-index",
+  " D": "deleted",
+  "R ": "renamed-index"
+};
+const MOJIBAKE_MARKER = /\uFFFD|[?]{2,}|[\u0080-\u009F]|[\uF900-\uFAFF]|\u00C3.|\u00C2.|\u00E2\u20AC|\u00EC[\u0080-\u00BF]|\u00ED[\u0080-\u00BF]|\u00EB[\u0080-\u00BF]|\u00EA[\u0080-\u00BF]/u;
+const KOREAN_UTF8_SENTINELS = Object.freeze([
+  "서술형 질문",
+  "근거 추적성",
+  "설정 부족",
+  "검색 snippet은 evidence가 아님"
+]);
 const results = {
   startedAt: new Date().toISOString(),
   environment: {},
@@ -19,6 +45,9 @@ const results = {
   grepChecks: [],
   server: {},
   settings: {},
+  toolDiagnostics: {},
+  toolPreflight: {},
+  uiVerify: { status: "SKIPPED" },
   blockedPath: { status: "SKIPPED" },
   livePath: { status: "SKIPPED" },
   artifacts: {},
@@ -38,7 +67,8 @@ try {
   const requestedPort = args.port !== undefined ? Number(args.port) : await findFreePort();
   await assertPortSafe(requestedPort);
   await startServer(requestedPort);
-  await runServerSmoke();
+  await runServerVerify();
+  await runUiVerify();
   const liveGate = await assessLiveGate();
   if (mode !== "live") {
     await runBlockedPath();
@@ -63,6 +93,7 @@ try {
 } finally {
   await stopServer();
   results.finishedAt = new Date().toISOString();
+  collectFinalGitStatus();
   results.verdict = verdict();
   writeReport(results);
 }
@@ -78,16 +109,19 @@ if (mode === "live" && strictLive && results.livePath.status === "SKIPPED") {
 process.exit(results.verdict === "FAIL" ? 1 : 0);
 
 function collectEnvironment() {
+  const dirtyFilesBefore = gitStatusShort();
   results.environment = {
     commit: command("git", ["rev-parse", "--short", "HEAD"]).stdout.trim(),
     branch: command("git", ["branch", "--show-current"]).stdout.trim(),
-    dirtyFiles: command("git", ["status", "--short"]).stdout.trim().split(/\r?\n/).filter(Boolean),
+    dirtyFilesBefore,
+    dirtyFiles: dirtyFilesBefore,
     nodeVersion: process.version,
     npmVersion: command(npm, ["-v"]).stdout.trim(),
     os: `${process.platform} ${process.arch}`,
     engine: packageJson.engines?.node ?? "unspecified",
     engineSatisfied: satisfiesNodeEngine(process.versions.node, packageJson.engines?.node ?? ">=22.16.0"),
     scripts: Object.keys(packageJson.scripts ?? {}),
+    staticMode: describeStaticMode(),
     dataRoot
   };
   if (!results.environment.engineSatisfied) {
@@ -104,7 +138,11 @@ async function prepareDataRoot() {
 }
 
 async function runStaticChecks() {
-  if (mode !== "live") {
+  if (skipStatic) {
+    results.staticChecks.push({ label: "static checks", exitCode: 0, seconds: 0, skipped: true, reason: "--skip-static" });
+    return;
+  }
+  if (mode !== "live" || fullStatic) {
     results.staticChecks.push(runTimed(npm, ["run", "typecheck"], "npm run typecheck"));
     results.staticChecks.push(runTimed(npm, ["test"], "npm test"));
   }
@@ -119,20 +157,22 @@ async function runStaticChecks() {
 async function runGrepChecks() {
   const checks = [
     {
-      label: "production mock/fallback adapters",
-      command: ["rg", "-n", "MockOpenCodeAdapter|LocalResearchAdapter|CompositeOpenCodeAdapter", "src", "README.md"],
-      passWhen: (result) => result.exitCode !== 0 || !result.stdout.split(/\r?\n/).filter(Boolean).some((line) => !/\.test\./.test(line) && !/README\.md:.*(mock|fallback|금지|없음)/i.test(line))
+      label: "production synthetic-substitute adapters",
+      pattern: PRODUCTION_ADAPTER_PATTERN,
+      paths: PRODUCTION_ADAPTER_PATHS,
+      passWhen: (result) => result.exitCode !== 0 || !hasForbiddenProductionAdapterLine(result.stdout, /README\.md:.*(policy|synthetic|substitute|adapter|none)/i)
     },
-    { label: "legacy RPC gate", command: ["rg", "-n", "AETHEROPS_ENABLE_LEGACY_RPC", "src/server/webServer.ts"], passWhen: (result) => result.exitCode === 0 },
-    { label: "WebSearchTool no evidence policy", command: ["rg", "-n", "class WebSearchTool|evidence:\\s*\\[\\]", "src/core/toolRegistry.ts"], passWhen: (result) => result.exitCode === 0 && result.stdout.includes("evidence: []") },
-    { label: "ProjectContextSnapshot enforcement", command: ["rg", "-n", "ProjectContextSnapshot|buildContextFromProjectContext", "src/core/orchestrator.ts", "src/core/hybridRetrievalEngine.ts", "src/core/projectContextBuilder.ts"], passWhen: (result) => result.exitCode === 0 },
-    { label: "DataAnalysis tool input availability", command: ["rg", "-n", "normalizedRecords:|validationResults:|projectContextSnapshots:", "src/core/orchestrator.ts"], passWhen: (result) => result.exitCode === 0 },
-    { label: "WebFetch hardening markers", command: ["rg", "-n", "AbortController|content-length|body read timeout|fc00|fe80|ff00|::ffff", "src/core/toolRegistry.ts"], passWhen: (result) => result.exitCode === 0 },
-    { label: "rawText sanitization markers", command: ["rg", "-n", "rawText", "scripts", "src/server", "src/core"], passWhen: (result) => result.exitCode === 0 },
-    { label: "old previous-evidence WebFetch message removed", command: ["rg", "-n", "requires at least one external source URL from previous evidence", "src"], passWhen: (result) => result.exitCode !== 0 }
+    { label: "legacy RPC gate", pattern: /AETHEROPS_ENABLE_LEGACY_RPC/, paths: ["src/server/webServer.ts"], passWhen: (result) => result.exitCode === 0 },
+    { label: "WebSearchTool no evidence policy", pattern: /class WebSearchTool|evidence:\s*\[\]/, paths: ["src/core/toolRegistry.ts"], passWhen: (result) => result.exitCode === 0 && result.stdout.includes("evidence: []") },
+    { label: "ProjectContextSnapshot enforcement", pattern: /ProjectContextSnapshot|buildContextFromProjectContext/, paths: ["src/core/orchestrator.ts", "src/core/hybridRetrievalEngine.ts", "src/core/projectContextBuilder.ts"], passWhen: (result) => result.exitCode === 0 },
+    { label: "DataAnalysis tool input availability", pattern: /normalizedRecords:|validationResults:|projectContextSnapshots:/, paths: ["src/core/orchestrator.ts"], passWhen: (result) => result.exitCode === 0 },
+    { label: "WebFetch hardening markers", pattern: /AbortController|content-length|body read timeout|fc00|fe80|ff00|::ffff/, paths: ["src/core/toolRegistry.ts"], passWhen: (result) => result.exitCode === 0 },
+    { label: "rawText sanitization markers", pattern: /rawText/, paths: ["scripts", "src/server", "src/core"], passWhen: (result) => result.exitCode === 0 },
+    { label: "old previous-evidence WebFetch message removed", pattern: /requires at least one external source URL from previous evidence/, paths: ["src"], passWhen: (result) => result.exitCode !== 0 }
   ];
   for (const check of checks) {
-    const result = runProcess(check.command[0], check.command.slice(1));
+    const matches = scanTextForPattern(check.pattern, check.paths);
+    const result = { exitCode: matches.length ? 0 : 1, stdout: matches.join("\n"), stderr: "" };
     const passed = check.passWhen(result);
     results.grepChecks.push({ label: check.label, exitCode: result.exitCode, passed, sample: sampleOutput(result.stdout || result.stderr) });
     if (!passed) results.findings.high.push(`Grep invariant failed: ${check.label}.`);
@@ -194,18 +234,68 @@ async function startServer(port) {
   throw new Error(`Server health check timed out: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
-async function runServerSmoke() {
+async function runServerVerify() {
   const port = Number(results.server.port ?? 0) || findPortInServerOutput(results.server.stdout) || await currentServerPort();
   const health = await fetchJson(`http://127.0.0.1:${port}/api/health`, 5_000);
   const settings = await rpc(port, "settings.get", []);
+  const toolDiagnostics = await rpc(port, "tools.diagnostics", []);
+  const toolPreflight = await rpc(port, "tools.preflightEngineering", ["all"]);
   results.server.port = health.body.port ?? port;
   results.server.health = { status: health.status, contentType: health.contentType, body: health.body };
   results.settings = settings.result;
+  results.toolDiagnostics = toolDiagnostics.result;
+  results.toolPreflight = toolPreflight.result;
+  assertEngineeringTemplateContract(results.toolDiagnostics);
   if (!health.contentType.includes("application/json; charset=utf-8")) results.findings.critical.push("Health response is missing application/json; charset=utf-8.");
   if (resolve(health.body.dataRoot) !== dataRoot) results.findings.critical.push(`Health dataRoot mismatch: ${health.body.dataRoot}`);
+  if (results.toolPreflight.status !== "failed") results.findings.high.push("Engineering program preflight did not fail closed with default self-test settings.");
   const legacy = await rpc(port, "opencode.run", ["invalid-project"], { allowFailure: true });
   results.server.legacyRpcBlocked = Boolean(legacy.error?.includes("Legacy RPC method opencode.run is disabled"));
   if (!results.server.legacyRpcBlocked) results.findings.high.push("Legacy RPC opencode.run was not blocked by default.");
+}
+
+function assertEngineeringTemplateContract(toolDiagnostics = {}) {
+  const templates = Array.isArray(toolDiagnostics.engineeringProgramRequestTemplates) ? toolDiagnostics.engineeringProgramRequestTemplates : [];
+  const openVspTemplate = templates.find((template) => template.id === "vsp-script-run:openvsp");
+  const su2Template = templates.find((template) => template.id === "su2-case-run:su2");
+  if (templates.length !== 9) {
+    results.findings.high.push(`Engineering program template contract changed: expected 9 templates, found ${templates.length}.`);
+  }
+  if (!su2Template) {
+    results.findings.high.push("Engineering program template contract is missing su2-case-run:su2.");
+  } else {
+    if (su2Template.request?.kind !== "su2-case-run" || su2Template.request?.target !== "su2") {
+      results.findings.high.push("SU2 request template does not expose kind=su2-case-run and target=su2.");
+    }
+    if (su2Template.request?.outputFileName !== "su2-run-output.txt") {
+      results.findings.high.push("SU2 request template outputFileName changed unexpectedly.");
+    }
+  }
+  if (!openVspTemplate) {
+    results.findings.high.push("Engineering program template contract is missing vsp-script-run:openvsp.");
+    return;
+  }
+  if (openVspTemplate.request?.kind !== "vsp-script-run" || openVspTemplate.request?.target !== "openvsp") {
+    results.findings.high.push("OpenVSP request template does not expose kind=vsp-script-run and target=openvsp.");
+  }
+  if (openVspTemplate.request?.outputFileName !== "openvsp-script-output.json") {
+    results.findings.high.push("OpenVSP request template outputFileName changed unexpectedly.");
+  }
+}
+
+async function runUiVerify() {
+  const port = Number(results.server.port ?? 0) || findPortInServerOutput(results.server.stdout) || await currentServerPort();
+  const check = runTimed(process.execPath, [join(repoRoot, "scripts", "ui-layout-verify.mjs"), "--url", `http://127.0.0.1:${port}`], "npm run ui:verify");
+  results.uiVerify = {
+    status: check.exitCode === 0 ? "PASS" : "FAIL",
+    exitCode: check.exitCode,
+    seconds: check.seconds,
+    stdout: check.stdout,
+    stderr: check.stderr
+  };
+  if (check.exitCode !== 0) {
+    results.findings.high.push("UI layout verification failed against the self-test server.");
+  }
 }
 
 async function runBlockedPath() {
@@ -228,17 +318,21 @@ async function runBlockedPath() {
   await rpc(port, "research.inputResearchQuestionHypothesis", [projectId, {
     researchQuestion: "검색 snippet을 evidence로 쓰지 않는 strict research loop가 설정 부족 상황에서 올바르게 blocked 되는가? 한글 질문: Vector RAG와 Hybrid RAG의 근거 추적성 차이를 검증한다.",
     initialHypotheses: [
-      "필수 LLM/OpenCode/Embedding 설정이 부족하면 연구는 조용히 fallback하지 않고 blocked 또는 failed로 기록되어야 한다.",
+      "필수 LLM/OpenCode/Embedding 설정이 부족하면 연구는 조용히 대체하지 않고 blocked 또는 failed로 기록되어야 한다.",
       "blocked 상태에서도 RuntimeBlocker, StepError, RunAuditOutput이 생성되어야 한다.",
       "가설: 온톨로지 그래프는 citation coverage를 개선할 수 있다."
     ],
-    constraints: ["mock/fallback 사용 금지", "검색 snippet은 evidence가 아님", "실제 API key가 없으면 blocked가 정상"],
+    constraints: ["synthetic-substitute 사용 금지", "검색 snippet은 evidence가 아님", "실제 API key가 없으면 blocked가 정상"],
     expectedOutputs: ["RuntimeBlocker", "StepError", "RunAuditOutput"]
   }]);
   const started = performance.now();
   await rpc(port, "loop.start", [projectId], { timeoutMs: 360_000 });
   const snapshot = (await rpc(port, "snapshots.get", [projectId])).result;
-  const badEvidence = (snapshot.evidence ?? []).filter((item) => !item.sourceUri && !item.citation && !item.quote);
+  const evidencePolicyRows = buildEvidencePolicyRows(snapshot);
+  let badEvidenceCount = 0;
+  for (const item of evidencePolicyRows) {
+    if (item.verdict !== "PASS") badEvidenceCount += 1;
+  }
   results.blockedPath = {
     status: snapshot.project.status,
     projectId,
@@ -252,14 +346,15 @@ async function runBlockedPath() {
     latestBlocker: snapshot.runtimeBlockers.at(-1),
     latestStepError: snapshot.stepErrors.at(-1),
     latestAudit: snapshot.runAuditOutputs.at(-1),
-    badEvidenceCount: badEvidence.length
+    badEvidenceCount,
+    evidencePolicyRows
   };
   writeFileSync(join(dataRoot, "blocked-path-result.json"), `${JSON.stringify({ snapshot }, null, 2)}\n`, "utf8");
   if (!["blocked", "failed"].includes(snapshot.project.status)) results.findings.high.push(`Blocked-path ended with unexpected status: ${snapshot.project.status}.`);
   if (snapshot.finalOutputs.length !== 0) results.findings.high.push("Blocked-path produced FinalOutput.");
   if (!snapshot.runtimeBlockers.length && !snapshot.stepErrors.length) results.findings.high.push("Blocked-path did not record RuntimeBlocker or StepError.");
   if (!snapshot.runAuditOutputs.length) results.findings.medium.push("Blocked-path did not create RunAuditOutput.");
-  if (badEvidence.length) results.findings.high.push("Blocked-path evidence pollution detected: evidence without sourceUri/citation/quote.");
+  if (badEvidenceCount) results.findings.high.push(`Blocked-path evidence policy violation detected: ${badEvidenceCount} bad evidence rows.`);
 }
 
 async function assessLiveGate() {
@@ -271,13 +366,13 @@ async function assessLiveGate() {
     openCode: Boolean(settings.openCode?.enabled && settings.openCode?.command),
     embedding: Boolean(settings.embedding?.apiKeyConfigured),
     externalSearch: Boolean(settings.allowExternalSearch && ((settings.webSearch?.provider !== "disabled" && settings.webSearch?.apiKeyConfigured) || settings.browserUse?.enabled)),
-    noMockFallback: !results.grepChecks.some((check) => check.label === "production mock/fallback adapters" && !check.passed)
+    noSubstituteAdapters: hasNoFailedGrepCheck("production synthetic-substitute adapters")
   };
   const ready = Object.values(prerequisites).every(Boolean);
   return {
     ready,
     prerequisites,
-    reason: ready ? undefined : Object.entries(prerequisites).filter(([, value]) => !value).map(([key]) => key).join(", ")
+    reason: ready ? undefined : missingPrerequisiteNames(prerequisites).join(", ")
   };
 }
 
@@ -286,7 +381,7 @@ async function runLivePath() {
   const projectInput = {
     goal: "Compare Vector RAG and Hybrid RAG citation coverage.",
     topic: "자동 연구 에이전트에서 Vector RAG와 Hybrid RAG의 citation coverage 비교",
-    scope: "공개 웹/문헌 자료로 1회 짧은 live-path E2E를 검증한다.",
+    scope: "공개 웹 문헌 자료로 1회차 live-path E2E를 검증한다.",
     budget: "30분",
     autonomyPolicy: { toolApproval: "suggested", allowExternalSearch: true, allowCodeExecution: false, maxLoopIterations: 1 }
   };
@@ -294,7 +389,7 @@ async function runLivePath() {
   const projectId = created.result.project.id;
   await rpc(port, "researchDb.create", [projectId]);
   await rpc(port, "research.inputResearchQuestionHypothesis", [projectId, {
-    researchQuestion: "Vector RAG 단독 방식과 Ontology Graph를 결합한 Hybrid RAG 방식은 claim-source traceability와 evidence gap detection 측면에서 어떤 차이를 보이는가?",
+    researchQuestion: "Vector RAG 단독 방식과 Ontology Graph 결합 Hybrid RAG는 claim-source traceability와 evidence gap detection에서 어떤 차이를 보이는가?",
     initialHypotheses: [
       "Vector RAG는 chunk retrieval에는 유리하지만 claim-evidence-source traceability는 약할 수 있다.",
       "Hybrid RAG는 ProjectContextSnapshot과 ontology relation을 통해 evidence gap detection을 개선할 수 있다.",
@@ -312,7 +407,7 @@ async function runLivePath() {
     counts: snapshotCounts(snapshot),
     finalOutputs: snapshot.finalOutputs.length,
     runAuditOutputs: snapshot.runAuditOutputs.length,
-    evidenceSamples: (snapshot.evidence ?? []).slice(0, 3).map((item) => ({ title: item.title, sourceUri: item.sourceUri, citation: item.citation, quotePresent: Boolean(item.quote) }))
+    evidenceSamples: sampleEvidence(snapshot.evidence ?? [], 3)
   };
 }
 
@@ -332,15 +427,18 @@ async function validateArtifactsAndDb() {
   }
   const dbSummaries = [];
   let rawTextHits = 0;
-  for (const dbPath of dbPaths.filter(existsSync)) {
+  for (const dbPath of dbPaths) {
+    if (!existsSync(dbPath)) continue;
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      const tables = db.prepare("select name from sqlite_master where type='table' order by name").all().map((row) => row.name);
+      const tableRows = db.prepare("select name from sqlite_master where type='table' order by name").all();
       const counts = {};
-      for (const table of tables) {
-        counts[table] = db.prepare(`select count(*) as n from ${JSON.stringify(table)}`).get().n;
-        if (hasDataColumn(db, table)) {
-          rawTextHits += db.prepare(`select count(*) as n from ${JSON.stringify(table)} where data like '%rawText%'`).get().n;
+      for (const row of tableRows) {
+        const table = row.name;
+        const quotedTable = quoteSqlIdentifier(table);
+        counts[table] = db.prepare(`select count(*) as n from ${quotedTable}`).get().n;
+        if (hasDataColumn(db, quotedTable)) {
+          rawTextHits += db.prepare(`select count(*) as n from ${quotedTable} where data like '%rawText%'`).get().n;
         }
       }
       dbSummaries.push({ path: relative(dataRoot, dbPath), counts });
@@ -348,13 +446,17 @@ async function validateArtifactsAndDb() {
       db.close();
     }
   }
-  const requiredPaths = [
+  const requiredPathNames = [
     "main/main.sqlite",
     "main/vector.sqlite",
     "main/ontology.sqlite",
     "main/files/sources",
     "projects"
-  ].map((item) => ({ path: item, exists: existsSync(join(dataRoot, item)) }));
+  ];
+  const requiredPaths = [];
+  for (const item of requiredPathNames) {
+    requiredPaths.push({ path: item, exists: existsSync(join(dataRoot, item)) });
+  }
   results.artifacts = {
     requiredPaths,
     dbSummaries,
@@ -362,7 +464,7 @@ async function validateArtifactsAndDb() {
     mainSourceFiles: countFiles(join(dataRoot, "main", "files", "sources")),
     projectWebSourceFiles: countMatchingFiles(projectsRoot, /[\\/]sources[\\/]web[\\/]/)
   };
-  if (requiredPaths.some((item) => !item.exists)) results.findings.medium.push("One or more expected self-test data paths were not created.");
+  if (hasMissingRequiredPath(requiredPaths)) results.findings.medium.push("One or more expected self-test data paths were not created.");
   if (rawTextHits > 0) results.findings.high.push(`rawText payload found in SQLite JSON rows: ${rawTextHits}.`);
 }
 
@@ -390,7 +492,7 @@ async function runSecurityHarness() {
     hypotheses: [],
     evidence: [],
     artifacts: [],
-    sources: urls.map((url, index) => ({ id: `s${index}`, projectId: "security-project", kind: "web", title: url, url, retrievedAt: now, metadata: {}, createdAt: now })),
+    sources: makeSecuritySources(urls, now),
     settings
   });
   const unsafeUrls = ["http://localhost:3000", "http://127.0.0.1", "http://192.168.0.1", "http://169.254.169.254", "http://[::1]", "http://[fc00::1]", "http://[fe80::1]", "http://[ff02::1]", "http://[::ffff:127.0.0.1]"];
@@ -430,19 +532,102 @@ async function runSecurityHarness() {
 
 async function validateUtf8() {
   const blockedResultPath = join(dataRoot, "blocked-path-result.json");
-  const blockedText = existsSync(blockedResultPath) ? readFileSync(blockedResultPath, "utf8") : "";
+  const blockedAudit = auditUtf8File(blockedResultPath);
+  const blockedText = blockedAudit.text;
   const reportCandidates = safeGlobFiles(join(dataRoot, "projects"), /run-audit\.md$/);
-  const auditText = reportCandidates.map((file) => readFileSync(file, "utf8")).join("\n");
-  const hasQuestionQuestion = /\?\?/.test(blockedText) || /\?\?/.test(auditText);
-  const hasReplacement = blockedText.includes("\uFFFD") || auditText.includes("\uFFFD");
+  const generatedTextAudit = auditUtf8Files(safeGlobFiles(dataRoot, /\.(?:md|json|jsonl|nt|txt)$/i));
+  const auditScan = scanAuditUtf8(reportCandidates, generatedTextAudit.audits);
+  const blockedJsonSentinels = sentinelStatus(blockedText, KOREAN_UTF8_SENTINELS);
+  const hasQuestionQuestion = /[?]{2,}/.test(blockedText) || auditScan.hasQuestionQuestion;
+  const hasReplacement = blockedText.includes("\uFFFD") || auditScan.hasReplacement;
+  const hasMojibake = MOJIBAKE_MARKER.test(blockedText) || auditScan.hasMojibake || !generatedTextAudit.fatalOk;
   results.utf8 = {
-    blockedJsonHasKorean: blockedText.includes("한글 질문"),
-    auditHasKoreanRequirement: auditText.includes("Embedding API key가 필요합니다.") || auditText.includes("LLM 설정") || auditText.includes("OpenCode"),
+    blockedJsonHasKorean: Object.values(blockedJsonSentinels).some(Boolean),
+    blockedJsonKoreanSentinels: blockedJsonSentinels,
+    blockedJsonFatalUtf8: blockedAudit.fatalOk,
+    blockedJsonFirstBytes: blockedAudit.firstBytes,
+    auditHasKoreanRequirement: auditScan.hasKoreanRequirement,
+    auditKoreanSentinels: auditScan.koreanSentinels,
+    generatedTextFileCount: generatedTextAudit.fileCount,
+    generatedTextFatalUtf8: generatedTextAudit.fatalOk,
+    generatedTextFatalFailures: generatedTextAudit.failures,
+    generatedTextBomFiles: generatedTextAudit.bomFiles,
     hasQuestionQuestion,
     hasReplacement,
-    apiCharset: results.server.health?.contentType
+    hasMojibake,
+    apiCharset: results.server.health?.contentType,
+    markdownBomPolicy: shouldWriteMarkdownBom() ? "bom-enabled" : "bom-disabled"
   };
-  if (hasQuestionQuestion || hasReplacement) results.findings.medium.push("UTF-8 regression marker found in blocked-path JSON or audit markdown.");
+  if (hasMojibake) results.findings.medium.push("UTF-8/mojibake regression marker found in blocked-path JSON or audit markdown.");
+  if (blockedText && !Object.values(blockedJsonSentinels).every(Boolean)) {
+    results.findings.medium.push("Blocked-path JSON is missing one or more Korean UTF-8 sentinel strings.");
+  }
+  if (!generatedTextAudit.fatalOk) {
+    results.findings.high.push(`Generated text files failed strict UTF-8 decoding: ${generatedTextAudit.failures.length}.`);
+  }
+}
+
+function auditUtf8Files(files) {
+  const failures = [];
+  const bomFiles = [];
+  const audits = new Map();
+  for (const file of files) {
+    const audit = auditUtf8File(file);
+    audits.set(file, audit);
+    if (!audit.fatalOk) failures.push({ file: relative(repoRoot, file), error: audit.error });
+    if (audit.hasBom) bomFiles.push(relative(repoRoot, file));
+  }
+  return {
+    fileCount: files.length,
+    fatalOk: failures.length === 0,
+    failures,
+    bomFiles,
+    audits
+  };
+}
+
+function auditUtf8File(file) {
+  if (!existsSync(file)) {
+    return { text: "", fatalOk: true, hasBom: false, firstBytes: "" };
+  }
+  const bytes = readFileSync(file);
+  const firstBytes = bytes.subarray(0, 4).toString("hex");
+  const hasBom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return { text, fatalOk: !text.includes("\uFFFD"), hasBom, firstBytes };
+  } catch (error) {
+    return { text: "", fatalOk: false, hasBom, firstBytes, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function scanAuditUtf8(files, audits = new Map()) {
+  const result = {
+    hasQuestionQuestion: false,
+    hasReplacement: false,
+    hasMojibake: false,
+    hasKoreanRequirement: false,
+    koreanSentinels: Object.fromEntries(KOREAN_UTF8_SENTINELS.map((item) => [item, false]))
+  };
+  for (const file of files) {
+    const audit = audits.get(file) ?? auditUtf8File(file);
+    const text = audit.text;
+    result.hasQuestionQuestion ||= /[?]{2,}/.test(text);
+    result.hasReplacement ||= text.includes("\uFFFD");
+    result.hasMojibake ||= MOJIBAKE_MARKER.test(text);
+    result.hasKoreanRequirement ||=
+      text.includes("Embedding API key가 필요합니다.") ||
+      text.includes("LLM 설정") ||
+      text.includes("OpenCode");
+    for (const sentinel of KOREAN_UTF8_SENTINELS) {
+      result.koreanSentinels[sentinel] ||= text.includes(sentinel);
+    }
+  }
+  return result;
+}
+
+function sentinelStatus(text, sentinels) {
+  return Object.fromEntries(sentinels.map((sentinel) => [sentinel, text.includes(sentinel)]));
 }
 
 function snapshotCounts(snapshot) {
@@ -459,6 +644,39 @@ function snapshotCounts(snapshot) {
   };
 }
 
+function sampleEvidence(evidence, limit) {
+  const samples = [];
+  for (const item of evidence) {
+    if (samples.length >= limit) break;
+    samples.push({
+      title: item.title,
+      sourceUri: item.sourceUri,
+      citation: item.citation,
+      quotePresent: Boolean(item.quote)
+    });
+  }
+  return samples;
+}
+
+function makeSecuritySources(urls, now) {
+  const sources = [];
+  let index = 0;
+  for (const url of urls) {
+    sources.push({
+      id: `s${index}`,
+      projectId: "security-project",
+      kind: "web",
+      title: url,
+      url,
+      retrievedAt: now,
+      metadata: {},
+      createdAt: now
+    });
+    index += 1;
+  }
+  return sources;
+}
+
 function verdict() {
   if (results.findings.critical.length || results.findings.high.length) return "FAIL";
   if (results.findings.medium.length || (mode !== "blocked" && results.livePath.status === "SKIPPED")) return "PASS_WITH_WARNINGS";
@@ -468,15 +686,34 @@ function verdict() {
 function writeReport(data) {
   mkdirSync(join(repoRoot, "docs"), { recursive: true });
   const report = renderReport(data);
-  const body = process.env.AETHEROPS_MARKDOWN_BOM === "true" ? `\uFEFF${report}` : report;
+  const body = withOptionalMarkdownBom(report);
   writeFileSync(reportPath, body, "utf8");
+}
+
+function withOptionalMarkdownBom(markdown) {
+  if (!shouldWriteMarkdownBom() || markdown.startsWith("\uFEFF")) return markdown;
+  return `\uFEFF${markdown}`;
+}
+
+function shouldWriteMarkdownBom() {
+  const setting = process.env.AETHEROPS_MARKDOWN_BOM?.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(setting)) return true;
+  if (["false", "0", "no", "off"].includes(setting)) return false;
+  return process.platform === "win32";
+}
+
+function collectFinalGitStatus() {
+  const dirtyFilesAfter = ensureExpectedReportUpdate(gitStatusShort());
+  results.environment.dirtyFilesAfter = dirtyFilesAfter;
+  results.environment.generatedBySelfTest = diffGitStatus(results.environment.dirtyFilesBefore ?? [], dirtyFilesAfter);
+  results.environment.expectedSelfTestReportUpdate = dirtyFilesAfter.some((entry) => gitStatusPath(entry) === "docs/aetherops-self-test-report.md");
 }
 
 function renderReport(data) {
   return `# AetherOps Self-Test Report
 
-Generated: ${new Date().toISOString()}  
-Workspace: \`${repoRoot}\`  
+Generated: ${new Date().toISOString()}
+Workspace: \`${repoRoot}\`
 Data root: \`${dataRoot}\`
 
 ## 1. Environment
@@ -488,17 +725,31 @@ Data root: \`${dataRoot}\`
 - OS: \`${data.environment.os}\`
 - Package engine: \`${data.environment.engine}\`
 - Engine check: ${data.environment.engineSatisfied ? "PASS" : "FAIL"}
-- Dirty files before self-test: ${data.environment.dirtyFiles?.length ? data.environment.dirtyFiles.map((item) => `\`${item}\``).join(", ") : "none"}
+- Static mode: ${data.environment.staticMode}
+
+### Dirty files before self-test
+
+${listGitStatusInline(data.environment.dirtyFilesBefore)}
+
+### Files generated by self-test
+
+${listGitStatusInline(data.environment.generatedBySelfTest)}
+
+### Dirty files after self-test
+
+${listGitStatusInline(data.environment.dirtyFilesAfter)}
+
+Expected self-test report update: ${data.environment.expectedSelfTestReportUpdate ? "`docs/aetherops-self-test-report.md`" : "none detected"}
 
 ## 2. Static Checks
 
-${table(["Check", "Result", "Seconds"], data.staticChecks.map((item) => [item.label, item.exitCode === 0 ? "PASS" : "FAIL", String(item.seconds)]))}
+${table(["Check", "Result", "Seconds"], staticCheckRows(data.staticChecks))}
 
 ### Grep Invariants
 
-${data.grepChecks.map((item) => `- ${item.passed ? "PASS" : "FAIL"}: ${item.label}${item.sample ? ` - ${item.sample}` : ""}`).join("\n")}
+${grepCheckList(data.grepChecks)}
 
-## 3. Server Smoke Test
+## 3. Server Verification
 
 - Health status: ${data.server.health?.status ?? "not run"}
 - Health content type: \`${data.server.health?.contentType ?? "unknown"}\`
@@ -508,10 +759,23 @@ ${data.grepChecks.map((item) => `- ${item.passed ? "PASS" : "FAIL"}: ${item.labe
   - OpenCode: enabled=\`${data.settings.openCode?.enabled}\`, command=\`${data.settings.openCode?.command ?? ""}\`
   - Embedding: provider=\`${data.settings.embedding?.provider ?? "unknown"}\`, apiKeyConfigured=\`${Boolean(data.settings.embedding?.apiKeyConfigured)}\`
   - Web Search: provider=\`${data.settings.webSearch?.provider ?? "unknown"}\`, apiKeyConfigured=\`${Boolean(data.settings.webSearch?.apiKeyConfigured)}\`
+  - Research Metadata: provider=\`${data.toolDiagnostics.researchMetadata?.provider ?? "unknown"}\`, ready=\`${Boolean(data.toolDiagnostics.researchMetadata?.ready)}\`
+  - Engineering Programs: executable=\`${Boolean(data.toolDiagnostics.executableTools?.includes?.("EngineeringProgramTool"))}\`, readyTargets=\`${engineeringReadyTargets(data.toolDiagnostics.engineeringPrograms)}\`
+  - Engineering Request Templates: total=\`${data.toolDiagnostics.engineeringProgramRequestTemplates?.length ?? 0}\`, ready=\`${engineeringReadyTemplateCount(data.toolDiagnostics.engineeringProgramRequestTemplates)}\`
+  - Engineering Artifact Candidates: total=\`${data.toolDiagnostics.engineeringArtifactCandidates?.length ?? 0}\`, ready=\`${engineeringReadyArtifactCandidateCount(data.toolDiagnostics.engineeringArtifactCandidates)}\`
+  - Engineering Preflight: status=\`${data.toolPreflight.status ?? "unknown"}\`, error=\`${data.toolPreflight.error ?? ""}\`
   - Browser: enabled=\`${Boolean(data.settings.browserUse?.enabled)}\`
 - Legacy RPC default gate: ${data.server.legacyRpcBlocked ? "PASS" : "FAIL"}
 
-## 4. Blocked-path E2E
+## 4. UI Layout Verification
+
+- Status: \`${data.uiVerify.status}\`
+- Exit code: \`${data.uiVerify.exitCode ?? "n/a"}\`
+- Seconds: \`${data.uiVerify.seconds ?? "n/a"}\`
+- Stdout sample: \`${sampleOutput(data.uiVerify.stdout ?? "", 700)}\`
+- Stderr sample: \`${sampleOutput(data.uiVerify.stderr ?? "", 700)}\`
+
+## 5. Blocked-path E2E
 
 - Status: \`${data.blockedPath.status}\`
 - Project ID: \`${data.blockedPath.projectId ?? "n/a"}\`
@@ -524,39 +788,51 @@ ${data.grepChecks.map((item) => `- ${item.passed ? "PASS" : "FAIL"}: ${item.labe
 - Latest blocker: \`${JSON.stringify(data.blockedPath.latestBlocker ?? {})}\`
 - Counts: \`${JSON.stringify(data.blockedPath.counts ?? {})}\`
 
-## 5. Live-path E2E
+### Evidence Policy Table
+
+${table(["Evidence ID", "traceabilityKind", "canSupportHypothesis", "citation", "quote", "sourceQualityTier", "generatedBy", "verdict"], evidencePolicyTableRows(data.blockedPath.evidencePolicyRows)) || "No evidence rows."}
+
+## 6. Live-path E2E
 
 - Status: \`${data.livePath.status}\`
 - Reason: ${data.livePath.reason ?? "n/a"}
 - Prerequisites: \`${JSON.stringify(data.livePath.prerequisites ?? {})}\`
 - Counts: \`${JSON.stringify(data.livePath.counts ?? {})}\`
 
-## 6. File / DB Artifact Validation
+## 7. File / DB Artifact Validation
 
-- Required paths: ${data.artifacts.requiredPaths?.map((item) => `${item.exists ? "PASS" : "FAIL"} ${item.path}`).join("; ") ?? "not run"}
+- Required paths: ${requiredPathSummary(data.artifacts.requiredPaths)}
 - rawText SQLite hits: ${data.artifacts.rawTextHits ?? "not run"}
 - Main source files: ${data.artifacts.mainSourceFiles ?? 0}
 - Project web source files: ${data.artifacts.projectWebSourceFiles ?? 0}
-- DB summaries: \`${JSON.stringify((data.artifacts.dbSummaries ?? []).map((item) => ({ path: item.path, counts: item.counts })))}\`
+- DB summaries: \`${dbSummariesJson(data.artifacts.dbSummaries)}\`
 
-## 7. Security Tests
+## 8. Security Tests
 
 - Unsafe URL pre-fetch block: ${data.security.unsafeBlocked ? "PASS" : "not run/fail"}
 - Unsafe harness fetch calls: ${data.security.unsafeFetchCalls ?? "n/a"}
 - Public URL stub accepted: ${data.security.publicUrlAccepted ? "PASS" : "not run/fail"}
 - Timeout/size/content-type coverage: covered by \`npm test\` and source invariant checks.
 
-## 8. UTF-8 Test
+## 9. UTF-8 Test
 
 - Korean blocked-path input preserved: ${data.utf8.blockedJsonHasKorean ? "PASS" : "not run/fail"}
+- Korean blocked-path sentinels: \`${JSON.stringify(data.utf8.blockedJsonKoreanSentinels ?? {})}\`
+- Blocked-path JSON fatal UTF-8 decode: ${data.utf8.blockedJsonFatalUtf8 ? "PASS" : "FAIL"} (first bytes: \`${data.utf8.blockedJsonFirstBytes ?? ""}\`)
 - Audit markdown Korean preserved: ${data.utf8.auditHasKoreanRequirement ? "PASS" : "not run/fail"}
+- Audit markdown Korean sentinels: \`${JSON.stringify(data.utf8.auditKoreanSentinels ?? {})}\`
+- Generated text files fatal UTF-8 decode: ${data.utf8.generatedTextFatalUtf8 ? "PASS" : "FAIL"} (${data.utf8.generatedTextFileCount ?? 0} files)
+- Generated text BOM files: \`${JSON.stringify(data.utf8.generatedTextBomFiles ?? [])}\`
+- Generated text fatal failures: \`${JSON.stringify(data.utf8.generatedTextFatalFailures ?? [])}\`
 - Contains \`??\`: ${data.utf8.hasQuestionQuestion ? "YES" : "NO"}
 - Contains replacement char: ${data.utf8.hasReplacement ? "YES" : "NO"}
+- Contains broader mojibake marker: ${data.utf8.hasMojibake ? "YES" : "NO"}
 - API charset: \`${data.utf8.apiCharset ?? data.server.health?.contentType ?? "unknown"}\`
+- Markdown BOM policy: \`${data.utf8.markdownBomPolicy ?? "unknown"}\`
 
-Windows PowerShell note: use \`Get-Content -Encoding UTF8 docs/aetherops-self-test-report.md\` if the default console displays mojibake.
+Windows PowerShell note: if default \`Get-Content <path>\` displays Korean as garbled text, this is a console decoding issue, not evidence that AetherOps rewrote the bytes. Use \`Get-Content -Encoding UTF8 <path>\` for generated Markdown, JSON, JSONL, NT, and source files. For example: \`Get-Content -Encoding UTF8 docs/aetherops-self-test-report.md\`.
 
-## 9. Findings
+## 10. Findings
 
 ### Critical
 ${list(data.findings.critical)}
@@ -570,11 +846,11 @@ ${list(data.findings.medium)}
 ### Low
 ${list(data.findings.low)}
 
-## 10. Recommended Fixes
+## 11. Recommended Fixes
 
 ${list(data.recommendations.length ? data.recommendations : ["No mandatory fixes. Configure real embedding/search credentials to exercise live-path E2E."])}
 
-## 11. Verdict
+## 12. Verdict
 
 \`${data.verdict}\`
 `;
@@ -654,15 +930,6 @@ async function findFreePort() {
   });
 }
 
-async function canListen(port) {
-  return new Promise((resolveCanListen) => {
-    const server = createServer();
-    server.once("error", () => resolveCanListen(false));
-    server.once("listening", () => server.close(() => resolveCanListen(true)));
-    server.listen(port, "127.0.0.1");
-  });
-}
-
 async function currentServerPort() {
   const port = findPortInServerOutput(results.server.stdout);
   if (!port) throw new Error("Could not determine server port.");
@@ -675,12 +942,14 @@ function findPortInServerOutput(output = "") {
 }
 
 function parseArgs(rawArgs) {
-  const parsed = { strictLive: false };
+  const parsed = { strictLive: false, skipStatic: false, fullStatic: false };
   for (const arg of rawArgs) {
     if (arg.startsWith("--mode=")) parsed.mode = arg.slice("--mode=".length);
     else if (arg.startsWith("--port=")) parsed.port = Number(arg.slice("--port=".length));
     else if (arg.startsWith("--data-root=")) parsed.dataRoot = arg.slice("--data-root=".length);
     else if (arg === "--strict-live") parsed.strictLive = true;
+    else if (arg === "--skip-static") parsed.skipStatic = true;
+    else if (arg === "--full-static") parsed.fullStatic = true;
   }
   if (!["full", "blocked", "live", undefined].includes(parsed.mode)) {
     throw new Error(`Unknown selftest mode: ${parsed.mode}`);
@@ -688,28 +957,173 @@ function parseArgs(rawArgs) {
   return parsed;
 }
 
-function satisfiesNodeEngine(version, range) {
-  const match = range.match(/>=\s*(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return true;
-  const actual = version.split(".").map(Number);
-  const required = match.slice(1).map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    if ((actual[index] ?? 0) > required[index]) return true;
-    if ((actual[index] ?? 0) < required[index]) return false;
+function describeStaticMode() {
+  if (skipStatic) return "skipped (--skip-static)";
+  if (mode === "live" && !fullStatic) return "build only (live default)";
+  return "typecheck + test + build";
+}
+
+function buildEvidencePolicyRows(snapshot) {
+  const rows = [];
+  const evidenceItems = new Map();
+  const sourcesById = new Map();
+  for (const source of snapshot.sources ?? []) {
+    sourcesById.set(source.id, source);
+  }
+  for (const item of snapshot.evidence ?? []) {
+    const source = sourcesById.get(item.sourceId);
+    evidenceItems.set(item.id, {
+      id: item.id,
+      sourceUri: item.sourceUri,
+      citation: item.citation,
+      quote: item.quote,
+      metadata: { ...(source?.metadata ?? {}), ...(item.metadata ?? {}) },
+      sourceId: item.sourceId,
+      normalized: false
+    });
+  }
+  for (const record of snapshot.normalizedRecords ?? []) {
+    const kind = String(record.kind ?? record.recordKind ?? record.metadata?.recordKind ?? "");
+    if (kind !== "evidence") continue;
+    const existing = evidenceItems.get(record.sourceEvidenceId ?? record.evidenceId ?? record.id);
+    evidenceItems.set(existing?.id ?? record.id, {
+      id: existing?.id ?? record.id,
+      sourceUri: existing?.sourceUri ?? record.sourceUri ?? record.metadata?.sourceUri,
+      citation: existing?.citation ?? record.citation ?? record.metadata?.citation,
+      quote: existing?.quote ?? record.quote ?? record.metadata?.quote,
+      metadata: { ...(existing?.metadata ?? {}), ...(record.metadata ?? {}) },
+      sourceId: existing?.sourceId ?? record.sourceId,
+      normalized: true,
+      record
+    });
+  }
+
+  for (const item of evidenceItems.values()) {
+    const metadata = item.metadata ?? {};
+    const traceabilityKind = String(metadata.traceabilityKind ?? "unknown");
+    const canSupportHypothesis = metadata.canSupportHypothesis === true;
+    const sourceQualityTier = String(metadata.sourceQualityTier ?? "unknown");
+    const generatedBy = String(metadata.generatedBy ?? metadata.toolName ?? metadata.sourceTool ?? metadata.adapter ?? inferGeneratedBy(metadata));
+    const hasSourceUri = Boolean(item.sourceUri ?? metadata.sourceUri ?? metadata.url ?? metadata.doi ?? metadata.pdfUrl);
+    const hasCitation = Boolean(item.citation ?? metadata.citation ?? metadata.sourceUri ?? metadata.url ?? metadata.doi ?? metadata.pdfUrl);
+    const hasQuote = Boolean(item.quote ?? metadata.quote);
+    const lowerGeneratedBy = generatedBy.toLowerCase();
+    const verdictReasons = [];
+    if (lowerGeneratedBy.includes("websearch") || metadata.snippet) verdictReasons.push("WebSearch snippet promoted");
+    if (lowerGeneratedBy.includes("opencode") && canSupportHypothesis) verdictReasons.push("OpenCode claim/observation support evidence");
+    if (traceabilityKind === "internal_artifact" && canSupportHypothesis) verdictReasons.push("internal_artifact support evidence");
+    if (canSupportHypothesis && !hasCitation) verdictReasons.push("support evidence lacks citation/sourceUri/doi/pdfUrl");
+    rows.push({
+      id: String(item.id),
+      traceabilityKind,
+      canSupportHypothesis,
+      hasCitation,
+      hasQuote,
+      sourceQualityTier,
+      generatedBy,
+      verdict: verdictReasons.length ? `FAIL: ${verdictReasons.join("; ")}` : "PASS"
+    });
+  }
+  return rows;
+}
+
+function hasNoFailedGrepCheck(label) {
+  for (const check of results.grepChecks) {
+    if (check.label === label && !check.passed) return false;
   }
   return true;
 }
 
-function hasDataColumn(db, table) {
-  return db.prepare(`pragma table_info(${JSON.stringify(table)})`).all().some((column) => column.name === "data");
+function hasMissingRequiredPath(paths) {
+  for (const item of paths) {
+    if (!item.exists) return true;
+  }
+  return false;
+}
+
+function missingPrerequisiteNames(prerequisites) {
+  const missing = [];
+  for (const [key, value] of Object.entries(prerequisites)) {
+    if (!value) missing.push(key);
+  }
+  return missing;
+}
+
+function inferGeneratedBy(metadata) {
+  if (metadata.fetchStatus === "fetched" || metadata.contentType) return "WebFetchTool";
+  if (metadata.snippet) return "WebSearchTool";
+  if (metadata.downgradedFromEvidence) return "OpenCodeAdapter";
+  return "unknown";
+}
+
+function gitStatusShort() {
+  const entries = [];
+  for (const line of command("git", ["status", "--short"]).stdout.split(/\r?\n/)) {
+    if (line.trim()) entries.push(line);
+  }
+  return entries;
+}
+
+function diffGitStatus(before, after) {
+  const beforeByPath = new Map();
+  for (const entry of before) {
+    beforeByPath.set(gitStatusPath(entry), entry);
+  }
+  const changed = [];
+  for (const entry of after) {
+    if (beforeByPath.get(gitStatusPath(entry)) !== entry) changed.push(entry);
+  }
+  return changed;
+}
+
+function gitStatusPath(entry) {
+  return entry.replace(/^.{2}\s+/, "").replace(/^.* -> /, "").trim().replace(/\\/g, "/");
+}
+
+function hasGitStatusPath(statusEntries, targetPath) {
+  for (const entry of statusEntries) {
+    if (gitStatusPath(entry) === targetPath) return true;
+  }
+  return false;
+}
+
+function ensureExpectedReportUpdate(statusEntries) {
+  const reportEntry = " M docs/aetherops-self-test-report.md";
+  if (hasGitStatusPath(statusEntries, "docs/aetherops-self-test-report.md")) return statusEntries;
+  const output = [];
+  for (const entry of statusEntries) output.push(entry);
+  output.push(reportEntry);
+  return output;
+}
+
+function hasDataColumn(db, quotedTable) {
+  for (const column of db.prepare(`pragma table_info(${quotedTable})`).all()) {
+    if (column.name === "data") return true;
+  }
+  return false;
+}
+
+function quoteSqlIdentifier(value) {
+  return JSON.stringify(value);
 }
 
 function countFiles(root) {
-  return safeGlobFiles(root, /./).length;
+  return countMatchingFiles(root, /./);
 }
 
 function countMatchingFiles(root, pattern) {
-  return safeGlobFiles(root, pattern).length;
+  if (!existsSync(root)) return 0;
+  let count = 0;
+  const stack = [root];
+  while (stack.length) {
+    const current = stack.pop();
+    for (const entry of safeReaddirEntries(current)) {
+      const file = join(current, entry.name);
+      if (entry.isDirectory()) stack.push(file);
+      else if (pattern.test(file)) count += 1;
+    }
+  }
+  return count;
 }
 
 function safeGlobFiles(root, pattern) {
@@ -718,10 +1132,9 @@ function safeGlobFiles(root, pattern) {
   const stack = [root];
   while (stack.length) {
     const current = stack.pop();
-    for (const name of safeReaddir(current)) {
-      const file = join(current, name);
-      const stat = statSync(file);
-      if (stat.isDirectory()) stack.push(file);
+    for (const entry of safeReaddirEntries(current)) {
+      const file = join(current, entry.name);
+      if (entry.isDirectory()) stack.push(file);
       else if (pattern.test(file)) output.push(file);
     }
   }
@@ -736,6 +1149,14 @@ function safeReaddir(root) {
   }
 }
 
+function safeReaddirEntries(root) {
+  try {
+    return existsSync(root) ? readdirSync(root, { withFileTypes: true }) : [];
+  } catch {
+    return [];
+  }
+}
+
 function sampleOutput(text = "", limit = 240) {
   return text.replace(/\s+/g, " ").trim().slice(0, limit);
 }
@@ -745,11 +1166,148 @@ function sleep(ms) {
 }
 
 function table(headers, rows) {
-  const header = `| ${headers.join(" | ")} |`;
-  const separator = `| ${headers.map(() => "---").join(" | ")} |`;
-  return [header, separator, ...rows.map((row) => `| ${row.join(" | ")} |`)].join("\n");
+  if (!rows.length) return "No rows.";
+  const lines = [tableRow(headers), tableSeparator(headers.length)];
+  for (const row of rows) {
+    lines.push(tableRow(row));
+  }
+  return lines.join("\n");
+}
+
+function staticCheckRows(checks = []) {
+  const rows = [];
+  for (const item of checks) {
+    rows.push([
+      item.label,
+      item.skipped ? `SKIPPED (${item.reason})` : item.exitCode === 0 ? "PASS" : "FAIL",
+      String(item.seconds)
+    ]);
+  }
+  return rows;
+}
+
+function grepCheckList(checks = []) {
+  if (!checks.length) return "- None.";
+  const lines = [];
+  for (const item of checks) {
+    lines.push(`- ${item.passed ? "PASS" : "FAIL"}: ${item.label}${item.sample ? ` - ${item.sample}` : ""}`);
+  }
+  return lines.join("\n");
+}
+
+function evidencePolicyTableRows(rows = []) {
+  const tableRows = [];
+  for (const item of evidencePolicyRowsForReport(rows)) {
+    tableRows.push([
+      item.id,
+      item.traceabilityKind,
+      String(item.canSupportHypothesis),
+      item.hasCitation ? "yes" : "no",
+      item.hasQuote ? "yes" : "no",
+      item.sourceQualityTier,
+      item.generatedBy,
+      item.verdict
+    ]);
+  }
+  return tableRows;
+}
+
+function requiredPathSummary(paths) {
+  if (!paths) return "not run";
+  if (!paths.length) return "none";
+  const parts = [];
+  for (const item of paths) {
+    parts.push(`${item.exists ? "PASS" : "FAIL"} ${item.path}`);
+  }
+  return parts.join("; ");
+}
+
+function dbSummariesJson(summaries = []) {
+  const output = [];
+  for (const item of summaries) {
+    output.push({ path: item.path, counts: item.counts });
+  }
+  return JSON.stringify(output);
+}
+
+function engineeringReadyTargets(capabilities = []) {
+  const ready = [];
+  for (const capability of capabilities ?? []) {
+    if (capability?.ready && capability.target) ready.push(`${capability.kind}:${capability.target}`);
+  }
+  return ready.join(", ") || "none";
+}
+
+function engineeringReadyTemplateCount(templates = []) {
+  let count = 0;
+  for (const template of templates ?? []) {
+    if (template?.ready) count += 1;
+  }
+  return count;
+}
+
+function engineeringReadyArtifactCandidateCount(candidates = []) {
+  let count = 0;
+  for (const candidate of candidates ?? []) {
+    if (candidate?.ready) count += 1;
+  }
+  return count;
 }
 
 function list(items) {
-  return items.length ? items.map((item) => `- ${item}`).join("\n") : "- None.";
+  if (!items.length) return "- None.";
+  const lines = [];
+  for (const item of items) {
+    lines.push(`- ${item}`);
+  }
+  return lines.join("\n");
+}
+
+function listGitStatusInline(items = []) {
+  if (!items.length) return "- None.";
+  const lines = [];
+  for (const item of items) {
+    lines.push(`- \`${formatGitStatusEntry(item)}\``);
+  }
+  return lines.join("\n");
+}
+
+function tableRow(values) {
+  const cells = [];
+  for (const value of values) {
+    cells.push(escapeTableCell(value));
+  }
+  return `| ${cells.join(" | ")} |`;
+}
+
+function tableSeparator(count) {
+  const cells = [];
+  for (let index = 0; index < count; index += 1) {
+    cells.push("---");
+  }
+  return `| ${cells.join(" | ")} |`;
+}
+
+function formatGitStatusEntry(entry) {
+  const code = entry.slice(0, 2);
+  const filePath = gitStatusPath(entry);
+  const label = GIT_STATUS_LABELS[code] ?? (code.trim() || "changed");
+  return `${label} ${filePath}`;
+}
+
+function escapeTableCell(value) {
+  return String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function evidencePolicyRowsForReport(rows = []) {
+  return rows.length ? rows : [{
+    id: "none",
+    traceabilityKind: "n/a",
+    canSupportHypothesis: false,
+    hasCitation: false,
+    hasQuote: false,
+    sourceQualityTier: "n/a",
+    generatedBy: "n/a",
+    verdict: "PASS: no evidence rows to inspect"
+  }];
 }

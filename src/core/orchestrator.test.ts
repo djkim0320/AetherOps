@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { InMemoryResearchStore } from "./memoryStore.js";
 import { createInputProject, createStrictTestOrchestrator } from "./orchestratorTestHarness.test.js";
 import { ResearchLoopStep, type ResearchProjectInput } from "./types.js";
@@ -88,6 +88,25 @@ describe("AetherOpsOrchestrator", () => {
 
     expect(snapshot.openCodeRuns).toHaveLength(1);
     expect(snapshot.continuationDecisions.at(-1)?.forceStop).toBe(true);
+    expect(snapshot.project.status).toBe("completed");
+  });
+
+  it("does not create an unused plan after the loop limit is already exhausted", async () => {
+    const orchestrator = createStrictTestOrchestrator();
+    let snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: {
+        ...input.autonomyPolicy,
+        maxLoopIterations: 1
+      }
+    });
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+    const planCount = snapshot.researchPlans.length;
+
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.openCodeRuns).toHaveLength(1);
+    expect(snapshot.researchPlans).toHaveLength(planCount);
     expect(snapshot.project.status).toBe("completed");
   });
 

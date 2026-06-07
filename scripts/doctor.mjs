@@ -1,7 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
-import { createServer } from "node:net";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  PRODUCTION_ADAPTER_PATHS,
+  PRODUCTION_ADAPTER_PATTERN,
+  REQUIRED_SCRIPTS,
+  canListen,
+  collectMissingScripts,
+  forbiddenProductionAdapterLines,
+  scanTextForPattern,
+  satisfiesNodeEngine
+} from "./lib/checks.mjs";
 
 const repoRoot = process.cwd();
 const args = new Set(process.argv.slice(2));
@@ -17,8 +26,7 @@ const engineStatus = satisfiesNodeEngine(process.versions.node, packageJson.engi
 checks.push({ key: "engine", status: engineStatus, detail: `node ${process.version}, required ${packageJson.engines?.node ?? "unspecified"}` });
 if (engineStatus === "fail") recommendations.push("Install Node.js >=22.16.0.");
 
-const requiredScripts = ["typecheck", "test", "build", "start", "selftest", "selftest:blocked", "selftest:live", "doctor"];
-const missingScripts = requiredScripts.filter((name) => !packageJson.scripts?.[name]);
+const missingScripts = collectMissingScripts(REQUIRED_SCRIPTS, packageJson.scripts ?? {});
 checks.push({ key: "scripts", status: missingScripts.length ? "fail" : "pass", detail: missingScripts.length ? `missing: ${missingScripts.join(", ")}` : "all required scripts present" });
 
 const portAvailable = Number.isFinite(port) && port > 0 ? await canListen(port) : true;
@@ -26,8 +34,8 @@ checks.push({ key: "serverPort", status: portAvailable ? "pass" : "warn", detail
 if (!portAvailable) recommendations.push(`Port ${port} is occupied. Use AETHEROPS_PORT or run npm run selftest without --port to use an isolated port.`);
 
 const forbiddenAdapters = grepForbiddenProductionAdapters();
-checks.push({ key: "productionMockFallbackAdapters", status: forbiddenAdapters.length ? "fail" : "pass", detail: forbiddenAdapters.length ? forbiddenAdapters.join("; ") : "none found" });
-if (forbiddenAdapters.length) recommendations.push("Remove production mock/fallback adapter imports before running live research.");
+checks.push({ key: "productionSubstituteAdapters", status: forbiddenAdapters.length ? "fail" : "pass", detail: forbiddenAdapters.length ? forbiddenAdapters.join("; ") : "none found" });
+if (forbiddenAdapters.length) recommendations.push("Remove production synthetic-substitute adapter imports before running live research.");
 
 const legacyRpcGate = fileIncludes(join(repoRoot, "src", "server", "webServer.ts"), "AETHEROPS_ENABLE_LEGACY_RPC");
 checks.push({ key: "legacyRpcGate", status: legacyRpcGate ? "pass" : "fail", detail: legacyRpcGate ? "AETHEROPS_ENABLE_LEGACY_RPC gate found" : "legacy RPC gate not found" });
@@ -36,6 +44,8 @@ const opencode = assessOpenCode(settings.openCode);
 const embedding = assessEmbedding(settings.embedding);
 const webSearch = assessWebSearch(settings.webSearch);
 const llm = assessLlm(settings.openCodeLlm);
+const researchMetadata = assessResearchMetadata(settings);
+const engineeringPrograms = assessEngineeringPrograms(settings);
 const browser = settings.browserUse?.enabled ? "enabled" : "disabled";
 const externalSearch = Boolean(settings.allowExternalSearch);
 const codeExecution = Boolean(settings.allowCodeExecution);
@@ -47,6 +57,8 @@ if (!liveReady) {
 }
 if (embedding.status === "missing_api_key") recommendations.push("Set an embedding API key for the configured provider.");
 if (webSearch.status === "disabled") recommendations.push("Configure Web Search provider/API key for web-source live research, or rely on explicitly enabled browser search where appropriate.");
+if (!researchMetadata.ready) recommendations.push(`Configure research metadata if paper discovery is expected: ${researchMetadata.status}.`);
+if (!engineeringPrograms.ready) recommendations.push(`Configure real engineering programs before expecting LLM solver/tool use: ${engineeringPrograms.status}.`);
 
 const result = {
   engine: engineStatus,
@@ -61,11 +73,14 @@ const result = {
   opencodeCommand: settings.openCode?.command,
   embedding: embedding.status,
   webSearch: webSearch.status,
+  researchMetadata: researchMetadata.status,
+  engineeringPrograms: engineeringPrograms.status,
+  engineeringProgramTargets: engineeringPrograms.targets,
   browser,
   allowExternalSearch: externalSearch,
   allowCodeExecution: codeExecution,
   legacyRpcGate: legacyRpcGate ? "pass" : "fail",
-  productionMockFallbackAdapters: forbiddenAdapters.length ? "fail" : "pass",
+  productionSubstituteAdapters: forbiddenAdapters.length ? "fail" : "pass",
   liveReady,
   blockedPathReady,
   checks,
@@ -81,28 +96,39 @@ if (jsonMode) {
 process.exit(engineStatus === "fail" || forbiddenAdapters.length || !legacyRpcGate || missingScripts.length ? 1 : 0);
 
 function printHuman(result) {
-  console.log("AetherOps Doctor");
-  console.log("================");
-  console.log(`Node.js: ${result.nodeVersion} (${result.engine})`);
-  console.log(`npm: ${result.npmVersion || "unknown"}`);
-  console.log(`Data root: ${result.dataRoot}`);
-  console.log(`Server port: ${result.port} (${result.portAvailable ? "available" : "occupied"})`);
-  console.log(`LLM: ${result.llm}`);
-  console.log(`OpenCode: ${result.opencode} (${result.opencodeCommand ?? "not configured"})`);
-  console.log(`Embedding: ${result.embedding}`);
-  console.log(`Web Search: ${result.webSearch}`);
-  console.log(`Browser runtime: ${result.browser}`);
-  console.log(`allowExternalSearch: ${result.allowExternalSearch}`);
-  console.log(`allowCodeExecution: ${result.allowCodeExecution}`);
-  console.log(`Legacy RPC gate: ${result.legacyRpcGate}`);
-  console.log(`Production mock/fallback adapters: ${result.productionMockFallbackAdapters}`);
-  console.log(`Blocked-path ready: ${result.blockedPathReady}`);
-  console.log(`Live-test ready: ${result.liveReady}`);
-  if (!result.liveReady) console.log("LIVE_TEST_NOT_READY");
+  const lines = [
+    "AetherOps Doctor",
+    "================",
+    `Node.js: ${result.nodeVersion} (${result.engine})`,
+    `npm: ${result.npmVersion || "unknown"}`,
+    `Data root: ${result.dataRoot}`,
+    `Server port: ${result.port} (${result.portAvailable ? "available" : "occupied"})`,
+    `LLM: ${result.llm}`,
+    `OpenCode: ${result.opencode} (${result.opencodeCommand ?? "not configured"})`,
+    `Embedding: ${result.embedding}`,
+    `Web Search: ${result.webSearch}`,
+    `Research Metadata: ${result.researchMetadata}`,
+    `Engineering Programs: ${result.engineeringPrograms} (${result.engineeringProgramTargets.join(", ") || "none"})`,
+    `Browser runtime: ${result.browser}`,
+    `allowExternalSearch: ${result.allowExternalSearch}`,
+    `allowCodeExecution: ${result.allowCodeExecution}`,
+    `Legacy RPC gate: ${result.legacyRpcGate}`,
+    `Production synthetic-substitute adapters: ${result.productionSubstituteAdapters}`,
+    `Blocked-path ready: ${result.blockedPathReady}`,
+    `Live-test ready: ${result.liveReady}`
+  ];
+  if (!result.liveReady) lines.push("LIVE_TEST_NOT_READY");
   if (result.recommendations.length) {
-    console.log("\nRecommended next actions:");
-    for (const item of result.recommendations) console.log(`- ${item}`);
+    lines.push("", "Recommended next actions:");
+    for (const item of result.recommendations) lines.push(`- ${item}`);
   }
+  if (process.platform === "win32") {
+    lines.push(
+      "",
+      "Windows note: if Korean text looks garbled in PowerShell output or redirected files, read generated files with `Get-Content -Encoding UTF8 <path>`. For redirected command output, set `$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` and use `Out-File -Encoding utf8`."
+    );
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 function readJson(path) {
@@ -117,6 +143,64 @@ function readSettings(root) {
     webSearch: { provider: "disabled" },
     embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
     browserUse: { enabled: true, mode: "background", maxPages: 2, timeoutMs: 30000, captureScreenshots: true },
+    researchMetadata: { enabled: true, provider: "openalex", maxResults: 5, timeoutMs: 15000 },
+    engineeringTools: {
+      enabled: false,
+      xfoil: { enabled: false, command: "", timeoutMs: 30000 },
+      modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
+      openFoam: {
+        enabled: false,
+        command: "",
+        caseRoot: "",
+        workingDirectory: "",
+        probeArgs: ["-help"],
+        runArgsTemplate: ["-case", "{case}"],
+        timeoutMs: 30 * 60 * 1000
+      },
+      su2: {
+        enabled: false,
+        command: "",
+        caseRoot: "",
+        configFile: "",
+        workingDirectory: "",
+        probeArgs: ["--help"],
+        runArgsTemplate: ["{config}"],
+        timeoutMs: 30 * 60 * 1000
+      },
+      freeCad: {
+        enabled: false,
+        command: "",
+        scriptPath: "",
+        workingDirectory: "",
+        probeArgs: ["--version"],
+        runArgsTemplate: ["{script}", "--output", "{output}"],
+        timeoutMs: 30 * 60 * 1000
+      },
+      openVsp: {
+        enabled: false,
+        command: "",
+        scriptPath: "",
+        workingDirectory: "",
+        probeArgs: ["-help"],
+        runArgsTemplate: ["-script", "{script}", "-output", "{output}"],
+        timeoutMs: 30 * 60 * 1000
+      },
+      commercialCfd: {
+        flightStreamConfigured: false,
+        starCcmConfigured: false,
+        flightStreamCommand: "",
+        flightStreamWorkingDirectory: "",
+        flightStreamProbeArgs: ["--version"],
+        flightStreamRunArgsTemplate: [],
+        flightStreamTimeoutMs: 120000,
+        starCcmCommand: "",
+        starCcmWorkingDirectory: "",
+        starCcmProbeArgs: ["-version"],
+        starCcmRunArgsTemplate: [],
+        starCcmTimeoutMs: 120000,
+        notes: ""
+      }
+    },
     allowExternalSearch: true,
     allowCodeExecution: false
   };
@@ -128,7 +212,18 @@ function readSettings(root) {
     webSearch: { ...defaults.webSearch, ...(persisted.webSearch ?? {}), apiKeyConfigured: usableEncryptedKey(persisted.encryptedWebSearchKey) },
     embedding: { ...defaults.embedding, ...(persisted.embedding ?? {}), apiKeyConfigured: usableEncryptedKey(persisted.encryptedEmbeddingKey) },
     openCodeLlm: persisted.openCodeLlm ?? defaults.openCodeLlm,
-    browserUse: { ...defaults.browserUse, ...(persisted.browserUse ?? {}) }
+    browserUse: { ...defaults.browserUse, ...(persisted.browserUse ?? {}) },
+    researchMetadata: { ...defaults.researchMetadata, ...(persisted.researchMetadata ?? {}) },
+    engineeringTools: {
+      enabled: persisted.engineeringTools?.enabled ?? defaults.engineeringTools.enabled,
+      xfoil: { ...defaults.engineeringTools.xfoil, ...(persisted.engineeringTools?.xfoil ?? {}) },
+      modeling: { ...defaults.engineeringTools.modeling, ...(persisted.engineeringTools?.modeling ?? {}) },
+      openFoam: { ...defaults.engineeringTools.openFoam, ...(persisted.engineeringTools?.openFoam ?? {}) },
+      su2: { ...defaults.engineeringTools.su2, ...(persisted.engineeringTools?.su2 ?? {}) },
+      freeCad: { ...defaults.engineeringTools.freeCad, ...(persisted.engineeringTools?.freeCad ?? {}) },
+      openVsp: { ...defaults.engineeringTools.openVsp, ...(persisted.engineeringTools?.openVsp ?? {}) },
+      commercialCfd: { ...defaults.engineeringTools.commercialCfd, ...(persisted.engineeringTools?.commercialCfd ?? {}) }
+    }
   };
 }
 
@@ -148,7 +243,7 @@ function assessOpenCode(openCode = {}) {
   if (!openCode.enabled) return { ready: false, status: "disabled" };
   if (!openCode.command?.trim()) return { ready: false, status: "missing_command" };
   const bundled = bundledOpenCodeExists();
-  const commandAvailable = commandExists(openCode.command) || bundled || /[\\/]/.test(openCode.command);
+  const commandAvailable = bundled || /[\\/]/.test(openCode.command) || commandExists(openCode.command);
   return { ready: commandAvailable, status: commandAvailable ? "available" : "command_not_found" };
 }
 
@@ -165,6 +260,82 @@ function assessWebSearch(webSearch = {}) {
   const hasKey = Boolean(webSearch.apiKeyConfigured || webSearch.apiKey);
   const hasEndpoint = webSearch.provider !== "custom" || Boolean(webSearch.endpoint);
   return { ready: hasKey && hasEndpoint, status: hasKey && hasEndpoint ? "available" : "missing_api_key" };
+}
+
+function assessResearchMetadata(settings = {}) {
+  if (!settings.allowExternalSearch) return { ready: false, status: "external_search_disabled" };
+  if (!settings.researchMetadata?.enabled) return { ready: false, status: "disabled" };
+  if (settings.researchMetadata.provider !== "openalex") return { ready: false, status: `unsupported_provider_${settings.researchMetadata.provider}` };
+  return { ready: true, status: "openalex_available" };
+}
+
+function assessEngineeringPrograms(settings = {}) {
+  const tools = settings.engineeringTools ?? {};
+  const targets = [];
+  if (!settings.allowCodeExecution) return { ready: false, status: "code_execution_disabled", targets };
+  if (!tools.enabled) return { ready: false, status: "disabled", targets };
+  if (tools.xfoil?.enabled && tools.xfoil.command?.trim()) targets.push("xfoil");
+  if (tools.modeling?.enabled && directoryExists(tools.modeling.artifactRoot)) targets.push("modeling");
+  if (tools.openFoam?.enabled && tools.openFoam.command?.trim() && openFoamCaseReady(tools.openFoam.caseRoot) && hasRunArgs(tools.openFoam.runArgsTemplate)) targets.push("openfoam");
+  if (
+    tools.su2?.enabled &&
+    tools.su2.command?.trim() &&
+    su2CaseReady(tools.su2.caseRoot, tools.su2.configFile) &&
+    hasRunArgs(tools.su2.runArgsTemplate) &&
+    tools.su2.runArgsTemplate.some((arg) => String(arg).includes("{config}"))
+  ) targets.push("su2");
+  if (scriptedEngineeringToolReady(tools.freeCad)) targets.push("freecad");
+  if (scriptedEngineeringToolReady(tools.openVsp)) targets.push("openvsp");
+  if (tools.commercialCfd?.flightStreamConfigured && tools.commercialCfd.flightStreamCommand?.trim()) targets.push("flightstream");
+  if (tools.commercialCfd?.starCcmConfigured && tools.commercialCfd.starCcmCommand?.trim()) targets.push("starccm");
+  return { ready: targets.length > 0, status: targets.length ? "available" : "missing_real_program_configuration", targets };
+}
+
+function scriptedEngineeringToolReady(tool = {}) {
+  return Boolean(
+    tool.enabled &&
+      tool.command?.trim() &&
+      fileExists(tool.scriptPath) &&
+      hasRunArgs(tool.runArgsTemplate) &&
+      tool.runArgsTemplate.some((arg) => String(arg).includes("{script}"))
+  );
+}
+
+function hasRunArgs(value) {
+  return Array.isArray(value) && value.some((arg) => typeof arg === "string" && arg.trim());
+}
+
+function openFoamCaseReady(caseRoot) {
+  if (!directoryExists(caseRoot)) return false;
+  return fileExists(join(resolve(caseRoot), "system", "controlDict"));
+}
+
+function su2CaseReady(caseRoot, configFile) {
+  if (!directoryExists(caseRoot)) return false;
+  if (typeof configFile !== "string" || !configFile.trim()) return false;
+  const root = resolve(caseRoot);
+  const configPath = resolve(root, configFile.trim());
+  const rel = relative(root, configPath);
+  if (rel.startsWith("..") || isAbsolute(rel)) return false;
+  return fileExists(configPath) && extname(configPath).toLowerCase() === ".cfg";
+}
+
+function fileExists(path) {
+  if (!path || typeof path !== "string") return false;
+  try {
+    return statSync(resolve(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function directoryExists(path) {
+  if (!path || typeof path !== "string") return false;
+  try {
+    return statSync(resolve(path)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function bundledOpenCodeExists() {
@@ -191,37 +362,11 @@ function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
-async function canListen(port) {
-  return new Promise((resolveCanListen) => {
-    const server = createServer();
-    server.once("error", () => resolveCanListen(false));
-    server.once("listening", () => server.close(() => resolveCanListen(true)));
-    server.listen(port, "127.0.0.1");
-  });
-}
-
 function grepForbiddenProductionAdapters() {
-  const result = spawnSync("rg", ["-n", "MockOpenCodeAdapter|LocalResearchAdapter|CompositeOpenCodeAdapter", "src", "README.md"], { encoding: "utf8" });
-  if (result.status !== 0) return [];
-  return result.stdout
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .filter((line) => !/\.test\./.test(line))
-    .filter((line) => !/README\.md:.*(금지|policy|fallback 없음|mock 없음|no mock|no fallback)/i.test(line));
+  const stdout = scanTextForPattern(PRODUCTION_ADAPTER_PATTERN, PRODUCTION_ADAPTER_PATHS).join("\n");
+  return forbiddenProductionAdapterLines(stdout, /README\.md:.*(policy|synthetic|substitute|adapter|none)/i);
 }
 
 function fileIncludes(path, needle) {
   return existsSync(path) && readFileSync(path, "utf8").includes(needle);
-}
-
-function satisfiesNodeEngine(version, range) {
-  const match = range.match(/>=\s*(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return true;
-  const actual = version.split(".").map(Number);
-  const required = match.slice(1).map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    if ((actual[index] ?? 0) > required[index]) return true;
-    if ((actual[index] ?? 0) < required[index]) return false;
-  }
-  return true;
 }

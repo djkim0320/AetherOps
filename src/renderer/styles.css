@@ -110,7 +110,7 @@ label {
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: clamp(248px, 22vw, 300px) minmax(0, 1fr);
   background: #111111;
 }
 
@@ -164,9 +164,10 @@ label {
   border-right: 1px solid #2e2e2e;
   color: #d9d9d9;
   padding: 12px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 16px;
+  align-content: stretch;
   scrollbar-color: rgb(122 122 122 / 70%) transparent;
 }
 
@@ -325,7 +326,7 @@ label {
 }
 
 .codexSettings {
-  margin-top: auto;
+  margin-top: 0;
 }
 
 .projectSection {
@@ -456,6 +457,10 @@ label {
   align-content: start;
   gap: 18px;
   scrollbar-gutter: stable;
+}
+
+.codexContent > * {
+  min-width: 0;
 }
 
 .codexHome {
@@ -934,6 +939,10 @@ label {
   gap: 18px;
 }
 
+.codexTopbar > * {
+  min-width: 0;
+}
+
 .codexTopbar h1 {
   font-size: 28px;
   letter-spacing: 0;
@@ -953,6 +962,7 @@ label {
 }
 
 .projectComposer {
+  min-width: 0;
   border: 1px solid #d9e0eb;
   border-radius: 8px;
   background: #ffffff;
@@ -972,7 +982,65 @@ label {
   align-content: start;
 }
 
+.loopLimitControl input {
+  min-height: 38px;
+}
+
+.policyToggle {
+  min-width: 0;
+  min-height: 58px;
+  border: 1px solid #d9e0eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.policyToggle.blocked {
+  border-color: #ead0d0;
+  background: #fff7f7;
+}
+
+.policyToggle input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+}
+
+.policyToggle span,
+.policyToggle strong,
+.policyToggle small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.policyToggle span {
+  display: grid;
+  gap: 3px;
+}
+
+.policyToggle strong {
+  color: #17324d;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.policyToggle small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.policyToggle.blocked small {
+  color: #9f3a38;
+}
+
 .panel {
+  min-width: 0;
   background: #ffffff;
   border: 1px solid #d9e0eb;
   border-radius: 8px;
@@ -990,6 +1058,7 @@ label {
 }
 
 .panelTitle {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -998,7 +1067,9 @@ label {
 
 .panelTitle h2,
 .panelTitle h3 {
+  min-width: 0;
   font-size: 15px;
+  overflow-wrap: anywhere;
 }
 
 .fieldGrid,
@@ -1053,6 +1124,211 @@ label {
   color: #ffffff;
 }
 
+.iconButtonText {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.preflightPanel {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  margin-bottom: 14px;
+}
+
+.preflightResult {
+  min-width: 0;
+  border: 1px solid #d9e0eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+  display: grid;
+  gap: 3px;
+}
+
+.preflightResult strong,
+.preflightResult span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.preflightResult strong {
+  font-size: 12px;
+  color: #17324d;
+}
+
+.preflightResult span {
+  font-size: 12px;
+  color: #475467;
+}
+
+.preflightResult.completed {
+  border-color: #bbf7d0;
+  background: #f7fff9;
+}
+
+.preflightResult.failed {
+  border-color: #fecaca;
+  background: #fff8f8;
+}
+
+.preflightOutput {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #d9e0eb;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 12px;
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.requestContractList {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.artifactCandidateList {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  border: 1px solid #d9e0eb;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 10px 12px;
+}
+
+.requestContractHeader,
+.requestContractItem summary,
+.artifactCandidateItem {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(140px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.requestContractHeader,
+.artifactCandidateItem {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.requestContractHeader strong {
+  font-size: 12px;
+  color: #17324d;
+}
+
+.requestContractHeader span,
+.requestContractItem summary strong {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 850;
+  background: #eef2f7;
+  color: #475467;
+}
+
+.requestContractItem {
+  min-width: 0;
+  border: 1px solid #d9e0eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfdff;
+}
+
+.requestContractItem.ready {
+  border-color: #bbf7d0;
+  background: #f7fff9;
+}
+
+.requestContractItem.blocked {
+  border-color: #fecaca;
+  background: #fff8f8;
+}
+
+.requestContractItem summary {
+  cursor: pointer;
+}
+
+.requestContractItem summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.requestContractItem summary small {
+  min-width: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.artifactCandidateItem {
+  border-top: 1px solid #e7ecf3;
+  padding-top: 8px;
+}
+
+.artifactCandidateItem span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.artifactCandidateItem strong {
+  min-width: 0;
+  color: #475467;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.artifactCandidateItem.ready strong {
+  color: #047857;
+}
+
+.artifactCandidateItem.blocked strong {
+  color: #b42318;
+}
+
+.artifactCandidateEmpty {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.requestContractItem p {
+  margin: 10px 0 8px;
+  color: #475467;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.requestContractItem code {
+  display: block;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 9px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .statusPill {
   border: 1px solid #c8d1df;
   border-radius: 999px;
@@ -1084,6 +1360,7 @@ label {
 }
 
 .flowBoard {
+  min-width: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   grid-auto-rows: minmax(108px, auto);
@@ -1278,6 +1555,7 @@ label {
 }
 
 .metricStrip {
+  min-width: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
@@ -1304,6 +1582,7 @@ label {
 }
 
 .contentGrid {
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
   gap: 16px;
@@ -1328,9 +1607,96 @@ label {
   font-weight: 800;
 }
 
+.toolReadinessGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.toolReadinessItem {
+  min-width: 0;
+  min-height: 104px;
+  border: 1px solid #d9e0eb;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 12px;
+  display: grid;
+  gap: 9px;
+  align-content: start;
+}
+
+.toolReadinessItem.ready {
+  border-color: #bbf7d0;
+  background: #f7fff9;
+}
+
+.toolReadinessItem.blocked {
+  border-color: #fecaca;
+  background: #fff8f8;
+}
+
+.toolReadinessItem.idle {
+  border-color: #d8dee8;
+  background: #f8fafc;
+}
+
+.toolReadinessHeader {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolReadinessHeader strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.toolReadinessHeader span,
+.toolRunStrip span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #eef2f7;
+  color: #475467;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.toolReadinessItem.ready .toolReadinessHeader span,
+.toolRunStrip .completed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.toolReadinessItem.blocked .toolReadinessHeader span,
+.toolRunStrip .failed {
+  background: #fee2e2;
+  color: #b42318;
+}
+
+.toolReadinessItem p {
+  color: #475467;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.toolRunStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .latestResult,
 .runBox,
 .ragBox {
+  min-width: 0;
   border: 1px solid #d9e0eb;
   border-radius: 8px;
   padding: 13px;
@@ -1342,17 +1708,21 @@ label {
 .latestResult h3,
 .runBox h3,
 .finalItem h3 {
+  min-width: 0;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .latestResult p,
 .runBox p,
 .ragBox p,
 .finalItem p {
+  min-width: 0;
   color: #475467;
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .eventList {
@@ -1405,18 +1775,22 @@ label {
 }
 
 .ragBox span {
+  min-width: 0;
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .finalGrid {
+  min-width: 0;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
 .finalItem {
+  min-width: 0;
   min-height: 150px;
   border: 1px solid #d9e0eb;
   border-radius: 8px;
@@ -1560,16 +1934,12 @@ label {
 
 @media (max-width: 1180px) {
   .codexShell {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: clamp(232px, 26vw, 260px) minmax(0, 1fr);
   }
 
   .codexSidebar {
-    height: auto;
-    max-height: 42vh;
-    min-height: 0;
-    border-right: 0;
-    border-bottom: 1px solid #2e2e2e;
+    padding: 10px;
+    gap: 12px;
   }
 
   .flowBoard {
@@ -1578,6 +1948,7 @@ label {
 
   .flowBoardStructured,
   .flowGroupGrid,
+  .toolReadinessGrid,
   .memoryLayer {
     grid-template-columns: 1fr;
   }
@@ -1585,7 +1956,7 @@ label {
   .projectComposer,
   .contentGrid,
   .panel.wide {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-column: span 1;
   }
 
@@ -1593,6 +1964,10 @@ label {
   .settingsGroupWide {
     grid-template-columns: 1fr;
     grid-column: span 1;
+  }
+
+  .preflightPanel {
+    grid-template-columns: 1fr;
   }
 
   .agentMatrix,
@@ -1608,10 +1983,33 @@ label {
   }
 }
 
+@media (max-width: 760px) {
+  .codexShell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .codexSidebar {
+    height: auto;
+    max-height: min(500px, 60vh);
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid #2e2e2e;
+  }
+}
+
 @media (max-width: 700px) {
   .codexContent,
   .codexSidebar {
     padding: 14px;
+  }
+
+  .codexSidebar {
+    max-height: min(500px, 60vh);
+  }
+
+  .codexNav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .flowBoard,
@@ -1620,12 +2018,22 @@ label {
   .memoryLayer,
   .metricStrip,
   .agentMatrix,
+  .toolReadinessGrid,
   .finalGrid,
   .homeCards,
   .fieldGrid,
   .fieldGrid.three,
   .controlGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .artifactCandidateItem {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .requestContractItem summary {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
   }
 
   .codexTopbar {

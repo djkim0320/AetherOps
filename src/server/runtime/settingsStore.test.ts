@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -87,5 +87,90 @@ describe("JsonAppSettingsStore", () => {
 
     expect(publicSettings.maxLoopIterations).toBeUndefined();
     expect(saved.maxLoopIterations).toBeUndefined();
+  });
+
+  it("round-trips OpenVSP engineering tool settings", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    const scriptPath = join(tempRoot, "openvsp-script.mjs");
+    writeFileSync(scriptPath, "console.log('OpenVSP settings round-trip');\n", "utf8");
+    const store = new JsonAppSettingsStore(settingsPath);
+    const current = await store.getSettings();
+
+    await store.saveSettings({
+      ...current,
+      allowCodeExecution: true,
+      engineeringTools: {
+        ...current.engineeringTools,
+        enabled: true,
+        openVsp: {
+          enabled: true,
+          command: "node.exe",
+          scriptPath,
+          workingDirectory: tempRoot,
+          probeArgs: ["--version"],
+          runArgsTemplate: ["{script}", "--output", "{output}"],
+          timeoutMs: 60_000
+        }
+      }
+    });
+
+    const publicSettings = await store.getSettings();
+    const runtimeSettings = await store.getRuntimeSettings();
+
+    expect(publicSettings.engineeringTools.openVsp).toMatchObject({
+      enabled: true,
+      command: "node.exe",
+      scriptPath,
+      workingDirectory: tempRoot,
+      probeArgs: ["--version"],
+      runArgsTemplate: ["{script}", "--output", "{output}"],
+      timeoutMs: 60_000
+    });
+    expect(runtimeSettings.engineeringTools.openVsp).toEqual(publicSettings.engineeringTools.openVsp);
+  });
+
+  it("round-trips SU2 engineering tool settings", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    const caseRoot = join(tempRoot, "su2-case");
+    mkdirSync(caseRoot, { recursive: true });
+    writeFileSync(join(caseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
+    const store = new JsonAppSettingsStore(settingsPath);
+    const current = await store.getSettings();
+
+    await store.saveSettings({
+      ...current,
+      allowCodeExecution: true,
+      engineeringTools: {
+        ...current.engineeringTools,
+        enabled: true,
+        su2: {
+          enabled: true,
+          command: "SU2_CFD.exe",
+          caseRoot,
+          configFile: "case.cfg",
+          workingDirectory: caseRoot,
+          probeArgs: ["--help"],
+          runArgsTemplate: ["{config}", "--output", "{output}"],
+          timeoutMs: 60_000
+        }
+      }
+    });
+
+    const publicSettings = await store.getSettings();
+    const runtimeSettings = await store.getRuntimeSettings();
+
+    expect(publicSettings.engineeringTools.su2).toMatchObject({
+      enabled: true,
+      command: "SU2_CFD.exe",
+      caseRoot,
+      configFile: "case.cfg",
+      workingDirectory: caseRoot,
+      probeArgs: ["--help"],
+      runArgsTemplate: ["{config}", "--output", "{output}"],
+      timeoutMs: 60_000
+    });
+    expect(runtimeSettings.engineeringTools.su2).toEqual(publicSettings.engineeringTools.su2);
   });
 });

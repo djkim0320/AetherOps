@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ResearchLoopStep, type AppSettings, type OpenCodeRunInput } from "../../core/types.js";
 import { BrowserResearchTool } from "./browserResearchTool.js";
 import type { BrowserCollectInput, BrowserPageCollector } from "./backgroundBrowserRuntime.js";

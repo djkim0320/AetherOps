@@ -124,10 +124,10 @@ export class OntologyGraphEngine {
       type: "Source",
       label: source.title,
       key: source.id,
-      description: [source.kind, source.url, source.doi, source.rawPath].filter(Boolean).join(" / "),
+      description: joinPresent(" / ", source.kind, source.url, source.doi, source.rawPath),
       confidence: source.url || source.doi || source.rawPath ? 0.82 : 0.48
     });
-    for (const conceptId of builder.conceptsFrom([source.title, source.url, source.doi].filter(Boolean).join(" "), sourceId, 0.48)) {
+    for (const conceptId of builder.conceptsFrom(joinPresent(" ", source.title, source.url, source.doi), sourceId, 0.48)) {
       builder.relation({ subjectId: sourceId, predicate: "mentions", objectId: conceptId, confidence: 0.42 });
     }
   }
@@ -137,7 +137,7 @@ export class OntologyGraphEngine {
       type: "Artifact",
       label: artifact.title,
       key: artifact.id,
-      description: [artifact.category, artifact.relativePath, artifact.summary].filter(Boolean).join(" / "),
+      description: joinPresent(" / ", artifact.category, artifact.relativePath, artifact.summary),
       confidence: artifact.rawPath || artifact.relativePath ? 0.72 : 0.52
     });
     if (artifact.category === "generated_artifact") {
@@ -150,7 +150,7 @@ export class OntologyGraphEngine {
       });
       builder.relation({ subjectId: artifactId, predicate: "generatedBy", objectId: writerId, confidence: 0.68 });
     }
-    for (const conceptId of builder.conceptsFrom([artifact.title, artifact.summary, artifact.content].filter(Boolean).join(" "), artifactId, 0.5)) {
+    for (const conceptId of builder.conceptsFrom(joinPresent(" ", artifact.title, artifact.summary, artifact.content), artifactId, 0.5)) {
       builder.relation({ subjectId: artifactId, predicate: "mentions", objectId: conceptId, confidence: 0.45 });
     }
     this.addParameters(builder, artifactId, artifact.content ?? artifact.summary);
@@ -168,7 +168,7 @@ export class OntologyGraphEngine {
       type: "Result",
       label: `${toolRun.toolName} ${toolRun.status}`,
       key: toolRun.id,
-      description: [JSON.stringify(toolRun.output), toolRun.error].filter(Boolean).join("\n").slice(0, 900),
+      description: joinPresent("\n", JSON.stringify(toolRun.output), toolRun.error).slice(0, 900),
       confidence: toolRun.status === "completed" ? 0.68 : 0.34
     });
     builder.relation({
@@ -213,7 +213,7 @@ export class OntologyGraphEngine {
         type: "Source",
         label: evidence.citation ?? evidence.sourceUri ?? evidence.doi ?? evidence.title,
         key: sourceKey,
-        description: [evidence.sourceUri, evidence.doi].filter(Boolean).join(" / "),
+        description: joinPresent(" / ", evidence.sourceUri, evidence.doi),
         sourceEvidenceId: evidence.id,
         confidence: 0.76
       });
@@ -222,35 +222,40 @@ export class OntologyGraphEngine {
         type: "Citation",
         label: evidence.citation ?? evidence.sourceUri ?? evidence.doi ?? evidence.title,
         key: `citation:${evidence.id}:${evidence.citation ?? evidence.sourceUri ?? evidence.doi}`,
-        description: [evidence.quote, evidence.sourceUri, evidence.doi].filter(Boolean).join(" / "),
+        description: joinPresent(" / ", evidence.quote, evidence.sourceUri, evidence.doi),
         sourceEvidenceId: evidence.id,
         confidence: 0.78
       });
       builder.relation({ subjectId: evidenceId, predicate: "cites", objectId: citationId, sourceEvidenceId: evidence.id, confidence: 0.78 });
       builder.relation({ subjectId: sourceId, predicate: "hasCitation", objectId: citationId, sourceEvidenceId: evidence.id, confidence: 0.76 });
     }
-    for (const hypothesisId of evidence.linkedHypothesisIds) {
-      const targetId = builder.entityId("Hypothesis", hypothesisId);
-      const predicate = predicateForEvidence(evidence);
-      if (predicate) {
-        builder.relation({
-          subjectId: evidenceId,
-          predicate,
-          objectId: targetId,
-          sourceEvidenceId: evidence.id,
-          confidence: evidenceConfidence(evidence)
-        });
-      }
-      if (isGapEvidence(evidence)) {
-        const limitationId = builder.entity({
-          type: "Limitation",
-          label: evidence.title,
-          key: `limitation:${evidence.id}`,
-          description: evidence.summary,
-          sourceEvidenceId: evidence.id,
-          confidence: 0.76
-        });
-        builder.relation({ subjectId: targetId, predicate: "hasLimitation", objectId: limitationId, sourceEvidenceId: evidence.id, confidence: 0.76 });
+    if (evidence.linkedHypothesisIds.length) {
+      const evidenceFlags = keywordFlags(evidence.keywords);
+      const predicate = predicateForEvidenceFlags(evidenceFlags);
+      const isGap = isGapKeywordFlags(evidenceFlags);
+      const confidence = evidenceConfidence(evidence);
+      for (const hypothesisId of evidence.linkedHypothesisIds) {
+        const targetId = builder.entityId("Hypothesis", hypothesisId);
+        if (predicate) {
+          builder.relation({
+            subjectId: evidenceId,
+            predicate,
+            objectId: targetId,
+            sourceEvidenceId: evidence.id,
+            confidence
+          });
+        }
+        if (isGap) {
+          const limitationId = builder.entity({
+            type: "Limitation",
+            label: evidence.title,
+            key: `limitation:${evidence.id}`,
+            description: evidence.summary,
+            sourceEvidenceId: evidence.id,
+            confidence: 0.76
+          });
+          builder.relation({ subjectId: targetId, predicate: "hasLimitation", objectId: limitationId, sourceEvidenceId: evidence.id, confidence: 0.76 });
+        }
       }
     }
     for (const limitation of evidence.limitations ?? []) {
@@ -264,7 +269,7 @@ export class OntologyGraphEngine {
       });
       builder.relation({ subjectId: evidenceId, predicate: "hasLimitation", objectId: limitationId, sourceEvidenceId: evidence.id, confidence: 0.68 });
     }
-    for (const conceptId of builder.conceptsFrom([evidence.title, evidence.summary, evidence.quote, ...evidence.keywords].filter(Boolean).join(" "), evidenceId, 0.55)) {
+    for (const conceptId of builder.conceptsFrom(evidenceConceptText(evidence), evidenceId, 0.55)) {
       builder.relation({ subjectId: evidenceId, predicate: "mentions", objectId: conceptId, sourceEvidenceId: evidence.id, confidence: 0.5 });
     }
     this.addParameters(builder, evidenceId, evidence.summary);
@@ -347,37 +352,46 @@ export class OntologyGraphEngine {
         confidence: 0.68
       });
     }
-    for (const hypothesisId of readStringArray(record.metadata.linkedHypothesisIds)) {
-      const targetId = builder.entityId("Hypothesis", hypothesisId);
-      if (isGapRecord(record)) {
-        builder.relation({
-          subjectId: targetId,
-          predicate: "hasLimitation",
-          objectId: recordEntityId,
-          sourceRecordId: record.id,
-          sourceEvidenceId: record.evidenceId,
-          confidence: record.confidence ?? 0.45
-        });
-      } else {
-        builder.relation({
-          subjectId: recordEntityId,
-          predicate: predicateForRecord(record),
-          objectId: targetId,
-          sourceRecordId: record.id,
-          sourceEvidenceId: record.evidenceId,
-          confidence: record.confidence ?? 0.45
-        });
+    const linkedHypothesisIds = readStringArray(record.metadata.linkedHypothesisIds);
+    if (linkedHypothesisIds.length) {
+      const recordFlags = keywordFlags(readStringArray(record.metadata.keywords));
+      const recordIsGap = isGapKeywordFlags(recordFlags);
+      const recordPredicate = predicateForRecordFlags(recordFlags);
+      const confidence = record.confidence ?? 0.45;
+      for (const hypothesisId of linkedHypothesisIds) {
+        const targetId = builder.entityId("Hypothesis", hypothesisId);
+        if (recordIsGap) {
+          builder.relation({
+            subjectId: targetId,
+            predicate: "hasLimitation",
+            objectId: recordEntityId,
+            sourceRecordId: record.id,
+            sourceEvidenceId: record.evidenceId,
+            confidence
+          });
+        } else {
+          builder.relation({
+            subjectId: recordEntityId,
+            predicate: recordPredicate,
+            objectId: targetId,
+            sourceRecordId: record.id,
+            sourceEvidenceId: record.evidenceId,
+            confidence
+          });
+        }
       }
     }
+    const canAnswerQuestion = record.kind === "claim" || record.kind === "evidence" || record.kind === "observation";
     for (const question of snapshot.questions) {
-      if (overlapScore(question.text, record.content) >= 0.18 && (record.kind === "claim" || record.kind === "evidence" || record.kind === "observation")) {
+      const score = canAnswerQuestion ? overlapScore(question.text, record.content) : 0;
+      if (score >= 0.18) {
         builder.relation({
           subjectId: recordEntityId,
           predicate: "answers",
           objectId: builder.entityId("ResearchQuestion", question.id),
           sourceRecordId: record.id,
           sourceEvidenceId: record.evidenceId,
-          confidence: Math.max(0.35, Math.min(0.7, overlapScore(question.text, record.content)))
+          confidence: Math.max(0.35, Math.min(0.7, score))
         });
       }
     }
@@ -478,7 +492,7 @@ export class OntologyGraphEngine {
   }
 
   private addParameters(builder: GraphBuilder, subjectId: string, text: string, sourceRecordId?: string, sourceEvidenceId?: string): void {
-    const matches = extractParameterMentions(text).slice(0, 6);
+    const matches = extractParameterMentions(text, 6);
     for (const match of matches) {
       const parameterId = builder.entity({
         type: "Parameter",
@@ -547,11 +561,11 @@ class GraphBuilder {
   }
 
   conceptsFrom(text: string, subjectId: string, confidence: number, preferredKeywords: string[] = []): string[] {
-    const keywords = unique([...preferredKeywords, ...extractKeywords(text)])
-      .map(normalizeConcept)
-      .filter((keyword) => keyword.length >= 3 && !genericConcepts.has(keyword))
-      .slice(0, 6);
-    const conceptIds = keywords.map((keyword) => this.concept(keyword, confidence));
+    const keywords = uniqueConceptKeywordsLazy(preferredKeywords, () => extractKeywords(text));
+    const conceptIds: string[] = [];
+    for (const keyword of keywords) {
+      conceptIds.push(this.concept(keyword, confidence));
+    }
     for (const conceptId of conceptIds) {
       this.relation({ subjectId, predicate: "mentions", objectId: conceptId, confidence: Math.max(0.25, confidence - 0.08) });
     }
@@ -609,15 +623,27 @@ class GraphBuilder {
       this.attachRelationSource(relation.subjectId, relation);
       this.attachRelationSource(relation.objectId, relation);
     }
-    const entities = [...this.entities.values()].filter((entity) => entity.sourceRecordId || entity.sourceEvidenceId);
-    const entityIds = new Set(entities.map((entity) => entity.id));
-    const relations = [...this.relations.values()].filter(
-      (relation) => (relation.sourceRecordId || relation.sourceEvidenceId) && entityIds.has(relation.subjectId) && entityIds.has(relation.objectId)
-    );
+    const entities: OntologyEntity[] = [];
+    const entityIds = new Set<string>();
+    for (const entity of this.entities.values()) {
+      if (!entity.sourceRecordId && !entity.sourceEvidenceId) continue;
+      entities.push(entity);
+      entityIds.add(entity.id);
+    }
+    const relations: OntologyRelation[] = [];
+    for (const relation of this.relations.values()) {
+      if (!relation.sourceRecordId && !relation.sourceEvidenceId) continue;
+      if (!entityIds.has(relation.subjectId) || !entityIds.has(relation.objectId)) continue;
+      relations.push(relation);
+    }
+    const constraints: OntologyConstraint[] = [];
+    for (const constraint of this.constraints.values()) {
+      if (constraint.sourceRecordId) constraints.push(constraint);
+    }
     return {
       entities,
       relations,
-      constraints: [...this.constraints.values()].filter((constraint) => constraint.sourceRecordId)
+      constraints
     };
   }
 
@@ -645,16 +671,14 @@ function entityTypeForRecord(record: NormalizedResearchRecord): OntologyEntityTy
   return "Result";
 }
 
-function predicateForEvidence(evidence: EvidenceItem): OntologyRelationType | undefined {
-  const keywords = new Set(evidence.keywords.map((keyword) => keyword.toLowerCase()));
-  if (keywords.has("contradicts") || keywords.has("rejected")) return "contradicts";
-  if (keywords.has("evidence_gap") || keywords.has("tool_unavailable")) return undefined;
+function predicateForEvidenceFlags(keywords: ReturnType<typeof keywordFlags>): OntologyRelationType | undefined {
+  if (keywords.contradicts || keywords.rejected) return "contradicts";
+  if (keywords.evidenceGap || keywords.toolUnavailable) return undefined;
   return "supports";
 }
 
-function predicateForRecord(record: NormalizedResearchRecord): OntologyRelationType {
-  const keywords = new Set(readStringArray(record.metadata.keywords).map((keyword) => keyword.toLowerCase()));
-  if (keywords.has("contradicts") || keywords.has("rejected")) return "contradicts";
+function predicateForRecordFlags(keywords: ReturnType<typeof keywordFlags>): OntologyRelationType {
+  if (keywords.contradicts || keywords.rejected) return "contradicts";
   return "supports";
 }
 
@@ -666,18 +690,38 @@ function evidenceConfidence(evidence: EvidenceItem): number {
   return clamp((reliability + relevance) / 2 + strength + traceability);
 }
 
-function isGapEvidence(evidence: EvidenceItem): boolean {
-  const keywords = new Set(evidence.keywords.map((keyword) => keyword.toLowerCase()));
-  return keywords.has("evidence_gap") || keywords.has("tool_unavailable");
-}
-
-function isGapRecord(record: NormalizedResearchRecord): boolean {
-  const keywords = new Set(readStringArray(record.metadata.keywords).map((keyword) => keyword.toLowerCase()));
-  return keywords.has("evidence_gap") || keywords.has("tool_unavailable");
+function isGapKeywordFlags(keywords: ReturnType<typeof keywordFlags>): boolean {
+  return keywords.evidenceGap || keywords.toolUnavailable;
 }
 
 function readStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  if (!Array.isArray(value)) return [];
+  const output: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string") output.push(item);
+  }
+  return output;
+}
+
+function keywordFlags(keywords: string[]): {
+  contradicts: boolean;
+  rejected: boolean;
+  evidenceGap: boolean;
+  toolUnavailable: boolean;
+} {
+  let contradicts = false;
+  let rejected = false;
+  let evidenceGap = false;
+  let toolUnavailable = false;
+  for (const keyword of keywords) {
+    const normalized = keyword.toLowerCase();
+    if (normalized === "contradicts") contradicts = true;
+    else if (normalized === "rejected") rejected = true;
+    else if (normalized === "evidence_gap") evidenceGap = true;
+    else if (normalized === "tool_unavailable") toolUnavailable = true;
+    if (contradicts && rejected && evidenceGap && toolUnavailable) break;
+  }
+  return { contradicts, rejected, evidenceGap, toolUnavailable };
 }
 
 function overlapScore(left: string, right: string): number {
@@ -691,20 +735,28 @@ function overlapScore(left: string, right: string): number {
   return overlap / leftTokens.size;
 }
 
-function extractParameterMentions(text: string): Array<{ value: string; unit?: string }> {
+function extractParameterMentions(text: string, limit = Number.POSITIVE_INFINITY): Array<{ value: string; unit?: string }> {
   const matches = new Map<string, { value: string; unit?: string }>();
   const slashPattern = /\b\d+\s*\/\s*\d+\b/g;
   for (const match of text.matchAll(slashPattern)) {
     const value = match[0].replace(/\s+/g, "");
     matches.set(value, { value, unit: "ratio" });
+    if (matches.size >= limit) return mapValues(matches);
   }
   const unitPattern = /\b\d+(?:\.\d+)?\s*(minutes?|mins?|hours?|hrs?|seconds?|secs?|%|percent|회|분|시간)\b/giu;
   for (const match of text.matchAll(unitPattern)) {
     const value = match[0].replace(/\s+/g, " ").trim();
     const unit = value.replace(/^[\d.]+\s*/, "");
     matches.set(value, { value, unit });
+    if (matches.size >= limit) return mapValues(matches);
   }
-  return [...matches.values()];
+  return mapValues(matches);
+}
+
+function mapValues<T>(map: Map<string, T>): T[] {
+  const values: T[] = [];
+  for (const value of map.values()) values.push(value);
+  return values;
 }
 
 function normalizeConcept(value: string): string {
@@ -712,11 +764,52 @@ function normalizeConcept(value: string): string {
 }
 
 function tokens(text: string): string[] {
-  return normalizeConcept(text).split(/\s+/).filter((token) => token.length >= 3 && !genericConcepts.has(token));
+  const matches = normalizeConcept(text).match(/\S+/g) ?? [];
+  const output: string[] = [];
+  for (const token of matches) {
+    if (token.length >= 3 && !genericConcepts.has(token)) output.push(token);
+  }
+  return output;
 }
 
-function unique(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
+function joinPresent(separator: string, ...values: unknown[]): string {
+  const parts: string[] = [];
+  for (const value of values) {
+    if (value) parts.push(String(value));
+  }
+  return parts.join(separator);
+}
+
+function evidenceConceptText(evidence: EvidenceItem): string {
+  const parts: string[] = [];
+  if (evidence.title) parts.push(evidence.title);
+  if (evidence.summary) parts.push(evidence.summary);
+  if (evidence.quote) parts.push(evidence.quote);
+  for (const keyword of evidence.keywords) {
+    if (keyword) parts.push(keyword);
+  }
+  return parts.join(" ");
+}
+
+function uniqueConceptKeywordsLazy(preferredKeywords: string[], extract: () => string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  appendConceptKeywords(output, seen, preferredKeywords);
+  if (output.length < 6) {
+    appendConceptKeywords(output, seen, extract());
+  }
+  return output;
+}
+
+function appendConceptKeywords(output: string[], seen: Set<string>, values: string[]): void {
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    const keyword = normalizeConcept(value);
+    if (keyword.length < 3 || genericConcepts.has(keyword)) continue;
+    output.push(keyword);
+    if (output.length >= 6) return;
+  }
 }
 
 function clamp(value: number): number {
@@ -738,19 +831,32 @@ function provenanceIndex(records: NormalizedResearchRecord[]): {
   specificationRecordId?: string;
   forText(text: string): string | undefined;
 } {
-  const provenanceRecords = records.filter((record) => record.metadata.traceabilityKind === "project_provenance");
-  const specificationRecordId = provenanceRecords.find((record) => record.sourceUri?.startsWith("project://research-specification/"))?.id;
+  const provenanceRecords: Array<{ id: string; normalizedContent: string }> = [];
+  let specificationRecordId: string | undefined;
+  for (const record of records) {
+    if (record.metadata.traceabilityKind !== "project_provenance") continue;
+    provenanceRecords.push({ id: record.id, normalizedContent: normalizeConcept(record.content) });
+    if (!specificationRecordId && record.sourceUri?.startsWith("project://research-specification/")) {
+      specificationRecordId = record.id;
+    }
+  }
   return {
     specificationRecordId,
     forText(text: string): string | undefined {
       const normalized = normalizeConcept(text);
-      return provenanceRecords.find((record) => normalizeConcept(record.content).includes(normalized))?.id ?? specificationRecordId ?? provenanceRecords[0]?.id;
+      for (const record of provenanceRecords) {
+        if (record.normalizedContent.includes(normalized)) return record.id;
+      }
+      return specificationRecordId ?? provenanceRecords[0]?.id;
     }
   };
 }
 
 function tagGraphMemoryScope(graph: OntologyGraphBuildResult, records: NormalizedResearchRecord[]): OntologyGraphBuildResult {
-  const recordById = new Map(records.map((record) => [record.id, record]));
+  const recordById = new Map<string, NormalizedResearchRecord>();
+  for (const record of records) {
+    recordById.set(record.id, record);
+  }
   const scopeForRecord = (sourceRecordId?: string): { memoryScope: import("./types.js").MemoryScope; originProjectId?: string; workspaceProjectId?: string; validationStatus?: import("./types.js").ValidationStatus } => {
     const record = sourceRecordId ? recordById.get(sourceRecordId) : undefined;
     return {
@@ -761,19 +867,25 @@ function tagGraphMemoryScope(graph: OntologyGraphBuildResult, records: Normalize
     };
   };
 
+  const entities: OntologyEntity[] = [];
+  for (const entity of graph.entities) {
+    const scope = scopeForRecord(entity.sourceRecordId);
+    entities.push({ ...tagMemoryScope(entity, scope.memoryScope, scope.originProjectId ?? entity.projectId, scope.workspaceProjectId ?? entity.projectId), validationStatus: scope.validationStatus ?? entity.validationStatus ?? "raw" });
+  }
+  const relations: OntologyRelation[] = [];
+  for (const relation of graph.relations) {
+    const scope = scopeForRecord(relation.sourceRecordId);
+    relations.push({ ...tagMemoryScope(relation, scope.memoryScope, scope.originProjectId ?? relation.projectId, scope.workspaceProjectId ?? relation.projectId), validationStatus: scope.validationStatus ?? relation.validationStatus ?? "raw" });
+  }
+  const constraints: OntologyConstraint[] = [];
+  for (const constraint of graph.constraints) {
+    const scope = scopeForRecord(constraint.sourceRecordId);
+    constraints.push({ ...tagMemoryScope(constraint, scope.memoryScope, scope.originProjectId ?? constraint.projectId, scope.workspaceProjectId ?? constraint.projectId), validationStatus: scope.validationStatus ?? constraint.validationStatus ?? "raw" });
+  }
   return {
-    entities: graph.entities.map((entity) => {
-      const scope = scopeForRecord(entity.sourceRecordId);
-      return { ...tagMemoryScope(entity, scope.memoryScope, scope.originProjectId ?? entity.projectId, scope.workspaceProjectId ?? entity.projectId), validationStatus: scope.validationStatus ?? entity.validationStatus ?? "raw" };
-    }),
-    relations: graph.relations.map((relation) => {
-      const scope = scopeForRecord(relation.sourceRecordId);
-      return { ...tagMemoryScope(relation, scope.memoryScope, scope.originProjectId ?? relation.projectId, scope.workspaceProjectId ?? relation.projectId), validationStatus: scope.validationStatus ?? relation.validationStatus ?? "raw" };
-    }),
-    constraints: graph.constraints.map((constraint) => {
-      const scope = scopeForRecord(constraint.sourceRecordId);
-      return { ...tagMemoryScope(constraint, scope.memoryScope, scope.originProjectId ?? constraint.projectId, scope.workspaceProjectId ?? constraint.projectId), validationStatus: scope.validationStatus ?? constraint.validationStatus ?? "raw" };
-    })
+    entities,
+    relations,
+    constraints
   };
 }
 

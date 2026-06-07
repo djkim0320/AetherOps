@@ -68,6 +68,21 @@ const PUBLIC_AUTHORITY_HOSTS = [
 
 const STANDARD_HOSTS = ["iso.org", "w3.org", "ietf.org", "rfc-editor.org", "nvlpubs.nist.gov"];
 const WEAK_HOSTS = ["wikipedia.org", "namu.wiki", "fandom.com", "medium.com", "blogspot.com", "tistory.com", "reddit.com", "quora.com"];
+const SEMANTIC_SCHOLAR_HOSTS = ["semanticscholar.org"];
+const CROSSREF_HOSTS = ["crossref.org"];
+const ARXIV_HOSTS = ["arxiv.org"];
+const DOI_CITATION_PATTERN = /10\.\d{4,9}\//;
+const PAPER_URL_PATTERN = /(\barxiv\b|\bdoi\b|\/pdf\/|\.pdf\b|journal|proceedings|conference|working paper|systematic review)/i;
+const TIER_RANK: Record<SourceQualityTier, number> = {
+  scholarly: 90,
+  public_authority: 86,
+  standard: 84,
+  education: 76,
+  credible_web: 62,
+  general_web: 40,
+  weak: 10,
+  excluded: -100
+};
 
 export function assessSourceQuality(rawUrl?: string, title?: string): SourceQualityAssessment {
   const hostname = hostnameOf(rawUrl);
@@ -130,9 +145,9 @@ function isDiscoverySurface(rawUrl: string | undefined, hostname: string): boole
     const url = new URL(rawUrl);
     const path = url.pathname.toLowerCase();
     return (
-      (matchesHost(hostname, ["semanticscholar.org"]) && path.startsWith("/search")) ||
-      (matchesHost(hostname, ["crossref.org"]) && (hostname.startsWith("search.") || path.startsWith("/search"))) ||
-      (matchesHost(hostname, ["arxiv.org"]) && path.startsWith("/search"))
+      (matchesHost(hostname, SEMANTIC_SCHOLAR_HOSTS) && path.startsWith("/search")) ||
+      (matchesHost(hostname, CROSSREF_HOSTS) && (hostname.startsWith("search.") || path.startsWith("/search"))) ||
+      (matchesHost(hostname, ARXIV_HOSTS) && path.startsWith("/search"))
     );
   } catch {
     return false;
@@ -140,11 +155,22 @@ function isDiscoverySurface(rawUrl: string | undefined, hostname: string): boole
 }
 
 export function rankResearchUrls(urls: string[]): string[] {
-  return [...new Set(urls)]
-    .map((url, index) => ({ url, index, quality: assessSourceQuality(url) }))
-    .filter((item) => item.quality.tier !== "excluded")
-    .sort((a, b) => sourceRank(b.quality) - sourceRank(a.quality) || a.index - b.index)
-    .map((item) => item.url);
+  const seen = new Set<string>();
+  const ranked: Array<{ url: string; index: number; quality: SourceQualityAssessment }> = [];
+  let uniqueIndex = 0;
+  for (const url of urls) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const quality = assessSourceQuality(url);
+    if (quality.tier !== "excluded") {
+      ranked.push({ url, index: uniqueIndex, quality });
+    }
+    uniqueIndex += 1;
+  }
+  ranked.sort((a, b) => sourceRank(b.quality) - sourceRank(a.quality) || a.index - b.index);
+  const output: string[] = [];
+  for (const item of ranked) output.push(item.url);
+  return output;
 }
 
 export function canEvidenceSupportHypothesis(evidence: EvidenceItem, source?: ResearchSource): boolean {
@@ -152,7 +178,7 @@ export function canEvidenceSupportHypothesis(evidence: EvidenceItem, source?: Re
   if (quality.tier === "weak" || quality.tier === "excluded") {
     return false;
   }
-  if (evidence.doi || /10\.\d{4,9}\//.test(evidence.citation ?? "")) {
+  if (evidence.doi || DOI_CITATION_PATTERN.test(evidence.citation ?? "")) {
     return true;
   }
   if (quality.canSupportHypothesis) {
@@ -185,17 +211,7 @@ function quality(
 }
 
 function sourceRank(assessment: SourceQualityAssessment): number {
-  const tierRank: Record<SourceQualityTier, number> = {
-    scholarly: 90,
-    public_authority: 86,
-    standard: 84,
-    education: 76,
-    credible_web: 62,
-    general_web: 40,
-    weak: 10,
-    excluded: -100
-  };
-  return tierRank[assessment.tier] + assessment.reliabilityScore;
+  return TIER_RANK[assessment.tier] + assessment.reliabilityScore;
 }
 
 function hostnameOf(rawUrl?: string): string {
@@ -208,10 +224,13 @@ function hostnameOf(rawUrl?: string): string {
 }
 
 function matchesHost(hostname: string, domains: string[]): boolean {
-  return domains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+  for (const domain of domains) {
+    if (hostname === domain || hostname.endsWith(`.${domain}`)) return true;
+  }
+  return false;
 }
 
 function looksLikePaperUrl(rawUrl?: string, title?: string): boolean {
   const value = `${rawUrl ?? ""} ${title ?? ""}`.toLowerCase();
-  return /(\barxiv\b|\bdoi\b|\/pdf\/|\.pdf\b|journal|proceedings|conference|working paper|systematic review)/i.test(value);
+  return PAPER_URL_PATTERN.test(value);
 }

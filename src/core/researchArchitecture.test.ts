@@ -1,4 +1,7 @@
-﻿import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { EvidenceNormalizer } from "./evidenceNormalizer.js";
 import { HybridRetrievalEngine } from "./hybridRetrievalEngine.js";
 import { LlmTimeoutError, type LlmJsonRequest, type LlmProvider } from "./llm.js";
@@ -23,6 +26,31 @@ const settings: AppSettings = {
   webSearch: { provider: "disabled" },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 64, apiKey: "test-key", apiKeyConfigured: true },
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
+  researchMetadata: { enabled: true, provider: "openalex", maxResults: 5, timeoutMs: 15_000 },
+  engineeringTools: {
+    enabled: false,
+    xfoil: { enabled: false, command: "", timeoutMs: 30_000 },
+    modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
+    openFoam: { enabled: false, command: "", caseRoot: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-case", "{case}"], timeoutMs: 30 * 60_000 },
+    su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 30 * 60_000 },
+    freeCad: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--version"], runArgsTemplate: ["{script}", "--output", "{output}"], timeoutMs: 30 * 60_000 },
+    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
+    commercialCfd: {
+      flightStreamConfigured: false,
+      starCcmConfigured: false,
+      flightStreamCommand: "",
+      flightStreamWorkingDirectory: "",
+      flightStreamProbeArgs: ["--version"],
+      flightStreamRunArgsTemplate: [],
+      flightStreamTimeoutMs: 120_000,
+      starCcmCommand: "",
+      starCcmWorkingDirectory: "",
+      starCcmProbeArgs: ["-version"],
+      starCcmRunArgsTemplate: [],
+      starCcmTimeoutMs: 120_000,
+      notes: ""
+    }
+  },
   allowExternalSearch: false,
   allowCodeExecution: false,
   ontologyExtractionMode: "rule_based",
@@ -225,6 +253,214 @@ describe("12-step research architecture modules", () => {
     expect(plan.requiredTools.length).toBeGreaterThan(0);
     expect(plan.expectedSources.length).toBeGreaterThan(0);
     expect(plan.stopCriteria.length).toBeGreaterThan(0);
+  });
+
+  it("filters LLM engineering program requests through ready runtime templates", async () => {
+    const base = snapshot();
+    const spec = base.specifications[0]!;
+    const llm: LlmProvider = {
+      name: "unsafe-engineering-request-test",
+      isAvailable: async () => true,
+      completeJson: async <T,>(): Promise<T> =>
+        ({
+          objective: "Try an unavailable OpenVSP run.",
+          requiredTools: ["EngineeringProgramTool", "ArtifactWriterTool"],
+          programRequests: [{ kind: "vsp-script-run", target: "openvsp", outputFileName: "unsafe.json" }]
+        }) as T
+    };
+
+    const plan = await new ResearchPlanner(llm).plan({
+      snapshot: base,
+      specification: spec,
+      iteration: 1,
+      settings: {
+        ...settings,
+        allowCodeExecution: true,
+        engineeringTools: { ...settings.engineeringTools, enabled: true }
+      },
+      availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
+    });
+
+    expect(plan.requiredTools).not.toContain("EngineeringProgramTool");
+    expect(plan.programRequests).toBeUndefined();
+  });
+
+  it("keeps ready OpenVSP program requests and normalizes them from the template contract", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-planner-openvsp-"));
+    try {
+      const scriptPath = join(tempRoot, "openvsp-script.mjs");
+      writeFileSync(scriptPath, "console.log('OpenVSP planner harness');\n", "utf8");
+      const base = snapshot();
+      const spec = base.specifications[0]!;
+      const llm: LlmProvider = {
+        name: "ready-openvsp-request-test",
+        isAvailable: async () => true,
+        completeJson: async <T,>(): Promise<T> =>
+          ({
+            objective: "Run configured OpenVSP.",
+            requiredTools: ["EngineeringProgramTool", "ArtifactWriterTool"],
+            programRequests: [
+              {
+                kind: "vsp-script-run",
+                target: "openvsp",
+                artifactPath: "../outside.vsp3",
+                outputFileName: "openvsp-custom.json",
+                reason: "Use the ready OpenVSP template."
+              }
+            ]
+          }) as T
+      };
+
+      const plan = await new ResearchPlanner(llm).plan({
+        snapshot: base,
+        specification: spec,
+        iteration: 1,
+        settings: {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
+            enabled: true,
+            openVsp: {
+              ...settings.engineeringTools.openVsp,
+              enabled: true,
+              command: process.execPath,
+              scriptPath,
+              probeArgs: ["--version"],
+              runArgsTemplate: ["{script}", "--output", "{output}"]
+            }
+          }
+        },
+        availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
+      });
+
+      expect(plan.requiredTools).toContain("EngineeringProgramTool");
+      expect(plan.programRequests).toEqual([
+        {
+          kind: "vsp-script-run",
+          target: "openvsp",
+          outputFileName: "openvsp-custom.json",
+          reason: "Use the ready OpenVSP template."
+        }
+      ]);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("filters SU2 program requests that omit the required target", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-planner-su2-missing-target-"));
+    try {
+      const caseRoot = join(tempRoot, "case");
+      mkdirSync(caseRoot, { recursive: true });
+      writeFileSync(join(caseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
+      const base = snapshot();
+      const spec = base.specifications[0]!;
+      const llm: LlmProvider = {
+        name: "missing-su2-target-request-test",
+        isAvailable: async () => true,
+        completeJson: async <T,>(): Promise<T> =>
+          ({
+            objective: "Run SU2 without an explicit target.",
+            requiredTools: ["EngineeringProgramTool", "ArtifactWriterTool"],
+            programRequests: [{ kind: "su2-case-run", outputFileName: "su2-custom.txt" }]
+          }) as T
+      };
+
+      const plan = await new ResearchPlanner(llm).plan({
+        snapshot: base,
+        specification: spec,
+        iteration: 1,
+        settings: {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
+            enabled: true,
+            su2: {
+              ...settings.engineeringTools.su2,
+              enabled: true,
+              command: process.execPath,
+              caseRoot,
+              configFile: "case.cfg",
+              probeArgs: ["--version"],
+              runArgsTemplate: ["{config}", "--output", "{output}"]
+            }
+          }
+        },
+        availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
+      });
+
+      expect(plan.requiredTools).not.toContain("EngineeringProgramTool");
+      expect(plan.programRequests).toBeUndefined();
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps ready SU2 program requests only when the configured case contract is ready", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-planner-su2-"));
+    try {
+      const caseRoot = join(tempRoot, "case");
+      mkdirSync(caseRoot, { recursive: true });
+      writeFileSync(join(caseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
+      const base = snapshot();
+      const spec = base.specifications[0]!;
+      const llm: LlmProvider = {
+        name: "ready-su2-request-test",
+        isAvailable: async () => true,
+        completeJson: async <T,>(): Promise<T> =>
+          ({
+            objective: "Run configured SU2.",
+            requiredTools: ["EngineeringProgramTool", "ArtifactWriterTool"],
+            programRequests: [
+              {
+                kind: "su2-case-run",
+                target: "su2",
+                artifactPath: "../outside.su2",
+                outputFileName: "su2-custom.txt",
+                reason: "Use the ready SU2 template."
+              }
+            ]
+          }) as T
+      };
+
+      const plan = await new ResearchPlanner(llm).plan({
+        snapshot: base,
+        specification: spec,
+        iteration: 1,
+        settings: {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
+            enabled: true,
+            su2: {
+              ...settings.engineeringTools.su2,
+              enabled: true,
+              command: process.execPath,
+              caseRoot,
+              configFile: "case.cfg",
+              probeArgs: ["--version"],
+              runArgsTemplate: ["{config}", "--output", "{output}"]
+            }
+          }
+        },
+        availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
+      });
+
+      expect(plan.requiredTools).toContain("EngineeringProgramTool");
+      expect(plan.programRequests).toEqual([
+        {
+          kind: "su2-case-run",
+          target: "su2",
+          outputFileName: "su2-custom.txt",
+          reason: "Use the ready SU2 template."
+        }
+      ]);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("retries PlanResearch LLM timeout with a compact prompt and preserves fetch candidates", async () => {

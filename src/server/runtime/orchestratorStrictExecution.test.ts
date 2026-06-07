@@ -1,4 +1,4 @@
-﻿import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { nowIso } from "../../core/ids.js";
 import {
   createInputProject,
   createStrictTestOrchestrator,
+  DeterministicOpenCodeAdapter,
   DeterministicLlmProvider,
   strictTestSettings
 } from "../../core/orchestratorTestHarness.test.js";
@@ -29,6 +30,86 @@ const input: ResearchProjectInput = {
   }
 };
 
+class CapturingOpenCodeAdapter extends DeterministicOpenCodeAdapter {
+  readonly inputs: OpenCodeRunInput[] = [];
+
+  override async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
+    this.inputs.push(input);
+    return super.run(input);
+  }
+}
+
+class MetadataFirstPlanner extends DeterministicLlmProvider {
+  override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
+    if (request.schemaName === "AetherOpsResearchPlan") {
+      return {
+        objective: "Collect OpenAlex metadata before OpenCode analysis.",
+        targetQuestions: ["q1"],
+        targetHypotheses: ["h1"],
+        requiredTools: ["OpenCodeTool", "ResearchMetadataTool"],
+        expectedSources: ["OpenAlex paper metadata"],
+        expectedArtifacts: ["metadata-aware analysis"],
+        executionSteps: ["Run ResearchMetadataTool", "Run OpenCode with acquired metadata"],
+        stopCriteria: ["OpenCode input contains metadata sources"]
+      } as T;
+    }
+    return super.completeJson(request);
+  }
+}
+
+const metadataAcquisitionTool: ResearchTool = {
+  name: "ResearchMetadataTool",
+  run: async (input: OpenCodeRunInput): Promise<ResearchToolResult> => {
+    const completedAt = nowIso();
+    return {
+      toolRun: {
+        id: "tool-openalex-test",
+        projectId: input.project.id,
+        iteration: input.iteration,
+        toolName: "ResearchMetadataTool",
+        input: { projectId: input.project.id, iteration: input.iteration },
+        output: { sourceIds: ["source-openalex-test"], evidenceIds: ["evidence-openalex-test"] },
+        status: "completed",
+        startedAt: completedAt,
+        completedAt
+      },
+      sources: [
+        {
+          id: "source-openalex-test",
+          projectId: input.project.id,
+          kind: "paper",
+          title: "OpenAlex metadata captured before OpenCode",
+          url: "https://openalex.org/W123",
+          doi: "https://doi.org/10.1234/openalex-test",
+          retrievedAt: completedAt,
+          metadata: { provider: "openalex" },
+          createdAt: completedAt
+        }
+      ],
+      evidence: [
+        {
+          id: "evidence-openalex-test",
+          projectId: input.project.id,
+          category: "paper_reference",
+          title: "OpenAlex metadata evidence",
+          summary: "Metadata evidence is available before OpenCode runs.",
+          sourceUri: "https://openalex.org/W123",
+          citation: "OpenAlex metadata captured before OpenCode.",
+          keywords: ["openalex", "metadata"],
+          linkedHypothesisIds: input.hypotheses.map((item) => item.id),
+          reliabilityScore: 0.75,
+          relevanceScore: 0.8,
+          evidenceStrength: "medium",
+          limitations: [],
+          metadata: { traceabilityKind: "external_source" },
+          createdAt: completedAt
+        }
+      ],
+      artifacts: []
+    };
+  }
+};
+
 afterEach(() => {
   if (tempDir) {
     rmSync(tempDir, { recursive: true, force: true });
@@ -37,16 +118,98 @@ afterEach(() => {
 });
 
 describe("AetherOps strict execution loop", () => {
-  it("blocks when explicit research input is missing", async () => {
+  it("derives research input from the project brief when separate hypotheses are missing", async () => {
     const orchestrator = createStrictTestOrchestrator();
     let snapshot = await orchestrator.createProject(input);
     snapshot = await orchestrator.seedQuestions(snapshot.project.id);
 
-    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.InputResearchQuestionHypothesis);
-    expect(snapshot.project.status).toBe("blocked");
-    expect(snapshot.runtimeBlockers.some((blocker) => blocker.requirementKey === "research_input")).toBe(true);
-    expect(snapshot.questions).toHaveLength(0);
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.BuildResearchSpecification);
+    expect(snapshot.project.status).not.toBe("blocked");
+    expect(snapshot.runtimeBlockers.some((blocker) => blocker.requirementKey === "research_input")).toBe(false);
+    expect(snapshot.researchInputs).toHaveLength(1);
+    expect(snapshot.researchInputs[0]?.researchQuestion).toBe(input.goal);
+    expect(snapshot.researchInputs[0]?.initialHypotheses.length).toBeGreaterThan(0);
+    expect(snapshot.researchInputs[0]?.initialHypotheses[0]).toContain(input.topic);
+    expect(snapshot.questions).toHaveLength(1);
+    expect(snapshot.hypotheses.length).toBeGreaterThan(0);
     expect(snapshot.finalOutputs).toHaveLength(0);
+  });
+
+  it("runs research metadata before OpenCode so the LLM receives real acquired sources", async () => {
+    const openCode = new CapturingOpenCodeAdapter();
+    const orchestrator = createStrictTestOrchestrator({
+      openCode,
+      llm: new MetadataFirstPlanner(),
+      toolRunner: new ToolRunner([metadataAcquisitionTool]),
+      settings: {
+        ...strictTestSettings,
+        allowExternalSearch: true,
+        researchMetadata: { ...strictTestSettings.researchMetadata, enabled: true }
+      }
+    });
+
+    let snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: {
+        ...input.autonomyPolicy,
+        allowExternalSearch: true,
+        maxLoopIterations: 1
+      }
+    });
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.project.status).toBe("completed");
+    expect(openCode.inputs).toHaveLength(1);
+    expect(openCode.inputs[0]?.sources?.some((source) => source.id === "source-openalex-test")).toBe(true);
+    expect(openCode.inputs[0]?.evidence?.some((evidence) => evidence.id === "evidence-openalex-test")).toBe(true);
+    expect(snapshot.toolRuns.some((toolRun) => toolRun.toolName === "ResearchMetadataTool")).toBe(true);
+  });
+
+  it("uses the current GUI research brief instead of stale untagged specifications or plans", async () => {
+    const openCode = new CapturingOpenCodeAdapter();
+    const orchestrator = createStrictTestOrchestrator({
+      openCode,
+      settings: {
+        ...strictTestSettings,
+        maxLoopIterations: 1
+      }
+    });
+    const nextInput: ResearchProjectInput = {
+      goal: "Evaluate whether citation-aware metadata improves RAG precision for literature review workflows.",
+      topic: "citation-aware metadata RAG precision",
+      scope: "Use traceable metadata and no synthetic sources.",
+      budget: "20 minutes",
+      autonomyPolicy: {
+        ...input.autonomyPolicy,
+        maxLoopIterations: 1
+      }
+    };
+    const nextHypothesis = "Citation-aware metadata improves RAG precision compared with text-only retrieval.";
+
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.buildResearchSpecification(snapshot.project.id);
+    snapshot = await orchestrator.planResearch(snapshot.project.id, 1);
+    const staleInputId = snapshot.researchInputs.at(-1)?.id;
+
+    snapshot = await orchestrator.updateProjectInput(snapshot.project.id, nextInput);
+    snapshot = await orchestrator.inputResearchQuestionHypothesis(snapshot.project.id, {
+      researchQuestion: nextInput.goal,
+      initialHypotheses: [nextHypothesis],
+      constraints: [],
+      expectedOutputs: []
+    });
+    const activeInputId = snapshot.researchInputs.at(-1)?.id;
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.project.status).toBe("completed");
+    expect(activeInputId).toBeDefined();
+    expect(activeInputId).not.toBe(staleInputId);
+    expect(openCode.inputs).toHaveLength(1);
+    expect(openCode.inputs[0]?.questions.map((question) => question.text)).toEqual([nextInput.goal]);
+    expect(openCode.inputs[0]?.hypotheses.map((hypothesis) => hypothesis.statement)).toEqual([nextHypothesis]);
+    expect(openCode.inputs[0]?.specification?.sourceResearchInputId).toBe(activeInputId);
+    expect(openCode.inputs[0]?.researchPlan?.sourceResearchInputId).toBe(activeInputId);
+    expect(JSON.stringify(openCode.inputs[0])).not.toContain(input.goal);
   });
 
   it("blocks clearly when the OpenCode execution engine is not configured", async () => {
@@ -146,7 +309,45 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.project.currentStep).toBe(ResearchLoopStep.ExecuteTools);
     expect(snapshot.project.status).toBe("failed");
     expect(snapshot.stepErrors.at(-1)?.step).toBe(ResearchLoopStep.ExecuteTools);
+    expect(snapshot.openCodeRuns).toHaveLength(1);
+    expect(snapshot.openCodeRuns[0]).toMatchObject({
+      iteration: 1,
+      status: "failed"
+    });
+    expect(snapshot.openCodeRuns[0]?.prompt).toContain(input.topic);
+    expect(snapshot.openCodeRuns[0]?.metadata?.executionBundleId).toBeDefined();
+    expect(snapshot.openCodeRuns[0]?.metadata?.error).toBe("configured OpenCode execution failed");
     expect(snapshot.finalOutputs).toHaveLength(0);
+  });
+
+  it("preserves pre-OpenCode acquisition outputs when the OpenCode attempt fails", async () => {
+    const orchestrator = createStrictTestOrchestrator({
+      openCode: failingAdapter(),
+      llm: new MetadataFirstPlanner(),
+      toolRunner: new ToolRunner([metadataAcquisitionTool]),
+      settings: {
+        ...strictTestSettings,
+        allowExternalSearch: true
+      }
+    });
+    let snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: {
+        ...input.autonomyPolicy,
+        allowExternalSearch: true
+      }
+    });
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    const failedRun = snapshot.openCodeRuns[0];
+    const bundleId = failedRun?.metadata?.executionBundleId;
+
+    expect(snapshot.project.status).toBe("failed");
+    expect(failedRun?.status).toBe("failed");
+    expect(bundleId).toBeDefined();
+    expect(snapshot.toolRuns.some((toolRun) => toolRun.id === "tool-openalex-test" && toolRun.status === "completed")).toBe(true);
+    expect(snapshot.sources.some((source) => source.id === "source-openalex-test" && source.metadata.executionBundleId === bundleId)).toBe(true);
+    expect(snapshot.evidence.some((evidence) => evidence.id === "evidence-openalex-test" && evidence.metadata?.executionBundleId === bundleId)).toBe(true);
   });
 
   it("feeds OpenCode source candidates into WebFetchTool during the same iteration", async () => {
@@ -240,7 +441,9 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.sources.some((source) => source.id === "partial-source-1")).toBe(true);
     expect(snapshot.toolRuns.some((run) => run.id === "partial-tool-1" && run.status === "completed")).toBe(true);
     expect(snapshot.toolRuns.some((run) => run.id === "partial-tool-2" && run.status === "failed")).toBe(true);
-    expect(snapshot.toolRuns.find((run) => run.id === "partial-tool-2")?.output).toMatchObject({ executionBundleId: "execution-bundle:" + snapshot.project.id + ":1:opencode-completed" });
+    expect(snapshot.toolRuns.find((run) => run.id === "partial-tool-2")?.output).toMatchObject({
+      executionBundleId: snapshot.openCodeRuns[0]?.metadata?.executionBundleId
+    });
 
     snapshot = await orchestrator.executeTools(snapshot.project.id, 1);
     expect(snapshot.toolRuns.filter((run) => run.id === "partial-tool-1")).toHaveLength(1);

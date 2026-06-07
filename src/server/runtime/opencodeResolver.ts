@@ -121,13 +121,13 @@ function bundledOpenCodeCandidates(): string[] {
 function defaultOpenCodeSearchRoots(): string[] {
   const processWithPackagedResources = process as NodeJS.Process & { resourcesPath?: string };
   const packagedResourcesPath = processWithPackagedResources.resourcesPath;
-  return [
-    process.cwd(),
-    process.env.AETHEROPS_APP_ROOT,
-    packagedResourcesPath,
-    packagedResourcesPath ? join(packagedResourcesPath, "app") : undefined,
-    packagedResourcesPath ? join(packagedResourcesPath, "app.asar.unpacked") : undefined
-  ].filter((item): item is string => Boolean(item));
+  const roots = [process.cwd()];
+  appendPath(roots, process.env.AETHEROPS_APP_ROOT);
+  appendPath(roots, packagedResourcesPath);
+  if (packagedResourcesPath) {
+    roots.push(join(packagedResourcesPath, "app"), join(packagedResourcesPath, "app.asar.unpacked"));
+  }
+  return roots;
 }
 
 function uniquePaths(paths: string[]): string[] {
@@ -142,4 +142,8 @@ function uniquePaths(paths: string[]): string[] {
     }
   }
   return result;
+}
+
+function appendPath(paths: string[], value: string | undefined): void {
+  if (value) paths.push(value);
 }

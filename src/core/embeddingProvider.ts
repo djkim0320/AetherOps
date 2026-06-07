@@ -115,11 +115,19 @@ export function cosineSimilarity(left: number[], right: number[]): number {
 }
 
 function normalize(vector: number[]): number[] {
-  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  let sum = 0;
+  for (const value of vector) {
+    sum += value * value;
+  }
+  const norm = Math.sqrt(sum);
   if (!norm) {
     return vector;
   }
-  return vector.map((value) => Number((value / norm).toFixed(8)));
+  const normalized: number[] = [];
+  for (const value of vector) {
+    normalized.push(Number((value / norm).toFixed(8)));
+  }
+  return normalized;
 }
 
 function formatError(error: unknown): string {

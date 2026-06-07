@@ -44,11 +44,19 @@ export function isVisibleInProjectMemory<T extends { projectId: string; memorySc
 }
 
 export function splitMemoryScope<T extends { memoryScope?: MemoryScope }>(items: T[]): { global: T[]; project: T[]; ephemeral: T[] } {
-  return {
-    global: items.filter((item) => item.memoryScope === "global"),
-    project: items.filter((item) => item.memoryScope === "project_only"),
-    ephemeral: items.filter((item) => item.memoryScope === "ephemeral")
-  };
+  const global: T[] = [];
+  const project: T[] = [];
+  const ephemeral: T[] = [];
+  for (const item of items) {
+    if (item.memoryScope === "global") {
+      global.push(item);
+    } else if (item.memoryScope === "ephemeral") {
+      ephemeral.push(item);
+    } else if (item.memoryScope === "project_only") {
+      project.push(item);
+    }
+  }
+  return { global, project, ephemeral };
 }
 
 export function normalizeMemoryScope(value: unknown): MemoryScope {

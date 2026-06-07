@@ -21,15 +21,21 @@ export class VectorIndexEngine {
     records: NormalizedResearchRecord[];
     settings?: AppSettings;
   }): Promise<ResearchChunk[]> {
-    const existing = new Set(input.snapshot.chunks.map((chunk) => chunk.id));
+    const existing = new Set<string>();
+    for (const chunk of input.snapshot.chunks) existing.add(chunk.id);
     const chunks: ResearchChunk[] = [];
-    for (const record of input.records.filter((item) =>
-      item.kind !== "error" &&
-      item.metadata.traceabilityKind !== "error" &&
-      normalizeMemoryScope(item.memoryScope) !== "ephemeral"
-    )) {
-      const source = sourceFromRecord(record);
+    const embeddingProviderName = providerName(input.settings);
+    const embeddingModel = input.settings?.embedding.model ?? "configured-embedding-model";
+    for (const record of input.records) {
+      if (
+        record.kind === "error" ||
+        record.metadata.traceabilityKind === "error" ||
+        normalizeMemoryScope(record.memoryScope) === "ephemeral"
+      ) {
+        continue;
+      }
       const traceabilityKind = getTraceabilityKind(record);
+      const source = sourceFromRecord(record, traceabilityKind);
       const canSupportHypothesis = record.metadata.canSupportHypothesis === true;
       const memoryScope = normalizeMemoryScope(record.memoryScope);
       for (const chunk of chunkResearchSource(source, record.content)) {
@@ -53,8 +59,8 @@ export class VectorIndexEngine {
           sourceQualityLabel: typeof record.metadata.sourceQualityLabel === "string" ? record.metadata.sourceQualityLabel : undefined,
           sourceCanSupportHypothesis: typeof record.metadata.sourceCanSupportHypothesis === "boolean" ? record.metadata.sourceCanSupportHypothesis : undefined,
           embedding,
-          embeddingProvider: providerName(input.settings),
-          embeddingModel: input.settings?.embedding.model ?? "configured-embedding-model",
+          embeddingProvider: embeddingProviderName,
+          embeddingModel,
           embeddingDimensions: embedding.length,
           createdAt: nowIso()
         }, memoryScope, record.originProjectId ?? record.projectId, record.workspaceProjectId ?? record.projectId));
@@ -64,11 +70,13 @@ export class VectorIndexEngine {
   }
 }
 
-function sourceFromRecord(record: NormalizedResearchRecord): ResearchSource {
+const HTTP_URL_PATTERN = /^https?:\/\//i;
+
+function sourceFromRecord(record: NormalizedResearchRecord, traceabilityKind = getTraceabilityKind(record)): ResearchSource {
   return {
     id: record.sourceId ?? `source_${record.id}`,
     projectId: record.projectId,
-    kind: sourceKindFromRecord(record),
+    kind: sourceKindFromRecord(record, traceabilityKind),
     title: record.title,
     url: record.sourceUri,
     retrievedAt: record.createdAt,
@@ -77,7 +85,7 @@ function sourceFromRecord(record: NormalizedResearchRecord): ResearchSource {
       citation: record.citation,
       confidence: record.confidence,
       recordKind: record.kind,
-      traceabilityKind: getTraceabilityKind(record),
+      traceabilityKind,
       canSupportHypothesis: record.metadata.canSupportHypothesis === true,
       sourceQualityTier: record.metadata.sourceQualityTier,
       sourceQualityLabel: record.metadata.sourceQualityLabel,
@@ -87,19 +95,18 @@ function sourceFromRecord(record: NormalizedResearchRecord): ResearchSource {
   };
 }
 
-function sourceKindFromRecord(record: NormalizedResearchRecord): ResearchSourceKind {
+function sourceKindFromRecord(record: NormalizedResearchRecord, traceabilityKind = getTraceabilityKind(record)): ResearchSourceKind {
   const sourceKind = typeof record.metadata.sourceKind === "string" ? record.metadata.sourceKind : undefined;
   if (sourceKind === "web" || sourceKind === "paper" || sourceKind === "file" || sourceKind === "artifact" || sourceKind === "log" || sourceKind === "conversation") {
     return sourceKind;
   }
-  const traceabilityKind = getTraceabilityKind(record);
   const mapping: Record<NormalizedRecordKind, ResearchSourceKind> = {
-    source: traceabilityKind === "external_source" && /^https?:\/\//i.test(record.sourceUri ?? "") ? "web" : "file",
+    source: traceabilityKind === "external_source" && HTTP_URL_PATTERN.test(record.sourceUri ?? "") ? "web" : "file",
     artifact: "artifact",
     claim: traceabilityKind === "project_provenance" ? "conversation" : "log",
-    evidence: traceabilityKind === "external_source" && /^https?:\/\//i.test(record.sourceUri ?? "") ? "web" : "file",
+    evidence: traceabilityKind === "external_source" && HTTP_URL_PATTERN.test(record.sourceUri ?? "") ? "web" : "file",
     observation: "log",
-    citation: /^https?:\/\//i.test(record.sourceUri ?? record.citation ?? "") ? "web" : "file",
+    citation: HTTP_URL_PATTERN.test(record.sourceUri ?? record.citation ?? "") ? "web" : "file",
     error: "log"
   };
   return mapping[record.kind];

@@ -86,56 +86,14 @@ export async function generateSeedPlanWithLlm(
   });
 
   const createdAt = nowIso();
-  const questions = normalizeArray(response.questions)
-    .slice(0, 5)
-    .map((question) => ({
-      id: createId("question"),
-      projectId: project.id,
-      text: cleanText(question.text),
-      status: "open" as const,
-      createdAt
-    }))
-    .filter((question) => question.text.length > 0);
+  const questions = buildSeedQuestions(response.questions, project, createdAt);
 
   if (questions.length < 3) {
     return undefined;
   }
 
-  const hypotheses = normalizeArray(response.hypotheses)
-    .slice(0, 8)
-    .map((hypothesis) => ({
-      id: createId("hypothesis"),
-      projectId: project.id,
-      questionId: questions[Math.max(0, Math.min(hypothesis.questionIndex ?? 0, questions.length - 1))].id,
-      statement: cleanText(hypothesis.statement),
-      status: "untested" as const,
-      confidence: clampConfidence(hypothesis.confidence ?? 0.35),
-      createdAt
-    }))
-    .filter((hypothesis) => hypothesis.statement.length > 0);
-
-  const evidence = normalizeArray(response.evidence)
-    .slice(0, 8)
-    .map((item) => ({
-      id: createId("evidence"),
-      projectId: project.id,
-      category: normalizeCategory(item.category),
-      title: cleanText(item.title) || "LLM seed evidence",
-      summary: cleanText(item.summary),
-      sourceUri: cleanText(item.sourceUri) || undefined,
-      citation: cleanText(item.citation) || undefined,
-      quote: cleanText(item.quote) || undefined,
-      keywords: normalizeArray(item.keywords).map(cleanText).filter(Boolean).slice(0, 8),
-      linkedHypothesisIds: normalizeArray(item.hypothesisIndexes)
-        .map((index) => hypotheses[index]?.id)
-        .filter((id): id is string => Boolean(id)),
-      reliabilityScore: clampConfidence(item.reliabilityScore ?? (item.citation || item.sourceUri ? 0.55 : 0.25)),
-      relevanceScore: clampConfidence(item.relevanceScore ?? 0.5),
-      evidenceStrength: normalizeStrength(item.evidenceStrength),
-      limitations: normalizeArray(item.limitations).map(cleanText).filter(Boolean),
-      createdAt
-    }))
-    .filter((item) => item.summary.length > 0);
+  const hypotheses = buildSeedHypotheses(response.hypotheses, project, questions, createdAt);
+  const evidence = buildSeedEvidence(response.evidence, project, hypotheses, createdAt);
 
   return {
     questions,
@@ -165,19 +123,17 @@ export async function deriveResultWithLlm(
   if (!answer) {
     return undefined;
   }
-  const hypothesisUpdates = normalizeArray(response.hypothesisUpdates)
-    .map((update) => {
-      const hypothesis = snapshot.hypotheses[update.hypothesisIndex];
-      return hypothesis
-        ? {
-            hypothesisId: hypothesis.id,
-            status: normalizeStatus(update.status),
-            confidence: clampConfidence(update.confidence),
-            rationale: cleanText(update.rationale) || "LLM derived update without detailed rationale."
-          }
-        : undefined;
-    })
-    .filter((update): update is NonNullable<typeof update> => Boolean(update));
+  const hypothesisUpdates: EvidenceBasedResult["hypothesisUpdates"] = [];
+  for (const update of normalizeArray(response.hypothesisUpdates)) {
+    const hypothesis = snapshot.hypotheses[update.hypothesisIndex];
+    if (!hypothesis) continue;
+    hypothesisUpdates.push({
+      hypothesisId: hypothesis.id,
+      status: normalizeStatus(update.status),
+      confidence: clampConfidence(update.confidence),
+      rationale: cleanText(update.rationale) || "LLM derived update without detailed rationale."
+    });
+  }
 
   return {
     id: createId("result"),
@@ -185,9 +141,9 @@ export async function deriveResultWithLlm(
     iteration,
     answer,
     hypothesisUpdates,
-    quantitativeResults: normalizeArray(response.quantitativeResults).map(cleanText).filter(Boolean),
-    qualitativeResults: normalizeArray(response.qualitativeResults).map(cleanText).filter(Boolean),
-    nextQuestions: forceStop ? [] : normalizeArray(response.nextQuestions).map(cleanText).filter(Boolean).slice(0, 5),
+    quantitativeResults: collectCleanStrings(response.quantitativeResults),
+    qualitativeResults: collectCleanStrings(response.qualitativeResults),
+    nextQuestions: forceStop ? [] : collectCleanStrings(response.nextQuestions, 5),
     needsMoreEvidence: forceStop ? false : Boolean(response.needsMoreEvidence),
     needsMoreAnalysis: forceStop ? false : Boolean(response.needsMoreAnalysis),
     createdAt
@@ -212,30 +168,10 @@ function requestResultJson(
           topic: snapshot.project.topic,
           goal: snapshot.project.goal.slice(0, 1_200)
         })}`,
-        `Hypotheses: ${JSON.stringify(snapshot.hypotheses.map((hypothesis, index) => ({
-          index,
-          statement: hypothesis.statement,
-          status: hypothesis.status,
-          confidence: hypothesis.confidence
-        })))}`,
-        `ValidationResults: ${JSON.stringify(snapshot.validationResults.slice(-8).map((result) => ({
-          hypothesisId: result.hypothesisId,
-          status: result.status,
-          confidence: result.confidence,
-          reasoningSummary: result.reasoningSummary,
-          limitations: result.limitations.slice(0, 4),
-          evidenceGaps: result.evidenceGaps.slice(0, 4)
-        })))}`,
-        `EvidenceCitations: ${JSON.stringify(snapshot.evidence.slice(-12).map((item) => ({
-          title: item.title,
-          citation: item.citation,
-          sourceUri: item.sourceUri,
-          reliabilityScore: item.reliabilityScore,
-          relevanceScore: item.relevanceScore,
-          evidenceStrength: item.evidenceStrength,
-          limitations: item.limitations?.slice(0, 3)
-        })))}`,
-        `HybridCitations: ${JSON.stringify(snapshot.hybridContexts.at(-1)?.citations.slice(0, 12) ?? [])}`
+        `Hypotheses: ${JSON.stringify(hypothesisPromptRows(snapshot.hypotheses))}`,
+        `ValidationResults: ${JSON.stringify(latestValidationPromptRows(snapshot.validationResults, 8))}`,
+        `EvidenceCitations: ${JSON.stringify(latestEvidenceCitationRows(snapshot.evidence, 12))}`,
+        `HybridCitations: ${JSON.stringify(limitedStrings(snapshot.hybridContexts.at(-1)?.citations, 12))}`
       ].join("\n")
     : [
         "Derive an evidence-based research result from the current project state.",
@@ -251,20 +187,12 @@ function requestResultJson(
         `Questions: ${JSON.stringify(snapshot.questions)}`,
         `Hypotheses: ${JSON.stringify(snapshot.hypotheses)}`,
         `ProjectContextSnapshot: ${JSON.stringify(snapshot.projectContextSnapshots.at(-1))}`,
-        `ValidationResults: ${JSON.stringify(snapshot.validationResults.filter((result) => result.iteration === iteration))}`,
+        `ValidationResults: ${JSON.stringify(validationResultsForIteration(snapshot.validationResults, iteration))}`,
         `Hybrid Context: ${JSON.stringify(snapshot.hybridContexts.at(-1))}`,
-        `Selected Evidence: ${JSON.stringify(snapshot.evidence.filter((item) => snapshot.projectContextSnapshots.at(-1)?.selectedEvidenceIds.includes(item.id)).map((item) => ({
-          title: item.title,
-          citation: item.citation,
-          sourceUri: item.sourceUri,
-          reliabilityScore: item.reliabilityScore,
-          relevanceScore: item.relevanceScore,
-          evidenceStrength: item.evidenceStrength,
-          limitations: item.limitations?.slice(0, 3)
-        })))}`,
-        `Selected Chunks: ${JSON.stringify(snapshot.chunks.filter((chunk) => snapshot.projectContextSnapshots.at(-1)?.selectedChunkIds.includes(chunk.id)).map((chunk) => ({ id: chunk.id, sourceId: chunk.sourceId, text: chunk.text.slice(0, 500), citation: chunk.citation })))}`,
-        `OpenCode Runs: ${JSON.stringify(snapshot.openCodeRuns.map((run) => ({ iteration: run.iteration, logs: run.logs, toolPlan: run.toolPlan })))}`,
-        `Tool Runs: ${JSON.stringify(snapshot.toolRuns.slice(-12))}`
+        `Selected Evidence: ${JSON.stringify(selectedEvidencePromptRows(snapshot))}`,
+        `Selected Chunks: ${JSON.stringify(selectedChunkPromptRows(snapshot))}`,
+        `OpenCode Runs: ${JSON.stringify(openCodeRunPromptRows(snapshot.openCodeRuns))}`,
+        `Tool Runs: ${JSON.stringify(lastItems(snapshot.toolRuns, 12))}`
       ].join("\n");
   return llm.completeJson<LlmResultResponse>({
     schemaName: "AetherOpsEvidenceBasedResult",
@@ -278,6 +206,279 @@ function normalizeArray<T>(value: T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+function hypothesisPromptRows(hypotheses: Hypothesis[]): Array<{ index: number; statement: string; status: HypothesisStatus; confidence: number }> {
+  const rows: Array<{ index: number; statement: string; status: HypothesisStatus; confidence: number }> = [];
+  for (let index = 0; index < hypotheses.length; index += 1) {
+    const hypothesis = hypotheses[index];
+    rows.push({
+      index,
+      statement: hypothesis.statement,
+      status: hypothesis.status,
+      confidence: hypothesis.confidence
+    });
+  }
+  return rows;
+}
+
+function latestValidationPromptRows(
+  validations: ResearchSnapshot["validationResults"],
+  limit: number
+): Array<{
+  hypothesisId?: string;
+  status: string;
+  confidence: number;
+  reasoningSummary: string;
+  limitations: string[];
+  evidenceGaps: string[];
+}> {
+  const rows: Array<{
+    hypothesisId?: string;
+    status: string;
+    confidence: number;
+    reasoningSummary: string;
+    limitations: string[];
+    evidenceGaps: string[];
+  }> = [];
+  const start = Math.max(0, validations.length - limit);
+  for (let index = start; index < validations.length; index += 1) {
+    const result = validations[index];
+    rows.push({
+      hypothesisId: result.hypothesisId,
+      status: result.status,
+      confidence: result.confidence,
+      reasoningSummary: result.reasoningSummary,
+      limitations: limitedStrings(result.limitations, 4),
+      evidenceGaps: limitedStrings(result.evidenceGaps, 4)
+    });
+  }
+  return rows;
+}
+
+function latestEvidenceCitationRows(
+  evidence: EvidenceItem[],
+  limit: number
+): Array<{
+  title: string;
+  citation?: string;
+  sourceUri?: string;
+  reliabilityScore?: number;
+  relevanceScore?: number;
+  evidenceStrength?: EvidenceItem["evidenceStrength"];
+  limitations?: string[];
+}> {
+  const rows: Array<{
+    title: string;
+    citation?: string;
+    sourceUri?: string;
+    reliabilityScore?: number;
+    relevanceScore?: number;
+    evidenceStrength?: EvidenceItem["evidenceStrength"];
+    limitations?: string[];
+  }> = [];
+  const start = Math.max(0, evidence.length - limit);
+  for (let index = start; index < evidence.length; index += 1) {
+    const item = evidence[index];
+    rows.push({
+      title: item.title,
+      citation: item.citation,
+      sourceUri: item.sourceUri,
+      reliabilityScore: item.reliabilityScore,
+      relevanceScore: item.relevanceScore,
+      evidenceStrength: item.evidenceStrength,
+      limitations: optionalLimitedStrings(item.limitations, 3)
+    });
+  }
+  return rows;
+}
+
+function validationResultsForIteration(
+  validations: ResearchSnapshot["validationResults"],
+  iteration: number
+): ResearchSnapshot["validationResults"] {
+  const rows: ResearchSnapshot["validationResults"] = [];
+  for (const result of validations) {
+    if (result.iteration === iteration) rows.push(result);
+  }
+  return rows;
+}
+
+function selectedEvidencePromptRows(snapshot: ResearchSnapshot): Array<{
+  title: string;
+  citation?: string;
+  sourceUri?: string;
+  reliabilityScore?: number;
+  relevanceScore?: number;
+  evidenceStrength?: EvidenceItem["evidenceStrength"];
+  limitations?: string[];
+}> {
+  const latestContext = snapshot.projectContextSnapshots.at(-1);
+  if (!latestContext) return [];
+  if (!latestContext.selectedEvidenceIds.length) return [];
+  const selectedEvidenceIds = new Set(latestContext.selectedEvidenceIds);
+  const rows: Array<{
+    title: string;
+    citation?: string;
+    sourceUri?: string;
+    reliabilityScore?: number;
+    relevanceScore?: number;
+    evidenceStrength?: EvidenceItem["evidenceStrength"];
+    limitations?: string[];
+  }> = [];
+  for (const item of snapshot.evidence) {
+    if (!selectedEvidenceIds.has(item.id)) continue;
+    rows.push({
+      title: item.title,
+      citation: item.citation,
+      sourceUri: item.sourceUri,
+      reliabilityScore: item.reliabilityScore,
+      relevanceScore: item.relevanceScore,
+      evidenceStrength: item.evidenceStrength,
+      limitations: optionalLimitedStrings(item.limitations, 3)
+    });
+  }
+  return rows;
+}
+
+function selectedChunkPromptRows(snapshot: ResearchSnapshot): Array<{ id: string; sourceId?: string; text: string; citation?: string }> {
+  const latestContext = snapshot.projectContextSnapshots.at(-1);
+  if (!latestContext) return [];
+  if (!latestContext.selectedChunkIds.length) return [];
+  const selectedChunkIds = new Set(latestContext.selectedChunkIds);
+  const rows: Array<{ id: string; sourceId?: string; text: string; citation?: string }> = [];
+  for (const chunk of snapshot.chunks) {
+    if (!selectedChunkIds.has(chunk.id)) continue;
+    rows.push({
+      id: chunk.id,
+      sourceId: chunk.sourceId,
+      text: chunk.text.slice(0, 500),
+      citation: chunk.citation
+    });
+  }
+  return rows;
+}
+
+function openCodeRunPromptRows(openCodeRuns: ResearchSnapshot["openCodeRuns"]): Array<{ iteration: number; logs: string[]; toolPlan: string[] }> {
+  const rows: Array<{ iteration: number; logs: string[]; toolPlan: string[] }> = [];
+  for (const run of openCodeRuns) {
+    rows.push({ iteration: run.iteration, logs: run.logs, toolPlan: run.toolPlan });
+  }
+  return rows;
+}
+
+function lastItems<T>(items: T[], limit: number): T[] {
+  const output: T[] = [];
+  const start = Math.max(0, items.length - limit);
+  for (let index = start; index < items.length; index += 1) {
+    output.push(items[index]);
+  }
+  return output;
+}
+
+function limitedStrings(values: string[] | undefined, limit: number): string[] {
+  const output: string[] = [];
+  if (!values) return output;
+  const count = Math.min(values.length, limit);
+  for (let index = 0; index < count; index += 1) {
+    output.push(values[index]);
+  }
+  return output;
+}
+
+function optionalLimitedStrings(values: string[] | undefined, limit: number): string[] | undefined {
+  return values ? limitedStrings(values, limit) : undefined;
+}
+
+function buildSeedQuestions(
+  responseQuestions: LlmSeedResponse["questions"] | undefined,
+  project: ResearchProject,
+  createdAt: string
+): ResearchQuestion[] {
+  const questions: ResearchQuestion[] = [];
+  const values = normalizeArray(responseQuestions);
+  const limit = Math.min(values.length, 5);
+  for (let index = 0; index < limit; index += 1) {
+    const text = cleanText(values[index].text);
+    if (!text) continue;
+    questions.push({
+      id: createId("question"),
+      projectId: project.id,
+      text,
+      status: "open",
+      createdAt
+    });
+  }
+  return questions;
+}
+
+function buildSeedHypotheses(
+  responseHypotheses: LlmSeedResponse["hypotheses"] | undefined,
+  project: ResearchProject,
+  questions: ResearchQuestion[],
+  createdAt: string
+): Hypothesis[] {
+  const hypotheses: Hypothesis[] = [];
+  const values = normalizeArray(responseHypotheses);
+  const limit = Math.min(values.length, 8);
+  for (let index = 0; index < limit; index += 1) {
+    const item = values[index];
+    const statement = cleanText(item.statement);
+    if (!statement) continue;
+    hypotheses.push({
+      id: createId("hypothesis"),
+      projectId: project.id,
+      questionId: questions[Math.max(0, Math.min(item.questionIndex ?? 0, questions.length - 1))].id,
+      statement,
+      status: "untested",
+      confidence: clampConfidence(item.confidence ?? 0.35),
+      createdAt
+    });
+  }
+  return hypotheses;
+}
+
+function buildSeedEvidence(
+  responseEvidence: LlmSeedResponse["evidence"] | undefined,
+  project: ResearchProject,
+  hypotheses: Hypothesis[],
+  createdAt: string
+): EvidenceItem[] {
+  const evidence: EvidenceItem[] = [];
+  const values = normalizeArray(responseEvidence);
+  const limit = Math.min(values.length, 8);
+  for (let index = 0; index < limit; index += 1) {
+    const item = values[index];
+    const summary = cleanText(item.summary);
+    if (!summary) continue;
+    evidence.push({
+      id: createId("evidence"),
+      projectId: project.id,
+      category: normalizeCategory(item.category),
+      title: cleanText(item.title) || "LLM seed evidence",
+      summary,
+      sourceUri: cleanText(item.sourceUri) || undefined,
+      citation: cleanText(item.citation) || undefined,
+      quote: cleanText(item.quote) || undefined,
+      keywords: collectCleanStrings(item.keywords, 8),
+      linkedHypothesisIds: collectLinkedHypothesisIds(item.hypothesisIndexes, hypotheses),
+      reliabilityScore: clampConfidence(item.reliabilityScore ?? (item.citation || item.sourceUri ? 0.55 : 0.25)),
+      relevanceScore: clampConfidence(item.relevanceScore ?? 0.5),
+      evidenceStrength: normalizeStrength(item.evidenceStrength),
+      limitations: collectCleanStrings(item.limitations),
+      createdAt
+    });
+  }
+  return evidence;
+}
+
+function collectLinkedHypothesisIds(indexes: number[] | undefined, hypotheses: Hypothesis[]): string[] {
+  const ids: string[] = [];
+  for (const index of normalizeArray(indexes)) {
+    const id = hypotheses[index]?.id;
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
 function cleanText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -288,14 +489,7 @@ function clampConfidence(value: unknown): number {
 }
 
 function normalizeCategory(value: unknown): EvidenceItem["category"] {
-  const allowed: EvidenceItem["category"][] = [
-    "generated_artifact",
-    "paper_reference",
-    "web_source",
-    "experiment_log",
-    "conversation_memo"
-  ];
-  return allowed.includes(value as EvidenceItem["category"]) ? (value as EvidenceItem["category"]) : "conversation_memo";
+  return allowedEvidenceCategories.has(value as EvidenceItem["category"]) ? (value as EvidenceItem["category"]) : "conversation_memo";
 }
 
 function normalizeStrength(value: unknown): EvidenceItem["evidenceStrength"] {
@@ -303,6 +497,26 @@ function normalizeStrength(value: unknown): EvidenceItem["evidenceStrength"] {
 }
 
 function normalizeStatus(value: unknown): HypothesisStatus {
-  const allowed: HypothesisStatus[] = ["untested", "supported", "rejected", "needs_more_evidence"];
-  return allowed.includes(value as HypothesisStatus) ? (value as HypothesisStatus) : "needs_more_evidence";
+  return allowedHypothesisStatuses.has(value as HypothesisStatus) ? (value as HypothesisStatus) : "needs_more_evidence";
 }
+
+function collectCleanStrings(value: string[] | undefined, limit = Number.POSITIVE_INFINITY): string[] {
+  const output: string[] = [];
+  for (const item of normalizeArray(value)) {
+    const text = cleanText(item);
+    if (!text) continue;
+    output.push(text);
+    if (output.length >= limit) break;
+  }
+  return output;
+}
+
+const allowedEvidenceCategories = new Set<EvidenceItem["category"]>([
+  "generated_artifact",
+  "paper_reference",
+  "web_source",
+  "experiment_log",
+  "conversation_memo"
+]);
+
+const allowedHypothesisStatuses = new Set<HypothesisStatus>(["untested", "supported", "rejected", "needs_more_evidence"]);

@@ -1,7 +1,13 @@
 import type { AetherOpsApi } from "../vite-env.js";
 
 const missingApiMessage =
-  "AetherOps 백엔드가 연결되지 않았습니다. `npm run dev`로 웹앱을 실행하거나 빌드 후 `npm run start`를 실행해 주세요.";
+  "AetherOps 백엔드에 연결하지 못했습니다. `npm run dev` 또는 `npm run start`를 실행해 주세요.";
+const configuredHttpApiBaseUrl = import.meta.env.VITE_AETHEROPS_API_URL;
+const httpApiBaseUrl = configuredHttpApiBaseUrl
+  ? configuredHttpApiBaseUrl.replace(/\/$/, "")
+  : window.location.port === "5180"
+    ? "http://127.0.0.1:5179"
+    : window.location.origin;
 
 export function isAetherOpsApiAvailable(): boolean {
   return typeof window.fetch === "function";
@@ -11,13 +17,14 @@ export async function waitForAetherOpsApi(timeoutMs = 2_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     try {
-      const response = await fetch(`${getHttpApiBaseUrl()}/api/health`, { cache: "no-store" });
+      const response = await fetch(`${httpApiBaseUrl}/api/health`, { cache: "no-store" });
       if (response.ok) {
         return true;
       }
     } catch {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+      // Retry below after the same delay used for non-OK health responses.
     }
+    await sleep(100);
   }
   return false;
 }
@@ -66,6 +73,10 @@ export function getAetherOpsApi(): AetherOpsApi {
       get: () => rpc("settings.get"),
       save: (settings) => rpc("settings.save", settings)
     },
+    tools: {
+      diagnostics: () => rpc("tools.diagnostics"),
+      preflightEngineering: (target) => rpc("tools.preflightEngineering", target)
+    },
     snapshots: {
       get: (projectId) => rpc("snapshots.get", projectId)
     },
@@ -80,9 +91,9 @@ export function getMissingAetherOpsApiMessage(): string {
 }
 
 async function rpc<T>(method: string, ...args: unknown[]): Promise<T> {
-  const response = await fetch(`${getHttpApiBaseUrl()}/api/rpc`, {
+  const response = await fetch(`${httpApiBaseUrl}/api/rpc`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json; charset=utf-8" },
     body: JSON.stringify({ method, args })
   });
   const payload = (await response.json()) as { ok?: boolean; result?: T; error?: string };
@@ -92,13 +103,6 @@ async function rpc<T>(method: string, ...args: unknown[]): Promise<T> {
   return payload.result as T;
 }
 
-function getHttpApiBaseUrl(): string {
-  const configured = import.meta.env.VITE_AETHEROPS_API_URL;
-  if (configured) {
-    return configured.replace(/\/$/, "");
-  }
-  if (window.location.port === "5180") {
-    return "http://127.0.0.1:5179";
-  }
-  return window.location.origin;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

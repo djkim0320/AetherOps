@@ -1,4 +1,5 @@
 import { createId, nowIso } from "./ids.js";
+import { hasExecutableEngineeringTool } from "./engineeringProgramTool.js";
 import type { AppSettings, OpenCodeRunInput, ResearchSnapshot, ToolRun } from "./types.js";
 import { createDefaultResearchTools, type ResearchToolResult, type ResearchTool } from "./toolRegistry.js";
 
@@ -15,6 +16,11 @@ export interface ToolRunnerResult {
   failure?: Error;
   rollingInput: OpenCodeRunInput;
   toolName?: string;
+}
+
+export interface ToolRunnerOptions {
+  includeTools?: string[];
+  excludeTools?: string[];
 }
 
 export class ToolRunnerError extends Error {
@@ -39,7 +45,14 @@ export class ToolRunner {
   constructor(private readonly tools: ResearchTool[] = createDefaultResearchTools()) {}
 
   listRegisteredToolNames(): string[] {
-    return [...new Set(this.tools.map((tool) => tool.name))];
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const tool of this.tools) {
+      if (seen.has(tool.name)) continue;
+      seen.add(tool.name);
+      names.push(tool.name);
+    }
+    return names;
   }
 
   listToolNames(): string[] {
@@ -47,64 +60,48 @@ export class ToolRunner {
   }
 
   listExecutableToolNames(context: ToolExecutableContext): string[] {
-    const registered = new Map(this.tools.map((tool) => [normalizeToolName(tool.name), tool.name]));
-    const include = (name: string, enabled: boolean) => (enabled && registered.has(normalizeToolName(name)) ? [registered.get(normalizeToolName(name)) as string] : []);
+    const registered = registeredToolNameMap(this.tools);
     const externalAllowed = context.snapshot.project.autonomyPolicy.allowExternalSearch && context.settings.allowExternalSearch;
     const webSearchConfigured =
       context.settings.webSearch.provider !== "disabled" && Boolean(context.settings.webSearch.apiKey || context.settings.webSearch.apiKeyConfigured);
     const hasFetchCandidates = hasFetchCandidateUrls(context.snapshot) || hasContinuationFetchHint(context.snapshot);
     const hasPdfInputs = hasPdfInput(context.snapshot);
     const codeAllowed = context.snapshot.project.autonomyPolicy.allowCodeExecution && context.settings.allowCodeExecution;
+    const researchMetadataReady = externalAllowed && context.settings.researchMetadata.enabled;
+    const engineeringProgramReady = codeAllowed && hasExecutableEngineeringTool(context.settings);
 
-    const standard = [
-      "websearchtool",
-      "backgroundbrowsertool",
-      "webfetchtool",
-      "papermetadatatool",
-      "pdfingestiontool",
-      "codeexecutiontool",
-      "artifactwritertool",
-      "dataanalysistool"
-    ];
-    const customRegistered = this.listRegisteredToolNames().filter((name) => !standard.includes(normalizeToolName(name)));
+    const customRegistered: string[] = [];
+    for (const [normalizedName, registeredName] of registered) {
+      if (!standardExecutableToolNames.has(normalizedName)) customRegistered.push(registeredName);
+    }
 
-    return orderToolNames([
-      ...include("WebSearchTool", externalAllowed && webSearchConfigured),
-      ...include("BackgroundBrowserTool", externalAllowed && context.settings.browserUse.enabled),
-      ...include("WebFetchTool", externalAllowed && (hasFetchCandidates || webSearchConfigured || context.settings.browserUse.enabled)),
-      ...include("PdfIngestionTool", hasPdfInputs),
-      ...include("CodeExecutionTool", codeAllowed),
-      ...include("ArtifactWriterTool", true),
-      ...include("DataAnalysisTool", true),
-      ...customRegistered
-    ]);
+    const candidates: string[] = [];
+    pushRegisteredTool(candidates, registered, "WebSearchTool", externalAllowed && webSearchConfigured);
+    pushRegisteredTool(candidates, registered, "BackgroundBrowserTool", externalAllowed && context.settings.browserUse.enabled);
+    pushRegisteredTool(candidates, registered, "WebFetchTool", externalAllowed && (hasFetchCandidates || webSearchConfigured || context.settings.browserUse.enabled));
+    pushRegisteredTool(candidates, registered, "ResearchMetadataTool", researchMetadataReady);
+    pushRegisteredTool(candidates, registered, "PdfIngestionTool", hasPdfInputs);
+    pushRegisteredTool(candidates, registered, "CodeExecutionTool", codeAllowed);
+    pushRegisteredTool(candidates, registered, "EngineeringProgramTool", engineeringProgramReady);
+    pushRegisteredTool(candidates, registered, "ArtifactWriterTool", true);
+    pushRegisteredTool(candidates, registered, "DataAnalysisTool", true);
+    for (const tool of customRegistered) candidates.push(tool);
+    return orderToolNames(candidates);
   }
 
   hasTool(name: string): boolean {
     const normalized = normalizeToolName(name);
-    return this.tools.some((tool) => normalizeToolName(tool.name) === normalized);
+    for (const tool of this.tools) {
+      if (normalizeToolName(tool.name) === normalized) return true;
+    }
+    return false;
   }
 
-  async runAll(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult[]> {
+  async runAll(input: OpenCodeRunInput, settings: AppSettings, options: ToolRunnerOptions = {}): Promise<ResearchToolResult[]> {
     const results: ResearchToolResult[] = [];
-    let rollingInput: RollingOpenCodeRunInput = {
-      ...input,
-      evidence: [...(input.evidence ?? [])],
-      artifacts: [...(input.artifacts ?? [])],
-      sources: [...(input.sources ?? [])],
-      sourceCandidates: [...(input.sourceCandidates ?? [])],
-      claims: [...(input.claims ?? [])],
-      observations: [...(input.observations ?? [])],
-      toolRuns: [...(input.toolRuns ?? [])],
-      normalizedRecords: [...(input.normalizedRecords ?? [])],
-      validationResults: [...(input.validationResults ?? [])],
-      projectContextSnapshots: [...(input.projectContextSnapshots ?? [])],
-      results: [...(input.results ?? [])]
-    };
-    const toolMap = new Map(this.tools.map((tool) => [normalizeToolName(tool.name), tool]));
-    const requiredTools = orderToolNames(input.researchPlan?.requiredTools ?? [])
-      .map(normalizeToolName)
-      .filter((toolName) => toolName && toolName !== "opencodetool");
+    let rollingInput = cloneRollingInput(input);
+    const toolMap = researchToolMap(this.tools);
+    const requiredTools = filterRequiredTools(normalizedRequiredTools(input.researchPlan?.requiredTools ?? []), options);
 
     for (const toolName of requiredTools) {
       const tool = toolMap.get(toolName);
@@ -115,20 +112,7 @@ export class ToolRunner {
           toolName
         });
       }
-      const currentInput: RollingOpenCodeRunInput = {
-        ...rollingInput,
-        evidence: [...(rollingInput.evidence ?? [])],
-        artifacts: [...(rollingInput.artifacts ?? [])],
-        sources: [...(rollingInput.sources ?? [])],
-        sourceCandidates: [...(rollingInput.sourceCandidates ?? [])],
-        claims: [...(rollingInput.claims ?? [])],
-        observations: [...(rollingInput.observations ?? [])],
-        toolRuns: [...(rollingInput.toolRuns ?? [])],
-        normalizedRecords: [...(rollingInput.normalizedRecords ?? [])],
-        validationResults: [...(rollingInput.validationResults ?? [])],
-        projectContextSnapshots: [...(rollingInput.projectContextSnapshots ?? [])],
-        results: [...(rollingInput.results ?? [])]
-      };
+      const currentInput = cloneRollingInput(rollingInput);
       let result: ResearchToolResult;
       try {
         result = await tool.run(currentInput, settings);
@@ -195,15 +179,104 @@ function syntheticFailedResult(toolName: string, input: RollingOpenCodeRunInput,
 function accumulateToolResult(input: RollingOpenCodeRunInput, result: ResearchToolResult): RollingOpenCodeRunInput {
   return {
     ...input,
-    evidence: [...(input.evidence ?? []), ...result.evidence],
-    artifacts: [...(input.artifacts ?? []), ...result.artifacts],
-    sources: [...(input.sources ?? []), ...result.sources],
-    toolRuns: [...(input.toolRuns ?? []), result.toolRun]
+    evidence: concatItems(input.evidence ?? [], result.evidence),
+    artifacts: concatItems(input.artifacts ?? [], result.artifacts),
+    sources: concatItems(input.sources ?? [], result.sources),
+    toolRuns: appendItem(input.toolRuns ?? [], result.toolRun)
   };
 }
 
+function cloneRollingInput(input: RollingOpenCodeRunInput): RollingOpenCodeRunInput {
+  return {
+    ...input,
+    evidence: copyItems(input.evidence ?? []),
+    artifacts: copyItems(input.artifacts ?? []),
+    sources: copyItems(input.sources ?? []),
+    sourceCandidates: copyItems(input.sourceCandidates ?? []),
+    claims: copyItems(input.claims ?? []),
+    observations: copyItems(input.observations ?? []),
+    toolRuns: copyItems(input.toolRuns ?? []),
+    normalizedRecords: copyItems(input.normalizedRecords ?? []),
+    validationResults: copyItems(input.validationResults ?? []),
+    projectContextSnapshots: copyItems(input.projectContextSnapshots ?? []),
+    results: copyItems(input.results ?? [])
+  };
+}
+
+function copyItems<T>(items: T[]): T[] {
+  if (!items.length) return [];
+  const output: T[] = [];
+  for (const item of items) output.push(item);
+  return output;
+}
+
+function concatItems<T>(first: T[], second: T[]): T[] {
+  if (!first.length && !second.length) return [];
+  if (!second.length) return first;
+  if (!first.length) return copyItems(second);
+  const output: T[] = [];
+  for (const item of first) output.push(item);
+  for (const item of second) output.push(item);
+  return output;
+}
+
+function appendItem<T>(items: T[], item: T): T[] {
+  const output = new Array<T>(items.length + 1);
+  for (let index = 0; index < items.length; index += 1) output[index] = items[index] as T;
+  output[items.length] = item;
+  return output;
+}
+
 export function normalizeToolName(value: string): string {
-  return value.replace(/\(.*?\)/g, "").replace(/\s+/g, "").trim().toLowerCase();
+  return value.replace(toolAnnotationPattern, "").replace(toolWhitespacePattern, "").trim().toLowerCase();
+}
+
+function registeredToolNameMap(tools: ResearchTool[]): Map<string, string> {
+  const registered = new Map<string, string>();
+  for (const tool of tools) registered.set(normalizeToolName(tool.name), tool.name);
+  return registered;
+}
+
+function researchToolMap(tools: ResearchTool[]): Map<string, ResearchTool> {
+  const map = new Map<string, ResearchTool>();
+  for (const tool of tools) map.set(normalizeToolName(tool.name), tool);
+  return map;
+}
+
+function pushRegisteredTool(candidates: string[], registered: Map<string, string>, name: string, enabled: boolean): void {
+  if (!enabled) return;
+  const registeredName = registered.get(normalizeToolName(name));
+  if (registeredName) candidates.push(registeredName);
+}
+
+function normalizedRequiredTools(requiredTools: string[]): string[] {
+  const normalized: string[] = [];
+  for (const tool of orderedToolEntries(requiredTools)) {
+    if (tool.normalized !== "opencodetool") normalized.push(tool.normalized);
+  }
+  return normalized;
+}
+
+function filterRequiredTools(requiredTools: string[], options: ToolRunnerOptions): string[] {
+  const include = normalizedToolFilter(options.includeTools);
+  const exclude = normalizedToolFilter(options.excludeTools);
+  const filtered: string[] = [];
+  for (const tool of requiredTools) {
+    if (include && !include.has(tool)) continue;
+    if (exclude?.has(tool)) continue;
+    filtered.push(tool);
+  }
+  return filtered;
+}
+
+function normalizedToolFilter(tools: string[] | undefined): Set<string> | undefined {
+  if (!tools?.length) return undefined;
+  const normalized = new Set<string>();
+  for (const tool of tools) {
+    const name = normalizeToolName(tool);
+    if (name && name !== "opencodetool") normalized.add(name);
+  }
+  return normalized;
 }
 
 const canonicalToolOrder = [
@@ -211,58 +284,114 @@ const canonicalToolOrder = [
   "websearchtool",
   "backgroundbrowsertool",
   "webfetchtool",
+  "researchmetadatatool",
   "papermetadatatool",
   "pdfingestiontool",
   "codeexecutiontool",
+  "engineeringprogramtool",
   "artifactwritertool",
   "dataanalysistool"
 ];
 
+function buildCanonicalToolOrderMap(): Map<string, number> {
+  const order = new Map<string, number>();
+  for (let index = 0; index < canonicalToolOrder.length; index += 1) {
+    order.set(canonicalToolOrder[index], index);
+  }
+  return order;
+}
+
+function buildStandardExecutableToolNames(): Set<string> {
+  const names = new Set<string>();
+  for (const tool of canonicalToolOrder) {
+    if (tool !== "opencodetool") names.add(tool);
+  }
+  return names;
+}
+
+const canonicalToolOrderByName = buildCanonicalToolOrderMap();
+const standardExecutableToolNames = buildStandardExecutableToolNames();
+const httpUrlPattern = /^https?:\/\//i;
+const pdfUrlPattern = /\.pdf($|[?#])/i;
+const arxivAbsUrlPattern = /arxiv\.org\/abs\//i;
+const webFetchHintPattern = /webfetch|fetch selected source|citation-backed evidence/i;
+
 export function orderToolNames(values: string[]): string[] {
-  const firstSeen = new Map<string, string>();
+  const output: string[] = [];
+  for (const item of orderedToolEntries(values)) output.push(item.value);
+  return output;
+}
+
+function orderedToolEntries(values: string[]): Array<{ normalized: string; value: string }> {
+  const ordered: Array<{ normalized: string; value: string }> = [];
+  const seen = new Set<string>();
   for (const value of values) {
     const normalized = normalizeToolName(value);
-    if (normalized && !firstSeen.has(normalized)) {
-      firstSeen.set(normalized, value);
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      ordered.push({ normalized, value });
     }
   }
-  return [...firstSeen.entries()]
-    .sort(([left], [right]) => {
-      const leftIndex = canonicalToolOrder.indexOf(left);
-      const rightIndex = canonicalToolOrder.indexOf(right);
-      if (leftIndex === -1 && rightIndex === -1) return 0;
-      if (leftIndex === -1) return 1;
-      if (rightIndex === -1) return -1;
+  if (ordered.length > 1) ordered.sort((left, right) => {
+      const leftIndex = canonicalToolOrderByName.get(left.normalized);
+      const rightIndex = canonicalToolOrderByName.get(right.normalized);
+      if (leftIndex === undefined && rightIndex === undefined) return 0;
+      if (leftIndex === undefined) return 1;
+      if (rightIndex === undefined) return -1;
       return leftIndex - rightIndex;
-    })
-    .map(([, value]) => value);
+    });
+  return ordered;
 }
+
+const toolAnnotationPattern = /\(.*?\)/g;
+const toolWhitespacePattern = /\s+/g;
 
 export function dedupeResearchTools(tools: ResearchTool[]): ResearchTool[] {
   const map = new Map<string, ResearchTool>();
   for (const tool of tools) {
     map.set(normalizeToolName(tool.name), tool);
   }
-  return [...map.values()];
+  const deduped: ResearchTool[] = [];
+  for (const tool of map.values()) deduped.push(tool);
+  return deduped;
 }
 
 function hasFetchCandidateUrls(snapshot: ResearchSnapshot): boolean {
-  return Boolean((snapshot.researchPlans ?? []).at(-1)?.fetchCandidateUrls?.length) ||
-    Boolean((snapshot.continuationDecisions ?? []).at(-1)?.fetchCandidateUrls?.length) ||
-    (snapshot.sources ?? []).some((source) => source.kind === "web" && Boolean(source.url) && !source.rawPath && source.metadata.fetchStatus !== "fetched") ||
-    (snapshot.evidence ?? []).some((evidence) => Boolean(evidence.sourceUri)) ||
-    Boolean((snapshot.projectContextSnapshots ?? []).at(-1)?.citations.some((citation) => /^https?:\/\//i.test(citation)));
+  if ((snapshot.researchPlans ?? []).at(-1)?.fetchCandidateUrls?.length) return true;
+  if ((snapshot.continuationDecisions ?? []).at(-1)?.fetchCandidateUrls?.length) return true;
+  for (const source of snapshot.sources ?? []) {
+    if (source.kind === "web" && source.url && !source.rawPath && source.metadata.fetchStatus !== "fetched") return true;
+  }
+  for (const evidence of snapshot.evidence ?? []) {
+    if (evidence.sourceUri) return true;
+  }
+  for (const citation of (snapshot.projectContextSnapshots ?? []).at(-1)?.citations ?? []) {
+    if (httpUrlPattern.test(citation)) return true;
+  }
+  return false;
 }
 
 function hasContinuationFetchHint(snapshot: ResearchSnapshot): boolean {
   const decision = (snapshot.continuationDecisions ?? []).at(-1);
-  return Boolean(decision?.planRevisionHints.some((hint) => /webfetch|fetch selected source|citation-backed evidence/i.test(hint)));
+  for (const hint of decision?.planRevisionHints ?? []) {
+    if (webFetchHintPattern.test(hint)) return true;
+  }
+  return false;
 }
 
 function hasPdfInput(snapshot: ResearchSnapshot): boolean {
-  return (snapshot.sources ?? []).some((source) => /\.pdf($|[?#])/i.test(source.url ?? source.rawPath ?? String(source.metadata.pdfUrl ?? "")) || source.metadata.mimeType === "application/pdf") ||
-    Boolean((snapshot.researchPlans ?? []).at(-1)?.fetchCandidateUrls?.some((url) => /\.pdf($|[?#])/i.test(url) || /arxiv\.org\/abs\//i.test(url))) ||
-    (snapshot.artifacts ?? []).some((artifact) => artifact.mimeType === "application/pdf" || /\.pdf$/i.test(artifact.relativePath));
+  for (const source of snapshot.sources ?? []) {
+    if (pdfUrlPattern.test(source.url ?? source.rawPath ?? String(source.metadata.pdfUrl ?? "")) || source.metadata.mimeType === "application/pdf") {
+      return true;
+    }
+  }
+  for (const url of (snapshot.researchPlans ?? []).at(-1)?.fetchCandidateUrls ?? []) {
+    if (pdfUrlPattern.test(url) || arxivAbsUrlPattern.test(url)) return true;
+  }
+  for (const artifact of snapshot.artifacts ?? []) {
+    if (artifact.mimeType === "application/pdf" || pdfUrlPattern.test(artifact.relativePath)) return true;
+  }
+  return false;
 }
 
 function candidateUrlCount(input: OpenCodeRunInput): number {
@@ -275,7 +404,7 @@ function candidateUrlCount(input: OpenCodeRunInput): number {
     if (evidence.sourceUri) urls.add(evidence.sourceUri);
   }
   for (const citation of input.projectContextSnapshot?.citations ?? []) {
-    if (/https?:\/\//i.test(citation)) urls.add(citation);
+    if (httpUrlPattern.test(citation)) urls.add(citation);
   }
   return urls.size;
 }

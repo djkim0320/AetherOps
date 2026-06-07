@@ -1,14 +1,15 @@
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { createReadStream, mkdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ApiEmbeddingProvider } from "../core/embeddingProvider.js";
+import { runEngineeringProgramPreflight } from "../core/engineeringProgramTool.js";
 import { AetherOpsOrchestrator } from "../core/orchestrator.js";
 import { createDefaultResearchTools } from "../core/toolRegistry.js";
 import { dedupeResearchTools, ToolRunner } from "../core/toolRunner.js";
+import { buildRuntimeToolDiagnostics } from "../core/runtimeToolDiagnostics.js";
 import { VectorRagEngine } from "../core/vectorRagEngine.js";
-import type { AppSettings, ResearchProjectInput, ResearchArtifact } from "../core/types.js";
+import type { AppSettings, EngineeringProgramTarget, ResearchProjectInput, ResearchArtifact } from "../core/types.js";
 import { BackgroundBrowserRuntime } from "./runtime/backgroundBrowserRuntime.js";
 import { BrowserResearchTool } from "./runtime/browserResearchTool.js";
 import { CodexOAuthLlmProvider } from "./runtime/codexOAuthLlmProvider.js";
@@ -17,6 +18,7 @@ import { NodeProjectStorage } from "./runtime/projectResearchStore.js";
 import { RealOpenCodeAdapter } from "./runtime/realOpenCodeAdapter.js";
 import { JsonAppSettingsStore } from "./runtime/settingsStore.js";
 import { SqliteResearchStore } from "./runtime/sqliteStore.js";
+import { decodeStrictUtf8Chunks } from "./runtime/strictUtf8.js";
 
 interface RpcRequest {
   method?: string;
@@ -45,8 +47,18 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   const store = new SqliteResearchStore(join(dataRoot, "aetherops.sqlite"));
   const settingsStore = new JsonAppSettingsStore(join(dataRoot, "settings.json"));
   const settings = () => settingsStore.getRuntimeSettings();
+  let cachedEmbeddingKey = "";
+  let cachedEmbeddingProvider: ApiEmbeddingProvider | undefined;
   const embeddingProvider = {
-    embed: async (text: string) => new ApiEmbeddingProvider((await settings()).embedding).embed(text)
+    embed: async (text: string) => {
+      const runtimeSettings = await settings();
+      const embeddingKey = JSON.stringify(runtimeSettings.embedding);
+      if (!cachedEmbeddingProvider || cachedEmbeddingKey !== embeddingKey) {
+        cachedEmbeddingKey = embeddingKey;
+        cachedEmbeddingProvider = new ApiEmbeddingProvider(runtimeSettings.embedding);
+      }
+      return cachedEmbeddingProvider.embed(text);
+    }
   };
   const llm = new CodexOAuthLlmProvider({
     cwd: dataRoot,
@@ -94,7 +106,7 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
       await serveStatic(appRoot, url.pathname, response);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      sendJson(response, 500, { ok: false, error: message });
+      sendJson(response, error instanceof HttpError ? error.status : 500, { ok: false, error: message });
     }
   });
 
@@ -200,6 +212,15 @@ async function handleRpc(
     case "settings.save":
     case "aetherops:updateSettings":
       return settingsStore.saveSettings(args[0] as AppSettings);
+    case "tools.diagnostics":
+    case "aetherops:getToolDiagnostics":
+      return buildRuntimeToolDiagnostics(await settingsStore.getRuntimeSettings());
+    case "tools.preflightEngineering":
+    case "aetherops:preflightEngineering": {
+      const runtimeSettings = await settingsStore.getRuntimeSettings();
+      const preflight = await runEngineeringProgramPreflight(runtimeSettings, optionalEngineeringProgramTarget(args[0]));
+      return { ...preflight, diagnostics: buildRuntimeToolDiagnostics(runtimeSettings) };
+    }
     case "snapshots.get":
     case "aetherops:getSnapshot":
       return orchestrator.getSnapshot(String(args[0]));
@@ -219,26 +240,50 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function optionalEngineeringProgramTarget(value: unknown): EngineeringProgramTarget {
+  if (value === "xfoil" || value === "modeling" || value === "openfoam" || value === "su2" || value === "freecad" || value === "openvsp" || value === "flightstream" || value === "starccm" || value === "all") {
+    return value;
+  }
+  return "all";
+}
+
 function readJson(request: IncomingMessage): Promise<unknown> {
   return new Promise((resolveJson, reject) => {
-    let body = "";
-    request.setEncoding("utf8");
+    const chunks: Buffer[] = [];
+    let bodyBytes = 0;
     request.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 10_000_000) {
-        reject(new Error("Request body is too large."));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(buffer);
+      bodyBytes += buffer.byteLength;
+      if (bodyBytes > 10_000_000) {
+        reject(new HttpError(413, "Request body is too large."));
         request.destroy();
       }
     });
     request.on("end", () => {
       try {
+        const body = chunks.length ? decodeStrictUtf8Chunks(chunks, "RPC request body") : "";
         resolveJson(body ? JSON.parse(body) : {});
-      } catch {
-        reject(new Error("Invalid JSON request body."));
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          reject(new HttpError(400, "Invalid JSON request body."));
+          return;
+        }
+        reject(new HttpError(400, error instanceof Error ? error.message : "Invalid UTF-8 request body."));
       }
     });
     request.on("error", reject);
   });
+}
+
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
 }
 
 async function serveStatic(appRoot: string, pathname: string, response: ServerResponse): Promise<void> {
@@ -251,8 +296,10 @@ async function serveStatic(appRoot: string, pathname: string, response: ServerRe
     return;
   }
 
-  const filePath = existsSync(requested) && statSync(requested).isFile() ? requested : join(distRoot, "index.html");
-  if (!existsSync(filePath)) {
+  const requestedStats = statSync(requested, { throwIfNoEntry: false });
+  const filePath = requestedStats?.isFile() ? requested : join(distRoot, "index.html");
+  const fileStats = statSync(filePath, { throwIfNoEntry: false });
+  if (!fileStats?.isFile()) {
     sendJson(response, 404, {
       ok: false,
       error: "Frontend build was not found. Run `npm run build` or use `npm run dev` for development."
@@ -281,12 +328,18 @@ function contentType(filePath: string): string {
       return "text/html; charset=utf-8";
     case ".js":
       return "text/javascript; charset=utf-8";
+    case ".map":
+      return "application/json; charset=utf-8";
     case ".css":
       return "text/css; charset=utf-8";
     case ".svg":
-      return "image/svg+xml";
+      return "image/svg+xml; charset=utf-8";
     case ".json":
       return "application/json; charset=utf-8";
+    case ".txt":
+      return "text/plain; charset=utf-8";
+    case ".md":
+      return "text/markdown; charset=utf-8";
     case ".png":
       return "image/png";
     case ".jpg":

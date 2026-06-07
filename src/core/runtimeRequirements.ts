@@ -1,4 +1,5 @@
 import { ResearchLoopStep, type AppSettings, type ResearchProject, type ResearchSnapshot, type RuntimeRequirement } from "./types.js";
+import { hasExecutableEngineeringTool } from "./engineeringProgramTool.js";
 import { normalizeToolName } from "./toolRunner.js";
 
 export class RuntimeRequirementError extends Error {
@@ -6,7 +7,7 @@ export class RuntimeRequirementError extends Error {
   readonly unmetRequirements: RuntimeRequirement[];
 
   constructor(step: ResearchLoopStep, unmetRequirements: RuntimeRequirement[]) {
-    super(unmetRequirements.map((item) => item.message ?? `${item.label} is required.`).join("\n"));
+    super(formatRequirementMessages(unmetRequirements));
     this.name = "RuntimeRequirementError";
     this.step = step;
     this.unmetRequirements = unmetRequirements;
@@ -78,7 +79,7 @@ export class RuntimeRequirementChecker {
   }
 
   assertStepReady(step: ResearchLoopStep, context: RuntimeRequirementContext): void {
-    const unmet = this.checkRequirements(step, context).filter((item) => !item.isSatisfied);
+    const unmet = collectUnmetRequirements(this.checkRequirements(step, context));
     if (unmet.length) {
       throw new RuntimeRequirementError(step, unmet);
     }
@@ -111,15 +112,21 @@ function requiredToolRequirements(
   registeredToolNames: string[]
 ): RuntimeRequirement[] {
   const requirements: RuntimeRequirement[] = [];
-  const normalizedTools = new Set(requiredTools.map(normalizeToolName));
-  const registered = new Set(registeredToolNames.map(normalizeToolName));
-  const missingTools = [...normalizedTools].filter((tool) => tool && tool !== "opencodetool" && !registered.has(tool));
+  const normalizedTools = normalizedToolSet(requiredTools);
+  const registered = normalizedToolSet(registeredToolNames);
 
-  for (const missing of missingTools) {
-    requirements.push(requirement("tool.registered", "Registered research tool", step, false, `Research plan requires an unregistered tool: ${missing}`));
+  for (const tool of normalizedTools) {
+    if (tool && tool !== "opencodetool" && !registered.has(tool)) {
+      requirements.push(requirement("tool.registered", "Registered research tool", step, false, `Research plan requires an unregistered tool: ${tool}`));
+    }
   }
 
-  if (normalizedTools.has("websearchtool") || normalizedTools.has("backgroundbrowsertool") || normalizedTools.has("webfetchtool")) {
+  if (
+    normalizedTools.has("websearchtool") ||
+    normalizedTools.has("backgroundbrowsertool") ||
+    normalizedTools.has("webfetchtool") ||
+    normalizedTools.has("researchmetadatatool")
+  ) {
     requirements.push(requirement("webSearch.allowed", "외부 검색 허용", step, project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch, "연구 계획이 WebSearchTool/BackgroundBrowserTool/WebFetchTool 외부 네트워크 접근을 요구하지만 외부 검색이 비활성화되어 있습니다."));
     if (normalizedTools.has("websearchtool")) {
       const configured = settings.webSearch.provider !== "disabled" && Boolean(settings.webSearch.apiKey || settings.webSearch.apiKeyConfigured);
@@ -130,9 +137,42 @@ function requiredToolRequirements(
     }
   }
 
-  if (normalizedTools.has("codeexecutiontool")) {
+  if (normalizedTools.has("researchmetadatatool")) {
+    requirements.push(requirement("researchMetadata.enabled", "Research metadata provider", step, settings.researchMetadata.enabled, "ResearchMetadataTool requires the OpenAlex metadata provider to be enabled."));
+  }
+
+  if (normalizedTools.has("codeexecutiontool") || normalizedTools.has("engineeringprogramtool")) {
     requirements.push(requirement("codeExecution.allowed", "코드 실행 허용", step, project.autonomyPolicy.allowCodeExecution && settings.allowCodeExecution, "연구 계획이 코드 실행을 요구하지만 코드 실행이 비활성화되어 있습니다."));
   }
 
+  if (normalizedTools.has("engineeringprogramtool")) {
+      requirements.push(requirement("engineeringTools.configured", "Engineering program toolchain", step, hasExecutableEngineeringTool(settings), "EngineeringProgramTool requires a configured XFOIL command, modeling artifact root, OpenFOAM case, SU2 case, FreeCAD script, OpenVSP script, or commercial CFD command adapter."));
+  }
+
   return requirements;
+}
+
+function formatRequirementMessages(requirements: RuntimeRequirement[]): string {
+  const messages: string[] = [];
+  for (const item of requirements) {
+    messages.push(item.message ?? `${item.label} is required.`);
+  }
+  return messages.join("\n");
+}
+
+function collectUnmetRequirements(requirements: RuntimeRequirement[]): RuntimeRequirement[] {
+  const unmet: RuntimeRequirement[] = [];
+  for (const item of requirements) {
+    if (!item.isSatisfied) unmet.push(item);
+  }
+  return unmet;
+}
+
+function normalizedToolSet(tools: string[]): Set<string> {
+  const normalized = new Set<string>();
+  for (const tool of tools) {
+    const name = normalizeToolName(tool);
+    if (name) normalized.add(name);
+  }
+  return normalized;
 }

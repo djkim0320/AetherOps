@@ -1,6 +1,10 @@
 import { createId, nowIso } from "./ids.js";
 import type { ContinuationDecision, EvidenceBasedResult, ResearchSnapshot } from "./types.js";
 
+const PUBLIC_HTTP_URL_PATTERN = /https?:\/\/[^\s)<>"']+/gi;
+const TRAILING_URL_PUNCTUATION_PATTERN = /[.,;]+$/g;
+const BLOCKED_HOST_SUFFIXES = [".local", ".localhost", ".internal"];
+
 export class LoopDecisionEngine {
   decide(input: {
     snapshot: ResearchSnapshot;
@@ -17,7 +21,7 @@ export class LoopDecisionEngine {
       entities: after.ontologyEntities.length - input.beforeCounts.entities,
       relations: after.ontologyRelations.length - input.beforeCounts.relations
     };
-    const latestContext = [...after.projectContextSnapshots].reverse().find((context) => context.iteration === input.iteration);
+    const latestContext = findLatestContextForIteration(after, input.iteration);
     const continuationContext = latestContext ? collectContinuationContext(after, latestContext) : emptyContinuationContext();
     const analysisSignal = latestDataAnalysisSignal(after);
     const analysisHasInputs = (analysisSignal?.normalizedRecordCount ?? 0) > 0 || (analysisSignal?.validationResultCount ?? 0) > 0;
@@ -27,20 +31,39 @@ export class LoopDecisionEngine {
       continuationContext.fetchCandidateUrls.length > 0
     );
     const fetchEvidenceGap = "Source candidates found but not fetched into citation-backed evidence";
-    const analysisEvidenceGaps = [
-      ...(analysisHasInputs ? (analysisSignal?.evidenceGapsFromLatestValidation ?? []) : []),
-      analysisHasInputs && analysisSignal?.supportEligibleEvidenceCount === 0 ? "DataAnalysisTool found no support-eligible citation-backed evidence." : undefined,
-      analysisHasInputs && typeof analysisSignal?.citationCoverage === "number" && analysisSignal.citationCoverage < 0.5
-        ? `DataAnalysisTool reported low citation coverage (${analysisSignal.citationCoverage.toFixed(2)}).`
-        : undefined
-    ].filter((gap): gap is string => Boolean(gap));
-    const evidenceGaps = [
-      ...input.result.nextQuestions,
-      ...after.validationResults.slice(-after.hypotheses.length).flatMap((result) => result.evidenceGaps),
-      ...analysisEvidenceGaps,
-      ...(sourceCandidatesNeedFetch ? [fetchEvidenceGap] : [])
-    ].filter(Boolean);
-    const repeatedLowGrowth = input.iteration > 1 && Object.values(growth).every((value) => value <= 0);
+    const evidenceGaps: string[] = [];
+    for (const question of input.result.nextQuestions) {
+      if (question) evidenceGaps.push(question);
+    }
+    const validationStart = Math.max(0, after.validationResults.length - after.hypotheses.length);
+    for (let index = validationStart; index < after.validationResults.length; index += 1) {
+      const validation = after.validationResults[index];
+      if (!validation) continue;
+      for (const gap of validation.evidenceGaps) {
+        if (gap) evidenceGaps.push(gap);
+      }
+    }
+    if (analysisHasInputs) {
+      for (const gap of analysisSignal?.evidenceGapsFromLatestValidation ?? []) {
+        if (gap) evidenceGaps.push(gap);
+      }
+      if (analysisSignal?.supportEligibleEvidenceCount === 0) {
+        evidenceGaps.push("DataAnalysisTool found no support-eligible citation-backed evidence.");
+      }
+      if (typeof analysisSignal?.citationCoverage === "number" && analysisSignal.citationCoverage < 0.5) {
+        evidenceGaps.push(`DataAnalysisTool reported low citation coverage (${analysisSignal.citationCoverage.toFixed(2)}).`);
+      }
+    }
+    if (sourceCandidatesNeedFetch) {
+      evidenceGaps.push(fetchEvidenceGap);
+    }
+    const repeatedLowGrowth =
+      input.iteration > 1 &&
+      growth.evidence <= 0 &&
+      growth.artifacts <= 0 &&
+      growth.chunks <= 0 &&
+      growth.entities <= 0 &&
+      growth.relations <= 0;
     const hitSafetyCap = input.iteration >= input.safetyCapIterations;
     const statusBlocked = after.project.status === "aborted" || after.project.status === "paused";
     const shouldContinue =
@@ -58,8 +81,8 @@ export class LoopDecisionEngine {
       nextObjective: shouldContinue
         ? `Resolve ${evidenceGaps[0] ?? "remaining evidence gaps"} and improve citation coverage for priority hypotheses.`
         : undefined,
-      nextQuestions: shouldContinue ? [...new Set(input.result.nextQuestions)].slice(0, 5) : [],
-      evidenceGaps: [...new Set(evidenceGaps)].slice(0, 8),
+      nextQuestions: shouldContinue ? uniqueFirstStrings(input.result.nextQuestions, 5) : [],
+      evidenceGaps: uniqueFirstStrings(evidenceGaps, 8),
       selectedSourceIds: continuationContext.selectedSourceIds,
       selectedRecordIds: continuationContext.selectedRecordIds,
       selectedEvidenceIds: continuationContext.selectedEvidenceIds,
@@ -127,13 +150,21 @@ function collectContinuationContext(
     addUrls(urls, readString((chunk as { metadata?: Record<string, unknown> }).metadata?.sourceUri));
     addUrls(urls, readString((chunk as { metadata?: Record<string, unknown> }).metadata?.pdfUrl));
   }
-  const fetchCandidateUrls = [...urls].slice(0, 12);
+  const fetchCandidateUrls: string[] = [];
+  for (const url of urls) {
+    fetchCandidateUrls.push(url);
+    if (fetchCandidateUrls.length >= 12) break;
+  }
+  const selectedCitationUrls: string[] = [];
+  for (const citation of context.citations) {
+    appendPublicHttpUrls(selectedCitationUrls, citation);
+  }
   return {
     selectedSourceIds: [...selectedSourceIds],
     selectedRecordIds: [...selectedRecordIds],
     selectedEvidenceIds: [...selectedEvidenceIds],
     selectedChunkIds: [...selectedChunkIds],
-    selectedCitationUrls: context.citations.flatMap(extractPublicHttpUrls),
+    selectedCitationUrls,
     fetchCandidateUrls
   };
 }
@@ -149,6 +180,14 @@ function emptyContinuationContext(): ReturnType<typeof collectContinuationContex
   };
 }
 
+function findLatestContextForIteration(snapshot: ResearchSnapshot, iteration: number): ResearchSnapshot["projectContextSnapshots"][number] | undefined {
+  for (let index = snapshot.projectContextSnapshots.length - 1; index >= 0; index -= 1) {
+    const context = snapshot.projectContextSnapshots[index];
+    if (context?.iteration === iteration) return context;
+  }
+  return undefined;
+}
+
 interface DataAnalysisSignal {
   supportEligibleEvidenceCount?: number;
   citationCoverage?: number;
@@ -158,7 +197,7 @@ interface DataAnalysisSignal {
 }
 
 function latestDataAnalysisSignal(snapshot: ResearchSnapshot): DataAnalysisSignal | undefined {
-  const output = [...snapshot.toolRuns].reverse().find((run) => run.toolName === "DataAnalysisTool" && run.status === "completed")?.output;
+  const output = findLatestCompletedDataAnalysisOutput(snapshot);
   if (!output || typeof output !== "object" || Array.isArray(output)) return undefined;
   const value = output as Record<string, unknown>;
   return {
@@ -166,10 +205,16 @@ function latestDataAnalysisSignal(snapshot: ResearchSnapshot): DataAnalysisSigna
     citationCoverage: readNumber(value.citationCoverage),
     normalizedRecordCount: readNumber(readObject(value.inputAvailability)?.normalizedRecordCount),
     validationResultCount: readNumber(readObject(value.inputAvailability)?.validationResultCount),
-    evidenceGapsFromLatestValidation: Array.isArray(value.evidenceGapsFromLatestValidation)
-      ? value.evidenceGapsFromLatestValidation.filter((item): item is string => typeof item === "string")
-      : undefined
+    evidenceGapsFromLatestValidation: readStringArray(value.evidenceGapsFromLatestValidation)
   };
+}
+
+function findLatestCompletedDataAnalysisOutput(snapshot: ResearchSnapshot): unknown {
+  for (let index = snapshot.toolRuns.length - 1; index >= 0; index -= 1) {
+    const run = snapshot.toolRuns[index];
+    if (run?.toolName === "DataAnalysisTool" && run.status === "completed") return run.output;
+  }
+  return undefined;
 }
 
 function readObject(value: unknown): Record<string, unknown> | undefined {
@@ -180,8 +225,33 @@ function readNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string") strings.push(item);
+  }
+  return strings;
+}
+
+function uniqueFirstStrings(values: string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    output.push(value);
+    if (output.length >= limit) break;
+  }
+  return output;
+}
+
 function addUrls(target: Set<string>, value: string | undefined): void {
   for (const url of extractPublicHttpUrls(value)) target.add(url);
+}
+
+function appendPublicHttpUrls(target: string[], value: string | undefined): void {
+  for (const url of extractPublicHttpUrls(value)) target.push(url);
 }
 
 function readString(value: unknown): string | undefined {
@@ -190,18 +260,23 @@ function readString(value: unknown): string | undefined {
 
 function extractPublicHttpUrls(value: string | undefined): string[] {
   if (!value) return [];
-  const matches = value.match(/https?:\/\/[^\s)<>"']+/gi) ?? [];
-  return matches.map(normalizePublicHttpUrl).filter((url): url is string => Boolean(url));
+  const matches = value.match(PUBLIC_HTTP_URL_PATTERN) ?? [];
+  const urls: string[] = [];
+  for (const match of matches) {
+    const url = normalizePublicHttpUrl(match);
+    if (url) urls.push(url);
+  }
+  return urls;
 }
 
 function normalizePublicHttpUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
-    const parsed = new URL(value.trim().replace(/[.,;]+$/g, ""));
+    const parsed = new URL(value.trim().replace(TRAILING_URL_PUNCTUATION_PATTERN, ""));
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
     parsed.hash = "";
     const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (!hostname || hostname === "localhost" || hostname.endsWith(".local") || hostname.endsWith(".localhost") || hostname.endsWith(".internal")) return undefined;
+    if (!hostname || hostname === "localhost" || hasBlockedHostSuffix(hostname)) return undefined;
     if (isPrivateIpv4(hostname) || hostname === "::1") return undefined;
     parsed.hostname = hostname;
     return parsed.toString();
@@ -210,9 +285,22 @@ function normalizePublicHttpUrl(value: string | undefined): string | undefined {
   }
 }
 
+function hasBlockedHostSuffix(hostname: string): boolean {
+  for (const suffix of BLOCKED_HOST_SUFFIXES) {
+    if (hostname.endsWith(suffix)) return true;
+  }
+  return false;
+}
+
 function isPrivateIpv4(hostname: string): boolean {
-  const parts = hostname.split(".").map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const segments = hostname.split(".");
+  if (segments.length !== 4) return false;
+  const parts: number[] = [];
+  for (const segment of segments) {
+    const part = Number(segment);
+    if (!Number.isInteger(part) || part < 0 || part > 255) return false;
+    parts.push(part);
+  }
   const [first, second] = parts;
   return first === 0 || first === 10 || first === 127 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || (first === 169 && second === 254);
 }

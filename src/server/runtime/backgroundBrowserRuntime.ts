@@ -49,7 +49,10 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
       const pages: BrowserCollectedPage[] = [];
       const failures: string[] = [];
 
-      for (const url of urls.slice(0, input.settings.maxPages)) {
+      const pageLimit = Math.min(urls.length, input.settings.maxPages);
+      for (let index = 0; index < pageLimit; index += 1) {
+        const url = urls[index];
+        if (!url) continue;
         const page = await context.newPage();
         try {
           await page.goto(url, { waitUntil: "domcontentloaded", timeout: input.settings.timeoutMs });
@@ -124,7 +127,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
             .filter(Boolean)
             .slice(0, 80)
         );
-        const urls = rankResearchUrls(uniqueHttpUrls(links.map(decodeSearchRedirect)).filter((url) => !isSearchEngineUrl(url)));
+        const urls = rankResearchUrls(publicNonSearchUrls(links));
         if (urls.length) {
           return urls;
         }
@@ -170,19 +173,24 @@ function decodeSearchRedirect(rawUrl: string): string {
 function isSearchEngineUrl(rawUrl: string): boolean {
   try {
     const hostname = new URL(rawUrl).hostname.replace(/^www\./, "");
-    return [
-      "duckduckgo.com",
-      "bing.com",
-      "microsoft.com",
-      "search.brave.com",
-      "brave.com",
-      "google.com",
-      "google.co.kr"
-    ].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+    for (const domain of searchEngineDomains) {
+      if (hostname === domain || hostname.endsWith(`.${domain}`)) return true;
+    }
+    return false;
   } catch {
     return true;
   }
 }
+
+const searchEngineDomains = [
+  "duckduckgo.com",
+  "bing.com",
+  "microsoft.com",
+  "search.brave.com",
+  "brave.com",
+  "google.com",
+  "google.co.kr"
+];
 
 function publicResearchQuery(query: string): string {
   return [
@@ -204,15 +212,32 @@ async function resolveBingRssUrls(query: string, timeoutMs: number): Promise<str
       return [];
     }
     const xml = await response.text();
-    const links = [...xml.matchAll(/<link>([\s\S]*?)<\/link>/gi)]
-      .map((match) => decodeXmlEntities(match[1] ?? "").trim())
-      .filter(Boolean);
-    return uniqueHttpUrls(links).filter((url) => !isSearchEngineUrl(url));
+    const links: string[] = [];
+    for (const match of xml.matchAll(/<link>([\s\S]*?)<\/link>/gi)) {
+      const link = decodeXmlEntities(match[1] ?? "").trim();
+      if (link) links.push(link);
+    }
+    return publicNonSearchUrls(links);
   } catch {
     return [];
   } finally {
     clearTimeout(timer);
   }
+}
+
+function publicNonSearchUrls(rawUrls: string[]): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const url of uniqueHttpUrls(rawUrls)) {
+    const decoded = decodeSearchRedirect(url);
+    for (const normalized of uniqueHttpUrls([decoded])) {
+      if (!isSearchEngineUrl(normalized) && !seen.has(normalized)) {
+        seen.add(normalized);
+        urls.push(normalized);
+      }
+    }
+  }
+  return urls;
 }
 
 function decodeXmlEntities(value: string): string {

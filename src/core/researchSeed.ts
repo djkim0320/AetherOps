@@ -79,7 +79,7 @@ export function seedResearchPlan(project: ResearchProject): {
       title: "초기 연구 목표",
       summary: project.goal,
       keywords: [project.topic, "goal", "initial-plan"],
-      linkedHypothesisIds: hypotheses.map((item) => item.id),
+      linkedHypothesisIds: collectHypothesisIds(hypotheses),
       reliabilityScore: 0.4,
       relevanceScore: 0.8,
       evidenceStrength: "weak",
@@ -107,4 +107,10 @@ export function seedResearchPlan(project: ResearchProject): {
     hypotheses,
     evidence
   };
+}
+
+function collectHypothesisIds(hypotheses: Hypothesis[]): string[] {
+  const ids: string[] = [];
+  for (const hypothesis of hypotheses) ids.push(hypothesis.id);
+  return ids;
 }

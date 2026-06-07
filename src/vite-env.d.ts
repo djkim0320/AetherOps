@@ -1,4 +1,4 @@
-﻿/// <reference types="vite/client" />
+/// <reference types="vite/client" />
 
 import type {
   ResearchProjectInput,
@@ -7,7 +7,10 @@ import type {
   ResearchProject,
   ResearchSession,
   AppSettings,
-  ResearchSnapshot
+  ResearchSnapshot,
+  RuntimeToolDiagnostics,
+  EngineeringProgramPreflightResult,
+  EngineeringProgramTarget
 } from "./core/types.js";
 
 export interface AetherOpsApi {
@@ -60,6 +63,10 @@ export interface AetherOpsApi {
   settings: {
     get(): Promise<AppSettings>;
     save(settings: AppSettings): Promise<AppSettings>;
+  };
+  tools: {
+    diagnostics(): Promise<RuntimeToolDiagnostics>;
+    preflightEngineering(target?: EngineeringProgramTarget): Promise<EngineeringProgramPreflightResult>;
   };
   snapshots: {
     get(projectId: string): Promise<ResearchSnapshot>;

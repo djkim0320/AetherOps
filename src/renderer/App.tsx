@@ -18,7 +18,6 @@ import {
   KeyRound,
   Loader2,
   MessageSquare,
-  Paperclip,
   Plus,
   Save,
   Search,
@@ -1102,6 +1101,7 @@ function CodexSidebar({
                           <button
                             className="sessionDeleteButton"
                             type="button"
+                            aria-label={`${session.title} 세션 삭제`}
                             title="세션 삭제"
                             onClick={() => void onDeleteSession(session.id)}
                           >
@@ -1211,11 +1211,6 @@ function CodexHome({
             onKeyDown={(event) => submitOnEnter(event, onSubmit)}
           />
           <div className="homePromptToolbar">
-            <div className="homeToolGroup">
-              <button type="button" className="ghostButton">
-                <Paperclip size={16} />
-              </button>
-            </div>
             <div className="homeToolGroup">
               <div className="modelPickerHost">
                 <button className="homeModelButton" type="button" onClick={() => setModelMenuOpen((open) => !open)}>
@@ -1356,11 +1351,6 @@ function ProjectChatTab({
             onKeyDown={(event) => submitOnEnter(event, onSubmit)}
           />
           <div className="homePromptToolbar">
-            <div className="homeToolGroup">
-              <button type="button" className="ghostButton" title="자료 첨부">
-                <Paperclip size={16} />
-              </button>
-            </div>
             <div className="homeToolGroup">
               <div className="modelPickerHost">
                 <button className="homeModelButton" type="button" onClick={() => setModelMenuOpen((open) => !open)}>
@@ -1755,11 +1745,14 @@ function AetherOpsTab({
           </div>
         </section>
 
-        <section className="panel eventsPanel">
-          <div className="panelTitle">
-            <History size={17} />
-            <h2>최근 이벤트</h2>
-          </div>
+        <details className="panel collapsiblePanel eventsPanel">
+          <summary className="panelSummary">
+            <div className="panelTitle">
+              <History size={17} />
+              <h2>최근 이벤트</h2>
+            </div>
+            <ChevronDown size={15} />
+          </summary>
           <div className="eventList">
             {events.length ? (
               events.map((event) => (
@@ -1772,21 +1765,27 @@ function AetherOpsTab({
               <p className="empty">아직 이벤트가 없습니다.</p>
             )}
           </div>
-        </section>
+        </details>
 
-        <section className="panel storagePanel">
-          <div className="panelTitle">
-            <Database size={17} />
-            <h2>연구 DB 저장 내용</h2>
-          </div>
+        <details className="panel collapsiblePanel storagePanel">
+          <summary className="panelSummary">
+            <div className="panelTitle">
+              <Database size={17} />
+              <h2>연구 DB 저장 내용</h2>
+            </div>
+            <ChevronDown size={15} />
+          </summary>
           <StorageList stats={stats} />
-        </section>
+        </details>
 
-        <section className="panel logsPanel">
-          <div className="panelTitle">
-            <Bot size={17} />
-            <h2>OpenCode / Tool 로그</h2>
-          </div>
+        <details className="panel collapsiblePanel logsPanel">
+          <summary className="panelSummary">
+            <div className="panelTitle">
+              <Bot size={17} />
+              <h2>OpenCode / Tool 로그</h2>
+            </div>
+            <ChevronDown size={15} />
+          </summary>
           <div className="runBox">
             <h3>{activeRun?.toolPlan.join(" / ") || "대기"}</h3>
             {activeRunLogs.map((log) => (
@@ -1798,20 +1797,23 @@ function AetherOpsTab({
               </p>
             ))}
           </div>
-        </section>
+        </details>
 
-        <section className="panel evidencePanel">
-          <div className="panelTitle">
-            <Search size={17} />
-            <h2>Hybrid 근거 패널</h2>
-          </div>
+        <details className="panel collapsiblePanel evidencePanel">
+          <summary className="panelSummary">
+            <div className="panelTitle">
+              <Search size={17} />
+              <h2>Hybrid 근거 패널</h2>
+            </div>
+            <ChevronDown size={15} />
+          </summary>
           <div className="ragBox">
             <p>{latestHybrid?.contextText ?? latestRag?.summary ?? "아직 검색 컨텍스트가 구성되지 않았습니다."}</p>
             <span>
               chunk {latestHybrid?.vectorChunkIds.length ?? latestRag?.chunkIds?.length ?? 0} / citation {latestHybrid?.citations.length ?? latestRag?.citations?.length ?? 0}
             </span>
           </div>
-        </section>
+        </details>
 
         <section className="panel wide finalPanel">
           <div className="panelTitle">
@@ -2088,11 +2090,15 @@ function SettingsTab({
           )}
         </section>
 
-        <section className="settingsGroup">
-          <div className="panelTitle">
-            <Workflow size={17} />
-            <h3>OpenCode 도구 엔진</h3>
-          </div>
+        <details className="settingsGroup settingsDisclosure openCodeSettingsDisclosure">
+          <summary className="settingsDisclosureSummary">
+            <div className="panelTitle">
+              <Workflow size={17} />
+              <h3>OpenCode 도구 엔진</h3>
+            </div>
+            <span>OAuth / CLI / provider</span>
+            <ChevronDown size={15} />
+          </summary>
           <div className="fieldGrid">
             <label>
               사용 여부
@@ -2161,7 +2167,7 @@ function SettingsTab({
             </div>
             {openCodeAuthOutput ? <pre className="authOutput">{openCodeAuthOutput}</pre> : null}
           </div>
-        </section>
+        </details>
 
         <section className="settingsGroup">
           <div className="panelTitle">
@@ -2275,11 +2281,15 @@ function SettingsTab({
           </div>
         </section>
 
-        <section className="settingsGroup settingsGroupWide">
-          <div className="panelTitle">
-            <Wrench size={17} />
-            <h3>Engineering programs</h3>
-          </div>
+        <details className="settingsGroup settingsGroupWide settingsDisclosure engineeringSettingsDisclosure">
+          <summary className="settingsDisclosureSummary">
+            <div className="panelTitle">
+              <Wrench size={17} />
+              <h3>Engineering programs</h3>
+            </div>
+            <span>XFOIL / SU2 / OpenVSP / CFD adapters</span>
+            <ChevronDown size={15} />
+          </summary>
           <div className="preflightPanel">
             <button
               type="button"
@@ -3175,7 +3185,7 @@ function SettingsTab({
               />
             </label>
           </div>
-        </section>
+        </details>
 
         <section className="settingsGroup">
           <div className="panelTitle">

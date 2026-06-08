@@ -92,6 +92,15 @@ textarea {
   outline: none;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #facc15;
+  outline-offset: 2px;
+}
+
 textarea {
   min-height: 72px;
   resize: vertical;
@@ -530,6 +539,7 @@ label {
 
 .homePromptToolbar {
   background: #303030;
+  justify-content: flex-end;
 }
 
 .homeContextBar {
@@ -587,21 +597,6 @@ label {
   color: #b7b7b7;
   font-size: 12px;
   font-weight: 760;
-}
-
-.ghostButton {
-  min-width: 34px;
-  width: 34px;
-  min-height: 34px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #cfcfcf;
-  padding: 0;
-}
-
-.ghostButton:hover {
-  background: #3a3a3a;
 }
 
 .homeModelButton {
@@ -1113,6 +1108,41 @@ label {
   min-width: 0;
   font-size: 15px;
   overflow-wrap: anywhere;
+}
+
+.panelSummary,
+.settingsDisclosureSummary {
+  min-width: 0;
+  display: grid;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+
+.panelSummary::-webkit-details-marker,
+.settingsDisclosureSummary::-webkit-details-marker {
+  display: none;
+}
+
+.panelSummary {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  color: #17324d;
+}
+
+.panelSummary > svg,
+.settingsDisclosureSummary > svg {
+  color: #64748b;
+  transition: transform 140ms ease;
+}
+
+.collapsiblePanel:not([open]) {
+  gap: 0;
+}
+
+.collapsiblePanel[open] .panelSummary > svg,
+.settingsDisclosure[open] .settingsDisclosureSummary > svg {
+  transform: rotate(180deg);
 }
 
 .fieldGrid,
@@ -2041,6 +2071,25 @@ label {
   font-size: 15px;
 }
 
+.settingsDisclosure:not([open]) {
+  gap: 0;
+}
+
+.settingsDisclosureSummary {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+}
+
+.settingsDisclosureSummary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .settingsGroupWide {
   grid-column: span 2;
 }
@@ -2234,7 +2283,33 @@ label {
   }
 
   .sessionList {
-    display: none;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .projectGroup.selected {
+    min-width: min(420px, 88vw);
+  }
+
+  .sessionList .codexConversation,
+  .sessionList .sessionRow,
+  .sessionList .sessionCreator {
+    flex: 0 0 auto;
+  }
+
+  .sessionList .codexConversation {
+    width: auto;
+    min-width: 142px;
+  }
+
+  .sessionList .sessionRow {
+    min-width: 172px;
+  }
+
+  .sessionList .sessionCreator {
+    width: 190px;
   }
 
   .codexSettings {
@@ -2276,6 +2351,14 @@ label {
   .requestContractItem summary {
     grid-template-columns: minmax(0, 1fr);
     align-items: start;
+  }
+
+  .settingsDisclosureSummary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .settingsDisclosureSummary > span {
+    display: none;
   }
 
   .codexTopbar {

@@ -51,6 +51,8 @@ try {
       );
       const settings = await page.evaluate(collectSettingsLayout);
       assertSettingsLayout(viewport, settings);
+      const settingsDisclosure = await verifySettingsDisclosure(page);
+      assertSettingsDisclosureLayout(viewport, settingsDisclosure);
 
       const chat = await ensureStartedChatLayout(page);
       assertChatLayout(viewport, chat);
@@ -98,27 +100,11 @@ async function ensureStartedChatLayout(page) {
   if (!state.projectId) {
     throw new Error("workspace state did not contain a project id for chat layout verification");
   }
-  let snapshot = await rpc(page, "snapshots.get", [state.projectId]);
+  const snapshot = await rpc(page, "snapshots.get", [state.projectId]);
   let session = snapshot.sessions?.find((item) => !item.title?.includes("Research Workflow")) ?? snapshot.sessions?.[0];
   if (!session) {
-    const sessions = await rpc(page, "sessions.createForProject", [state.projectId]);
-    session = sessions?.[0];
+    throw new Error("project did not expose a real chat session for chat layout verification");
   }
-  if (!session) {
-    throw new Error("project did not expose a chat session for chat layout verification");
-  }
-  await rpc(page, "artifacts.store", [
-    state.projectId,
-    {
-      category: "conversation_memo",
-      title: `${session.title} 메모`,
-      relativePath: `artifacts/chat/${session.id}-ui-layout-verify-assistant.md`,
-      mimeType: "text/markdown",
-      summary: "UI layout verification conversation message.",
-      content: "Assistant: UI layout verification message.",
-      metadata: { role: "assistant", source: "ui-layout-verify" }
-    }
-  ]);
   await page.evaluate(
     ({ projectId, sessionId }) => {
       window.localStorage.setItem("aetherops.workspaceState", JSON.stringify({ projectId, sessionId, view: "chat" }));
@@ -126,7 +112,7 @@ async function ensureStartedChatLayout(page) {
     { projectId: state.projectId, sessionId: session.id }
   );
   await page.reload({ waitUntil: "domcontentloaded", timeout: 15_000 });
-  await page.locator(".projectChatHome.chatStarted .homePromptCard").waitFor({ state: "visible", timeout: 10_000 });
+  await page.locator(".projectChatHome .homePromptCard").waitFor({ state: "visible", timeout: 10_000 });
   return page.evaluate(collectChatLayout);
 }
 
@@ -186,6 +172,15 @@ function assertLayout(viewport, layout, phase) {
       `${viewport.label}/${phase}: legacy dashboard/placeholder UI remained flow=${layout.legacyFlowBoardCount} metrics=${layout.legacyMetricStripCount} placeholders=${layout.placeholderCount}`
     );
   }
+  if (layout.ghostButtons !== 0) {
+    failures.push(`${viewport.label}/${phase}: inert ghost buttons must not remain, found ${layout.ghostButtons}`);
+  }
+  if (layout.collapsiblePanels < 4) {
+    failures.push(`${viewport.label}/${phase}: expected at least four compact dashboard disclosure panels, found ${layout.collapsiblePanels}`);
+  }
+  if (layout.openCollapsiblePanels !== 0) {
+    failures.push(`${viewport.label}/${phase}: dashboard disclosure panels should be closed by default, found ${layout.openCollapsiblePanels} open`);
+  }
   if (layout.primaryNavItems !== 1) {
     failures.push(`${viewport.label}/${phase}: primary sidebar should expose only one real nav item, found ${layout.primaryNavItems}`);
   }
@@ -197,6 +192,9 @@ function assertLayout(viewport, layout, phase) {
   }
   if (viewport.expected === "top" && layout.sidebar?.height > Math.min(180, viewport.height * 0.4)) {
     failures.push(`${viewport.label}/${phase}: mobile sidebar is too tall at ${layout.sidebar.height}px`);
+  }
+  if (viewport.expected === "top" && !layout.mobileSessionNavigationVisible) {
+    failures.push(`${viewport.label}/${phase}: mobile sidebar must keep project dashboard/chat session navigation visible`);
   }
   if (!layout.loopLimitVisible) {
     failures.push(`${viewport.label}/${phase}: maximum loop iteration control is not visible`);
@@ -223,7 +221,7 @@ function assertBriefEditorLayout(viewport, editor) {
 
 function assertChatLayout(viewport, chat) {
   if (!chat.visible) {
-    failures.push(`${viewport.label}/chat: started chat view is not visible`);
+    failures.push(`${viewport.label}/chat: chat composer view is not visible`);
   }
   if (chat.composerPosition === "fixed") {
     failures.push(`${viewport.label}/chat: chat composer must not use viewport-fixed positioning`);
@@ -246,6 +244,12 @@ function assertSettingsLayout(viewport, settings) {
   if (settings.requestContractRows !== 10) {
     failures.push(`${viewport.label}/settings: expected 10 engineering request templates, found ${settings.requestContractRows}`);
   }
+  if (settings.settingsDisclosures < 2) {
+    failures.push(`${viewport.label}/settings: expected OpenCode and engineering settings disclosures, found ${settings.settingsDisclosures}`);
+  }
+  if (settings.openSettingsDisclosures !== 0) {
+    failures.push(`${viewport.label}/settings: advanced settings disclosures should be closed by default, found ${settings.openSettingsDisclosures} open`);
+  }
   if (!settings.xfoilWasmText.includes("XFOIL-WASM")) {
     failures.push(`${viewport.label}/settings: XFOIL-WASM request template is missing`);
   }
@@ -258,6 +262,31 @@ function assertSettingsLayout(viewport, settings) {
   if (settings.horizontalOverflow) {
     failures.push(
       `${viewport.label}/settings: horizontal overflow body=${settings.scrollWidths.body} document=${settings.scrollWidths.documentElement}`
+    );
+  }
+}
+
+function assertSettingsDisclosureLayout(viewport, settingsDisclosure) {
+  if (!settingsDisclosure.openCodeOpen) {
+    failures.push(`${viewport.label}/settings-disclosure: OpenCode disclosure did not open`);
+  }
+  if (!settingsDisclosure.engineeringOpen) {
+    failures.push(`${viewport.label}/settings-disclosure: engineering disclosure did not open`);
+  }
+  if (!settingsDisclosure.openCodeCommandVisible) {
+    failures.push(`${viewport.label}/settings-disclosure: OpenCode command control is not visible after opening`);
+  }
+  if (settingsDisclosure.visibleRequestContractRows !== 10) {
+    failures.push(
+      `${viewport.label}/settings-disclosure: expected 10 visible engineering request templates after opening, found ${settingsDisclosure.visibleRequestContractRows}`
+    );
+  }
+  if (!settingsDisclosure.xfoilCommandVisible) {
+    failures.push(`${viewport.label}/settings-disclosure: XFOIL command control is not visible after opening`);
+  }
+  if (settingsDisclosure.horizontalOverflow) {
+    failures.push(
+      `${viewport.label}/settings-disclosure: horizontal overflow body=${settingsDisclosure.scrollWidths.body} document=${settingsDisclosure.scrollWidths.documentElement}`
     );
   }
 }
@@ -287,6 +316,12 @@ function collectLayout() {
   const runtimeError = document.querySelector(".runtimeErrorView");
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
+  const visibleSessionNavigationItems = Array.from(
+    document.querySelectorAll(".sessionList .codexConversation, .sessionList .sessionSelectButton")
+  ).filter((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }).length;
   return {
     viewport: { width: viewportWidth, height: viewportHeight },
     shell,
@@ -304,9 +339,13 @@ function collectLayout() {
     },
     legacyProjectComposerCount: document.querySelectorAll(".projectComposer").length,
     runOverviewVisible: Boolean(document.querySelector(".runOverview")),
+    mobileSessionNavigationVisible: viewportWidth > 760 || visibleSessionNavigationItems > 0,
     legacyFlowBoardCount: document.querySelectorAll(".flowBoard, .flowBoardStructured").length,
     legacyMetricStripCount: document.querySelectorAll(".metricStrip").length,
     placeholderCount: document.querySelectorAll(".codexPlaceholder, .placeholderCard").length,
+    ghostButtons: document.querySelectorAll(".ghostButton").length,
+    collapsiblePanels: document.querySelectorAll(".collapsiblePanel").length,
+    openCollapsiblePanels: document.querySelectorAll(".collapsiblePanel[open]").length,
     primaryNavItems: document.querySelectorAll(".codexNavItem").length,
     sidebarLeft: Boolean(sidebar && sidebar.x === 0 && sidebar.y === 0 && sidebar.height > viewportHeight * 0.9 && sidebar.width < viewportWidth),
     sidebarTop: Boolean(sidebar && sidebar.x === 0 && sidebar.y === 0 && sidebar.width === viewportWidth && sidebar.height < viewportHeight * 0.9),
@@ -343,7 +382,7 @@ function collectChatLayout() {
       position: style.position
     };
   };
-  const composerElement = document.querySelector(".projectChatHome.chatStarted .homePromptCard");
+  const composerElement = document.querySelector(".projectChatHome .homePromptCard");
   const sidebarElement = document.querySelector(".codexSidebar");
   const composer = composerElement ? rectFromElement(composerElement) : null;
   return {
@@ -376,6 +415,8 @@ function collectSettingsLayout() {
   return {
     visible: Boolean(document.querySelector("#settings-window-title")),
     activeSettings: document.querySelector(".codexSettings")?.classList.contains("active") ?? false,
+    settingsDisclosures: document.querySelectorAll(".settingsDisclosure").length,
+    openSettingsDisclosures: document.querySelectorAll(".settingsDisclosure[open]").length,
     requestContractRows: summaries.length,
     xfoilWasmText: xfoilWasm?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     xfoilWasmRect: xfoilWasm ? rectFromElement(xfoilWasm) : null,
@@ -383,6 +424,36 @@ function collectSettingsLayout() {
     su2Rect: su2 ? rectFromElement(su2) : null,
     openVspText: openVsp?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     openVspRect: openVsp ? rectFromElement(openVsp) : null,
+    horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
+    scrollWidths: { body: document.body.scrollWidth, documentElement: document.documentElement.scrollWidth }
+  };
+}
+
+async function verifySettingsDisclosure(page) {
+  await page.locator(".openCodeSettingsDisclosure > summary").click();
+  await page.locator(".openCodeSettingsDisclosure[open]").waitFor({ state: "attached", timeout: 10_000 });
+  await page.locator(".engineeringSettingsDisclosure > summary").click();
+  await page.locator(".engineeringSettingsDisclosure[open]").waitFor({ state: "attached", timeout: 10_000 });
+  return page.evaluate(collectSettingsDisclosureLayout);
+}
+
+function collectSettingsDisclosureLayout() {
+  const isVisible = (selector) => {
+    const element = document.querySelector(selector);
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  const visibleRequestContractRows = Array.from(document.querySelectorAll(".requestContractItem summary")).filter((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }).length;
+  return {
+    openCodeOpen: document.querySelector(".openCodeSettingsDisclosure")?.hasAttribute("open") ?? false,
+    engineeringOpen: document.querySelector(".engineeringSettingsDisclosure")?.hasAttribute("open") ?? false,
+    openCodeCommandVisible: isVisible(".openCodeSettingsDisclosure input[list='opencode-command-options'], .openCodeSettingsDisclosure select"),
+    visibleRequestContractRows,
+    xfoilCommandVisible: isVisible(".engineeringSettingsDisclosure input[list='xfoil-command-options']"),
     horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
     scrollWidths: { body: document.body.scrollWidth, documentElement: document.documentElement.scrollWidth }
   };

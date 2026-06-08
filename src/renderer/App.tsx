@@ -1264,11 +1264,6 @@ function CodexHome({
           </div>
         </div>
 
-        <div className="homeCards">
-          <HomeCard icon={FolderKanban} title="연구 DB 준비" copy="목표, 범위, 예산, 자율성 정책을 한 번에 설정" />
-          <HomeCard icon={MessageSquare} title="채팅 세션 생성" copy="프로젝트 안에서 주제별 대화 세션 구성" />
-          <HomeCard icon={Database} title="자료 연결" copy="결과, 조사, 계획을 DB와 RAG에 저장" />
-        </div>
       </div>
     </section>
   );
@@ -1406,11 +1401,6 @@ function ProjectChatTab({
           </div>
         </div>
 
-        <div className="homeCards chatSessionCards">
-          <HomeCard icon={MessageSquare} title="연구 대화" copy="질문, 아이디어, 결정 사항을 대화 메모로 저장합니다." />
-          <HomeCard icon={Database} title="프로젝트 DB 연결" copy="저장된 메모는 프로젝트 연구 DB와 RAG 자료로 이어집니다." />
-          <HomeCard icon={Workflow} title="관제 화면 연동" copy="전체 관제 화면에서 루프 단계와 산출물을 계속 추적합니다." />
-        </div>
       </div>
     </section>
   );
@@ -1474,16 +1464,6 @@ function HomeModelPicker({
         })}
       </div>
     </div>
-  );
-}
-
-function HomeCard({ icon: Icon, title, copy }: { icon: IconComponent; title: string; copy: string }): ReactElement {
-  return (
-    <article className="homeCard">
-      <Icon size={20} />
-      <h2>{title}</h2>
-      <p>{copy}</p>
-    </article>
   );
 }
 
@@ -1716,7 +1696,7 @@ function AetherOpsTab({
       </section>
 
       <div className="contentGrid">
-        <section className="panel wide">
+        <section className="panel wide agentPanel">
           <div className="panelTitle">
             <Bot size={17} />
             <h2>AetherOps 연구 에이전트</h2>
@@ -1742,7 +1722,7 @@ function AetherOpsTab({
           </div>
         </section>
 
-        <section className="panel wide">
+        <section className="panel wide readinessPanel">
           <div className="panelTitle">
             <FlaskConical size={17} />
             <h2>연구 메타데이터 / 프로그램 도구</h2>
@@ -1789,7 +1769,7 @@ function AetherOpsTab({
           onRun={onRunEngineeringWorkbench}
         />
 
-        <section className="panel">
+        <section className="panel blockerPanel">
           <div className="panelTitle">
             <AlertTriangle size={17} />
             <h2>오류 / Blocker</h2>
@@ -1805,7 +1785,7 @@ function AetherOpsTab({
           </div>
         </section>
 
-        <section className="panel">
+        <section className="panel eventsPanel">
           <div className="panelTitle">
             <History size={17} />
             <h2>최근 이벤트</h2>
@@ -1824,7 +1804,7 @@ function AetherOpsTab({
           </div>
         </section>
 
-        <section className="panel">
+        <section className="panel storagePanel">
           <div className="panelTitle">
             <Database size={17} />
             <h2>연구 DB 저장 내용</h2>
@@ -1832,7 +1812,7 @@ function AetherOpsTab({
           <StorageList stats={stats} />
         </section>
 
-        <section className="panel">
+        <section className="panel logsPanel">
           <div className="panelTitle">
             <Bot size={17} />
             <h2>OpenCode / Tool 로그</h2>
@@ -1850,7 +1830,7 @@ function AetherOpsTab({
           </div>
         </section>
 
-        <section className="panel">
+        <section className="panel evidencePanel">
           <div className="panelTitle">
             <Search size={17} />
             <h2>Hybrid 근거 패널</h2>
@@ -1863,7 +1843,7 @@ function AetherOpsTab({
           </div>
         </section>
 
-        <section className="panel wide">
+        <section className="panel wide finalPanel">
           <div className="panelTitle">
             <CheckCircle2 size={17} />
             <h2>최종 결과 도출</h2>

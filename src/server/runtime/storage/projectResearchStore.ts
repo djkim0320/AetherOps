@@ -15,7 +15,6 @@ import type {
   ResearchChunk,
   ResearchDatabase,
   ResearchProject,
-  ResearchReport,
   ResearchSnapshot,
   ResearchSource,
   RunAuditOutput,
@@ -181,20 +180,6 @@ export class NodeProjectStorage implements ProjectStorage {
     });
 
     return { ontologyExportPath, ontologyNtPath };
-  }
-
-  async writeReportFiles(
-    project: ResearchProject,
-    database: ResearchDatabase,
-    report: ResearchReport,
-    markdown: string,
-    reusableKnowledge: string
-  ): Promise<{ reportPath: string; knowledgePath: string }> {
-    const { reportPath, knowledgePath } = reportKnowledgePaths(project);
-    writeMarkdownFileSync(reportPath, markdown);
-    writeMarkdownFileSync(knowledgePath, reusableKnowledge);
-    upsertJson(database.sqlitePath, "reports", report.id, project.id, report.createdAt, { ...report, reportPath, knowledgePath });
-    return { reportPath, knowledgePath };
   }
 
   async writeFinalOutputFiles(

@@ -302,10 +302,6 @@ export class TestProjectStorage implements ProjectStorage {
     return { ontologyExportPath: "", ontologyNtPath: "" };
   }
 
-  async writeReportFiles(): Promise<{ reportPath: string; knowledgePath: string }> {
-    return { reportPath: "", knowledgePath: "" };
-  }
-
   async writeFinalOutputFiles(): Promise<{ reportPath: string; knowledgePath: string; ontologyExportPath: string; artifactPackagePath: string }> {
     return { reportPath: "", knowledgePath: "", ontologyExportPath: "", artifactPackagePath: "" };
   }

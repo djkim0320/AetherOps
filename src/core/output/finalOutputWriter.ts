@@ -76,13 +76,15 @@ export class FinalOutputWriter {
       reusableKnowledgeAsset: report.reusableKnowledgeAsset,
       createdAt: nowIso()
     };
-    const files = this.projectStorage.writeFinalOutputFiles
-      ? await this.projectStorage.writeFinalOutputFiles(snapshot.project, database, output, graphExport, artifactPackage, evidenceCitations, hypothesisVerification)
-      : await this.projectStorage.writeReportFiles(snapshot.project, database, report, output.markdownReport, output.reusableKnowledgeAsset).then((paths) => ({
-          ...paths,
-          ontologyExportPath: "",
-          artifactPackagePath: ""
-        }));
+    const files = await this.projectStorage.writeFinalOutputFiles(
+      snapshot.project,
+      database,
+      output,
+      graphExport,
+      artifactPackage,
+      evidenceCitations,
+      hypothesisVerification
+    );
 
     return {
       ...output,

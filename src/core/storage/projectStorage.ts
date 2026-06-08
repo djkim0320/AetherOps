@@ -8,7 +8,6 @@ import type {
   ResearchDatabase,
   FinalResearchOutput,
   ResearchProject,
-  ResearchReport,
   ResearchSnapshot,
   ResearchSource,
   RunAuditOutput,
@@ -44,14 +43,7 @@ export interface ProjectStorage {
       exportedAt: string;
     }
   ): Promise<{ ontologyExportPath: string; ontologyNtPath: string }>;
-  writeReportFiles(
-    project: ResearchProject,
-    database: ResearchDatabase,
-    report: ResearchReport,
-    markdown: string,
-    reusableKnowledge: string
-  ): Promise<{ reportPath: string; knowledgePath: string }>;
-  writeFinalOutputFiles?(
+  writeFinalOutputFiles(
     project: ResearchProject,
     database: ResearchDatabase,
     output: FinalResearchOutput,

@@ -40,7 +40,8 @@ import {
   type ResearchSnapshot,
   type RuntimeToolDiagnostics,
   type EngineeringProgramPreflightResult,
-  type EngineeringProgramTarget
+  type EngineeringProgramTarget,
+  type EngineeringProgramDirectRunResult
 } from "../core/shared/types.js";
 import { buildResearchInputPayloadFromBrief } from "../core/input/researchInput.js";
 import { getAetherOpsApi, getMissingAetherOpsApiMessage, waitForAetherOpsApi } from "./aetherClient.js";
@@ -75,6 +76,14 @@ interface SnapshotStats {
   memoryProjectsAndReports: number;
   storageProjectsAndReports: number;
   errorsAndBlockers: number;
+}
+interface EngineeringWorkbenchState {
+  sourceUrl: string;
+  reynolds: number;
+  mach: number;
+  alphaStart: number;
+  alphaEnd: number;
+  alphaStep: number;
 }
 
 const defaultInput: ResearchProjectInput = {
@@ -180,6 +189,14 @@ const embeddingModelOptions: Record<AppSettings["embedding"]["provider"], string
   custom: ["text-embedding-3-small", "text-embedding-3-large", "gemini-embedding-001", "custom-embedding-model"]
 };
 const embeddingDimensionOptions = [64, 96, 128, 256, 512, 1024, 1536, 3072];
+const defaultEngineeringWorkbench: EngineeringWorkbenchState = {
+  sourceUrl: "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat",
+  reynolds: 1_000_000,
+  mach: 0,
+  alphaStart: -2,
+  alphaEnd: 6,
+  alphaStep: 2
+};
 
 const stepLabels: Record<ResearchLoopStep, { index: string; label: string; flow: StepFlowClass; icon: IconComponent }> = {
   [ResearchLoopStep.CreateResearchDb]: { index: "1", label: "연구 DB 생성", flow: "storage", icon: Database },
@@ -234,6 +251,10 @@ export function App(): ReactElement {
   const [toolDiagnostics, setToolDiagnostics] = useState<RuntimeToolDiagnostics>();
   const [engineeringPreflightResult, setEngineeringPreflightResult] = useState<EngineeringProgramPreflightResult>();
   const [engineeringPreflightBusy, setEngineeringPreflightBusy] = useState(false);
+  const [engineeringWorkbench, setEngineeringWorkbench] = useState<EngineeringWorkbenchState>(defaultEngineeringWorkbench);
+  const [engineeringRunResult, setEngineeringRunResult] = useState<EngineeringProgramDirectRunResult>();
+  const [engineeringRunBusy, setEngineeringRunBusy] = useState(false);
+  const [engineeringRunMessage, setEngineeringRunMessage] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [webKeyInput, setWebKeyInput] = useState("");
   const [embeddingKeyInput, setEmbeddingKeyInput] = useState("");
@@ -750,6 +771,38 @@ export function App(): ReactElement {
     }
   }
 
+  async function runEngineeringWorkbench(): Promise<void> {
+    setEngineeringRunBusy(true);
+    setEngineeringRunMessage("");
+    setEngineeringRunResult(undefined);
+    try {
+      const result = await api.engineering.runProgram({
+        title: "Clark Y XFOIL-WASM polar analysis",
+        question: "Run a real Clark Y airfoil aerodynamic polar analysis and report the computed CL/CD values.",
+        programRequests: [
+          {
+            kind: "xfoil-wasm-polar",
+            target: "xfoil-wasm",
+            sourceUrl: engineeringWorkbench.sourceUrl.trim(),
+            reynolds: engineeringWorkbench.reynolds,
+            mach: engineeringWorkbench.mach,
+            alphaStart: engineeringWorkbench.alphaStart,
+            alphaEnd: engineeringWorkbench.alphaEnd,
+            alphaStep: engineeringWorkbench.alphaStep,
+            reason: "Direct UI operation requested by the user."
+          }
+        ]
+      });
+      setEngineeringRunResult(result);
+      setEngineeringRunMessage(result.status === "completed" ? "Engineering program run completed." : result.error ?? "Engineering program run failed.");
+      void refreshToolDiagnostics();
+    } catch (error) {
+      setEngineeringRunMessage(formatError(error));
+    } finally {
+      setEngineeringRunBusy(false);
+    }
+  }
+
   async function selectHomeModel(selection: HomeModelSelection): Promise<void> {
     const current = settingsDraft ?? appSettings;
     if (!current) {
@@ -895,6 +948,12 @@ export function App(): ReactElement {
           events={events}
           metrics={metrics}
           busy={busy}
+          engineeringWorkbench={engineeringWorkbench}
+          engineeringRunResult={engineeringRunResult}
+          engineeringRunBusy={engineeringRunBusy}
+          engineeringRunMessage={engineeringRunMessage}
+          onEngineeringWorkbenchChange={setEngineeringWorkbench}
+          onRunEngineeringWorkbench={runEngineeringWorkbench}
           onCreate={createExactWorkflow}
           onStart={startLoop}
           onPause={pauseLoop}
@@ -1426,6 +1485,12 @@ function AetherOpsTab({
   events,
   metrics,
   busy,
+  engineeringWorkbench,
+  engineeringRunResult,
+  engineeringRunBusy,
+  engineeringRunMessage,
+  onEngineeringWorkbenchChange,
+  onRunEngineeringWorkbench,
   onCreate,
   onStart
 }: {
@@ -1438,6 +1503,12 @@ function AetherOpsTab({
   events: LoopIteration[];
   metrics: Array<{ label: string; value: number }>;
   busy: boolean;
+  engineeringWorkbench: EngineeringWorkbenchState;
+  engineeringRunResult?: EngineeringProgramDirectRunResult;
+  engineeringRunBusy: boolean;
+  engineeringRunMessage: string;
+  onEngineeringWorkbenchChange: (state: EngineeringWorkbenchState) => void;
+  onRunEngineeringWorkbench: () => Promise<void>;
   onCreate: () => Promise<void>;
   onStart: () => Promise<void>;
   onPause: () => Promise<void>;
@@ -1692,6 +1763,20 @@ function AetherOpsTab({
           </div>
         </section>
 
+        <EngineeringProgramWorkbench
+          state={engineeringWorkbench}
+          result={engineeringRunResult}
+          busy={engineeringRunBusy}
+          message={engineeringRunMessage}
+          codeReady={appCodeExecution}
+          xfoilWasmReady={Boolean(
+            appCodeExecution &&
+              toolDiagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-wasm-polar:xfoil-wasm")?.ready
+          )}
+          onChange={onEngineeringWorkbenchChange}
+          onRun={onRunEngineeringWorkbench}
+        />
+
         <section className="panel">
           <div className="panelTitle">
             <AlertTriangle size={17} />
@@ -1791,6 +1876,152 @@ function AetherOpsTab({
           </div>
         </section>
       </div>
+    </section>
+  );
+}
+
+function EngineeringProgramWorkbench({
+  state,
+  result,
+  busy,
+  message,
+  codeReady,
+  xfoilWasmReady,
+  onChange,
+  onRun
+}: {
+  state: EngineeringWorkbenchState;
+  result?: EngineeringProgramDirectRunResult;
+  busy: boolean;
+  message: string;
+  codeReady: boolean;
+  xfoilWasmReady: boolean;
+  onChange: (state: EngineeringWorkbenchState) => void;
+  onRun: () => Promise<void>;
+}): ReactElement {
+  const summary = useMemo(() => engineeringRunSummary(result), [result]);
+  const rows = summary.rows;
+  const canRun = codeReady && xfoilWasmReady && Boolean(state.sourceUrl.trim()) && !busy;
+  return (
+    <section className="panel wide engineeringWorkbenchPanel">
+      <div className="panelTitle">
+        <Wrench size={17} />
+        <h2>Engineering Program Workbench</h2>
+      </div>
+      <div className="engineeringWorkbenchGrid">
+        <div className="engineeringWorkbenchControls">
+          <label>
+            Airfoil coordinate source URL
+            <input value={state.sourceUrl} onChange={(event) => onChange({ ...state, sourceUrl: event.target.value })} />
+          </label>
+          <div className="fieldGrid three">
+            <label>
+              Reynolds
+              <input
+                type="number"
+                min={1_000}
+                max={100_000_000}
+                step={10_000}
+                value={state.reynolds}
+                onChange={(event) => onChange({ ...state, reynolds: parseNumericInput(event.target.value, state.reynolds) })}
+              />
+            </label>
+            <label>
+              Mach
+              <input
+                type="number"
+                min={0}
+                max={0.8}
+                step={0.01}
+                value={state.mach}
+                onChange={(event) => onChange({ ...state, mach: parseNumericInput(event.target.value, state.mach) })}
+              />
+            </label>
+            <label>
+              Alpha step
+              <input
+                type="number"
+                min={0.1}
+                max={10}
+                step={0.1}
+                value={state.alphaStep}
+                onChange={(event) => onChange({ ...state, alphaStep: parseNumericInput(event.target.value, state.alphaStep) })}
+              />
+            </label>
+          </div>
+          <div className="fieldGrid three">
+            <label>
+              Alpha start
+              <input
+                type="number"
+                min={-30}
+                max={30}
+                step={0.5}
+                value={state.alphaStart}
+                onChange={(event) => onChange({ ...state, alphaStart: parseNumericInput(event.target.value, state.alphaStart) })}
+              />
+            </label>
+            <label>
+              Alpha end
+              <input
+                type="number"
+                min={-30}
+                max={30}
+                step={0.5}
+                value={state.alphaEnd}
+                onChange={(event) => onChange({ ...state, alphaEnd: parseNumericInput(event.target.value, state.alphaEnd) })}
+              />
+            </label>
+            <button className="primaryButton engineeringRunButton" type="button" onClick={() => void onRun()} disabled={!canRun}>
+              {busy ? <Loader2 className="spin" size={17} /> : <FlaskConical size={17} />}
+              Run XFOIL-WASM
+            </button>
+          </div>
+          <div className="engineeringStatusGrid">
+            <span className={codeReady ? "ready" : "blocked"}>Code execution {codeReady ? "ready" : "blocked"}</span>
+            <span className={xfoilWasmReady ? "ready" : "blocked"}>XFOIL-WASM {xfoilWasmReady ? "ready" : "blocked"}</span>
+            {message ? <span className={result?.status === "completed" ? "ready" : "blocked"}>{message}</span> : null}
+          </div>
+        </div>
+        <div className="engineeringWorkbenchResult">
+          <div className="engineeringResultHeader">
+            <strong>{summary.airfoil || "No run yet"}</strong>
+            <span>{result ? `${result.status} / artifacts ${result.artifacts.length} / evidence ${result.evidence.length}` : "ready for direct operation"}</span>
+          </div>
+          {summary.runtime ? (
+            <p className="engineeringResultMeta">
+              {summary.runtime} {summary.runtimeVersion} / {summary.runtimeLicense} / rows {summary.rowCount ?? rows.length}
+            </p>
+          ) : null}
+          {rows.length ? (
+            <div className="engineeringTableWrap">
+              <table className="engineeringResultTable">
+                <thead>
+                  <tr>
+                    <th>alpha</th>
+                    <th>CL</th>
+                    <th>CD</th>
+                    <th>Cm</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={`${row.alpha}-${row.cl}-${row.cd}`}>
+                      <td>{formatEngineeringNumber(row.alpha)}</td>
+                      <td>{formatEngineeringNumber(row.cl)}</td>
+                      <td>{formatEngineeringNumber(row.cd)}</td>
+                      <td>{formatEngineeringNumber(row.cm)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="engineeringEmpty">Run the bundled XFOIL-WASM solver to generate a real polar table.</p>
+          )}
+        </div>
+      </div>
+      {result?.reportMarkdown ? <pre className="engineeringReport">{result.reportMarkdown}</pre> : null}
     </section>
   );
 }
@@ -3116,6 +3347,67 @@ function SettingsTab({
       </footer>
     </section>
   );
+}
+
+interface EngineeringRunSummaryView {
+  airfoil?: string;
+  runtime?: string;
+  runtimeVersion?: string;
+  runtimeLicense?: string;
+  rowCount?: number;
+  rows: Array<{ alpha?: number; cl?: number; cd?: number; cm?: number }>;
+}
+
+function engineeringRunSummary(result: EngineeringProgramDirectRunResult | undefined): EngineeringRunSummaryView {
+  if (!result) return { rows: [] };
+  for (const run of result.programRuns) {
+    const summary = asPlainRecord(asPlainRecord(run)?.summary);
+    const rows = Array.isArray(summary?.rows) ? summary.rows.map(engineeringPolarRow).filter((row) => row.alpha !== undefined) : [];
+    if (summary) {
+      return {
+        airfoil: optionalText(summary.airfoil),
+        runtime: optionalText(summary.runtime),
+        runtimeVersion: optionalText(summary.runtimeVersion),
+        runtimeLicense: optionalText(summary.runtimeLicense),
+        rowCount: optionalNumber(summary.rowCount),
+        rows
+      };
+    }
+  }
+  return { rows: [] };
+}
+
+function engineeringPolarRow(value: unknown): { alpha?: number; cl?: number; cd?: number; cm?: number } {
+  const row = asPlainRecord(value);
+  return {
+    alpha: optionalNumber(row?.alpha),
+    cl: optionalNumber(row?.cl),
+    cd: optionalNumber(row?.cd),
+    cm: optionalNumber(row?.cm)
+  };
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function optionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  const next = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(next) ? next : undefined;
+}
+
+function parseNumericInput(value: string, previous: number): number {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : previous;
+}
+
+function formatEngineeringNumber(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return "";
+  return Number(value.toFixed(5)).toString();
 }
 
 function StringSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }): ReactElement {

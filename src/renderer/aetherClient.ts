@@ -77,6 +77,9 @@ export function getAetherOpsApi(): AetherOpsApi {
       diagnostics: () => rpc("tools.diagnostics"),
       preflightEngineering: (target) => rpc("tools.preflightEngineering", target)
     },
+    engineering: {
+      runProgram: (input) => rpc("engineering.runProgram", input)
+    },
     snapshots: {
       get: (projectId) => rpc("snapshots.get", projectId)
     },

@@ -3,13 +3,24 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join, normalize, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ApiEmbeddingProvider } from "../core/providers/embeddingProvider.js";
-import { runEngineeringProgramPreflight } from "../core/tools/engineeringProgramTool.js";
+import { EngineeringProgramTool, runEngineeringProgramPreflight } from "../core/tools/engineeringProgramTool.js";
 import { AetherOpsOrchestrator } from "../core/orchestration/orchestrator.js";
 import { createDefaultResearchTools } from "../core/tools/toolRegistry.js";
 import { dedupeResearchTools, ToolRunner } from "../core/tools/toolRunner.js";
 import { buildRuntimeToolDiagnostics } from "../core/tools/runtimeToolDiagnostics.js";
 import { VectorRagEngine } from "../core/retrieval/vectorRagEngine.js";
-import type { AppSettings, EngineeringProgramTarget, ResearchProjectInput, ResearchArtifact } from "../core/shared/types.js";
+import { createId, nowIso } from "../core/shared/ids.js";
+import { ResearchLoopStep } from "../core/shared/types.js";
+import type {
+  AppSettings,
+  EngineeringProgramDirectRunInput,
+  EngineeringProgramDirectRunResult,
+  EngineeringProgramRequest,
+  EngineeringProgramTarget,
+  OpenCodeRunInput,
+  ResearchArtifact,
+  ResearchProjectInput
+} from "../core/shared/types.js";
 import { BackgroundBrowserRuntime } from "./runtime/browser/backgroundBrowserRuntime.js";
 import { BrowserResearchTool } from "./runtime/browser/browserResearchTool.js";
 import { CodexOAuthLlmProvider } from "./runtime/opencode/codexOAuthLlmProvider.js";
@@ -221,6 +232,9 @@ async function handleRpc(
       const preflight = await runEngineeringProgramPreflight(runtimeSettings, optionalEngineeringProgramTarget(args[0]));
       return { ...preflight, diagnostics: buildRuntimeToolDiagnostics(runtimeSettings) };
     }
+    case "engineering.runProgram":
+    case "aetherops:runEngineeringProgram":
+      return runEngineeringProgramDirect(args[0] as EngineeringProgramDirectRunInput, await settingsStore.getRuntimeSettings());
     case "snapshots.get":
     case "aetherops:getSnapshot":
       return orchestrator.getSnapshot(String(args[0]));
@@ -234,6 +248,202 @@ function requireLegacyRpc(method: string): void {
     throw new Error(`Legacy RPC method ${method} is disabled. Use the 12-step AetherOps RPC methods instead.`);
   }
   console.warn(`[AetherOps] Legacy RPC method ${method} was called. Set AETHEROPS_ENABLE_LEGACY_RPC=false to block old clients.`);
+}
+
+async function runEngineeringProgramDirect(payload: EngineeringProgramDirectRunInput, settings: AppSettings): Promise<EngineeringProgramDirectRunResult> {
+  const startedAt = nowIso();
+  const projectId = createId("direct_project");
+  const questionId = createId("question");
+  const hypothesisId = createId("hypothesis");
+  const programRequests = normalizeDirectProgramRequests(payload?.programRequests);
+  const question = payload?.question?.trim() || "Run a direct engineering program analysis and report the computed values.";
+  const title = payload?.title?.trim() || "Direct engineering program run";
+  const input: OpenCodeRunInput = {
+    project: {
+      id: projectId,
+      goal: title,
+      topic: title,
+      scope: "Direct program operation through AetherOps EngineeringProgramTool.",
+      budget: "single direct run",
+      autonomyPolicy: {
+        toolApproval: "suggested",
+        allowExternalSearch: Boolean(settings.allowExternalSearch),
+        allowCodeExecution: Boolean(settings.allowCodeExecution),
+        maxLoopIterations: 1
+      },
+      createdAt: startedAt,
+      updatedAt: startedAt,
+      currentStep: ResearchLoopStep.ExecuteTools,
+      status: "running",
+      projectRoot: ".aetherops/direct-engineering"
+    },
+    questions: [{ id: questionId, projectId, text: question, status: "open", createdAt: startedAt }],
+    hypotheses: [
+      {
+        id: hypothesisId,
+        projectId,
+        questionId,
+        statement: "A real engineering program execution can produce traceable numerical output.",
+        status: "untested",
+        confidence: 0.5,
+        createdAt: startedAt
+      }
+    ],
+    evidence: [],
+    artifacts: [],
+    sources: [],
+    researchPlan: {
+      id: createId("plan"),
+      projectId,
+      iteration: 1,
+      objective: title,
+      targetQuestions: [questionId],
+      targetHypotheses: [hypothesisId],
+      requiredTools: ["EngineeringProgramTool"],
+      expectedSources: ["real engineering program inputs"],
+      expectedArtifacts: ["engineering program output artifact"],
+      executionSteps: ["Run EngineeringProgramTool with the supplied structured request."],
+      stopCriteria: ["Engineering program output is returned or an explicit failure is recorded."],
+      programRequests,
+      createdAt: startedAt
+    },
+    iteration: 1
+  };
+
+  try {
+    const result = await new EngineeringProgramTool().run(input, settings);
+    const completedAt = nowIso();
+    const programRuns = programRunsFromOutput(result.toolRun.output);
+    const reportMarkdown = engineeringDirectReport(title, result.toolRun.status, programRuns, result.artifacts, result.evidence, result.toolRun.error);
+    return {
+      status: result.toolRun.status === "completed" ? "completed" : "failed",
+      startedAt,
+      completedAt,
+      toolRun: result.toolRun,
+      programRuns,
+      artifacts: result.artifacts,
+      evidence: result.evidence,
+      reportMarkdown,
+      error: result.toolRun.error
+    };
+  } catch (error) {
+    const completedAt = nowIso();
+    const message = error instanceof Error ? error.message : String(error);
+    const toolRun = {
+      id: createId("tool"),
+      projectId,
+      iteration: 1,
+      toolName: "EngineeringProgramTool",
+      input: { programRequests },
+      output: { programRequests },
+      status: "failed" as const,
+      error: message,
+      startedAt,
+      completedAt
+    };
+    return {
+      status: "failed",
+      startedAt,
+      completedAt,
+      toolRun,
+      programRuns: [],
+      artifacts: [],
+      evidence: [],
+      reportMarkdown: engineeringDirectReport(title, "failed", [], [], [], message),
+      error: message
+    };
+  }
+}
+
+function normalizeDirectProgramRequests(value: unknown): EngineeringProgramRequest[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("engineering.runProgram requires at least one program request.");
+  }
+  return value.slice(0, 4).map((item) => {
+    if (!item || typeof item !== "object") {
+      throw new Error("Engineering program request must be an object.");
+    }
+    const request = item as Partial<EngineeringProgramRequest>;
+    if (typeof request.kind !== "string") {
+      throw new Error("Engineering program request requires kind.");
+    }
+    return {
+      kind: request.kind as EngineeringProgramRequest["kind"],
+      target: request.target,
+      artifactPath: request.artifactPath,
+      sourceUrl: request.sourceUrl,
+      outputFileName: request.outputFileName,
+      naca: request.naca,
+      reynolds: request.reynolds,
+      mach: request.mach,
+      alphaStart: request.alphaStart,
+      alphaEnd: request.alphaEnd,
+      alphaStep: request.alphaStep,
+      reason: request.reason
+    };
+  });
+}
+
+function programRunsFromOutput(output: unknown): unknown[] {
+  const record = asRecord(output);
+  if (Array.isArray(record?.programRuns)) return record.programRuns;
+  return Array.isArray(record?.outputs) ? record.outputs : [];
+}
+
+function engineeringDirectReport(
+  title: string,
+  status: string,
+  programRuns: unknown[],
+  artifacts: ResearchArtifact[],
+  evidence: Array<{ title: string; summary: string; limitations?: string[] }>,
+  error?: string
+): string {
+  const lines = [`# ${title}`, "", `Status: ${status}`, ""];
+  if (error) {
+    lines.push("## Error", error, "");
+  }
+  for (const run of programRuns) {
+    const record = asRecord(run);
+    const summary = asRecord(record?.summary);
+    lines.push(`## ${String(record?.target ?? record?.kind ?? "Engineering program")}`);
+    if (summary?.airfoil) lines.push(`Airfoil: ${String(summary.airfoil)}`);
+    if (summary?.sourceUrl) lines.push(`Source URL: ${String(summary.sourceUrl)}`);
+    if (summary?.runtime) lines.push(`Runtime: ${String(summary.runtime)} ${summary.runtimeVersion ? String(summary.runtimeVersion) : ""}`.trim());
+    if (summary?.runtimeLicense) lines.push(`Runtime license: ${String(summary.runtimeLicense)}`);
+    if (summary?.reynolds !== undefined) lines.push(`Reynolds: ${formatReportNumber(summary.reynolds)}`);
+    if (summary?.mach !== undefined) lines.push(`Mach: ${formatReportNumber(summary.mach)}`);
+    const rows = Array.isArray(summary?.rows) ? summary.rows.map(asRecord).filter(Boolean) : [];
+    if (rows.length) {
+      lines.push("", "| alpha | CL | CD | Cm | Top Xtr | Bot Xtr |", "| ---: | ---: | ---: | ---: | ---: | ---: |");
+      for (const row of rows) {
+        lines.push(
+          `| ${formatReportNumber(row?.alpha)} | ${formatReportNumber(row?.cl)} | ${formatReportNumber(row?.cd)} | ${formatReportNumber(row?.cm)} | ${formatReportNumber(row?.topXtr)} | ${formatReportNumber(row?.botXtr)} |`
+        );
+      }
+    }
+    lines.push("");
+  }
+  if (evidence.length) {
+    lines.push("## Evidence");
+    for (const item of evidence) {
+      lines.push(`- ${item.title}: ${item.summary}`);
+      for (const limitation of item.limitations ?? []) lines.push(`  - Limitation: ${limitation}`);
+    }
+    lines.push("");
+  }
+  lines.push(`Artifacts: ${artifacts.length}`, `Evidence items: ${evidence.length}`, "");
+  return `${lines.join("\n").trim()}\n`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function formatReportNumber(value: unknown): string {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue)) return "";
+  if (Math.abs(numberValue) >= 1000) return numberValue.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return Number(numberValue.toFixed(5)).toString();
 }
 
 function optionalString(value: unknown): string | undefined {

@@ -315,6 +315,24 @@ export interface EngineeringProgramPreflightResult {
   completedAt: string;
 }
 
+export interface EngineeringProgramDirectRunInput {
+  title?: string;
+  question?: string;
+  programRequests: EngineeringProgramRequest[];
+}
+
+export interface EngineeringProgramDirectRunResult {
+  status: "completed" | "failed";
+  startedAt: string;
+  completedAt: string;
+  toolRun: ToolRun;
+  programRuns: unknown[];
+  artifacts: ResearchArtifact[];
+  evidence: EvidenceItem[];
+  reportMarkdown: string;
+  error?: string;
+}
+
 export interface ResearchPlan {
   id: string;
   projectId: string;

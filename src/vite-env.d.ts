@@ -10,7 +10,9 @@ import type {
   ResearchSnapshot,
   RuntimeToolDiagnostics,
   EngineeringProgramPreflightResult,
-  EngineeringProgramTarget
+  EngineeringProgramTarget,
+  EngineeringProgramDirectRunInput,
+  EngineeringProgramDirectRunResult
 } from "./core/shared/types.js";
 
 export interface AetherOpsApi {
@@ -67,6 +69,9 @@ export interface AetherOpsApi {
   tools: {
     diagnostics(): Promise<RuntimeToolDiagnostics>;
     preflightEngineering(target?: EngineeringProgramTarget): Promise<EngineeringProgramPreflightResult>;
+  };
+  engineering: {
+    runProgram(input: EngineeringProgramDirectRunInput): Promise<EngineeringProgramDirectRunResult>;
   };
   snapshots: {
     get(projectId: string): Promise<ResearchSnapshot>;

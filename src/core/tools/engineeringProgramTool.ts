@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { createId, nowIso } from "../shared/ids.js";
 import type { ResearchTool, ResearchToolResult } from "./toolRegistry.js";
 import type {
@@ -337,7 +337,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       requiredFields: ["kind", "naca or artifactPath"],
       optionalFields: ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "reason"],
       description: "Run the configured XFOIL executable to generate a polar table.",
-      blockedReason: xfoilReady ? undefined : "XFOIL command is not configured."
+      blockedReason: xfoilReady ? undefined : "XFOIL command is not configured or not available on PATH."
     },
     {
       kind: "openfoam-case-run",
@@ -346,7 +346,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       requiredFields: ["kind", "target"],
       optionalFields: ["outputFileName", "reason"],
       description: "Run a configured OpenFOAM-compatible solver command against the saved case root using its args template.",
-      blockedReason: openFoamReady ? undefined : "OpenFOAM command and parser-visible case root are not configured."
+      blockedReason: openFoamReady ? undefined : "OpenFOAM command is not available, or parser-visible case root is not configured."
     },
     {
       kind: "su2-case-run",
@@ -355,7 +355,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       requiredFields: ["kind", "target"],
       optionalFields: ["outputFileName", "reason"],
       description: "Run a configured SU2_CFD-compatible command against the saved case config using its args template.",
-      blockedReason: su2Ready ? undefined : "SU2 command and parser-visible case config are not configured."
+      blockedReason: su2Ready ? undefined : "SU2 command is not available, or parser-visible case config is not configured."
     },
     {
       kind: "cad-script-run",
@@ -364,7 +364,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       requiredFields: ["kind", "target"],
       optionalFields: ["outputFileName", "reason"],
       description: "Run the configured FreeCAD-compatible headless command with the saved script and args template.",
-      blockedReason: freeCadReady ? undefined : "FreeCAD command and script path are not configured."
+      blockedReason: freeCadReady ? undefined : "FreeCAD command is not available, or script path is not configured."
     },
     {
       kind: "vsp-script-run",
@@ -373,7 +373,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       requiredFields: ["kind", "target"],
       optionalFields: ["outputFileName", "reason"],
       description: "Run the configured OpenVSP-compatible headless command with the saved script and args template.",
-      blockedReason: openVspReady ? undefined : "OpenVSP command and script path are not configured."
+      blockedReason: openVspReady ? undefined : "OpenVSP command is not available, or script path is not configured."
     },
     {
       kind: "commercial-cfd-run",
@@ -382,7 +382,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       requiredFields: ["kind", "target"],
       optionalFields: ["artifactPath", "outputFileName", "reason"],
       description: "Run the configured FlightStream adapter command using its saved args template.",
-      blockedReason: flightStreamReady ? undefined : "FlightStream command adapter is not configured."
+      blockedReason: flightStreamReady ? undefined : "FlightStream command adapter is not configured or not available on PATH."
     },
     {
       kind: "commercial-cfd-run",
@@ -391,7 +391,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       requiredFields: ["kind", "target"],
       optionalFields: ["artifactPath", "outputFileName", "reason"],
       description: "Run the configured STAR-CCM+ adapter command using its saved args template.",
-      blockedReason: starCcmReady ? undefined : "STAR-CCM+ command adapter is not configured."
+      blockedReason: starCcmReady ? undefined : "STAR-CCM+ command adapter is not configured or not available on PATH."
     }
   ];
   return capabilities.map((capability) => (capability.ready ? { ...capability, blockedReason: undefined } : capability));
@@ -1659,7 +1659,7 @@ function su2CaseRunEvidence(input: OpenCodeRunInput, summary: Su2CaseRunSummary,
 }
 
 function hasConfiguredXfoil(settings: AppSettings): boolean {
-  return settings.engineeringTools.xfoil.enabled && Boolean(settings.engineeringTools.xfoil.command?.trim());
+  return settings.engineeringTools.xfoil.enabled && hasAvailableCommand(settings.engineeringTools.xfoil.command);
 }
 
 function hasConfiguredModelingRoot(settings: AppSettings): boolean {
@@ -1673,7 +1673,7 @@ function hasConfiguredModelingRoot(settings: AppSettings): boolean {
 }
 
 function hasConfiguredOpenFoam(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.openFoam.enabled || !settings.engineeringTools.openFoam.command?.trim()) return false;
+  if (!settings.engineeringTools.openFoam.enabled || !hasAvailableCommand(settings.engineeringTools.openFoam.command)) return false;
   try {
     validateOpenFoamCaseRoot(settings.engineeringTools.openFoam.caseRoot);
     return true;
@@ -1683,7 +1683,7 @@ function hasConfiguredOpenFoam(settings: AppSettings): boolean {
 }
 
 function hasConfiguredSu2(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.su2.enabled || !settings.engineeringTools.su2.command?.trim()) return false;
+  if (!settings.engineeringTools.su2.enabled || !hasAvailableCommand(settings.engineeringTools.su2.command)) return false;
   try {
     validateSu2CaseConfig(settings.engineeringTools.su2.caseRoot, settings.engineeringTools.su2.configFile);
     return true;
@@ -1693,7 +1693,7 @@ function hasConfiguredSu2(settings: AppSettings): boolean {
 }
 
 function hasConfiguredFreeCad(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.freeCad.enabled || !settings.engineeringTools.freeCad.command?.trim()) return false;
+  if (!settings.engineeringTools.freeCad.enabled || !hasAvailableCommand(settings.engineeringTools.freeCad.command)) return false;
   try {
     validateFreeCadScriptPath(settings.engineeringTools.freeCad.scriptPath);
     return true;
@@ -1703,7 +1703,7 @@ function hasConfiguredFreeCad(settings: AppSettings): boolean {
 }
 
 function hasConfiguredOpenVsp(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.openVsp.enabled || !settings.engineeringTools.openVsp.command?.trim()) return false;
+  if (!settings.engineeringTools.openVsp.enabled || !hasAvailableCommand(settings.engineeringTools.openVsp.command)) return false;
   try {
     validateOpenVspScriptPath(settings.engineeringTools.openVsp.scriptPath);
     return true;
@@ -1715,7 +1715,49 @@ function hasConfiguredOpenVsp(settings: AppSettings): boolean {
 function hasConfiguredCommercialAdapter(settings: AppSettings, target: Extract<EngineeringProgramTarget, "flightstream" | "starccm">): boolean {
   const adapter = commercialAdapterConfig(settings, target);
   const flag = target === "flightstream" ? settings.engineeringTools.commercialCfd.flightStreamConfigured : settings.engineeringTools.commercialCfd.starCcmConfigured;
-  return flag && Boolean(adapter.command?.trim());
+  return flag && hasAvailableCommand(adapter.command);
+}
+
+function hasAvailableCommand(command: string | undefined): boolean {
+  const trimmed = command?.trim();
+  if (!trimmed) return false;
+  const candidate = unquoteCommand(trimmed);
+  if (!candidate) return false;
+
+  if (isAbsolute(candidate) || candidate.includes("/") || candidate.includes("\\")) {
+    return isExistingFile(resolve(candidate));
+  }
+
+  const names = commandLookupNames(candidate);
+  const pathEntries = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const entry of pathEntries) {
+    for (const name of names) {
+      if (isExistingFile(resolve(entry, name))) return true;
+    }
+  }
+  return false;
+}
+
+function commandLookupNames(command: string): string[] {
+  if (extname(command)) return [command];
+  if (process.platform !== "win32") return [command];
+  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [command, ...extensions.map((extension) => `${command}${extension.startsWith(".") ? extension : `.${extension}`}`)];
+}
+
+function unquoteCommand(command: string): string {
+  return command.replace(/^["']|["']$/g, "").trim();
+}
+
+function isExistingFile(path: string): boolean {
+  try {
+    return existsSync(path) && statSync(path).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function openFoamConfig(settings: AppSettings): OpenFoamConfig {

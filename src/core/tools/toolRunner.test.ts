@@ -369,7 +369,7 @@ describe("ToolRunner web tool pipeline", () => {
           commercialCfd: {
             ...settings.engineeringTools.commercialCfd,
             flightStreamConfigured: true,
-            flightStreamCommand: "flightstream.exe",
+            flightStreamCommand: process.execPath,
             flightStreamRunArgsTemplate: ["--batch", "{input}", "--output", "{output}"]
           }
         }
@@ -390,11 +390,11 @@ describe("ToolRunner web tool pipeline", () => {
       engineeringTools: {
         ...settings.engineeringTools,
         enabled: true,
-        xfoil: { ...settings.engineeringTools.xfoil, enabled: true, command: "xfoil.exe" },
+        xfoil: { ...settings.engineeringTools.xfoil, enabled: true, command: process.execPath },
         commercialCfd: {
           ...settings.engineeringTools.commercialCfd,
           flightStreamConfigured: true,
-          flightStreamCommand: "flightstream.exe",
+          flightStreamCommand: process.execPath,
           flightStreamRunArgsTemplate: ["--batch", "{input}", "--output", "{output}"]
         }
       }
@@ -403,6 +403,20 @@ describe("ToolRunner web tool pipeline", () => {
     expect(configuredCapabilities.find((capability) => capability.kind === "xfoil-polar")?.ready).toBe(true);
     expect(configuredCapabilities.find((capability) => capability.target === "flightstream")?.ready).toBe(true);
     expect(configuredCapabilities.find((capability) => capability.target === "flightstream")?.requiredFields).toEqual(["kind", "target"]);
+
+    const missingCommandCapabilities = describeEngineeringProgramCapabilities({
+      ...settings,
+      allowCodeExecution: true,
+      engineeringTools: {
+        ...settings.engineeringTools,
+        enabled: true,
+        xfoil: { ...settings.engineeringTools.xfoil, enabled: true, command: "aetherops-missing-xfoil-command.exe" }
+      }
+    });
+    expect(missingCommandCapabilities.find((capability) => capability.kind === "xfoil-polar")).toMatchObject({
+      ready: false,
+      blockedReason: expect.stringContaining("not available")
+    });
   });
 
   it("builds runtime tool diagnostics without exposing unavailable tool availability", () => {
@@ -474,7 +488,7 @@ describe("ToolRunner web tool pipeline", () => {
           commercialCfd: {
             ...settings.engineeringTools.commercialCfd,
             flightStreamConfigured: true,
-            flightStreamCommand: "flightstream-adapter.exe",
+            flightStreamCommand: process.execPath,
             flightStreamRunArgsTemplate: ["--input", "{input}", "--output", "{output}"]
           }
         }
@@ -1322,7 +1336,7 @@ describe("ToolRunner web tool pipeline", () => {
         commercialCfd: {
           ...settings.engineeringTools.commercialCfd,
           flightStreamConfigured: true,
-          flightStreamCommand: "flightstream.exe",
+          flightStreamCommand: process.execPath,
           flightStreamRunArgsTemplate: []
         }
       }
@@ -1563,6 +1577,31 @@ describe("ToolRunner web tool pipeline", () => {
     expect(output.failureReasons["https://example.edu/redirect"]).toContain("blocked internal IP address");
     expect(output.failureReasons["https://example.edu/image"]).toContain("unsupported content-type");
     expect(output.failureReasons["https://example.edu/large"]).toContain("content-length exceeds 2MB");
+  });
+
+  it("accepts text-like coordinate files when servers omit content type", async () => {
+    const input = { ...runInput(["WebFetchTool"]), sources: [webSource("Clark Y coordinates", "https://93.184.216.34/clarky.dat")] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        url,
+        headers: new Headers(),
+        body: undefined,
+        arrayBuffer: async () => new TextEncoder().encode("CLARK Y AIRFOIL\n61.0 61.0\n0.000000 0.000000\n").buffer
+      }))
+    );
+
+    const result = await new WebFetchTool().run(input, settings);
+
+    expect(result.toolRun.status).toBe("completed");
+    expect(result.sources[0]).toMatchObject({
+      title: "https://93.184.216.34/clarky.dat",
+      url: "https://93.184.216.34/clarky.dat"
+    });
+    expect(result.evidence[0]?.quote).toContain("CLARK Y AIRFOIL");
   });
 
   it("returns a failed tool run when every selected URL fails so ToolRunner rejects it", async () => {

@@ -1,3 +1,4 @@
+import { extname } from "node:path";
 import { createId, nowIso } from "../shared/ids.js";
 import { EngineeringProgramTool } from "./engineeringProgramTool.js";
 import { ResearchMetadataTool } from "./researchMetadataTool.js";
@@ -18,6 +19,7 @@ const MAX_FETCH_BYTES = 2 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const WEB_FETCH_CONCURRENCY = 2;
 const ALLOWED_FETCH_CONTENT_TYPES = new Set(["text/html", "text/plain", "application/xhtml+xml"]);
+const TEXT_FETCH_EXTENSIONS = new Set([".csv", ".dat", ".json", ".md", ".tab", ".tsv", ".txt"]);
 const BLOCKED_HOST_SUFFIXES = [".local", ".localhost", ".internal"];
 const HTML_META_CHARSET_PATTERN = /<meta\b[^>]*charset\s*=\s*["']?\s*([a-z0-9._:-]+)/i;
 const LATIN1_TEXT_DECODER = new TextDecoder("latin1");
@@ -807,7 +809,7 @@ async function fetchPage(url: string): Promise<{ url: string; title: string; tex
     }
     const contentType = response.headers.get("content-type") ?? "unknown";
     const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-    if (!ALLOWED_FETCH_CONTENT_TYPES.has(mediaType)) {
+    if (!isAllowedTextFetchContentType(mediaType, response.url || url)) {
       throw new Error(`unsupported content-type for ${url}: ${contentType}`);
     }
     const contentLength = Number(response.headers.get("content-length") ?? "0");
@@ -823,6 +825,20 @@ async function fetchPage(url: string): Promise<{ url: string; title: string; tex
     return { url: response.url || url, title, text, contentType, status: response.status };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+function isAllowedTextFetchContentType(mediaType: string, url: string): boolean {
+  if (ALLOWED_FETCH_CONTENT_TYPES.has(mediaType)) return true;
+  if (mediaType && mediaType !== "unknown" && mediaType !== "application/octet-stream") return false;
+  return TEXT_FETCH_EXTENSIONS.has(urlPathExtension(url));
+}
+
+function urlPathExtension(url: string): string {
+  try {
+    return extname(new URL(url).pathname).toLowerCase();
+  } catch {
+    return "";
   }
 }
 

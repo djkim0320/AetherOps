@@ -1086,16 +1086,25 @@ label {
   transform: rotate(180deg);
 }
 
+.projectBriefEditor:not([open]) > .briefEditorGrid {
+  display: none;
+}
+
 .briefEditorGrid {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.42fr) minmax(180px, 0.42fr);
+  grid-template-columns: minmax(160px, 0.7fr) minmax(120px, 0.42fr) minmax(130px, 0.48fr) minmax(130px, 0.48fr);
   gap: 10px;
 }
 
-.briefEditorGrid label:first-child,
-.briefEditorGrid label:last-child {
+.briefEditorGrid > .briefWideField {
   grid-column: 1 / -1;
+}
+
+.briefEditorGrid > .briefSelectControl,
+.briefEditorGrid > .briefNumberControl,
+.briefEditorGrid > .compactPolicyToggle {
+  width: auto;
 }
 
 .panel {
@@ -1155,6 +1164,10 @@ label {
 
 .collapsiblePanel:not([open]) {
   gap: 0;
+}
+
+.collapsiblePanel:not([open]) > :not(summary) {
+  display: none;
 }
 
 .collapsiblePanel[open] .panelSummary > svg,
@@ -1623,8 +1636,8 @@ label {
   grid-template-areas:
     "workbench status"
     "agent more"
-    "final more"
-    "evidence more";
+    "final final"
+    "evidence evidence";
   gap: 12px;
   align-content: start;
 }
@@ -1655,6 +1668,7 @@ label {
 
 .contentGrid > .panel.morePanel {
   grid-area: more;
+  align-self: start;
 }
 
 .summaryStack {
@@ -1993,8 +2007,8 @@ label {
 }
 
 .eventList {
-  min-height: 220px;
-  max-height: 360px;
+  min-height: 0;
+  max-height: 260px;
   overflow: auto;
   display: grid;
   align-content: start;
@@ -2058,7 +2072,7 @@ label {
 
 .finalItem {
   min-width: 0;
-  min-height: 150px;
+  min-height: 132px;
   border: 1px solid #d9e0eb;
   border-radius: 8px;
   padding: 13px;
@@ -2066,6 +2080,11 @@ label {
   display: grid;
   align-content: start;
   gap: 8px;
+}
+
+.finalItem p {
+  max-height: 180px;
+  overflow: auto;
 }
 
 .settingsWindowHeader,

@@ -1555,88 +1555,6 @@ function AetherOpsTab({
           <p>{input.goal || snapshot.project.goal}</p>
         </div>
         <div className="briefControlRail">
-          <label className="briefSelectControl">
-            승인
-            <select
-              value={input.autonomyPolicy.toolApproval}
-              onChange={(event) =>
-                setInput({
-                  ...input,
-                  autonomyPolicy: { ...input.autonomyPolicy, toolApproval: event.target.value as ResearchProjectInput["autonomyPolicy"]["toolApproval"] }
-                })
-              }
-            >
-              <option value="manual">수동</option>
-              <option value="suggested">제안 후 실행</option>
-              <option value="automatic">자동</option>
-            </select>
-          </label>
-          <label className="loopLimitControl briefNumberControl">
-            최대 반복
-            <input
-              aria-label="Maximum loop iterations"
-              type="number"
-              min={1}
-              max={maxGuiLoopLimit}
-              step={1}
-              value={input.autonomyPolicy.maxLoopIterations ?? defaultGuiLoopLimit}
-              onChange={(event) =>
-                setInput({
-                  ...input,
-                  autonomyPolicy: {
-                    ...input.autonomyPolicy,
-                    maxLoopIterations: normalizeLoopLimit(event.target.value)
-                  }
-                })
-              }
-            />
-          </label>
-          <label
-            className={`policyToggle compactPolicyToggle ${appExternalAccess ? "ready" : "blocked"}`}
-            title={appExternalAccess ? "외부 자료 접근 허용" : "앱 설정에서 외부 자료 접근 필요"}
-          >
-            <input
-              type="checkbox"
-              aria-label="외부 자료 접근"
-              checked={projectExternalRequested}
-              disabled={!appExternalAccess && !projectExternalRequested}
-              onChange={(event) => {
-                const requested = event.target.checked;
-                if (requested && !appExternalAccess) return;
-                setInput({
-                  ...input,
-                  autonomyPolicy: { ...input.autonomyPolicy, allowExternalSearch: requested }
-                });
-              }}
-            />
-            <span>
-              <strong>자료</strong>
-              <small>{appExternalAccess ? "허용" : "설정 필요"}</small>
-            </span>
-          </label>
-          <label
-            className={`policyToggle compactPolicyToggle ${appCodeExecution ? "ready" : "blocked"}`}
-            title={appCodeExecution ? "코드 및 프로그램 실행 허용" : "앱 설정에서 코드 및 프로그램 실행 필요"}
-          >
-            <input
-              type="checkbox"
-              aria-label="코드 및 프로그램 실행"
-              checked={projectCodeRequested}
-              disabled={!appCodeExecution && !projectCodeRequested}
-              onChange={(event) => {
-                const requested = event.target.checked;
-                if (requested && !appCodeExecution) return;
-                setInput({
-                  ...input,
-                  autonomyPolicy: { ...input.autonomyPolicy, allowCodeExecution: requested }
-                });
-              }}
-            />
-            <span>
-              <strong>실행</strong>
-              <small>{appCodeExecution ? "허용" : "설정 필요"}</small>
-            </span>
-          </label>
           <button
             className="primaryButton briefRunButton"
             onClick={onStart}
@@ -1660,7 +1578,89 @@ function AetherOpsTab({
             <ChevronDown size={14} />
           </summary>
           <div className="briefEditorGrid">
-            <label>
+            <label className="briefSelectControl">
+              승인
+              <select
+                value={input.autonomyPolicy.toolApproval}
+                onChange={(event) =>
+                  setInput({
+                    ...input,
+                    autonomyPolicy: { ...input.autonomyPolicy, toolApproval: event.target.value as ResearchProjectInput["autonomyPolicy"]["toolApproval"] }
+                  })
+                }
+              >
+                <option value="manual">수동</option>
+                <option value="suggested">제안 후 실행</option>
+                <option value="automatic">자동</option>
+              </select>
+            </label>
+            <label className="loopLimitControl briefNumberControl">
+              최대 반복
+              <input
+                aria-label="Maximum loop iterations"
+                type="number"
+                min={1}
+                max={maxGuiLoopLimit}
+                step={1}
+                value={input.autonomyPolicy.maxLoopIterations ?? defaultGuiLoopLimit}
+                onChange={(event) =>
+                  setInput({
+                    ...input,
+                    autonomyPolicy: {
+                      ...input.autonomyPolicy,
+                      maxLoopIterations: normalizeLoopLimit(event.target.value)
+                    }
+                  })
+                }
+              />
+            </label>
+            <label
+              className={`policyToggle compactPolicyToggle ${appExternalAccess ? "ready" : "blocked"}`}
+              title={appExternalAccess ? "외부 자료 접근 허용" : "앱 설정에서 외부 자료 접근 필요"}
+            >
+              <input
+                type="checkbox"
+                aria-label="외부 자료 접근"
+                checked={projectExternalRequested}
+                disabled={!appExternalAccess && !projectExternalRequested}
+                onChange={(event) => {
+                  const requested = event.target.checked;
+                  if (requested && !appExternalAccess) return;
+                  setInput({
+                    ...input,
+                    autonomyPolicy: { ...input.autonomyPolicy, allowExternalSearch: requested }
+                  });
+                }}
+              />
+              <span>
+                <strong>자료</strong>
+                <small>{appExternalAccess ? "허용" : "설정 필요"}</small>
+              </span>
+            </label>
+            <label
+              className={`policyToggle compactPolicyToggle ${appCodeExecution ? "ready" : "blocked"}`}
+              title={appCodeExecution ? "코드 및 프로그램 실행 허용" : "앱 설정에서 코드 및 프로그램 실행 필요"}
+            >
+              <input
+                type="checkbox"
+                aria-label="코드 및 프로그램 실행"
+                checked={projectCodeRequested}
+                disabled={!appCodeExecution && !projectCodeRequested}
+                onChange={(event) => {
+                  const requested = event.target.checked;
+                  if (requested && !appCodeExecution) return;
+                  setInput({
+                    ...input,
+                    autonomyPolicy: { ...input.autonomyPolicy, allowCodeExecution: requested }
+                  });
+                }}
+              />
+              <span>
+                <strong>실행</strong>
+                <small>{appCodeExecution ? "허용" : "설정 필요"}</small>
+              </span>
+            </label>
+            <label className="briefWideField">
               목표
               <textarea value={input.goal} onChange={(event) => setInput({ ...input, goal: event.target.value })} />
             </label>
@@ -1672,7 +1672,7 @@ function AetherOpsTab({
               예산/제약
               <input value={input.budget} onChange={(event) => setInput({ ...input, budget: event.target.value })} />
             </label>
-            <label>
+            <label className="briefWideField">
               범위
               <textarea value={input.scope} onChange={(event) => setInput({ ...input, scope: event.target.value })} />
             </label>

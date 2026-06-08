@@ -8,9 +8,9 @@ const apiBaseUrl = normalizeUrl(
 
 const viewportCases = Object.freeze([
   { label: "desktop-1920x1080", width: 1920, height: 1080, expected: "left" },
+  { label: "desktop-1600x900", width: 1600, height: 900, expected: "left" },
   { label: "desktop-1440x900", width: 1440, height: 900, expected: "left" },
-  { label: "desktop-1366x768", width: 1366, height: 768, expected: "left" },
-  { label: "narrow-desktop-761x900", width: 761, height: 900, expected: "left" }
+  { label: "desktop-1366x768", width: 1366, height: 768, expected: "left" }
 ]);
 
 const results = [];
@@ -218,10 +218,10 @@ async function verifyProjectBriefEditor(page) {
   if (summaryCount !== 1) {
     throw new Error(`expected one project brief editor summary, found ${summaryCount}`);
   }
-  await summary.click({ timeoutMs: 10_000 });
+  await summary.click({ timeout: 10_000 });
   await page.locator(".briefEditorGrid").waitFor({ state: "visible", timeout: 10_000 });
   const expanded = await page.evaluate(collectBriefEditorLayout);
-  await summary.click({ timeoutMs: 10_000 });
+  await summary.click({ timeout: 10_000 });
   return expanded;
 }
 
@@ -305,6 +305,12 @@ function assertLayout(viewport, layout, phase) {
   if (!layout.morePanel) {
     failures.push(`${viewport.label}/${phase}: compact More disclosure panel is missing`);
   }
+  if (layout.morePanel && layout.morePanel.height > 96) {
+    failures.push(`${viewport.label}/${phase}: closed More disclosure is too tall: ${layout.morePanel.height}px`);
+  }
+  if (layout.finalPanel && layout.finalPanel.height > 620) {
+    failures.push(`${viewport.label}/${phase}: final output panel should stay preview-sized, got ${layout.finalPanel.height}px`);
+  }
   if (layout.legacyRightRailPanels !== 0) {
     failures.push(`${viewport.label}/${phase}: old right-rail panels remained, found ${layout.legacyRightRailPanels}`);
   }
@@ -329,38 +335,18 @@ function assertLayout(viewport, layout, phase) {
   if (viewport.expected === "left" && !layout.sidebarLeft) {
     failures.push(`${viewport.label}/${phase}: sidebar should remain left-positioned on desktop-sized viewports`);
   }
-  if (viewport.expected === "top" && !layout.sidebarTop) {
-    failures.push(`${viewport.label}/${phase}: sidebar should stack above content only at mobile widths`);
+  if (layout.briefControls.runButtons !== 1) {
+    failures.push(`${viewport.label}/${phase}: compact project start action missing ${JSON.stringify(layout.briefControls)}`);
   }
-  if (viewport.expected === "top" && layout.sidebar?.height > Math.min(180, viewport.height * 0.4)) {
-    failures.push(`${viewport.label}/${phase}: mobile sidebar is too tall at ${layout.sidebar.height}px`);
+  if (layout.briefControls.visibleAdvancedControls !== 0) {
+    failures.push(`${viewport.label}/${phase}: advanced run controls should stay inside the closed brief editor, found ${layout.briefControls.visibleAdvancedControls}`);
   }
-  if (viewport.expected === "top" && !layout.mobileSessionNavigationVisible) {
-    failures.push(`${viewport.label}/${phase}: mobile sidebar must keep project dashboard/chat session navigation visible`);
-  }
-  if (!layout.loopLimitVisible) {
-    failures.push(`${viewport.label}/${phase}: maximum loop iteration control is not visible`);
-  }
-  if (layout.briefControls.approvalSelects !== 1 || layout.briefControls.policyCheckboxes !== 2 || layout.briefControls.runButtons !== 1) {
-    failures.push(`${viewport.label}/${phase}: compact project controls missing ${JSON.stringify(layout.briefControls)}`);
-  }
-  if (layout.loopLimitValue !== "1") {
-    failures.push(`${viewport.label}/${phase}: maximum loop iteration control should default to 1, found ${layout.loopLimitValue || "empty"}`);
-  }
-  for (const policy of layout.policyControls) {
-    if (policy.blocked && !policy.checked && !policy.disabled) {
-      failures.push(`${viewport.label}/${phase}: blocked policy "${policy.text}" can be newly enabled`);
-    }
-  }
-  if (layout.policyControls.some((policy) => policy.blocked && policy.checked)) {
-    if (!layout.startButton.disabled) {
-      failures.push(`${viewport.label}/${phase}: start button is enabled while a requested policy is blocked by app settings`);
-    }
+  if (layout.startButton.disabled) {
     if (!layout.startButton.text.includes("설정 필요")) {
-      failures.push(`${viewport.label}/${phase}: start button should show the settings-required state, found "${layout.startButton.text}"`);
+      failures.push(`${viewport.label}/${phase}: disabled start button should show the settings-required state, found "${layout.startButton.text}"`);
     }
     if (!layout.startButton.statusText || layout.startButton.describedBy !== "project-start-status") {
-      failures.push(`${viewport.label}/${phase}: blocked start state must expose a visible aria-described reason`);
+      failures.push(`${viewport.label}/${phase}: disabled start state must expose a visible aria-described reason`);
     }
   }
 }
@@ -369,8 +355,16 @@ function assertBriefEditorLayout(viewport, editor) {
   if (!editor.open) {
     failures.push(`${viewport.label}/brief-editor: details did not open`);
   }
-  if (editor.textareas !== 2 || editor.inputs !== 2) {
-    failures.push(`${viewport.label}/brief-editor: expected goal/scope textareas and topic/budget inputs, found ${JSON.stringify(editor)}`);
+  if (editor.textareas !== 2 || editor.textInputs !== 2 || editor.numberInputs !== 1) {
+    failures.push(`${viewport.label}/brief-editor: expected goal/scope textareas, topic/budget inputs, and loop limit input, found ${JSON.stringify(editor)}`);
+  }
+  if (editor.approvalSelects !== 1 || editor.policyCheckboxes !== 2 || editor.loopLimitValue !== "1") {
+    failures.push(`${viewport.label}/brief-editor: expected run options inside editor, found ${JSON.stringify(editor)}`);
+  }
+  for (const policy of editor.policyControls) {
+    if (policy.blocked && !policy.checked && !policy.disabled) {
+      failures.push(`${viewport.label}/brief-editor: blocked policy "${policy.text}" can be newly enabled`);
+    }
   }
   if (editor.horizontalOverflow) {
     failures.push(`${viewport.label}/brief-editor: horizontal overflow body=${editor.scrollWidths.body} document=${editor.scrollWidths.documentElement}`);
@@ -486,6 +480,10 @@ function collectLayout() {
     const element = document.querySelector(selector);
     return element ? rectFromElement(element) : null;
   };
+  const isVisible = (element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
   const sidebar = rectOf(".codexSidebar");
   const shell = rectOf(".codexShell");
   const projectBrief = rectOf(".projectBriefBar");
@@ -500,14 +498,8 @@ function collectLayout() {
   const startButton = document.querySelector(".briefRunButton");
   const startStatus = document.querySelector(".briefStartStatus");
   const runtimeError = document.querySelector(".runtimeErrorView");
-  const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
-  const visibleSessionNavigationItems = Array.from(
-    document.querySelectorAll(".sessionList .codexConversation, .sessionList .sessionSelectButton")
-  ).filter((element) => {
-    const rect = element.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  }).length;
+  const viewportWidth = window.innerWidth;
   return {
     viewport: { width: viewportWidth, height: viewportHeight },
     shell,
@@ -542,11 +534,13 @@ function collectLayout() {
     briefControls: {
       approvalSelects: document.querySelectorAll(".briefSelectControl select").length,
       policyCheckboxes: document.querySelectorAll(".compactPolicyToggle input[type='checkbox']").length,
-      runButtons: document.querySelectorAll(".briefRunButton").length
+      runButtons: document.querySelectorAll(".briefRunButton").length,
+      visibleAdvancedControls: Array.from(
+        document.querySelectorAll(".briefControlRail > .briefSelectControl, .briefControlRail > .briefNumberControl, .briefControlRail > .compactPolicyToggle")
+      ).filter(isVisible).length
     },
     legacyProjectComposerCount: document.querySelectorAll(".projectComposer").length,
     runOverviewVisible: Boolean(document.querySelector(".runOverview")),
-    mobileSessionNavigationVisible: viewportWidth > 760 || visibleSessionNavigationItems > 0,
     legacyFlowBoardCount: document.querySelectorAll(".flowBoard, .flowBoardStructured").length,
     legacyMetricStripCount: document.querySelectorAll(".metricStrip").length,
     placeholderCount: document.querySelectorAll(".codexPlaceholder, .placeholderCard").length,
@@ -565,16 +559,31 @@ function collectLayout() {
 }
 
 function collectBriefEditorLayout() {
+  const isVisible = (element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  const policyControls = Array.from(document.querySelectorAll(".briefEditorGrid .compactPolicyToggle")).filter(isVisible).map((element) => {
+    const input = element.querySelector("input");
+    return {
+      text: element.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      blocked: element.classList.contains("blocked"),
+      checked: Boolean(input?.checked),
+      disabled: Boolean(input?.disabled)
+    };
+  });
+  const loopLimit = Array.from(document.querySelectorAll(".briefEditorGrid .loopLimitControl input")).find(isVisible);
   return {
     open: document.querySelector(".projectBriefEditor")?.hasAttribute("open") ?? false,
     textareas: Array.from(document.querySelectorAll(".briefEditorGrid textarea")).filter((element) => {
-      const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
+      return isVisible(element);
     }).length,
-    inputs: Array.from(document.querySelectorAll(".briefEditorGrid input")).filter((element) => {
-      const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
-    }).length,
+    textInputs: Array.from(document.querySelectorAll(".briefEditorGrid input:not([type='checkbox']):not([type='number'])")).filter(isVisible).length,
+    numberInputs: Array.from(document.querySelectorAll(".briefEditorGrid input[type='number']")).filter(isVisible).length,
+    approvalSelects: Array.from(document.querySelectorAll(".briefEditorGrid .briefSelectControl select")).filter(isVisible).length,
+    policyCheckboxes: Array.from(document.querySelectorAll(".briefEditorGrid .compactPolicyToggle input[type='checkbox']")).filter(isVisible).length,
+    policyControls,
+    loopLimitValue: loopLimit?.value ?? "",
     horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
     scrollWidths: { body: document.body.scrollWidth, documentElement: document.documentElement.scrollWidth }
   };

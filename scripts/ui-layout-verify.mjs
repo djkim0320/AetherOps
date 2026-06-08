@@ -49,11 +49,14 @@ try {
       const settings = await page.evaluate(collectSettingsLayout);
       assertSettingsLayout(viewport, settings);
 
+      const chat = await ensureStartedChatLayout(page);
+      assertChatLayout(viewport, chat);
+
       if (consoleErrors.length) {
         failures.push(`${viewport.label}: console errors: ${consoleErrors.slice(0, 3).join(" | ")}`);
       }
 
-      results.push({ viewport: viewport.label, initial, settings, consoleErrors: consoleErrors.length });
+      results.push({ viewport: viewport.label, initial, settings, chat, consoleErrors: consoleErrors.length });
     } catch (error) {
       failures.push(`${viewport.label}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -87,6 +90,59 @@ async function ensureProjectDashboard(page) {
   await page.locator(".projectComposer").waitFor({ state: "visible", timeout: 10_000 });
 }
 
+async function ensureStartedChatLayout(page) {
+  const state = await page.evaluate(() => JSON.parse(window.localStorage.getItem("aetherops.workspaceState") || "{}"));
+  if (!state.projectId) {
+    throw new Error("workspace state did not contain a project id for chat layout verification");
+  }
+  let snapshot = await rpc(page, "snapshots.get", [state.projectId]);
+  let session = snapshot.sessions?.find((item) => !item.title?.includes("Research Workflow")) ?? snapshot.sessions?.[0];
+  if (!session) {
+    const sessions = await rpc(page, "sessions.createForProject", [state.projectId]);
+    session = sessions?.[0];
+  }
+  if (!session) {
+    throw new Error("project did not expose a chat session for chat layout verification");
+  }
+  await rpc(page, "artifacts.store", [
+    state.projectId,
+    {
+      category: "conversation_memo",
+      title: `${session.title} 메모`,
+      relativePath: `artifacts/chat/${session.id}-ui-layout-verify-assistant.md`,
+      mimeType: "text/markdown",
+      summary: "UI layout verification conversation message.",
+      content: "Assistant: UI layout verification message.",
+      metadata: { role: "assistant", source: "ui-layout-verify" }
+    }
+  ]);
+  await page.evaluate(
+    ({ projectId, sessionId }) => {
+      window.localStorage.setItem("aetherops.workspaceState", JSON.stringify({ projectId, sessionId, view: "chat" }));
+    },
+    { projectId: state.projectId, sessionId: session.id }
+  );
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15_000 });
+  await page.locator(".projectChatHome.chatStarted .homePromptCard").waitFor({ state: "visible", timeout: 10_000 });
+  return page.evaluate(collectChatLayout);
+}
+
+async function rpc(page, method, args) {
+  return page.evaluate(
+    async ({ method: rpcMethod, args: rpcArgs }) => {
+      const response = await fetch("/api/rpc", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ method: rpcMethod, args: rpcArgs })
+      });
+      const payload = await response.json();
+      if (!payload.ok) throw new Error(payload.error || `RPC failed: ${rpcMethod}`);
+      return payload.result;
+    },
+    { method, args }
+  );
+}
+
 function assertLayout(viewport, layout, phase) {
   if (layout.runtimeErrorVisible) {
     failures.push(`${viewport.label}/${phase}: runtime error view is visible`);
@@ -94,17 +150,46 @@ function assertLayout(viewport, layout, phase) {
   if (layout.horizontalOverflow) {
     failures.push(`${viewport.label}/${phase}: horizontal overflow body=${layout.scrollWidths.body} document=${layout.scrollWidths.documentElement}`);
   }
+  if (!layout.runOverviewVisible) {
+    failures.push(`${viewport.label}/${phase}: compact run overview is not visible`);
+  }
+  if (layout.legacyFlowBoardCount || layout.legacyMetricStripCount || layout.placeholderCount) {
+    failures.push(
+      `${viewport.label}/${phase}: legacy dashboard/placeholder UI remained flow=${layout.legacyFlowBoardCount} metrics=${layout.legacyMetricStripCount} placeholders=${layout.placeholderCount}`
+    );
+  }
+  if (layout.primaryNavItems !== 1) {
+    failures.push(`${viewport.label}/${phase}: primary sidebar should expose only one real nav item, found ${layout.primaryNavItems}`);
+  }
   if (viewport.expected === "left" && !layout.sidebarLeft) {
     failures.push(`${viewport.label}/${phase}: sidebar should remain left-positioned on desktop-sized viewports`);
   }
   if (viewport.expected === "top" && !layout.sidebarTop) {
     failures.push(`${viewport.label}/${phase}: sidebar should stack above content only at mobile widths`);
   }
+  if (viewport.expected === "top" && layout.sidebar?.height > Math.min(180, viewport.height * 0.4)) {
+    failures.push(`${viewport.label}/${phase}: mobile sidebar is too tall at ${layout.sidebar.height}px`);
+  }
   if (!layout.loopLimitVisible) {
     failures.push(`${viewport.label}/${phase}: maximum loop iteration control is not visible`);
   }
   if (layout.loopLimitValue !== "1") {
     failures.push(`${viewport.label}/${phase}: maximum loop iteration control should default to 1, found ${layout.loopLimitValue || "empty"}`);
+  }
+}
+
+function assertChatLayout(viewport, chat) {
+  if (!chat.visible) {
+    failures.push(`${viewport.label}/chat: started chat view is not visible`);
+  }
+  if (chat.composerPosition === "fixed") {
+    failures.push(`${viewport.label}/chat: chat composer must not use viewport-fixed positioning`);
+  }
+  if (viewport.expected === "left" && chat.composer && chat.sidebar && chat.composer.x < chat.sidebar.width - 1) {
+    failures.push(`${viewport.label}/chat: composer overlaps the left sidebar composerX=${chat.composer.x} sidebarWidth=${chat.sidebar.width}`);
+  }
+  if (chat.horizontalOverflow) {
+    failures.push(`${viewport.label}/chat: horizontal overflow body=${chat.scrollWidths.body} document=${chat.scrollWidths.documentElement}`);
   }
 }
 
@@ -164,9 +249,39 @@ function collectLayout() {
     loopLimitVisible: Boolean(loopLimit && loopLimit.getBoundingClientRect().width > 0 && loopLimit.getBoundingClientRect().height > 0),
     loopLimitValue: loopLimit?.value ?? "",
     runtimeErrorVisible: Boolean(runtimeError),
+    runOverviewVisible: Boolean(document.querySelector(".runOverview")),
+    legacyFlowBoardCount: document.querySelectorAll(".flowBoard, .flowBoardStructured").length,
+    legacyMetricStripCount: document.querySelectorAll(".metricStrip").length,
+    placeholderCount: document.querySelectorAll(".codexPlaceholder, .placeholderCard").length,
+    primaryNavItems: document.querySelectorAll(".codexNavItem").length,
     sidebarLeft: Boolean(sidebar && sidebar.x === 0 && sidebar.y === 0 && sidebar.height > viewportHeight * 0.9 && sidebar.width < viewportWidth),
     sidebarTop: Boolean(sidebar && sidebar.x === 0 && sidebar.y === 0 && sidebar.width === viewportWidth && sidebar.height < viewportHeight * 0.9),
     horizontalOverflow: document.documentElement.scrollWidth > viewportWidth || document.body.scrollWidth > viewportWidth,
+    scrollWidths: { body: document.body.scrollWidth, documentElement: document.documentElement.scrollWidth }
+  };
+}
+
+function collectChatLayout() {
+  const rectFromElement = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      position: style.position
+    };
+  };
+  const composerElement = document.querySelector(".projectChatHome.chatStarted .homePromptCard");
+  const sidebarElement = document.querySelector(".codexSidebar");
+  const composer = composerElement ? rectFromElement(composerElement) : null;
+  return {
+    visible: Boolean(composerElement),
+    composer,
+    composerPosition: composer?.position ?? "",
+    sidebar: sidebarElement ? rectFromElement(sidebarElement) : null,
+    horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
     scrollWidths: { body: document.body.scrollWidth, documentElement: document.documentElement.scrollWidth }
   };
 }

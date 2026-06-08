@@ -206,7 +206,6 @@ label {
 }
 
 .codexNavItem,
-.codexAction,
 .codexConversation,
 .codexSettings {
   width: 100%;
@@ -221,7 +220,6 @@ label {
 }
 
 .codexNavItem:hover,
-.codexAction:hover,
 .codexConversation:hover,
 .codexSettings:hover {
   background: #2b2b2b;
@@ -729,11 +727,11 @@ label {
 }
 
 .projectChatHome.chatStarted .homePromptCard {
-  position: fixed;
-  left: calc(300px + (100vw - 300px - min(1080px, calc(100vw - 364px))) / 2);
+  position: sticky;
   bottom: 20px;
   z-index: 30;
-  width: min(1080px, calc(100vw - 364px));
+  justify-self: center;
+  width: min(1080px, 100%);
   box-shadow: 0 24px 90px rgb(0 0 0 / 44%);
 }
 
@@ -861,28 +859,6 @@ label {
   min-height: 88px;
 }
 
-.codexPlaceholder {
-  min-width: 0;
-  height: 100%;
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  display: grid;
-  place-items: center;
-  background: #141414;
-  color: #efefef;
-}
-
-.placeholderCard {
-  width: min(560px, calc(100% - 48px));
-  border: 1px solid #343434;
-  border-radius: 8px;
-  background: #1b1b1b;
-  padding: 28px;
-}
-
-.placeholderCard h1,
-.placeholderCard p,
 .settingsWindowHeader h1,
 .settingsWindowHeader p,
 .panel h2,
@@ -910,12 +886,6 @@ label {
   font-weight: 760;
   letter-spacing: 0;
   overflow-wrap: anywhere;
-}
-
-.topbarActions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .eyebrow {
@@ -1014,10 +984,6 @@ label {
   border-radius: 8px;
   padding: 14px;
   display: grid;
-  gap: 12px;
-}
-
-.panel.compact {
   gap: 12px;
 }
 
@@ -1327,112 +1293,78 @@ label {
   background: #fff1f2;
 }
 
-.flowBoard {
+.runOverview {
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  grid-auto-rows: auto;
-  gap: 8px;
-  align-items: stretch;
-}
-
-.flowBoardStructured {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 8px;
-}
-
-.flowGroup {
   border: 1px solid #e1e1df;
   border-radius: 8px;
   background: #ffffff;
   padding: 10px;
-}
-
-.flowGroup h2 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: #475467;
-}
-
-.flowGroupHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.flowGroupHeader h2 {
-  margin: 0;
-}
-
-.flowGroupHeader span {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.flowGroupGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
-  gap: 6px;
-}
-
-.loopGrid {
-  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
-}
-
-.decisionGrid {
-  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-}
-
-.memoryLayer {
-  border: 1px solid #bbf7d0;
-  border-radius: 8px;
-  background: #f8fffb;
-  padding: 14px;
-  display: grid;
-  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.6fr);
-  gap: 14px;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.4fr) minmax(220px, 0.8fr);
   align-items: center;
-}
-
-.memoryLayer h2 {
-  margin: 0 0 6px;
-  font-size: 14px;
-}
-
-.memoryLayer p {
-  margin: 0;
-  color: #64748b;
-  line-height: 1.5;
-}
-
-.memoryGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 8px;
-}
-
-.memoryItem {
-  border: 1px solid #d9e0eb;
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 10px;
 }
 
-.memoryItem span {
-  color: #475467;
-  font-size: 12px;
-  font-weight: 800;
+.runOverviewCurrent {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
 }
 
-.memoryItem strong {
-  color: #0f766e;
+.runOverviewCurrent h2,
+.runOverviewCurrent p {
+  margin: 0;
+}
+
+.runOverviewCurrent h2 {
+  min-width: 0;
+  color: #172033;
+  font-size: 14px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runOverviewCurrent p {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.runStepRail {
+  min-width: 0;
+  overflow-x: auto;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(44px, 1fr));
+  gap: 5px;
+  padding-bottom: 2px;
+}
+
+.runMetricRail {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.runMetricRail span {
+  max-width: 100%;
+  border: 1px solid #e1e1df;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #64748b;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.runMetricRail strong {
+  color: #172033;
 }
 
 .stepTile {
@@ -1440,12 +1372,12 @@ label {
   position: relative;
   isolation: isolate;
   min-width: 0;
-  min-height: 42px;
+  min-height: 32px;
   border: 1px solid #e1e1df;
   border-left: 3px solid var(--step-accent);
-  border-radius: 8px;
+  border-radius: 7px;
   background: #ffffff;
-  padding: 8px;
+  padding: 6px 7px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -1528,33 +1460,6 @@ label {
   font-weight: 900;
 }
 
-.metricStrip {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 8px;
-}
-
-.metricItem {
-  border: 1px solid #e1e1df;
-  border-radius: 8px;
-  background: #ffffff;
-  min-height: 50px;
-  padding: 9px 10px;
-  display: grid;
-  align-content: center;
-}
-
-.metricItem strong {
-  font-size: 18px;
-}
-
-.metricItem span {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-}
-
 .contentGrid {
   min-width: 0;
   display: grid;
@@ -1612,22 +1517,46 @@ label {
   grid-row: 5;
 }
 
-.agentMatrix {
+.summaryStack {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
+  gap: 2px;
 }
 
-.duty {
-  min-height: 52px;
-  border: 1px solid #d9e0eb;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px;
+.summaryRow {
+  min-width: 0;
+  border-top: 1px solid #edf0f4;
+  padding: 10px 0;
+  display: grid;
+  grid-template-columns: minmax(120px, 0.36fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.summaryRow:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.summaryRow:last-child {
+  padding-bottom: 0;
+}
+
+.summaryRow h3,
+.summaryRow p {
+  margin: 0;
+}
+
+.summaryRow h3 {
+  color: #475467;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 850;
+}
+
+.summaryRow p {
+  min-width: 0;
+  color: #172033;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .toolReadinessGrid {
@@ -1838,7 +1767,6 @@ label {
   white-space: pre-wrap;
 }
 
-.latestResult,
 .runBox,
 .ragBox {
   min-width: 0;
@@ -1850,7 +1778,6 @@ label {
   background: #fbfdff;
 }
 
-.latestResult h3,
 .runBox h3,
 .finalItem h3 {
   min-width: 0;
@@ -1858,7 +1785,6 @@ label {
   overflow-wrap: anywhere;
 }
 
-.latestResult p,
 .runBox p,
 .ragBox p,
 .finalItem p {
@@ -1944,28 +1870,6 @@ label {
   display: grid;
   align-content: start;
   gap: 8px;
-}
-
-.modalOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  background: rgb(15 23 42 / 42%);
-  display: grid;
-  place-items: center;
-  padding: 24px;
-}
-
-.settingsWindow {
-  width: min(1120px, 100%);
-  max-height: min(860px, calc(100vh - 48px));
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 24px 72px rgb(15 23 42 / 24%);
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  overflow: hidden;
 }
 
 .settingsWindowHeader,
@@ -2087,15 +1991,13 @@ label {
     gap: 12px;
   }
 
-  .flowBoard {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .runOverview,
+  .toolReadinessGrid {
+    grid-template-columns: 1fr;
   }
 
-  .flowBoardStructured,
-  .flowGroupGrid,
-  .toolReadinessGrid,
-  .memoryLayer {
-    grid-template-columns: 1fr;
+  .runMetricRail {
+    justify-content: flex-start;
   }
 
   .projectComposer,
@@ -2129,15 +2031,8 @@ label {
     grid-template-columns: 1fr;
   }
 
-  .agentMatrix,
   .finalGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .projectChatHome.chatStarted .homePromptCard {
-    left: 18px;
-    right: 18px;
-    width: auto;
   }
 }
 
@@ -2149,10 +2044,71 @@ label {
 
   .codexSidebar {
     height: auto;
-    max-height: min(500px, 60vh);
+    max-height: min(164px, 34vh);
     min-height: 0;
     border-right: 0;
     border-bottom: 1px solid #2e2e2e;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto;
+    align-items: start;
+    gap: 8px;
+    overflow: auto;
+  }
+
+  .codexChrome,
+  .codexSectionTitle {
+    display: none;
+  }
+
+  .codexNav {
+    min-width: 42px;
+  }
+
+  .codexNavItem {
+    min-width: 42px;
+    width: 42px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .codexNavItem span {
+    display: none;
+  }
+
+  .projectSection {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto;
+    align-items: start;
+    gap: 8px;
+  }
+
+  .projectCreateButton {
+    width: auto;
+    min-width: 128px;
+  }
+
+  .projectList {
+    margin-top: 0;
+    display: flex;
+    gap: 6px;
+    overflow: auto;
+    padding-right: 0;
+  }
+
+  .projectGroup {
+    min-width: min(230px, 72vw);
+  }
+
+  .sessionList {
+    display: none;
+  }
+
+  .codexSettings {
+    min-width: 42px;
+    width: 42px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
   }
 }
 
@@ -2163,22 +2119,14 @@ label {
   }
 
   .codexSidebar {
-    max-height: min(500px, 60vh);
+    max-height: min(164px, 34vh);
   }
 
-  .codexNav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .flowBoard,
-  .flowBoardStructured,
-  .flowGroupGrid,
-  .memoryLayer,
-  .metricStrip,
-  .agentMatrix,
+  .runOverview,
   .toolReadinessGrid,
   .engineeringWorkbenchGrid,
   .finalGrid,
+  .summaryRow,
   .fieldGrid,
   .fieldGrid.three,
   .controlGrid {
@@ -2197,10 +2145,6 @@ label {
   .codexTopbar {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .modalOverlay {
-    padding: 10px;
   }
 
   .settingsWindowHeader,

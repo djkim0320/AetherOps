@@ -49,7 +49,7 @@ import { getAetherOpsApi, getMissingAetherOpsApiMessage, waitForAetherOpsApi } f
 const api = getAetherOpsApi();
 const workspaceStateKey = "aetherops.workspaceState";
 
-type SidebarTab = "aetherops" | "new-chat" | "search" | "plugins" | "automation" | "settings";
+type SidebarTab = "aetherops" | "new-chat" | "settings";
 type ProjectView = "dashboard" | "chat";
 type IconComponent = typeof Target;
 type StepFlowClass = "main" | "data" | "agent" | "storage" | "knowledge" | "loop" | "output";
@@ -174,14 +174,6 @@ const projectStatusLabels: Record<ResearchProject["status"], string> = {
   failed: "실패",
   blocked: "설정 필요"
 };
-const sidebarTabLabels: Record<SidebarTab, string> = {
-  aetherops: "AetherOps",
-  "new-chat": "새 채팅",
-  search: "검색",
-  plugins: "플러그인",
-  automation: "자동화",
-  settings: "설정"
-};
 const embeddingModelOptions: Record<AppSettings["embedding"]["provider"], string[]> = {
   local: ["text-embedding-3-small", "text-embedding-3-large"],
   openai: ["text-embedding-3-small", "text-embedding-3-large"],
@@ -230,6 +222,7 @@ const loopSteps = [
 ];
 
 const decisionSteps = [ResearchLoopStep.DecideContinuation, ResearchLoopStep.FinalizeOutputs];
+const allResearchSteps = [...designSteps, ...loopSteps, ...decisionSteps];
 const legacyStructuredSessionTitles = new Set(["질문/가설 세션", "근거/RAG 세션", "실행/분석 세션"]);
 
 export function App(): ReactElement {
@@ -989,7 +982,6 @@ export function App(): ReactElement {
           onSubmit={submitChatPrompt}
         />
       ) : null}
-      {activeTab !== "aetherops" && activeTab !== "settings" && activeTab !== "new-chat" ? <CodexPlaceholder activeTab={activeTab} /> : null}
       {activeTab === "settings" && settingsDraft ? (
         <SettingsTab
           appSettings={appSettings}
@@ -1069,9 +1061,6 @@ function CodexSidebar({
 
       <nav className="codexNav">
         <SidebarButton active={activeTab === "new-chat"} icon={MessageSquare} label="새 채팅" onClick={onNewChat} />
-        <SidebarButton active={activeTab === "search"} icon={Search} label="검색" onClick={() => onTabChange("search")} />
-        <SidebarButton active={activeTab === "plugins"} icon={Wrench} label="플러그인" onClick={() => onTabChange("plugins")} />
-        <SidebarButton active={activeTab === "automation"} icon={Gauge} label="자동화" onClick={() => onTabChange("automation")} />
       </nav>
 
       <section className="codexSection projectSection">
@@ -1149,11 +1138,8 @@ function CodexSidebar({
       <button
         className={`codexSettings ${activeTab === "settings" ? "active" : ""}`}
         type="button"
-        onPointerDown={(event) => {
-          if (event.button === 0) onTabChange("settings");
-        }}
-        onMouseDown={() => onTabChange("settings")}
-        onTouchStart={() => onTabChange("settings")}
+        aria-label="설정"
+        title="설정"
         onClick={() => onTabChange("settings")}
       >
         <Settings size={17} />
@@ -1175,7 +1161,7 @@ function SidebarButton({
   onClick: () => void;
 }): ReactElement {
   return (
-    <button className={`codexNavItem ${active ? "active" : ""}`} type="button" onClick={onClick}>
+    <button className={`codexNavItem ${active ? "active" : ""}`} type="button" aria-label={label} title={label} onClick={onClick}>
       <Icon size={17} />
       <span>{label}</span>
     </button>
@@ -1517,7 +1503,6 @@ function AetherOpsTab({
   const latestDecision = snapshot.continuationDecisions.at(-1);
   const latestAudit = snapshot.runAuditOutputs.at(-1);
   const visitedSteps = useMemo(() => visitedStepSet(snapshot.iterations), [snapshot.iterations]);
-  const memoryItems = useMemo(() => memoryRows(stats), [stats]);
   const researchQuestionPreview = useMemo(() => joinFirstStrings(latestSpec?.researchQuestions ?? [], 3, " / "), [latestSpec]);
   const blockerMessages = useMemo(() => recentBlockerMessages(snapshot), [snapshot]);
   const recentToolRuns = useMemo(() => lastItems(snapshot.toolRuns, 4), [snapshot.toolRuns]);
@@ -1526,26 +1511,25 @@ function AetherOpsTab({
   const appExternalAccess = Boolean(settings?.allowExternalSearch);
   const appCodeExecution = Boolean(settings?.allowCodeExecution);
   const activeRunLogs = activeRun?.logs ?? emptyRunLogs;
-  const stepTileGroups = useMemo(() => {
-    const renderStepTile = (step: ResearchLoopStep): ReactElement => {
+  const activeStepMeta = stepLabels[currentStep];
+  const visitedStepCount = allResearchSteps.filter((step) => visitedSteps.has(step)).length;
+  const runStepTiles = useMemo(
+    () =>
+      allResearchSteps.map((step) => {
       const meta = stepLabels[step];
       const Icon = meta.icon;
       const active = currentStep === step;
       const visited = visitedSteps.has(step);
       return (
-        <div key={step} className={`stepTile ${meta.flow} ${active ? "active" : ""} ${visited ? "visited" : ""}`}>
+        <div key={step} className={`stepTile ${meta.flow} ${active ? "active" : ""} ${visited ? "visited" : ""}`} aria-current={active ? "step" : undefined}>
           <div className="stepIndex">{meta.index}</div>
           <Icon size={21} />
           <span>{meta.label}</span>
         </div>
       );
-    };
-    return {
-      design: designSteps.map(renderStepTile),
-      loop: loopSteps.map(renderStepTile),
-      decision: decisionSteps.map(renderStepTile)
-    };
-  }, [currentStep, visitedSteps]);
+      }),
+    [currentStep, visitedSteps]
+  );
 
   return (
     <section className="codexContent">
@@ -1654,71 +1638,36 @@ function AetherOpsTab({
         </div>
       </section>
 
-      <section className="flowBoard flowBoardStructured">
-        <div className="flowGroup design">
-          <h2>연구 설계</h2>
-          <div className="flowGroupGrid">{stepTileGroups.design}</div>
-        </div>
-        <div className="flowGroup loop">
-          <div className="flowGroupHeader">
-            <h2>연구 실행 및 분석 반복 루프</h2>
-            <span>11에서 계속이면 4번 연구 계획 수립으로 복귀</span>
-          </div>
-          <div className="flowGroupGrid loopGrid">{stepTileGroups.loop}</div>
-        </div>
-        <div className="flowGroup decision">
-          <h2>루프 판단 및 최종 산출</h2>
-          <div className="flowGroupGrid decisionGrid">{stepTileGroups.decision}</div>
-        </div>
-        <div className="memoryLayer">
+      <section className="runOverview">
+        <div className="runOverviewCurrent">
+          <div className="stepIndex">{activeStepMeta.index}</div>
           <div>
-            <h2>Persistent Research Memory</h2>
-            <p>NormalizeData 이후 Vector Index와 Ontology Graph를 병렬 지식화 계층으로 보관합니다.</p>
-          </div>
-          <div className="memoryGrid">
-            {memoryItems.map((item) => (
-              <div key={item.label} className="memoryItem">
-                <span>{item.label}</span>
-                <strong>{item.value}</strong>
-              </div>
-            ))}
+            <h2>{activeStepMeta.label}</h2>
+            <p>
+              {statusLabel(snapshot.project.status)} · {visitedStepCount}/{allResearchSteps.length} steps · loop {snapshot.results.length}
+            </p>
           </div>
         </div>
-      </section>
-
-      <section className="metricStrip">
-        {metrics.map((metric) => (
-          <div key={metric.label} className="metricItem">
-            <strong>{metric.value}</strong>
-            <span>{metric.label}</span>
-          </div>
-        ))}
+        <div className="runStepRail">{runStepTiles}</div>
+        <div className="runMetricRail">
+          {metrics.map((metric) => (
+            <span key={metric.label}>
+              <strong>{metric.value}</strong> {metric.label}
+            </span>
+          ))}
+        </div>
       </section>
 
       <div className="contentGrid">
         <section className="panel wide agentPanel">
           <div className="panelTitle">
-            <Bot size={17} />
-            <h2>AetherOps 연구 에이전트</h2>
+            <FileText size={17} />
+            <h2>연구 요약</h2>
           </div>
-          <div className="agentMatrix">
-            <AgentDuty icon={Target} label="계획 및 의사결정" />
-            <AgentDuty icon={Wrench} label="도구 선택 및 실행" />
-            <AgentDuty icon={FileText} label="결과 해석 및 요약" />
-            <AgentDuty icon={GitBranch} label="질문/가설 업데이트" />
-            <AgentDuty icon={Workflow} label="다음 단계 제안" />
-          </div>
-          <div className="latestResult">
-            <h3>근거 기반 결과</h3>
-            <p>{latestResult?.answer ?? "루프를 실행하면 Hybrid Retrieval과 citation 기반 결과가 표시됩니다."}</p>
-          </div>
-          <div className="latestResult">
-            <h3>현재 연구 명세</h3>
-            <p>{researchQuestionPreview ?? "아직 연구 명세가 없습니다."}</p>
-          </div>
-          <div className="latestResult">
-            <h3>현재 연구 계획</h3>
-            <p>{latestPlan ? latestPlan.objective : "아직 연구 계획이 없습니다."}</p>
+          <div className="summaryStack">
+            <SummaryRow title="근거 기반 결과" value={latestResult?.answer ?? "루프를 실행하면 Hybrid Retrieval과 citation 기반 결과가 표시됩니다."} />
+            <SummaryRow title="현재 연구 명세" value={researchQuestionPreview || "아직 연구 명세가 없습니다."} />
+            <SummaryRow title="현재 연구 계획" value={latestPlan ? latestPlan.objective : "아직 연구 계획이 없습니다."} />
           </div>
         </section>
 
@@ -2015,17 +1964,6 @@ function EngineeringProgramWorkbench({
         </div>
       </div>
       {result?.reportMarkdown ? <pre className="engineeringReport">{result.reportMarkdown}</pre> : null}
-    </section>
-  );
-}
-
-function CodexPlaceholder({ activeTab }: { activeTab: SidebarTab }): ReactElement {
-  return (
-    <section className="codexPlaceholder">
-      <div className="placeholderCard">
-        <h1>{sidebarTabLabels[activeTab]}</h1>
-        <p>이 영역은 이후 AetherOps 프로젝트 자료와 연결될 예정입니다. 연구 프로젝트는 왼쪽 사이드바 또는 첫 화면에서 생성할 수 있습니다.</p>
-      </div>
     </section>
   );
 }
@@ -3709,12 +3647,12 @@ function recentIntegratedToolRuns(toolRuns: ResearchSnapshot["toolRuns"]): Resea
   return lastItems(integrated, 4);
 }
 
-function AgentDuty({ icon: Icon, label }: { icon: IconComponent; label: string }): ReactElement {
+function SummaryRow({ title, value }: { title: string; value: string }): ReactElement {
   return (
-    <div className="duty">
-      <Icon size={16} />
-      <span>{label}</span>
-    </div>
+    <article className="summaryRow">
+      <h3>{title}</h3>
+      <p>{value}</p>
+    </article>
   );
 }
 
@@ -4066,19 +4004,6 @@ function metricRows(stats: SnapshotStats): Array<{ label: string; value: number 
     { label: "Vector chunk", value: stats.chunks },
     { label: "Graph", value: stats.graphItems },
     { label: "검증", value: stats.validationResults }
-  ];
-}
-
-function memoryRows(stats: SnapshotStats): Array<{ label: string; value: number }> {
-  return [
-    { label: "Raw Sources", value: stats.rawSources },
-    { label: "Artifacts", value: stats.artifacts },
-    { label: "Tool Logs", value: stats.toolLogs },
-    { label: "Evidence Ledger", value: stats.evidenceLedger },
-    { label: "Vector DB", value: stats.chunks },
-    { label: "Ontology Graph DB", value: stats.graphItems },
-    { label: "Projects & Reports", value: stats.memoryProjectsAndReports },
-    { label: "Errors / Blockers", value: stats.errorsAndBlockers }
   ];
 }
 

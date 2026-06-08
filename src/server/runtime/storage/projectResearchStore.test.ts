@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { createStrictTestOrchestrator } from "../../../core/testing/orchestratorTestHarness.js";
+import { createInputProject, createStrictTestOrchestrator } from "../../../core/testing/orchestratorTestHarness.js";
 import type { ResearchProjectInput, OntologyEntity, OntologyRelation } from "../../../core/shared/types.js";
 import { NodeProjectStorage } from "./projectResearchStore.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
@@ -62,6 +62,49 @@ describe("NodeProjectStorage", () => {
     expect(existsSync(join(snapshot.project.projectRoot, "project.md"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "aetherops-loop.json"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "aetherops-loop.md"))).toBe(true);
+  });
+
+  it("writes final report files when a research loop completes successfully", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-storage-"));
+    store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
+    const orchestrator = createStrictTestOrchestrator({
+      store,
+      storage: new NodeProjectStorage(),
+      projectRootBase: join(tempDir, "projects")
+    });
+
+    let snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: {
+        ...input.autonomyPolicy,
+        maxLoopIterations: 1
+      }
+    });
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    const reportPath = join(snapshot.project.projectRoot, "reports", "final-report.md");
+    const knowledgePath = join(snapshot.project.projectRoot, "knowledge", "reusable-knowledge.md");
+    const artifactPackagePath = join(snapshot.project.projectRoot, "exports", "artifact-package.json");
+    const evidenceCitationsPath = join(snapshot.project.projectRoot, "exports", "evidence-citations.json");
+    const hypothesisVerificationPath = join(snapshot.project.projectRoot, "exports", "hypothesis-verification.json");
+    const ontologyJsonPath = join(snapshot.project.projectRoot, "ontology", "project-graph.json");
+    const ontologyNtPath = join(snapshot.project.projectRoot, "ontology", "project-graph.nt");
+
+    expect(snapshot.project.status).toBe("completed");
+    expect(snapshot.finalOutputs).toHaveLength(1);
+    expect(snapshot.finalOutputs[0]?.reportPath).toBe(reportPath);
+    expect(snapshot.report?.reportPath).toBe(reportPath);
+    expect(existsSync(reportPath)).toBe(true);
+    expect(existsSync(knowledgePath)).toBe(true);
+    expect(existsSync(artifactPackagePath)).toBe(true);
+    expect(existsSync(evidenceCitationsPath)).toBe(true);
+    expect(existsSync(hypothesisVerificationPath)).toBe(true);
+    expect(existsSync(ontologyJsonPath)).toBe(true);
+    expect(existsSync(ontologyNtPath)).toBe(true);
+    expect(readFileSync(reportPath, "utf8")).toContain("AetherOps loop completed with traceable test evidence.");
+    expect(JSON.parse(readFileSync(artifactPackagePath, "utf8"))).toMatchObject({
+      projectId: snapshot.project.id
+    });
   });
 
   it("persists ontology graph files and ontology.sqlite records", async () => {

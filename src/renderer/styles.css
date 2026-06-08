@@ -1621,11 +1621,10 @@ label {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(292px, 350px);
   grid-template-areas:
-    "workbench readiness"
-    "agent blocker"
-    "final events"
-    "evidence storage"
-    "evidence logs";
+    "workbench status"
+    "agent more"
+    "final more"
+    "evidence more";
   gap: 12px;
   align-content: start;
 }
@@ -1650,24 +1649,12 @@ label {
   grid-area: evidence;
 }
 
-.contentGrid > .panel.readinessPanel {
-  grid-area: readiness;
+.contentGrid > .panel.statusPanel {
+  grid-area: status;
 }
 
-.contentGrid > .panel.blockerPanel {
-  grid-area: blocker;
-}
-
-.contentGrid > .panel.eventsPanel {
-  grid-area: events;
-}
-
-.contentGrid > .panel.storagePanel {
-  grid-area: storage;
-}
-
-.contentGrid > .panel.logsPanel {
-  grid-area: logs;
+.contentGrid > .panel.morePanel {
+  grid-area: more;
 }
 
 .summaryStack {
@@ -1712,13 +1699,15 @@ label {
   overflow-wrap: anywhere;
 }
 
-.toolReadinessGrid {
+.toolReadinessGrid,
+.runStatusList {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
-.toolReadinessItem {
+.toolReadinessItem,
+.runStatusItem {
   min-width: 0;
   min-height: 0;
   border: 1px solid #e1e1df;
@@ -1730,29 +1719,34 @@ label {
   align-content: start;
 }
 
-.toolReadinessItem.ready {
+.toolReadinessItem.ready,
+.runStatusItem.ready {
   border-color: #bbf7d0;
   background: #f7fff9;
 }
 
-.toolReadinessItem.blocked {
+.toolReadinessItem.blocked,
+.runStatusItem.blocked {
   border-color: #fecaca;
   background: #fff8f8;
 }
 
-.toolReadinessItem.idle {
+.toolReadinessItem.idle,
+.runStatusItem.idle {
   border-color: #d8dee8;
   background: #f8fafc;
 }
 
-.toolReadinessHeader {
+.toolReadinessHeader,
+.runStatusHeader {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }
 
-.toolReadinessHeader strong {
+.toolReadinessHeader strong,
+.runStatusHeader strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1761,6 +1755,7 @@ label {
 }
 
 .toolReadinessHeader span,
+.runStatusHeader span,
 .toolRunStrip span {
   max-width: 100%;
   overflow-wrap: anywhere;
@@ -1774,22 +1769,70 @@ label {
 }
 
 .toolReadinessItem.ready .toolReadinessHeader span,
+.runStatusItem.ready .runStatusHeader span,
 .toolRunStrip .completed {
   background: #dcfce7;
   color: #166534;
 }
 
 .toolReadinessItem.blocked .toolReadinessHeader span,
+.runStatusItem.blocked .runStatusHeader span,
 .toolRunStrip .failed {
   background: #fee2e2;
   color: #b42318;
 }
 
-.toolReadinessItem p {
+.toolReadinessItem p,
+.runStatusItem p {
   color: #475467;
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.statusPanel {
+  gap: 12px;
+}
+
+.runIssueList {
+  min-width: 0;
+  border: 1px solid #e7edf5;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 9px 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.runIssueList p {
+  margin: 0;
+  color: #475467;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.morePanelStack {
+  display: grid;
+  gap: 12px;
+}
+
+.moreSection {
+  min-width: 0;
+  border-top: 1px solid #edf0f4;
+  padding-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.moreSection:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.moreSection .panelTitle h3 {
+  margin: 0;
+  font-size: 13px;
 }
 
 .toolRunStrip {
@@ -2069,6 +2112,11 @@ label {
   padding: 18px 20px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    "model permissions"
+    "embedding embedding"
+    "opencode research"
+    "engineering engineering";
   gap: 14px;
   background: #f8fafc;
 }
@@ -2110,6 +2158,47 @@ label {
 
 .settingsGroupWide {
   grid-column: span 2;
+}
+
+.modelSettingsGroup {
+  grid-area: model;
+}
+
+.permissionsSettingsGroup {
+  grid-area: permissions;
+}
+
+.embeddingSettingsGroup {
+  grid-area: embedding;
+}
+
+.openCodeSettingsDisclosure {
+  grid-area: opencode;
+}
+
+.researchDataSettingsDisclosure {
+  grid-area: research;
+}
+
+.engineeringSettingsDisclosure {
+  grid-area: engineering;
+}
+
+.researchDataSettingsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settingsSubgroup {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
 }
 
 .settingsFooterActions {
@@ -2226,11 +2315,8 @@ label {
   .contentGrid > .panel.finalPanel,
   .contentGrid > .panel.agentPanel,
   .contentGrid > .panel.evidencePanel,
-  .contentGrid > .panel.readinessPanel,
-  .contentGrid > .panel.blockerPanel,
-  .contentGrid > .panel.eventsPanel,
-  .contentGrid > .panel.storagePanel,
-  .contentGrid > .panel.logsPanel {
+  .contentGrid > .panel.statusPanel,
+  .contentGrid > .panel.morePanel {
     grid-column: 1;
     grid-row: auto;
     grid-area: auto;
@@ -2240,6 +2326,23 @@ label {
   .settingsGroupWide {
     grid-template-columns: 1fr;
     grid-column: span 1;
+  }
+
+  .settingsWindowGrid {
+    grid-template-areas: none;
+  }
+
+  .modelSettingsGroup,
+  .permissionsSettingsGroup,
+  .embeddingSettingsGroup,
+  .openCodeSettingsDisclosure,
+  .researchDataSettingsDisclosure,
+  .engineeringSettingsDisclosure {
+    grid-area: auto;
+  }
+
+  .researchDataSettingsGrid {
+    grid-template-columns: 1fr;
   }
 
   .preflightPanel {

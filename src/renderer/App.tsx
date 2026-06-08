@@ -1496,15 +1496,16 @@ function AetherOpsTab({
   const activeRun = snapshot.openCodeRuns.at(-1);
   const latestRag = snapshot.ragContexts.at(-1);
   const latestHybrid = snapshot.hybridContexts.at(-1);
+  const retrievalCitationCount = latestHybrid?.citations.length ?? latestRag?.citations?.length ?? 0;
   const latestPlan = snapshot.researchPlans.at(-1);
   const latestSpec = snapshot.specifications.at(-1);
   const latestDecision = snapshot.continuationDecisions.at(-1);
   const latestAudit = snapshot.runAuditOutputs.at(-1);
   const visitedSteps = useMemo(() => visitedStepSet(snapshot.iterations), [snapshot.iterations]);
   const researchQuestionPreview = useMemo(() => joinFirstStrings(latestSpec?.researchQuestions ?? [], 3, " / "), [latestSpec]);
-  const blockerMessages = useMemo(() => recentBlockerMessages(snapshot), [snapshot]);
   const recentToolRuns = useMemo(() => lastItems(snapshot.toolRuns, 4), [snapshot.toolRuns]);
   const researchToolReadiness = useMemo(() => buildRuntimeResearchToolReadiness(settings, snapshot, toolDiagnostics), [settings, snapshot, toolDiagnostics]);
+  const runStatusMessages = useMemo(() => prioritizedRunStatusMessages(settings, input, snapshot, toolDiagnostics), [settings, input, snapshot, toolDiagnostics]);
   const recentResearchProgramRuns = useMemo(() => recentIntegratedToolRuns(snapshot.toolRuns), [snapshot.toolRuns]);
   const appExternalAccess = Boolean(settings?.allowExternalSearch);
   const appCodeExecution = Boolean(settings?.allowCodeExecution);
@@ -1726,17 +1727,17 @@ function AetherOpsTab({
           </div>
         </section>
 
-        <section className="panel wide readinessPanel">
+        <section className="panel statusPanel">
           <div className="panelTitle">
-            <FlaskConical size={17} />
-            <h2>연구 메타데이터 / 프로그램 도구</h2>
+            <Gauge size={17} />
+            <h2>Run status</h2>
           </div>
-          <div className="toolReadinessGrid">
+          <div className="runStatusList">
             {researchToolReadiness.map((item) => {
               const Icon = item.icon;
               return (
-                <article key={item.id} className={`toolReadinessItem ${item.status}`}>
-                  <div className="toolReadinessHeader">
+                <article key={item.id} className={`runStatusItem ${item.status}`}>
+                  <div className="runStatusHeader">
                     <Icon size={18} />
                     <strong>{item.label}</strong>
                     <span>{item.badge}</span>
@@ -1745,6 +1746,13 @@ function AetherOpsTab({
                 </article>
               );
             })}
+          </div>
+          <div className="runIssueList">
+            {runStatusMessages.length ? (
+              runStatusMessages.map((message) => <p key={message}>{message}</p>)
+            ) : (
+              <p>No active app, project, or runtime blockers.</p>
+            )}
           </div>
           <div className="toolRunStrip">
             {recentResearchProgramRuns.length ? (
@@ -1759,73 +1767,57 @@ function AetherOpsTab({
           </div>
         </section>
 
-        <section className="panel blockerPanel">
-          <div className="panelTitle">
-            <AlertTriangle size={17} />
-            <h2>오류 / Blocker</h2>
-          </div>
-          <div className="runBox">
-            {snapshot.runtimeBlockers.length || snapshot.stepErrors.length ? (
-              blockerMessages.map((message, index) => (
-                <p key={`${index}-${message}`}>{message}</p>
-              ))
-            ) : (
-              <p>현재 runtime blocker나 step error가 없습니다.</p>
-            )}
-          </div>
-        </section>
-
-        <details className="panel collapsiblePanel eventsPanel">
+        <details className="panel collapsiblePanel morePanel">
           <summary className="panelSummary">
             <div className="panelTitle">
-              <History size={17} />
-              <h2>최근 이벤트</h2>
+              <Boxes size={17} />
+              <h2>More</h2>
             </div>
             <ChevronDown size={15} />
           </summary>
-          <div className="eventList">
-            {events.length ? (
-              events.map((event) => (
-                <div key={event.id} className="eventRow">
-                  <span>{event.flowKind}</span>
-                  <p>{event.message}</p>
-                </div>
-              ))
-            ) : (
-              <p className="empty">아직 이벤트가 없습니다.</p>
-            )}
-          </div>
-        </details>
-
-        <details className="panel collapsiblePanel storagePanel">
-          <summary className="panelSummary">
-            <div className="panelTitle">
-              <Database size={17} />
-              <h2>연구 DB 저장 내용</h2>
-            </div>
-            <ChevronDown size={15} />
-          </summary>
-          <StorageList stats={stats} />
-        </details>
-
-        <details className="panel collapsiblePanel logsPanel">
-          <summary className="panelSummary">
-            <div className="panelTitle">
-              <Bot size={17} />
-              <h2>OpenCode / Tool 로그</h2>
-            </div>
-            <ChevronDown size={15} />
-          </summary>
-          <div className="runBox">
-            <h3>{activeRun?.toolPlan.join(" / ") || "대기"}</h3>
-            {activeRunLogs.map((log) => (
-              <p key={log}>{log}</p>
-            ))}
-            {recentToolRuns.map((toolRun) => (
-              <p key={toolRun.id}>
-                [{toolRun.status}] {toolRun.toolName} {toolRun.error ? `- ${toolRun.error}` : ""}
-              </p>
-            ))}
+          <div className="morePanelStack">
+            <section className="moreSection">
+              <div className="panelTitle">
+                <History size={16} />
+                <h3>Recent events</h3>
+              </div>
+              <div className="eventList">
+                {events.length ? (
+                  events.map((event) => (
+                    <div key={event.id} className="eventRow">
+                      <span>{event.flowKind}</span>
+                      <p>{event.message}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="empty">No events yet.</p>
+                )}
+              </div>
+            </section>
+            <section className="moreSection">
+              <div className="panelTitle">
+                <Database size={16} />
+                <h3>Storage</h3>
+              </div>
+              <StorageList stats={stats} />
+            </section>
+            <section className="moreSection">
+              <div className="panelTitle">
+                <Bot size={16} />
+                <h3>OpenCode / Tool logs</h3>
+              </div>
+              <div className="runBox">
+                <h3>{activeRun?.toolPlan.join(" / ") || "Idle"}</h3>
+                {activeRunLogs.map((log) => (
+                  <p key={log}>{log}</p>
+                ))}
+                {recentToolRuns.map((toolRun) => (
+                  <p key={toolRun.id}>
+                    [{toolRun.status}] {toolRun.toolName} {toolRun.error ? `- ${toolRun.error}` : ""}
+                  </p>
+                ))}
+              </div>
+            </section>
           </div>
         </details>
 
@@ -1833,14 +1825,14 @@ function AetherOpsTab({
           <summary className="panelSummary">
             <div className="panelTitle">
               <Search size={17} />
-              <h2>Hybrid 근거 패널</h2>
+              <h2>{retrievalCitationCount ? "Hybrid evidence" : "Retrieval context"}</h2>
             </div>
             <ChevronDown size={15} />
           </summary>
           <div className="ragBox">
             <p>{latestHybrid?.contextText ?? latestRag?.summary ?? "아직 검색 컨텍스트가 구성되지 않았습니다."}</p>
             <span>
-              chunk {latestHybrid?.vectorChunkIds.length ?? latestRag?.chunkIds?.length ?? 0} / citation {latestHybrid?.citations.length ?? latestRag?.citations?.length ?? 0}
+              chunk {latestHybrid?.vectorChunkIds.length ?? latestRag?.chunkIds?.length ?? 0} / citation {retrievalCitationCount}
             </span>
           </div>
         </details>
@@ -2078,7 +2070,7 @@ function SettingsTab({
       </header>
 
       <div className="settingsWindowGrid">
-        <section className="settingsGroup">
+        <section className="settingsGroup modelSettingsGroup">
           <div className="panelTitle">
             <Bot size={17} />
             <h3>오케스트레이터 LLM</h3>
@@ -2118,6 +2110,77 @@ function SettingsTab({
           ) : (
             <p className="settingsHint">Codex OAuth 모델은 홈의 모델 버튼에서 바로 바꿀 수 있습니다.</p>
           )}
+        </section>
+
+        <section className="settingsGroup permissionsSettingsGroup">
+          <div className="panelTitle">
+            <Gauge size={17} />
+            <h3>Permissions</h3>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              External data
+              <select
+                className="externalPermissionSelect"
+                value={settingsDraft.allowExternalSearch ? "true" : "false"}
+                onChange={(event) => onSettingsDraftChange({ ...settingsDraft, allowExternalSearch: event.target.value === "true" })}
+              >
+                <option value="true">allowed</option>
+                <option value="false">blocked</option>
+              </select>
+            </label>
+            <label>
+              Code execution
+              <select
+                className="codePermissionSelect"
+                value={settingsDraft.allowCodeExecution ? "true" : "false"}
+                onChange={(event) => onSettingsDraftChange({ ...settingsDraft, allowCodeExecution: event.target.value === "true" })}
+              >
+                <option value="false">blocked</option>
+                <option value="true">allowed</option>
+              </select>
+            </label>
+          </div>
+          <div className="fieldGrid">
+            <label>
+              Ontology extraction
+              <select
+                value={settingsDraft.ontologyExtractionMode ?? "rule_based"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    ontologyExtractionMode: event.target.value as NonNullable<AppSettings["ontologyExtractionMode"]>
+                  })
+                }
+              >
+                <option value="rule_based">rule_based</option>
+                <option value="hybrid">hybrid</option>
+                <option value="llm">llm</option>
+              </select>
+            </label>
+            <label>
+              Final exports
+              <select
+                value={settingsDraft.finalOutputExport?.artifactPackage === false ? "report-only" : "full"}
+                onChange={(event) =>
+                  onSettingsDraftChange({
+                    ...settingsDraft,
+                    finalOutputExport:
+                      event.target.value === "full"
+                        ? { markdown: true, json: true, ontologyGraph: true, artifactPackage: true }
+                        : { markdown: true, json: true, ontologyGraph: false, artifactPackage: false }
+                  })
+                }
+              >
+                <option value="full">full package</option>
+                <option value="report-only">report only</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            Saved state
+            <input readOnly value={settingsStatus(appSettings)} />
+          </label>
         </section>
 
         <details className="settingsGroup settingsDisclosure openCodeSettingsDisclosure">
@@ -2199,22 +2262,22 @@ function SettingsTab({
           </div>
         </details>
 
-        <section className="settingsGroup">
-          <div className="panelTitle">
-            <Globe2 size={17} />
-            <h3>검색 API</h3>
-          </div>
+        <details className="settingsGroup settingsDisclosure researchDataSettingsDisclosure">
+          <summary className="settingsDisclosureSummary">
+            <div className="panelTitle">
+              <Globe2 size={17} />
+              <h3>Research data</h3>
+            </div>
+            <span>Search API / OpenAlex metadata</span>
+            <ChevronDown size={15} />
+          </summary>
+          <div className="researchDataSettingsGrid">
+            <section className="settingsSubgroup">
+              <div className="panelTitle">
+                <Globe2 size={16} />
+                <h3>Search API</h3>
+              </div>
           <div className="fieldGrid">
-            <label>
-              외부 검색
-              <select
-                value={settingsDraft.allowExternalSearch ? "true" : "false"}
-                onChange={(event) => onSettingsDraftChange({ ...settingsDraft, allowExternalSearch: event.target.value === "true" })}
-              >
-                <option value="true">허용</option>
-                <option value="false">차단</option>
-              </select>
-            </label>
             <label>
               Provider
               <select
@@ -2250,13 +2313,13 @@ function SettingsTab({
               onChange={(endpoint) => onSettingsDraftChange({ ...settingsDraft, webSearch: { ...settingsDraft.webSearch, endpoint } })}
             />
           </label>
-        </section>
+            </section>
 
-        <section className="settingsGroup">
-          <div className="panelTitle">
-            <FlaskConical size={17} />
-            <h3>Research metadata</h3>
-          </div>
+            <section className="settingsSubgroup">
+              <div className="panelTitle">
+                <FlaskConical size={16} />
+                <h3>Research metadata</h3>
+              </div>
           <div className="fieldGrid">
             <label>
               OpenAlex
@@ -2309,7 +2372,9 @@ function SettingsTab({
               />
             </label>
           </div>
-        </section>
+            </section>
+          </div>
+        </details>
 
         <details className="settingsGroup settingsGroupWide settingsDisclosure engineeringSettingsDisclosure">
           <summary className="settingsDisclosureSummary">
@@ -3217,7 +3282,7 @@ function SettingsTab({
           </div>
         </details>
 
-        <section className="settingsGroup">
+        <section className="settingsGroup embeddingSettingsGroup">
           <div className="panelTitle">
             <Database size={17} />
             <h3>Embedding / RAG</h3>
@@ -3273,64 +3338,6 @@ function SettingsTab({
           ) : null}
         </section>
 
-        <section className="settingsGroup settingsGroupWide">
-          <div className="panelTitle">
-            <Gauge size={17} />
-            <h3>전역 실행 정책</h3>
-          </div>
-          <div className="fieldGrid three">
-            <label>
-              코드 실행
-              <select
-                value={settingsDraft.allowCodeExecution ? "true" : "false"}
-                onChange={(event) => onSettingsDraftChange({ ...settingsDraft, allowCodeExecution: event.target.value === "true" })}
-              >
-                <option value="false">비활성화</option>
-                <option value="true">활성화</option>
-              </select>
-            </label>
-            <label>
-              저장 상태
-              <input readOnly value={settingsStatus(appSettings)} />
-            </label>
-          </div>
-          <div className="fieldGrid">
-            <label>
-              Ontology extraction
-              <select
-                value={settingsDraft.ontologyExtractionMode ?? "rule_based"}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    ontologyExtractionMode: event.target.value as NonNullable<AppSettings["ontologyExtractionMode"]>
-                  })
-                }
-              >
-                <option value="rule_based">rule_based</option>
-                <option value="hybrid">hybrid</option>
-                <option value="llm">llm</option>
-              </select>
-            </label>
-            <label>
-              Final exports
-              <select
-                value={settingsDraft.finalOutputExport?.artifactPackage === false ? "report-only" : "full"}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    finalOutputExport:
-                      event.target.value === "full"
-                        ? { markdown: true, json: true, ontologyGraph: true, artifactPackage: true }
-                        : { markdown: true, json: true, ontologyGraph: false, artifactPackage: false }
-                  })
-                }
-              >
-                <option value="full">full package</option>
-                <option value="report-only">report only</option>
-              </select>
-            </label>
-          </div>
-        </section>
       </div>
 
       <footer className="settingsWindowFooter">
@@ -3670,36 +3677,45 @@ function buildRuntimeResearchToolReadiness(
         starCcmCapability?.ready ? "STAR-CCM+ adapter ready" : starCcmCapability?.blockedReason
       ) || "FlightStream / STAR-CCM+ command adapter 설정이 필요합니다."
     : "Project autonomy blocks code execution.";
+  const metadataStatus: ToolReadinessStatus = metadataReady ? "ready" : projectExternalAllowed ? "blocked" : "idle";
+  const engineeringStatus: ToolReadinessStatus = engineeringReady ? "ready" : projectCodeAllowed ? "blocked" : "idle";
+  const commercialStatus: ToolReadinessStatus = commercialReady ? "ready" : projectCodeAllowed ? "blocked" : "idle";
 
   return [
     {
       id: "metadata",
       label: "OpenAlex metadata",
-      badge: metadataReady ? "Ready" : "Blocked",
+      badge: metadataReady ? "Ready" : projectExternalAllowed ? "Blocked" : "Off",
       detail: metadataReady
         ? `최대 ${diagnostics?.researchMetadata.maxResults ?? settings?.researchMetadata.maxResults ?? 0}개 논문 메타데이터 수집 가능`
-        : metadataBlockedReason,
-      status: metadataReady ? "ready" : "blocked",
+        : projectExternalAllowed
+          ? metadataBlockedReason
+          : "Project policy keeps external metadata off.",
+      status: metadataStatus,
       icon: Globe2
     },
     {
       id: "headless-programs",
       label: "Headless program tools",
-      badge: engineeringReady ? "Ready" : "Blocked",
+      badge: engineeringReady ? "Ready" : projectCodeAllowed ? "Blocked" : "Off",
       detail: engineeringReady
         ? `XFOIL ${xfoilReady ? "ready" : "blocked"} / XFOIL-WASM ${xfoilWasmReady ? "ready" : "blocked"} / mesh ${modelingReady ? "ready" : "blocked"} / OpenFOAM ${openFoamReady ? "ready" : "blocked"} / SU2 ${su2Ready ? "ready" : "blocked"} / FreeCAD ${freeCadReady ? "ready" : "blocked"} / OpenVSP ${openVspReady ? "ready" : "blocked"}`
-        : engineeringBlockedReason,
-      status: engineeringReady ? "ready" : "blocked",
+        : projectCodeAllowed
+          ? engineeringBlockedReason
+          : "Project policy keeps program execution off.",
+      status: engineeringStatus,
       icon: Wrench
     },
     {
       id: "commercial-cfd",
       label: "Commercial CFD",
-      badge: commercialReady ? "Adapter ready" : "Blocked",
+      badge: commercialReady ? "Adapter ready" : projectCodeAllowed ? "Blocked" : "Off",
       detail: commercialReady
         ? `FlightStream ${flightStreamReady ? "ready" : "blocked"} / STAR-CCM+ ${starCcmReady ? "ready" : "blocked"}`
-        : commercialBlockedReason,
-      status: commercialReady ? "ready" : "blocked",
+        : projectCodeAllowed
+          ? commercialBlockedReason
+          : "Project policy keeps commercial CFD off.",
+      status: commercialStatus,
       icon: HardDrive
     }
   ];
@@ -3728,7 +3744,7 @@ function StorageList({ stats }: { stats: SnapshotStats }): ReactElement {
       { icon: FileText, label: "Raw Sources", value: stats.rawSources },
       { icon: Boxes, label: "Artifacts", value: stats.artifacts },
       { icon: Gauge, label: "Tool Logs", value: stats.toolLogs },
-      { icon: MessageSquare, label: "Evidence Ledger", value: stats.evidence },
+      { icon: MessageSquare, label: "Evidence Ledger", value: stats.evidenceLedger },
       { icon: Search, label: "Vector DB", value: stats.chunks },
       { icon: Workflow, label: "Ontology Graph DB", value: stats.graphItems },
       { icon: Database, label: "Projects & Reports", value: stats.storageProjectsAndReports }
@@ -4100,6 +4116,40 @@ function recentBlockerMessages(snapshot: ResearchSnapshot): string[] {
     messages.push(`failed · ${error.step}: ${error.message}`);
   }
   return messages;
+}
+
+function prioritizedRunStatusMessages(
+  settings: AppSettings | undefined,
+  input: ResearchProjectInput,
+  snapshot: ResearchSnapshot,
+  diagnostics?: RuntimeToolDiagnostics
+): string[] {
+  const messages: string[] = [];
+  if (input.autonomyPolicy.allowExternalSearch && !settings?.allowExternalSearch) {
+    messages.push("App settings block external data access.");
+  }
+  if (input.autonomyPolicy.allowCodeExecution && !settings?.allowCodeExecution) {
+    messages.push("App settings block code and program execution.");
+  }
+  for (const blocker of diagnostics?.blockers ?? []) {
+    messages.push(`${blocker.key}: ${blocker.message}`);
+  }
+  for (const message of recentBlockerMessages(snapshot)) {
+    messages.push(message);
+  }
+  return uniqueStrings(messages).slice(0, 5);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    output.push(trimmed);
+  }
+  return output;
 }
 
 function describeLlm(settings?: AppSettings): string {

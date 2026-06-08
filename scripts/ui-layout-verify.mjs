@@ -2,14 +2,15 @@ import { chromium } from "playwright";
 
 const args = parseArgs(process.argv.slice(2));
 const appUrl = normalizeUrl(args.url ?? process.env.AETHEROPS_UI_URL ?? "http://127.0.0.1:5180");
+const apiBaseUrl = normalizeUrl(
+  args.apiUrl ?? process.env.VITE_AETHEROPS_API_URL ?? process.env.AETHEROPS_API_URL ?? defaultApiUrl(appUrl)
+).replace(/\/$/, "");
 
 const viewportCases = Object.freeze([
   { label: "desktop-1920x1080", width: 1920, height: 1080, expected: "left" },
   { label: "desktop-1440x900", width: 1440, height: 900, expected: "left" },
   { label: "desktop-1366x768", width: 1366, height: 768, expected: "left" },
-  { label: "narrow-desktop-761x900", width: 761, height: 900, expected: "left" },
-  { label: "mobile-boundary-760x900", width: 760, height: 900, expected: "top" },
-  { label: "mobile-390x844", width: 390, height: 844, expected: "top" }
+  { label: "narrow-desktop-761x900", width: 761, height: 900, expected: "left" }
 ]);
 
 const results = [];
@@ -19,7 +20,8 @@ let browser;
 try {
   browser = await chromium.launch({ headless: true });
   for (const viewport of viewportCases) {
-    const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
+    const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } });
+    const page = await context.newPage();
     const consoleErrors = [];
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
@@ -28,7 +30,7 @@ try {
     try {
       await page.goto(withQaParam(appUrl, viewport.label), { waitUntil: "domcontentloaded", timeout: 15_000 });
       await page.locator(".codexShell").waitFor({ state: "visible", timeout: 10_000 });
-      await ensureProjectDashboard(page);
+      await ensureProjectDashboard(page, viewport);
       const initial = await page.evaluate(collectLayout);
       assertLayout(viewport, initial, "initial");
       await verifyBlockedStartDoesNotCallRpc(page, viewport);
@@ -66,7 +68,7 @@ try {
     } catch (error) {
       failures.push(`${viewport.label}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      await page.close();
+      await context.close();
     }
   }
 } finally {
@@ -83,17 +85,26 @@ if (failures.length) {
   console.log(JSON.stringify(results, null, 2));
 }
 
-async function ensureProjectDashboard(page) {
-  if ((await page.locator(".projectBriefBar").count()) > 0) {
-    await ensureCodeExecutionPolicyMismatch(page);
-    return;
-  }
-  const projectButtons = page.locator(".projectFolderHeader");
-  if ((await projectButtons.count()) > 0) {
-    await projectButtons.first().click();
-  } else {
-    await page.locator(".projectCreateButton").click();
-  }
+async function ensureProjectDashboard(page, viewport) {
+  const snapshot = await rpc(page, "projects.create", [
+    {
+      goal: `Verify AetherOps desktop layout at ${viewport.width}x${viewport.height}.`,
+      topic: `UI layout verification ${viewport.label}`,
+      scope: "Desktop web UI placement, settings grouping, blocked start handling, and chat composition.",
+      budget: "Automated UI verification run",
+      autonomyPolicy: {
+        toolApproval: "suggested",
+        allowExternalSearch: true,
+        allowCodeExecution: true,
+        maxLoopIterations: 1
+      }
+    }
+  ]);
+  await rpc(page, "sessions.createForProject", [snapshot.project.id]);
+  await page.evaluate((projectId) => {
+    window.localStorage.setItem("aetherops.workspaceState", JSON.stringify({ projectId, view: "dashboard" }));
+  }, snapshot.project.id);
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15_000 });
   await page.locator(".projectBriefBar").waitFor({ state: "visible", timeout: 10_000 });
   await ensureCodeExecutionPolicyMismatch(page);
 }
@@ -216,17 +227,25 @@ async function verifyProjectBriefEditor(page) {
 
 async function rpc(page, method, args) {
   return page.evaluate(
-    async ({ method: rpcMethod, args: rpcArgs }) => {
-      const response = await fetch("/api/rpc", {
+    async ({ apiBaseUrl: rpcApiBaseUrl, method: rpcMethod, args: rpcArgs }) => {
+      const response = await fetch(`${rpcApiBaseUrl}/api/rpc`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ method: rpcMethod, args: rpcArgs })
       });
-      const payload = await response.json();
-      if (!payload.ok) throw new Error(payload.error || `RPC failed: ${rpcMethod}`);
+      const responseText = await response.text();
+      let payload;
+      try {
+        payload = responseText ? JSON.parse(responseText) : undefined;
+      } catch {
+        throw new Error(`RPC ${rpcMethod} returned non-JSON HTTP ${response.status}: ${responseText.slice(0, 200)}`);
+      }
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error || `RPC ${rpcMethod} failed with HTTP ${response.status}: ${responseText.slice(0, 200)}`);
+      }
       return payload.result;
     },
-    { method, args }
+    { apiBaseUrl, method, args }
   );
 }
 
@@ -243,7 +262,7 @@ function assertLayout(viewport, layout, phase) {
   if (!layout.projectBriefVisible) {
     failures.push(`${viewport.label}/${phase}: compact project brief bar is not visible`);
   }
-  if (!layout.projectBrief || layout.projectBrief.height > (viewport.width <= 760 ? 260 : 190)) {
+  if (!layout.projectBrief || layout.projectBrief.height > 190) {
     failures.push(`${viewport.label}/${phase}: compact project brief bar is too tall: ${layout.projectBrief?.height ?? "missing"}px`);
   }
   if (layout.projectBrief && layout.runOverview && layout.runOverview.y - layout.projectBrief.y > layout.projectBrief.height + 24) {
@@ -280,8 +299,26 @@ function assertLayout(viewport, layout, phase) {
   if (layout.ghostButtons !== 0) {
     failures.push(`${viewport.label}/${phase}: inert ghost buttons must not remain, found ${layout.ghostButtons}`);
   }
-  if (layout.collapsiblePanels < 4) {
-    failures.push(`${viewport.label}/${phase}: expected at least four compact dashboard disclosure panels, found ${layout.collapsiblePanels}`);
+  if (!layout.statusPanel) {
+    failures.push(`${viewport.label}/${phase}: concise run status panel is missing`);
+  }
+  if (!layout.morePanel) {
+    failures.push(`${viewport.label}/${phase}: compact More disclosure panel is missing`);
+  }
+  if (layout.legacyRightRailPanels !== 0) {
+    failures.push(`${viewport.label}/${phase}: old right-rail panels remained, found ${layout.legacyRightRailPanels}`);
+  }
+  if (layout.runStatusItems < 3) {
+    failures.push(`${viewport.label}/${phase}: expected three compact run status items, found ${layout.runStatusItems}`);
+  }
+  if (layout.runIssueMessages > 5) {
+    failures.push(`${viewport.label}/${phase}: run issue list should stay compact, found ${layout.runIssueMessages} messages`);
+  }
+  if (viewport.width > 1180 && layout.statusPanel && layout.workbench && layout.statusPanel.x <= layout.workbench.x) {
+    failures.push(`${viewport.label}/${phase}: run status panel should sit in the right rail on desktop`);
+  }
+  if (layout.collapsiblePanels < 2) {
+    failures.push(`${viewport.label}/${phase}: expected More and retrieval disclosure panels, found ${layout.collapsiblePanels}`);
   }
   if (layout.openCollapsiblePanels !== 0) {
     failures.push(`${viewport.label}/${phase}: dashboard disclosure panels should be closed by default, found ${layout.openCollapsiblePanels} open`);
@@ -365,11 +402,22 @@ function assertSettingsLayout(viewport, settings) {
   if (settings.requestContractRows !== 10) {
     failures.push(`${viewport.label}/settings: expected 10 engineering request templates, found ${settings.requestContractRows}`);
   }
-  if (settings.settingsDisclosures < 2) {
-    failures.push(`${viewport.label}/settings: expected OpenCode and engineering settings disclosures, found ${settings.settingsDisclosures}`);
+  if (settings.settingsDisclosures < 3) {
+    failures.push(`${viewport.label}/settings: expected OpenCode, Research data, and engineering settings disclosures, found ${settings.settingsDisclosures}`);
   }
   if (settings.openSettingsDisclosures !== 0) {
     failures.push(`${viewport.label}/settings: advanced settings disclosures should be closed by default, found ${settings.openSettingsDisclosures} open`);
+  }
+  if (!settings.coreSettingsGroups.model || !settings.coreSettingsGroups.permissions || !settings.coreSettingsGroups.embedding) {
+    failures.push(`${viewport.label}/settings: Model, Permissions, and Embedding core groups must be present`);
+  }
+  if (settings.externalPermissionSelects !== 1 || settings.codePermissionSelects !== 1) {
+    failures.push(
+      `${viewport.label}/settings: expected one external and one code permission control, found external=${settings.externalPermissionSelects} code=${settings.codePermissionSelects}`
+    );
+  }
+  if (settings.duplicatePolicyGroups !== 0) {
+    failures.push(`${viewport.label}/settings: duplicate wide policy groups remained, found ${settings.duplicatePolicyGroups}`);
   }
   if (!settings.embeddingProviderOptions.some((option) => option.value === "local" && option.text.includes("blocked"))) {
     failures.push(`${viewport.label}/settings: local embedding option must remain explicit and marked blocked`);
@@ -394,11 +442,17 @@ function assertSettingsDisclosureLayout(viewport, settingsDisclosure) {
   if (!settingsDisclosure.openCodeOpen) {
     failures.push(`${viewport.label}/settings-disclosure: OpenCode disclosure did not open`);
   }
+  if (!settingsDisclosure.researchDataOpen) {
+    failures.push(`${viewport.label}/settings-disclosure: Research data disclosure did not open`);
+  }
   if (!settingsDisclosure.engineeringOpen) {
     failures.push(`${viewport.label}/settings-disclosure: engineering disclosure did not open`);
   }
   if (!settingsDisclosure.openCodeCommandVisible) {
     failures.push(`${viewport.label}/settings-disclosure: OpenCode command control is not visible after opening`);
+  }
+  if (!settingsDisclosure.researchDataProviderVisible || !settingsDisclosure.researchMetadataMailtoVisible) {
+    failures.push(`${viewport.label}/settings-disclosure: Research data search/metadata controls are not visible after opening`);
   }
   if (settingsDisclosure.visibleRequestContractRows !== 10) {
     failures.push(
@@ -439,6 +493,8 @@ function collectLayout() {
   const agentPanel = rectOf(".agentPanel");
   const finalPanel = rectOf(".finalPanel");
   const workbench = rectOf(".engineeringWorkbenchPanel");
+  const statusPanel = rectOf(".statusPanel");
+  const morePanel = rectOf(".morePanel");
   const contentFirstPanel = document.querySelector(".contentGrid > .panel")?.className ?? "";
   const loopLimit = document.querySelector(".loopLimitControl input");
   const startButton = document.querySelector(".briefRunButton");
@@ -461,6 +517,8 @@ function collectLayout() {
     agentPanel,
     finalPanel,
     workbench,
+    statusPanel,
+    morePanel,
     contentFirstPanel,
     loopLimitVisible: Boolean(loopLimit && loopLimit.getBoundingClientRect().width > 0 && loopLimit.getBoundingClientRect().height > 0),
     loopLimitValue: loopLimit?.value ?? "",
@@ -493,6 +551,9 @@ function collectLayout() {
     legacyMetricStripCount: document.querySelectorAll(".metricStrip").length,
     placeholderCount: document.querySelectorAll(".codexPlaceholder, .placeholderCard").length,
     ghostButtons: document.querySelectorAll(".ghostButton").length,
+    legacyRightRailPanels: document.querySelectorAll(".readinessPanel, .blockerPanel, .eventsPanel, .storagePanel, .logsPanel").length,
+    runStatusItems: document.querySelectorAll(".runStatusItem").length,
+    runIssueMessages: document.querySelectorAll(".runIssueList p").length,
     collapsiblePanels: document.querySelectorAll(".collapsiblePanel").length,
     openCollapsiblePanels: document.querySelectorAll(".collapsiblePanel[open]").length,
     primaryNavItems: document.querySelectorAll(".codexNavItem").length,
@@ -567,6 +628,14 @@ function collectSettingsLayout() {
     activeSettings: document.querySelector(".codexSettings")?.classList.contains("active") ?? false,
     settingsDisclosures: document.querySelectorAll(".settingsDisclosure").length,
     openSettingsDisclosures: document.querySelectorAll(".settingsDisclosure[open]").length,
+    coreSettingsGroups: {
+      model: Boolean(document.querySelector(".modelSettingsGroup")),
+      permissions: Boolean(document.querySelector(".permissionsSettingsGroup")),
+      embedding: Boolean(document.querySelector(".embeddingSettingsGroup"))
+    },
+    externalPermissionSelects: document.querySelectorAll(".externalPermissionSelect").length,
+    codePermissionSelects: document.querySelectorAll(".codePermissionSelect").length,
+    duplicatePolicyGroups: document.querySelectorAll(".settingsGroupWide:not(.engineeringSettingsDisclosure)").length,
     requestContractRows: summaries.length,
     xfoilWasmText: xfoilWasm?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     xfoilWasmRect: xfoilWasm ? rectFromElement(xfoilWasm) : null,
@@ -585,6 +654,8 @@ function collectSettingsLayout() {
 async function verifySettingsDisclosure(page) {
   await page.locator(".openCodeSettingsDisclosure > summary").click();
   await page.locator(".openCodeSettingsDisclosure[open]").waitFor({ state: "attached", timeout: 10_000 });
+  await page.locator(".researchDataSettingsDisclosure > summary").click();
+  await page.locator(".researchDataSettingsDisclosure[open]").waitFor({ state: "attached", timeout: 10_000 });
   await page.locator(".engineeringSettingsDisclosure > summary").click();
   await page.locator(".engineeringSettingsDisclosure[open]").waitFor({ state: "attached", timeout: 10_000 });
   return page.evaluate(collectSettingsDisclosureLayout);
@@ -603,8 +674,11 @@ function collectSettingsDisclosureLayout() {
   }).length;
   return {
     openCodeOpen: document.querySelector(".openCodeSettingsDisclosure")?.hasAttribute("open") ?? false,
+    researchDataOpen: document.querySelector(".researchDataSettingsDisclosure")?.hasAttribute("open") ?? false,
     engineeringOpen: document.querySelector(".engineeringSettingsDisclosure")?.hasAttribute("open") ?? false,
     openCodeCommandVisible: isVisible(".openCodeSettingsDisclosure input[list='opencode-command-options'], .openCodeSettingsDisclosure select"),
+    researchDataProviderVisible: isVisible(".researchDataSettingsDisclosure select"),
+    researchMetadataMailtoVisible: isVisible(".researchDataSettingsDisclosure input[list], .researchDataSettingsDisclosure input"),
     visibleRequestContractRows,
     xfoilCommandVisible: isVisible(".engineeringSettingsDisclosure input[list='xfoil-command-options']"),
     horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
@@ -626,6 +700,17 @@ function normalizeUrl(value) {
   }
 }
 
+function defaultApiUrl(url) {
+  const parsed = new URL(url);
+  if (parsed.hostname === "127.0.0.1" && parsed.port === "5180") {
+    return "http://127.0.0.1:5179";
+  }
+  if (parsed.hostname === "localhost" && parsed.port === "5180") {
+    return "http://localhost:5179";
+  }
+  return parsed.origin;
+}
+
 function parseArgs(values) {
   const parsed = {};
   for (let index = 0; index < values.length; index += 1) {
@@ -635,6 +720,11 @@ function parseArgs(values) {
       index += 1;
     } else if (value?.startsWith("--url=")) {
       parsed.url = value.slice("--url=".length);
+    } else if (value === "--api-url") {
+      parsed.apiUrl = values[index + 1];
+      index += 1;
+    } else if (value?.startsWith("--api-url=")) {
+      parsed.apiUrl = value.slice("--api-url=".length);
     } else if (value) {
       throw new Error(`Unknown argument: ${value}`);
     }

@@ -32,6 +32,9 @@ try {
       const initial = await page.evaluate(collectLayout);
       assertLayout(viewport, initial, "initial");
 
+      const briefEditor = await verifyProjectBriefEditor(page);
+      assertBriefEditorLayout(viewport, briefEditor);
+
       await page.locator("button.codexSettings").click();
       await page.locator("#settings-window-title").waitFor({ state: "visible", timeout: 10_000 });
       await page.waitForFunction(
@@ -56,7 +59,7 @@ try {
         failures.push(`${viewport.label}: console errors: ${consoleErrors.slice(0, 3).join(" | ")}`);
       }
 
-      results.push({ viewport: viewport.label, initial, settings, chat, consoleErrors: consoleErrors.length });
+      results.push({ viewport: viewport.label, initial, briefEditor, settings, chat, consoleErrors: consoleErrors.length });
     } catch (error) {
       failures.push(`${viewport.label}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -78,7 +81,7 @@ if (failures.length) {
 }
 
 async function ensureProjectDashboard(page) {
-  if ((await page.locator(".loopLimitControl input").count()) > 0) {
+  if ((await page.locator(".projectBriefBar").count()) > 0) {
     return;
   }
   const projectButtons = page.locator(".projectFolderHeader");
@@ -87,7 +90,7 @@ async function ensureProjectDashboard(page) {
   } else {
     await page.locator(".projectCreateButton").click();
   }
-  await page.locator(".projectComposer").waitFor({ state: "visible", timeout: 10_000 });
+  await page.locator(".projectBriefBar").waitFor({ state: "visible", timeout: 10_000 });
 }
 
 async function ensureStartedChatLayout(page) {
@@ -127,6 +130,19 @@ async function ensureStartedChatLayout(page) {
   return page.evaluate(collectChatLayout);
 }
 
+async function verifyProjectBriefEditor(page) {
+  const summary = page.locator(".projectBriefEditor summary");
+  const summaryCount = await summary.count();
+  if (summaryCount !== 1) {
+    throw new Error(`expected one project brief editor summary, found ${summaryCount}`);
+  }
+  await summary.click({ timeoutMs: 10_000 });
+  await page.locator(".briefEditorGrid").waitFor({ state: "visible", timeout: 10_000 });
+  const expanded = await page.evaluate(collectBriefEditorLayout);
+  await summary.click({ timeoutMs: 10_000 });
+  return expanded;
+}
+
 async function rpc(page, method, args) {
   return page.evaluate(
     async ({ method: rpcMethod, args: rpcArgs }) => {
@@ -153,6 +169,18 @@ function assertLayout(viewport, layout, phase) {
   if (!layout.runOverviewVisible) {
     failures.push(`${viewport.label}/${phase}: compact run overview is not visible`);
   }
+  if (!layout.projectBriefVisible) {
+    failures.push(`${viewport.label}/${phase}: compact project brief bar is not visible`);
+  }
+  if (!layout.projectBrief || layout.projectBrief.height > (viewport.width <= 760 ? 260 : 190)) {
+    failures.push(`${viewport.label}/${phase}: compact project brief bar is too tall: ${layout.projectBrief?.height ?? "missing"}px`);
+  }
+  if (layout.projectBrief && layout.runOverview && layout.runOverview.y - layout.projectBrief.y > layout.projectBrief.height + 24) {
+    failures.push(`${viewport.label}/${phase}: run overview is pushed too far below project brief`);
+  }
+  if (layout.legacyProjectComposerCount) {
+    failures.push(`${viewport.label}/${phase}: legacy expanded project composer remained`);
+  }
   if (layout.legacyFlowBoardCount || layout.legacyMetricStripCount || layout.placeholderCount) {
     failures.push(
       `${viewport.label}/${phase}: legacy dashboard/placeholder UI remained flow=${layout.legacyFlowBoardCount} metrics=${layout.legacyMetricStripCount} placeholders=${layout.placeholderCount}`
@@ -173,8 +201,23 @@ function assertLayout(viewport, layout, phase) {
   if (!layout.loopLimitVisible) {
     failures.push(`${viewport.label}/${phase}: maximum loop iteration control is not visible`);
   }
+  if (layout.briefControls.approvalSelects !== 1 || layout.briefControls.policyCheckboxes !== 2 || layout.briefControls.runButtons !== 1) {
+    failures.push(`${viewport.label}/${phase}: compact project controls missing ${JSON.stringify(layout.briefControls)}`);
+  }
   if (layout.loopLimitValue !== "1") {
     failures.push(`${viewport.label}/${phase}: maximum loop iteration control should default to 1, found ${layout.loopLimitValue || "empty"}`);
+  }
+}
+
+function assertBriefEditorLayout(viewport, editor) {
+  if (!editor.open) {
+    failures.push(`${viewport.label}/brief-editor: details did not open`);
+  }
+  if (editor.textareas !== 2 || editor.inputs !== 2) {
+    failures.push(`${viewport.label}/brief-editor: expected goal/scope textareas and topic/budget inputs, found ${JSON.stringify(editor)}`);
+  }
+  if (editor.horizontalOverflow) {
+    failures.push(`${viewport.label}/brief-editor: horizontal overflow body=${editor.scrollWidths.body} document=${editor.scrollWidths.documentElement}`);
   }
 }
 
@@ -238,6 +281,8 @@ function collectLayout() {
   };
   const sidebar = rectOf(".codexSidebar");
   const shell = rectOf(".codexShell");
+  const projectBrief = rectOf(".projectBriefBar");
+  const runOverview = rectOf(".runOverview");
   const loopLimit = document.querySelector(".loopLimitControl input");
   const runtimeError = document.querySelector(".runtimeErrorView");
   const viewportWidth = window.innerWidth;
@@ -246,9 +291,18 @@ function collectLayout() {
     viewport: { width: viewportWidth, height: viewportHeight },
     shell,
     sidebar,
+    projectBrief,
+    runOverview,
     loopLimitVisible: Boolean(loopLimit && loopLimit.getBoundingClientRect().width > 0 && loopLimit.getBoundingClientRect().height > 0),
     loopLimitValue: loopLimit?.value ?? "",
     runtimeErrorVisible: Boolean(runtimeError),
+    projectBriefVisible: Boolean(document.querySelector(".projectBriefBar")),
+    briefControls: {
+      approvalSelects: document.querySelectorAll(".briefSelectControl select").length,
+      policyCheckboxes: document.querySelectorAll(".compactPolicyToggle input[type='checkbox']").length,
+      runButtons: document.querySelectorAll(".briefRunButton").length
+    },
+    legacyProjectComposerCount: document.querySelectorAll(".projectComposer").length,
     runOverviewVisible: Boolean(document.querySelector(".runOverview")),
     legacyFlowBoardCount: document.querySelectorAll(".flowBoard, .flowBoardStructured").length,
     legacyMetricStripCount: document.querySelectorAll(".metricStrip").length,
@@ -257,6 +311,22 @@ function collectLayout() {
     sidebarLeft: Boolean(sidebar && sidebar.x === 0 && sidebar.y === 0 && sidebar.height > viewportHeight * 0.9 && sidebar.width < viewportWidth),
     sidebarTop: Boolean(sidebar && sidebar.x === 0 && sidebar.y === 0 && sidebar.width === viewportWidth && sidebar.height < viewportHeight * 0.9),
     horizontalOverflow: document.documentElement.scrollWidth > viewportWidth || document.body.scrollWidth > viewportWidth,
+    scrollWidths: { body: document.body.scrollWidth, documentElement: document.documentElement.scrollWidth }
+  };
+}
+
+function collectBriefEditorLayout() {
+  return {
+    open: document.querySelector(".projectBriefEditor")?.hasAttribute("open") ?? false,
+    textareas: Array.from(document.querySelectorAll(".briefEditorGrid textarea")).filter((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }).length,
+    inputs: Array.from(document.querySelectorAll(".briefEditorGrid input")).filter((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }).length,
+    horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
     scrollWidths: { body: document.body.scrollWidth, documentElement: document.documentElement.scrollWidth }
   };
 }

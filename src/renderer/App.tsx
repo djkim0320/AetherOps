@@ -1516,17 +1516,21 @@ function AetherOpsTab({
   const runStepTiles = useMemo(
     () =>
       allResearchSteps.map((step) => {
-      const meta = stepLabels[step];
-      const Icon = meta.icon;
-      const active = currentStep === step;
-      const visited = visitedSteps.has(step);
-      return (
-        <div key={step} className={`stepTile ${meta.flow} ${active ? "active" : ""} ${visited ? "visited" : ""}`} aria-current={active ? "step" : undefined}>
-          <div className="stepIndex">{meta.index}</div>
-          <Icon size={21} />
-          <span>{meta.label}</span>
-        </div>
-      );
+        const meta = stepLabels[step];
+        const Icon = meta.icon;
+        const active = currentStep === step;
+        const visited = visitedSteps.has(step);
+        return (
+          <div
+            key={step}
+            className={`stepTile ${meta.flow} ${active ? "active" : ""} ${visited ? "visited" : ""}`}
+            aria-current={active ? "step" : undefined}
+          >
+            <div className="stepIndex">{meta.index}</div>
+            <Icon size={21} />
+            <span>{meta.label}</span>
+          </div>
+        );
       }),
     [currentStep, visitedSteps]
   );
@@ -1536,34 +1540,19 @@ function AetherOpsTab({
       <header className="codexTopbar">
         <div>
           <p className="eyebrow">Main Flow / Data Flow / Agent Control / Knowledge Flow / Error Flow</p>
-          <h1>{snapshot.project.topic}</h1>
+          <h1>{input.topic || snapshot.project.topic}</h1>
         </div>
         <div className={`statusPill ${snapshot.project.status}`}>{statusLabel(snapshot.project.status)}</div>
       </header>
 
-      <section className="projectComposer">
-        <div className="composerFields">
-          <label>
-            목표
-            <textarea value={input.goal} onChange={(event) => setInput({ ...input, goal: event.target.value })} />
-          </label>
-          <div className="fieldGrid">
-            <label>
-              주제
-              <input value={input.topic} onChange={(event) => setInput({ ...input, topic: event.target.value })} />
-            </label>
-            <label>
-              예산/제약
-              <input value={input.budget} onChange={(event) => setInput({ ...input, budget: event.target.value })} />
-            </label>
-          </div>
-          <label>
-            범위
-            <textarea value={input.scope} onChange={(event) => setInput({ ...input, scope: event.target.value })} />
-          </label>
+      <section className="projectBriefBar">
+        <div className="projectBriefSummary">
+          <span>Project brief</span>
+          <h2>{input.topic || snapshot.project.topic}</h2>
+          <p>{input.goal || snapshot.project.goal}</p>
         </div>
-        <div className="composerSide">
-          <label>
+        <div className="briefControlRail">
+          <label className="briefSelectControl">
             승인
             <select
               value={input.autonomyPolicy.toolApproval}
@@ -1579,7 +1568,7 @@ function AetherOpsTab({
               <option value="automatic">자동</option>
             </select>
           </label>
-          <label className="loopLimitControl">
+          <label className="loopLimitControl briefNumberControl">
             최대 반복
             <input
               aria-label="Maximum loop iterations"
@@ -1599,9 +1588,13 @@ function AetherOpsTab({
               }
             />
           </label>
-          <label className={`policyToggle ${appExternalAccess ? "ready" : "blocked"}`}>
+          <label
+            className={`policyToggle compactPolicyToggle ${appExternalAccess ? "ready" : "blocked"}`}
+            title={appExternalAccess ? "외부 자료 접근 허용" : "앱 설정에서 외부 자료 접근 필요"}
+          >
             <input
               type="checkbox"
+              aria-label="외부 자료 접근"
               checked={input.autonomyPolicy.allowExternalSearch}
               onChange={(event) =>
                 setInput({
@@ -1611,13 +1604,17 @@ function AetherOpsTab({
               }
             />
             <span>
-              <strong>외부 자료 접근</strong>
-              <small>{appExternalAccess ? "OpenAlex, Browser, Fetch 허용" : "앱 설정에서 외부 접근 꺼짐"}</small>
+              <strong>자료</strong>
+              <small>{appExternalAccess ? "허용" : "설정 필요"}</small>
             </span>
           </label>
-          <label className={`policyToggle ${appCodeExecution ? "ready" : "blocked"}`}>
+          <label
+            className={`policyToggle compactPolicyToggle ${appCodeExecution ? "ready" : "blocked"}`}
+            title={appCodeExecution ? "코드 및 프로그램 실행 허용" : "앱 설정에서 코드 및 프로그램 실행 필요"}
+          >
             <input
               type="checkbox"
+              aria-label="코드 및 프로그램 실행"
               checked={input.autonomyPolicy.allowCodeExecution}
               onChange={(event) =>
                 setInput({
@@ -1627,15 +1624,39 @@ function AetherOpsTab({
               }
             />
             <span>
-              <strong>코드/프로그램 실행</strong>
-              <small>{appCodeExecution ? "CodeExecution, engineering tools 허용" : "앱 설정에서 코드 실행 꺼짐"}</small>
+              <strong>실행</strong>
+              <small>{appCodeExecution ? "허용" : "설정 필요"}</small>
             </span>
           </label>
-          <button className="primaryButton" onClick={onStart} disabled={busy} type="button">
+          <button className="primaryButton briefRunButton" onClick={onStart} disabled={busy} type="button">
             {busy ? <Loader2 className="spin" size={17} /> : <FolderKanban size={17} />}
-            연구 루프 시작
+            시작
           </button>
         </div>
+        <details className="projectBriefEditor">
+          <summary>
+            <span>연구 입력 편집</span>
+            <ChevronDown size={14} />
+          </summary>
+          <div className="briefEditorGrid">
+            <label>
+              목표
+              <textarea value={input.goal} onChange={(event) => setInput({ ...input, goal: event.target.value })} />
+            </label>
+            <label>
+              주제
+              <input value={input.topic} onChange={(event) => setInput({ ...input, topic: event.target.value })} />
+            </label>
+            <label>
+              예산/제약
+              <input value={input.budget} onChange={(event) => setInput({ ...input, budget: event.target.value })} />
+            </label>
+            <label>
+              범위
+              <textarea value={input.scope} onChange={(event) => setInput({ ...input, scope: event.target.value })} />
+            </label>
+          </div>
+        </details>
       </section>
 
       <section className="runOverview">

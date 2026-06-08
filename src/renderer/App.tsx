@@ -100,6 +100,10 @@ const defaultInput: ResearchProjectInput = {
 
 const defaultGuiLoopLimit = 1;
 const maxGuiLoopLimit = 8;
+const runBlockerMessages = {
+  external: "설정에서 외부 자료 접근을 먼저 허용하세요.",
+  code: "설정에서 코드 및 프로그램 실행을 먼저 허용하세요."
+};
 
 const providerLabels: Record<OpenCodeApiLlmSettings["provider"], string> = {
   openai: "OpenAI",
@@ -646,9 +650,13 @@ export function App(): ReactElement {
     if (!snapshot) {
       return;
     }
+    const runInput = normalizeRunInput(input);
+    const runBlocker = getRunStartBlocker(runInput, appSettings);
+    if (runBlocker) {
+      return;
+    }
     setBusy(true);
     try {
-      const runInput = normalizeRunInput(input);
       setInput(runInput);
       let prepared = await api.projects.update(snapshot.project.id, runInput);
       setSnapshot(prepared);
@@ -1500,6 +1508,10 @@ function AetherOpsTab({
   const recentResearchProgramRuns = useMemo(() => recentIntegratedToolRuns(snapshot.toolRuns), [snapshot.toolRuns]);
   const appExternalAccess = Boolean(settings?.allowExternalSearch);
   const appCodeExecution = Boolean(settings?.allowCodeExecution);
+  const projectExternalRequested = input.autonomyPolicy.allowExternalSearch;
+  const projectCodeRequested = input.autonomyPolicy.allowCodeExecution;
+  const startBlocker = getRunStartBlocker(input, settings);
+  const startStatusId = startBlocker ? "project-start-status" : undefined;
   const activeRunLogs = activeRun?.logs ?? emptyRunLogs;
   const activeStepMeta = stepLabels[currentStep];
   const visitedStepCount = allResearchSteps.filter((step) => visitedSteps.has(step)).length;
@@ -1585,13 +1597,16 @@ function AetherOpsTab({
             <input
               type="checkbox"
               aria-label="외부 자료 접근"
-              checked={input.autonomyPolicy.allowExternalSearch}
-              onChange={(event) =>
+              checked={projectExternalRequested}
+              disabled={!appExternalAccess && !projectExternalRequested}
+              onChange={(event) => {
+                const requested = event.target.checked;
+                if (requested && !appExternalAccess) return;
                 setInput({
                   ...input,
-                  autonomyPolicy: { ...input.autonomyPolicy, allowExternalSearch: event.target.checked }
-                })
-              }
+                  autonomyPolicy: { ...input.autonomyPolicy, allowExternalSearch: requested }
+                });
+              }}
             />
             <span>
               <strong>자료</strong>
@@ -1605,23 +1620,38 @@ function AetherOpsTab({
             <input
               type="checkbox"
               aria-label="코드 및 프로그램 실행"
-              checked={input.autonomyPolicy.allowCodeExecution}
-              onChange={(event) =>
+              checked={projectCodeRequested}
+              disabled={!appCodeExecution && !projectCodeRequested}
+              onChange={(event) => {
+                const requested = event.target.checked;
+                if (requested && !appCodeExecution) return;
                 setInput({
                   ...input,
-                  autonomyPolicy: { ...input.autonomyPolicy, allowCodeExecution: event.target.checked }
-                })
-              }
+                  autonomyPolicy: { ...input.autonomyPolicy, allowCodeExecution: requested }
+                });
+              }}
             />
             <span>
               <strong>실행</strong>
               <small>{appCodeExecution ? "허용" : "설정 필요"}</small>
             </span>
           </label>
-          <button className="primaryButton briefRunButton" onClick={onStart} disabled={busy} type="button">
-            {busy ? <Loader2 className="spin" size={17} /> : <FolderKanban size={17} />}
-            시작
+          <button
+            className="primaryButton briefRunButton"
+            onClick={onStart}
+            disabled={busy || Boolean(startBlocker)}
+            type="button"
+            title={startBlocker || "연구 루프 시작"}
+            aria-describedby={startStatusId}
+          >
+            {busy ? <Loader2 className="spin" size={17} /> : startBlocker ? <AlertTriangle size={17} /> : <FolderKanban size={17} />}
+            {startBlocker ? "설정 필요" : "시작"}
           </button>
+          {startBlocker ? (
+            <p id={startStatusId} className="briefStartStatus" title={startBlocker}>
+              {startBlocker}
+            </p>
+          ) : null}
         </div>
         <details className="projectBriefEditor">
           <summary>
@@ -1670,6 +1700,20 @@ function AetherOpsTab({
       </section>
 
       <div className="contentGrid">
+        <EngineeringProgramWorkbench
+          state={engineeringWorkbench}
+          result={engineeringRunResult}
+          busy={engineeringRunBusy}
+          message={engineeringRunMessage}
+          codeReady={appCodeExecution}
+          xfoilWasmReady={Boolean(
+            appCodeExecution &&
+              toolDiagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-wasm-polar:xfoil-wasm")?.ready
+          )}
+          onChange={onEngineeringWorkbenchChange}
+          onRun={onRunEngineeringWorkbench}
+        />
+
         <section className="panel wide agentPanel">
           <div className="panelTitle">
             <FileText size={17} />
@@ -1714,20 +1758,6 @@ function AetherOpsTab({
             )}
           </div>
         </section>
-
-        <EngineeringProgramWorkbench
-          state={engineeringWorkbench}
-          result={engineeringRunResult}
-          busy={engineeringRunBusy}
-          message={engineeringRunMessage}
-          codeReady={appCodeExecution}
-          xfoilWasmReady={Boolean(
-            appCodeExecution &&
-              toolDiagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-wasm-polar:xfoil-wasm")?.ready
-          )}
-          onChange={onEngineeringWorkbenchChange}
-          onRun={onRunEngineeringWorkbench}
-        />
 
         <section className="panel blockerPanel">
           <div className="panelTitle">
@@ -3196,7 +3226,8 @@ function SettingsTab({
             <label>
               Provider
               <select
-                value={settingsDraft.embedding.provider === "local" ? "openai" : settingsDraft.embedding.provider}
+                className="embeddingProviderSelect"
+                value={settingsDraft.embedding.provider}
                 onChange={(event) => {
                   const provider = event.target.value as AppSettings["embedding"]["provider"];
                   onSettingsDraftChange({
@@ -3205,6 +3236,7 @@ function SettingsTab({
                   });
                 }}
               >
+                <option value="local">local (blocked)</option>
                 <option value="openai">openai</option>
                 <option value="google">google</option>
                 <option value="custom">custom</option>
@@ -3236,6 +3268,9 @@ function SettingsTab({
               onChange={(event) => onEmbeddingKeyInputChange(event.target.value)}
             />
           </label>
+          {settingsDraft.embedding.provider === "local" ? (
+            <p className="settingsHint blocked">local embedding은 production index에서 차단됩니다. OpenAI, Google, custom provider를 설정하세요.</p>
+          ) : null}
         </section>
 
         <section className="settingsGroup settingsGroupWide">
@@ -3875,6 +3910,16 @@ function normalizeRunInput(input: ResearchProjectInput): ResearchProjectInput {
       maxLoopIterations: normalizeLoopLimit(input.autonomyPolicy.maxLoopIterations)
     }
   };
+}
+
+function getRunStartBlocker(input: ResearchProjectInput, settings: AppSettings | undefined): string {
+  if (input.autonomyPolicy.allowExternalSearch && !settings?.allowExternalSearch) {
+    return runBlockerMessages.external;
+  }
+  if (input.autonomyPolicy.allowCodeExecution && !settings?.allowCodeExecution) {
+    return runBlockerMessages.code;
+  }
+  return "";
 }
 
 function normalizeLoopLimit(value: unknown): number {

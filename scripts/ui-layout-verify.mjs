@@ -31,6 +31,7 @@ try {
       await ensureProjectDashboard(page);
       const initial = await page.evaluate(collectLayout);
       assertLayout(viewport, initial, "initial");
+      await verifyBlockedStartDoesNotCallRpc(page, viewport);
 
       const briefEditor = await verifyProjectBriefEditor(page);
       assertBriefEditorLayout(viewport, briefEditor);
@@ -84,6 +85,7 @@ if (failures.length) {
 
 async function ensureProjectDashboard(page) {
   if ((await page.locator(".projectBriefBar").count()) > 0) {
+    await ensureCodeExecutionPolicyMismatch(page);
     return;
   }
   const projectButtons = page.locator(".projectFolderHeader");
@@ -93,6 +95,89 @@ async function ensureProjectDashboard(page) {
     await page.locator(".projectCreateButton").click();
   }
   await page.locator(".projectBriefBar").waitFor({ state: "visible", timeout: 10_000 });
+  await ensureCodeExecutionPolicyMismatch(page);
+}
+
+async function ensureCodeExecutionPolicyMismatch(page) {
+  const settings = await rpc(page, "settings.get", []);
+  if (settings.allowCodeExecution !== false) {
+    return;
+  }
+  const state = await page.evaluate(() => JSON.parse(window.localStorage.getItem("aetherops.workspaceState") || "{}"));
+  if (!state.projectId) {
+    return;
+  }
+  const snapshot = await rpc(page, "snapshots.get", [state.projectId]);
+  if (snapshot.project.autonomyPolicy.allowCodeExecution) {
+    return;
+  }
+  const project = snapshot.project;
+  await rpc(page, "projects.update", [
+    project.id,
+    {
+      goal: project.goal,
+      topic: project.topic,
+      scope: project.scope,
+      budget: project.budget,
+      autonomyPolicy: { ...project.autonomyPolicy, allowCodeExecution: true }
+    }
+  ]);
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15_000 });
+  await page.locator(".projectBriefBar").waitFor({ state: "visible", timeout: 10_000 });
+}
+
+async function verifyBlockedStartDoesNotCallRpc(page, viewport) {
+  const result = await page.evaluate(async () => {
+    const button = document.querySelector(".briefRunButton");
+    const status = document.querySelector(".briefStartStatus");
+    if (!(button instanceof HTMLButtonElement)) {
+      return { skipped: "start button missing", calls: [] };
+    }
+    if (!status) {
+      return { skipped: "blocked start status missing", calls: [] };
+    }
+    const originalFetch = window.fetch.bind(window);
+    const calls = [];
+    window.fetch = async (...args) => {
+      try {
+        const request = args[0];
+        const init = args[1];
+        const url = typeof request === "string" ? request : request instanceof Request ? request.url : "";
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (url.includes("/api/rpc") && body) {
+          const payload = JSON.parse(body);
+          calls.push(payload.method);
+        }
+      } catch {
+        calls.push("unreadable-rpc");
+      }
+      return originalFetch(...args);
+    };
+    const originallyDisabled = button.disabled;
+    button.disabled = false;
+    button.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    button.disabled = originallyDisabled;
+    window.fetch = originalFetch;
+    return {
+      skipped: "",
+      calls,
+      statusText: status.textContent?.replace(/\s+/g, " ").trim() ?? ""
+    };
+  });
+  if (result.skipped) {
+    failures.push(`${viewport.label}/blocked-start: ${result.skipped}`);
+    return;
+  }
+  const forbiddenCalls = result.calls.filter((method) =>
+    ["projects.update", "research.inputResearchQuestionHypothesis", "loop.start"].includes(method)
+  );
+  if (forbiddenCalls.length) {
+    failures.push(`${viewport.label}/blocked-start: blocked start triggered RPCs ${forbiddenCalls.join(", ")}`);
+  }
+  if (!result.statusText) {
+    failures.push(`${viewport.label}/blocked-start: blocked start reason was empty`);
+  }
 }
 
 async function ensureStartedChatLayout(page) {
@@ -164,6 +249,26 @@ function assertLayout(viewport, layout, phase) {
   if (layout.projectBrief && layout.runOverview && layout.runOverview.y - layout.projectBrief.y > layout.projectBrief.height + 24) {
     failures.push(`${viewport.label}/${phase}: run overview is pushed too far below project brief`);
   }
+  if (!layout.contentFirstPanel) {
+    failures.push(`${viewport.label}/${phase}: content grid did not expose a first panel`);
+  } else if (!layout.contentFirstPanel.includes("engineeringWorkbenchPanel")) {
+    failures.push(`${viewport.label}/${phase}: engineering workbench must be the first content panel, found ${layout.contentFirstPanel}`);
+  }
+  if (!layout.workbench) {
+    failures.push(`${viewport.label}/${phase}: engineering workbench panel is missing`);
+  }
+  if (!layout.agentPanel) {
+    failures.push(`${viewport.label}/${phase}: research summary panel is missing`);
+  }
+  if (!layout.finalPanel) {
+    failures.push(`${viewport.label}/${phase}: final output panel is missing`);
+  }
+  if (layout.agentPanel && layout.workbench && layout.workbench.y > layout.agentPanel.y) {
+    failures.push(`${viewport.label}/${phase}: engineering workbench must render before the research summary`);
+  }
+  if (layout.finalPanel && layout.workbench && layout.workbench.y > layout.finalPanel.y) {
+    failures.push(`${viewport.label}/${phase}: engineering workbench must stay above final output`);
+  }
   if (layout.legacyProjectComposerCount) {
     failures.push(`${viewport.label}/${phase}: legacy expanded project composer remained`);
   }
@@ -204,6 +309,22 @@ function assertLayout(viewport, layout, phase) {
   }
   if (layout.loopLimitValue !== "1") {
     failures.push(`${viewport.label}/${phase}: maximum loop iteration control should default to 1, found ${layout.loopLimitValue || "empty"}`);
+  }
+  for (const policy of layout.policyControls) {
+    if (policy.blocked && !policy.checked && !policy.disabled) {
+      failures.push(`${viewport.label}/${phase}: blocked policy "${policy.text}" can be newly enabled`);
+    }
+  }
+  if (layout.policyControls.some((policy) => policy.blocked && policy.checked)) {
+    if (!layout.startButton.disabled) {
+      failures.push(`${viewport.label}/${phase}: start button is enabled while a requested policy is blocked by app settings`);
+    }
+    if (!layout.startButton.text.includes("설정 필요")) {
+      failures.push(`${viewport.label}/${phase}: start button should show the settings-required state, found "${layout.startButton.text}"`);
+    }
+    if (!layout.startButton.statusText || layout.startButton.describedBy !== "project-start-status") {
+      failures.push(`${viewport.label}/${phase}: blocked start state must expose a visible aria-described reason`);
+    }
   }
 }
 
@@ -249,6 +370,9 @@ function assertSettingsLayout(viewport, settings) {
   }
   if (settings.openSettingsDisclosures !== 0) {
     failures.push(`${viewport.label}/settings: advanced settings disclosures should be closed by default, found ${settings.openSettingsDisclosures} open`);
+  }
+  if (!settings.embeddingProviderOptions.some((option) => option.value === "local" && option.text.includes("blocked"))) {
+    failures.push(`${viewport.label}/settings: local embedding option must remain explicit and marked blocked`);
   }
   if (!settings.xfoilWasmText.includes("XFOIL-WASM")) {
     failures.push(`${viewport.label}/settings: XFOIL-WASM request template is missing`);
@@ -312,7 +436,13 @@ function collectLayout() {
   const shell = rectOf(".codexShell");
   const projectBrief = rectOf(".projectBriefBar");
   const runOverview = rectOf(".runOverview");
+  const agentPanel = rectOf(".agentPanel");
+  const finalPanel = rectOf(".finalPanel");
+  const workbench = rectOf(".engineeringWorkbenchPanel");
+  const contentFirstPanel = document.querySelector(".contentGrid > .panel")?.className ?? "";
   const loopLimit = document.querySelector(".loopLimitControl input");
+  const startButton = document.querySelector(".briefRunButton");
+  const startStatus = document.querySelector(".briefStartStatus");
   const runtimeError = document.querySelector(".runtimeErrorView");
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
@@ -328,8 +458,27 @@ function collectLayout() {
     sidebar,
     projectBrief,
     runOverview,
+    agentPanel,
+    finalPanel,
+    workbench,
+    contentFirstPanel,
     loopLimitVisible: Boolean(loopLimit && loopLimit.getBoundingClientRect().width > 0 && loopLimit.getBoundingClientRect().height > 0),
     loopLimitValue: loopLimit?.value ?? "",
+    startButton: {
+      disabled: Boolean(startButton?.disabled),
+      text: startButton?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      describedBy: startButton?.getAttribute("aria-describedby") ?? "",
+      statusText: startStatus?.textContent?.replace(/\s+/g, " ").trim() ?? ""
+    },
+    policyControls: Array.from(document.querySelectorAll(".compactPolicyToggle")).map((element) => {
+      const input = element.querySelector("input");
+      return {
+        text: element.textContent?.replace(/\s+/g, " ").trim() ?? "",
+        blocked: element.classList.contains("blocked"),
+        checked: Boolean(input?.checked),
+        disabled: Boolean(input?.disabled)
+      };
+    }),
     runtimeErrorVisible: Boolean(runtimeError),
     projectBriefVisible: Boolean(document.querySelector(".projectBriefBar")),
     briefControls: {
@@ -412,6 +561,7 @@ function collectSettingsLayout() {
   const xfoilWasm = summaries.find((summary) => summary.textContent?.includes("XFOIL-WASM"));
   const su2 = summaries.find((summary) => summary.textContent?.includes("SU2"));
   const openVsp = summaries.find((summary) => summary.textContent?.includes("OpenVSP"));
+  const embeddingProvider = document.querySelector(".embeddingProviderSelect");
   return {
     visible: Boolean(document.querySelector("#settings-window-title")),
     activeSettings: document.querySelector(".codexSettings")?.classList.contains("active") ?? false,
@@ -424,6 +574,9 @@ function collectSettingsLayout() {
     su2Rect: su2 ? rectFromElement(su2) : null,
     openVspText: openVsp?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     openVspRect: openVsp ? rectFromElement(openVsp) : null,
+    embeddingProviderOptions: embeddingProvider
+      ? Array.from(embeddingProvider.querySelectorAll("option")).map((option) => ({ value: option.value, text: option.textContent ?? "" }))
+      : [],
     horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
     scrollWidths: { body: document.body.scrollWidth, documentElement: document.documentElement.scrollWidth }
   };

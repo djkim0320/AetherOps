@@ -901,7 +901,7 @@ label {
   box-shadow: 0 10px 32px rgb(15 23 42 / 5%);
   padding: 10px;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(0, auto);
+  grid-template-columns: minmax(260px, 1fr) minmax(0, min(62%, 700px));
   gap: 10px;
   align-items: center;
 }
@@ -1038,6 +1038,23 @@ label {
 
 .briefRunButton {
   min-width: 74px;
+}
+
+.briefStartStatus {
+  flex: 0 1 160px;
+  max-width: 100%;
+  margin: 0;
+  border: 1px solid #f0d2d2;
+  border-radius: 8px;
+  background: #fff8f8;
+  color: #9f3a38;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .projectBriefEditor {
@@ -1603,6 +1620,12 @@ label {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(292px, 350px);
+  grid-template-areas:
+    "workbench readiness"
+    "agent blocker"
+    "final events"
+    "evidence storage"
+    "evidence logs";
   gap: 12px;
   align-content: start;
 }
@@ -1612,48 +1635,39 @@ label {
 }
 
 .contentGrid > .panel.engineeringWorkbenchPanel {
-  grid-column: 1;
-  grid-row: 1;
+  grid-area: workbench;
 }
 
 .contentGrid > .panel.finalPanel {
-  grid-column: 1;
-  grid-row: 2;
+  grid-area: final;
 }
 
 .contentGrid > .panel.agentPanel {
-  grid-column: 1;
-  grid-row: 3;
+  grid-area: agent;
 }
 
 .contentGrid > .panel.evidencePanel {
-  grid-column: 1;
-  grid-row: 4;
+  grid-area: evidence;
 }
 
 .contentGrid > .panel.readinessPanel {
-  grid-column: 2;
-  grid-row: 1;
+  grid-area: readiness;
 }
 
 .contentGrid > .panel.blockerPanel {
-  grid-column: 2;
-  grid-row: 2;
+  grid-area: blocker;
 }
 
 .contentGrid > .panel.eventsPanel {
-  grid-column: 2;
-  grid-row: 3;
+  grid-area: events;
 }
 
 .contentGrid > .panel.storagePanel {
-  grid-column: 2;
-  grid-row: 4;
+  grid-area: storage;
 }
 
 .contentGrid > .panel.logsPanel {
-  grid-column: 2;
-  grid-row: 5;
+  grid-area: logs;
 }
 
 .summaryStack {
@@ -2045,6 +2059,10 @@ label {
   font-size: 13px;
 }
 
+.settingsHint.blocked {
+  color: #b42318;
+}
+
 .settingsWindowGrid {
   min-height: 0;
   overflow: auto;
@@ -2183,12 +2201,25 @@ label {
     font-size: 12px;
   }
 
+  .projectBriefSummary p {
+    -webkit-line-clamp: 1;
+  }
+
+  .briefStartStatus {
+    flex: 0 0 min(180px, 48vw);
+    padding: 5px 8px;
+  }
+
   .projectBriefBar,
   .contentGrid,
   .engineeringWorkbenchGrid,
   .panel.wide {
     grid-template-columns: minmax(0, 1fr);
     grid-column: span 1;
+  }
+
+  .contentGrid {
+    grid-template-areas: none;
   }
 
   .contentGrid > .panel.engineeringWorkbenchPanel,
@@ -2202,6 +2233,7 @@ label {
   .contentGrid > .panel.logsPanel {
     grid-column: 1;
     grid-row: auto;
+    grid-area: auto;
   }
 
   .settingsWindowGrid,

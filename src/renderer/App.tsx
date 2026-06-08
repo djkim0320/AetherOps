@@ -775,8 +775,10 @@ export function App(): ReactElement {
     setEngineeringRunBusy(true);
     setEngineeringRunMessage("");
     setEngineeringRunResult(undefined);
+    const projectId = snapshot?.project.id;
     try {
       const result = await api.engineering.runProgram({
+        projectId,
         title: "Clark Y XFOIL-WASM polar analysis",
         question: "Run a real Clark Y airfoil aerodynamic polar analysis and report the computed CL/CD values.",
         programRequests: [
@@ -794,7 +796,17 @@ export function App(): ReactElement {
         ]
       });
       setEngineeringRunResult(result);
-      setEngineeringRunMessage(result.status === "completed" ? "Engineering program run completed." : result.error ?? "Engineering program run failed.");
+      if (projectId) {
+        const latest = await api.snapshots.get(projectId);
+        setSnapshot(latest);
+        setEvents(latest.iterations.slice(-16));
+      }
+      const savedPath = result.savedReportArtifact?.relativePath;
+      setEngineeringRunMessage(
+        result.status === "completed"
+          ? `Engineering program run completed${savedPath ? `; report saved to ${savedPath}` : "."}`
+          : result.error ?? "Engineering program run failed."
+      );
       void refreshToolDiagnostics();
     } catch (error) {
       setEngineeringRunMessage(formatError(error));
@@ -1988,6 +2000,7 @@ function EngineeringProgramWorkbench({
             <strong>{summary.airfoil || "No run yet"}</strong>
             <span>{result ? `${result.status} / artifacts ${result.artifacts.length} / evidence ${result.evidence.length}` : "ready for direct operation"}</span>
           </div>
+          {result?.savedReportArtifact ? <p className="engineeringSavedReport">Saved report: {result.savedReportArtifact.relativePath}</p> : null}
           {summary.runtime ? (
             <p className="engineeringResultMeta">
               {summary.runtime} {summary.runtimeVersion} / {summary.runtimeLicense} / rows {summary.rowCount ?? rows.length}

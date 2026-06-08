@@ -316,6 +316,7 @@ export interface EngineeringProgramPreflightResult {
 }
 
 export interface EngineeringProgramDirectRunInput {
+  projectId?: string;
   title?: string;
   question?: string;
   programRequests: EngineeringProgramRequest[];
@@ -330,6 +331,7 @@ export interface EngineeringProgramDirectRunResult {
   artifacts: ResearchArtifact[];
   evidence: EvidenceItem[];
   reportMarkdown: string;
+  savedReportArtifact?: ResearchArtifact;
   error?: string;
 }
 

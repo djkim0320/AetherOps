@@ -234,7 +234,7 @@ async function handleRpc(
     }
     case "engineering.runProgram":
     case "aetherops:runEngineeringProgram":
-      return runEngineeringProgramDirect(args[0] as EngineeringProgramDirectRunInput, await settingsStore.getRuntimeSettings());
+      return runEngineeringProgramDirect(args[0] as EngineeringProgramDirectRunInput, await settingsStore.getRuntimeSettings(), orchestrator);
     case "snapshots.get":
     case "aetherops:getSnapshot":
       return orchestrator.getSnapshot(String(args[0]));
@@ -250,45 +250,57 @@ function requireLegacyRpc(method: string): void {
   console.warn(`[AetherOps] Legacy RPC method ${method} was called. Set AETHEROPS_ENABLE_LEGACY_RPC=false to block old clients.`);
 }
 
-async function runEngineeringProgramDirect(payload: EngineeringProgramDirectRunInput, settings: AppSettings): Promise<EngineeringProgramDirectRunResult> {
+async function runEngineeringProgramDirect(
+  payload: EngineeringProgramDirectRunInput,
+  settings: AppSettings,
+  orchestrator?: AetherOpsOrchestrator
+): Promise<EngineeringProgramDirectRunResult> {
   const startedAt = nowIso();
-  const projectId = createId("direct_project");
-  const questionId = createId("question");
-  const hypothesisId = createId("hypothesis");
   const programRequests = normalizeDirectProgramRequests(payload?.programRequests);
   const question = payload?.question?.trim() || "Run a direct engineering program analysis and report the computed values.";
   const title = payload?.title?.trim() || "Direct engineering program run";
+  const persistentProjectId = optionalProjectId(payload?.projectId);
+  let persistentSnapshot = persistentProjectId && orchestrator ? await orchestrator.getSnapshot(persistentProjectId) : undefined;
+  if (persistentProjectId && orchestrator && !persistentSnapshot?.database) {
+    persistentSnapshot = await orchestrator.createResearchDb(persistentProjectId);
+  }
+  const projectId = persistentSnapshot?.project.id ?? createId("direct_project");
+  const questionId = persistentSnapshot?.questions[0]?.id ?? createId("question");
+  const hypothesisId = persistentSnapshot?.hypotheses[0]?.id ?? createId("hypothesis");
+  const directQuestion = persistentSnapshot?.questions[0] ?? { id: questionId, projectId, text: question, status: "open" as const, createdAt: startedAt };
+  const directHypothesis = persistentSnapshot?.hypotheses[0] ?? {
+    id: hypothesisId,
+    projectId,
+    questionId,
+    statement: "A real engineering program execution can produce traceable numerical output.",
+    status: "untested" as const,
+    confidence: 0.5,
+    createdAt: startedAt
+  };
   const input: OpenCodeRunInput = {
     project: {
-      id: projectId,
-      goal: title,
-      topic: title,
-      scope: "Direct program operation through AetherOps EngineeringProgramTool.",
-      budget: "single direct run",
+      ...(persistentSnapshot?.project ?? {
+        id: projectId,
+        goal: title,
+        topic: title,
+        scope: "Direct program operation through AetherOps EngineeringProgramTool.",
+        budget: "single direct run",
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        projectRoot: ".aetherops/direct-engineering"
+      }),
       autonomyPolicy: {
-        toolApproval: "suggested",
+        ...(persistentSnapshot?.project.autonomyPolicy ?? { toolApproval: "suggested", maxLoopIterations: 1 }),
+        toolApproval: persistentSnapshot?.project.autonomyPolicy.toolApproval ?? "suggested",
         allowExternalSearch: Boolean(settings.allowExternalSearch),
         allowCodeExecution: Boolean(settings.allowCodeExecution),
         maxLoopIterations: 1
       },
-      createdAt: startedAt,
-      updatedAt: startedAt,
       currentStep: ResearchLoopStep.ExecuteTools,
-      status: "running",
-      projectRoot: ".aetherops/direct-engineering"
+      status: "running"
     },
-    questions: [{ id: questionId, projectId, text: question, status: "open", createdAt: startedAt }],
-    hypotheses: [
-      {
-        id: hypothesisId,
-        projectId,
-        questionId,
-        statement: "A real engineering program execution can produce traceable numerical output.",
-        status: "untested",
-        confidence: 0.5,
-        createdAt: startedAt
-      }
-    ],
+    questions: [directQuestion],
+    hypotheses: [directHypothesis],
     evidence: [],
     artifacts: [],
     sources: [],
@@ -315,8 +327,17 @@ async function runEngineeringProgramDirect(payload: EngineeringProgramDirectRunI
     const completedAt = nowIso();
     const programRuns = programRunsFromOutput(result.toolRun.output);
     const reportMarkdown = engineeringDirectReport(title, result.toolRun.status, programRuns, result.artifacts, result.evidence, result.toolRun.error);
+    let savedReportArtifact: ResearchArtifact | undefined;
+    let persistenceError: string | undefined;
+    if (persistentProjectId && orchestrator && result.toolRun.status === "completed") {
+      try {
+        savedReportArtifact = await saveEngineeringDirectReport(orchestrator, persistentProjectId, title, reportMarkdown, result.toolRun.status, result.toolRun.id, startedAt, completedAt);
+      } catch (error) {
+        persistenceError = error instanceof Error ? error.message : String(error);
+      }
+    }
     return {
-      status: result.toolRun.status === "completed" ? "completed" : "failed",
+      status: result.toolRun.status === "completed" && !persistenceError ? "completed" : "failed",
       startedAt,
       completedAt,
       toolRun: result.toolRun,
@@ -324,7 +345,8 @@ async function runEngineeringProgramDirect(payload: EngineeringProgramDirectRunI
       artifacts: result.artifacts,
       evidence: result.evidence,
       reportMarkdown,
-      error: result.toolRun.error
+      savedReportArtifact,
+      error: result.toolRun.error ?? persistenceError
     };
   } catch (error) {
     const completedAt = nowIso();
@@ -355,6 +377,44 @@ async function runEngineeringProgramDirect(payload: EngineeringProgramDirectRunI
   }
 }
 
+async function saveEngineeringDirectReport(
+  orchestrator: AetherOpsOrchestrator,
+  projectId: string,
+  title: string,
+  reportMarkdown: string,
+  toolStatus: string,
+  toolRunId: string,
+  startedAt: string,
+  completedAt: string
+): Promise<ResearchArtifact> {
+  const relativePath = "reports/engineering-program-workbench.md";
+  const artifactId = createId("artifact");
+  const next = await orchestrator.storeArtifact(projectId, {
+    id: artifactId,
+    category: "experiment_log",
+    title: `${title} report`,
+    relativePath,
+    mimeType: "text/markdown",
+    summary: "Direct engineering program report generated from EngineeringProgramTool output.",
+    content: reportMarkdown,
+    metadata: {
+      traceabilityKind: "tool_observation",
+      generatedBy: "EngineeringProgramWorkbench",
+      toolName: "EngineeringProgramTool",
+      toolRunId,
+      toolStatus,
+      startedAt,
+      completedAt
+    },
+    createdAt: completedAt
+  });
+  const artifact = next.artifacts.find((item) => item.id === artifactId);
+  if (!artifact) {
+    throw new Error("Direct engineering report was not persisted as a project artifact.");
+  }
+  return artifact;
+}
+
 function normalizeDirectProgramRequests(value: unknown): EngineeringProgramRequest[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error("engineering.runProgram requires at least one program request.");
@@ -382,6 +442,10 @@ function normalizeDirectProgramRequests(value: unknown): EngineeringProgramReque
       reason: request.reason
     };
   });
+}
+
+function optionalProjectId(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function programRunsFromOutput(output: unknown): unknown[] {

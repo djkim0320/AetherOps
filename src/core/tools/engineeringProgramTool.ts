@@ -1297,7 +1297,7 @@ async function resolveWasmAirfoilInput(request: EngineeringProgramRequest, setti
     if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
       throw new Error("XFOIL WebAssembly sourceUrl execution requires WebFetchTool-provided rawText or external search permission for direct coordinate fetch.");
     }
-    const text = await fetchAirfoilCoordinateText(sourceUrl);
+    const text = await fetchAirfoilCoordinateText(sourceUrl, settings.engineeringTools.xfoil.timeoutMs);
     validateAirfoilCoordinateText(text);
     return {
       text,
@@ -1375,10 +1375,15 @@ export function validateAirfoilCoordinateText(text: string): { pointCount: numbe
   return { pointCount: points.length, xMin, xMax, yMin, yMax };
 }
 
-async function fetchAirfoilCoordinateText(sourceUrl: string): Promise<string> {
+async function fetchAirfoilCoordinateText(sourceUrl: string, timeoutMs: number): Promise<string> {
   assertPublicCoordinateUrl(sourceUrl);
+  const effectiveTimeoutMs = clampAirfoilFetchTimeout(timeoutMs);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+  let didTimeout = false;
+  const timeout = setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, effectiveTimeoutMs);
   try {
     const response = await fetch(sourceUrl, { headers: { accept: "text/plain,text/*,*/*" }, signal: controller.signal });
     assertPublicCoordinateUrl(response.url || sourceUrl);
@@ -1394,9 +1399,23 @@ async function fetchAirfoilCoordinateText(sourceUrl: string): Promise<string> {
       throw new Error(`airfoil coordinate response exceeds 2MB for ${sourceUrl}`);
     }
     return text;
+  } catch (error) {
+    if (didTimeout || isAbortError(error)) {
+      throw new Error(`airfoil coordinate fetch timed out after ${effectiveTimeoutMs}ms for ${sourceUrl}`);
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function clampAirfoilFetchTimeout(timeoutMs: number): number {
+  if (!Number.isFinite(timeoutMs)) return 30_000;
+  return Math.min(120_000, Math.max(10_000, Math.trunc(timeoutMs)));
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || /aborted/i.test(error.message));
 }
 
 function assertPublicCoordinateUrl(rawUrl: string): void {

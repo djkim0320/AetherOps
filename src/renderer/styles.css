@@ -1752,6 +1752,7 @@ label {
 
 .engineeringResultHeader strong,
 .engineeringResultHeader span,
+.engineeringSavedReport,
 .engineeringResultMeta {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1762,11 +1763,17 @@ label {
 }
 
 .engineeringResultHeader span,
+.engineeringSavedReport,
 .engineeringResultMeta,
 .engineeringEmpty {
   color: #64748b;
   font-size: 12px;
   font-weight: 760;
+}
+
+.engineeringSavedReport {
+  margin: 0;
+  color: #166534;
 }
 
 .engineeringTableWrap {

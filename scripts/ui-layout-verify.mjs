@@ -37,7 +37,11 @@ try {
       await page.waitForFunction(
         () => {
           const summaries = Array.from(document.querySelectorAll(".requestContractItem summary"));
-          return summaries.length >= 9 && summaries.some((summary) => summary.textContent?.includes("SU2"));
+          return (
+            summaries.length >= 10 &&
+            summaries.some((summary) => summary.textContent?.includes("SU2")) &&
+            summaries.some((summary) => summary.textContent?.includes("XFOIL-WASM"))
+          );
         },
         undefined,
         { timeout: 10_000 }
@@ -111,8 +115,11 @@ function assertSettingsLayout(viewport, settings) {
   if (!settings.activeSettings) {
     failures.push(`${viewport.label}/settings: settings sidebar button is not active`);
   }
-  if (settings.requestContractRows !== 9) {
-    failures.push(`${viewport.label}/settings: expected 9 engineering request templates, found ${settings.requestContractRows}`);
+  if (settings.requestContractRows !== 10) {
+    failures.push(`${viewport.label}/settings: expected 10 engineering request templates, found ${settings.requestContractRows}`);
+  }
+  if (!settings.xfoilWasmText.includes("XFOIL-WASM")) {
+    failures.push(`${viewport.label}/settings: XFOIL-WASM request template is missing`);
   }
   if (!settings.su2Text.includes("SU2")) {
     failures.push(`${viewport.label}/settings: SU2 request template is missing`);
@@ -178,12 +185,15 @@ function collectSettingsLayout() {
     };
   };
   const summaries = Array.from(document.querySelectorAll(".requestContractItem summary"));
+  const xfoilWasm = summaries.find((summary) => summary.textContent?.includes("XFOIL-WASM"));
   const su2 = summaries.find((summary) => summary.textContent?.includes("SU2"));
   const openVsp = summaries.find((summary) => summary.textContent?.includes("OpenVSP"));
   return {
     visible: Boolean(document.querySelector("#settings-window-title")),
     activeSettings: document.querySelector(".codexSettings")?.classList.contains("active") ?? false,
     requestContractRows: summaries.length,
+    xfoilWasmText: xfoilWasm?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    xfoilWasmRect: xfoilWasm ? rectFromElement(xfoilWasm) : null,
     su2Text: su2?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     su2Rect: su2 ? rectFromElement(su2) : null,
     openVspText: openVsp?.textContent?.replace(/\s+/g, " ").trim() ?? "",

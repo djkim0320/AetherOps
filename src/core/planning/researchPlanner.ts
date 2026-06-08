@@ -156,6 +156,7 @@ export class ResearchPlanner {
           engineeringTools: {
             enabled: input.settings.engineeringTools.enabled,
             xfoilConfigured: Boolean(input.settings.engineeringTools.xfoil.enabled && input.settings.engineeringTools.xfoil.command?.trim()),
+            xfoilWasmConfigured: Boolean(input.settings.engineeringTools.enabled),
             modelingConfigured: Boolean(input.settings.engineeringTools.modeling.enabled && input.settings.engineeringTools.modeling.artifactRoot?.trim()),
             openFoamConfigured: Boolean(input.settings.engineeringTools.openFoam.enabled && input.settings.engineeringTools.openFoam.command?.trim() && input.settings.engineeringTools.openFoam.caseRoot?.trim()),
             su2Configured: Boolean(input.settings.engineeringTools.su2.enabled && input.settings.engineeringTools.su2.command?.trim() && input.settings.engineeringTools.su2.caseRoot?.trim() && input.settings.engineeringTools.su2.configFile?.trim()),
@@ -172,7 +173,7 @@ export class ResearchPlanner {
           openCodeEnabled: input.settings.openCode.enabled,
           availableTools: input.availableTools
         })}`,
-        "If EngineeringProgramTool is selected, build programRequests from runtimeToolDiagnostics.engineeringProgramRequestTemplates. Use only templates marked ready=true. For artifactPath, use only runtimeToolDiagnostics.engineeringArtifactCandidates entries marked ready=true; do not invent paths. If no engineering template is ready, do not request EngineeringProgramTool.",
+        "If EngineeringProgramTool is selected, build programRequests from runtimeToolDiagnostics.engineeringProgramRequestTemplates. Use only templates marked ready=true. For artifactPath, use only runtimeToolDiagnostics.engineeringArtifactCandidates entries marked ready=true; do not invent paths. For xfoil-wasm-polar, named airfoils such as Clark Y must use a real artifactPath or public sourceUrl coordinate file; do not run a default NACA code for a named non-NACA airfoil. If no engineering template is ready, do not request EngineeringProgramTool.",
         "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria, fetchCandidateUrls, programRequests."
       ].join("\n\n") : [
         `Specification: ${JSON.stringify(input.specification)}`,
@@ -186,6 +187,7 @@ export class ResearchPlanner {
           engineeringTools: {
             enabled: input.settings.engineeringTools.enabled,
             xfoilConfigured: Boolean(input.settings.engineeringTools.xfoil.enabled && input.settings.engineeringTools.xfoil.command?.trim()),
+            xfoilWasmConfigured: Boolean(input.settings.engineeringTools.enabled),
             modelingConfigured: Boolean(input.settings.engineeringTools.modeling.enabled && input.settings.engineeringTools.modeling.artifactRoot?.trim()),
             openFoamConfigured: Boolean(input.settings.engineeringTools.openFoam.enabled && input.settings.engineeringTools.openFoam.command?.trim() && input.settings.engineeringTools.openFoam.caseRoot?.trim()),
             su2Configured: Boolean(input.settings.engineeringTools.su2.enabled && input.settings.engineeringTools.su2.command?.trim() && input.settings.engineeringTools.su2.caseRoot?.trim() && input.settings.engineeringTools.su2.configFile?.trim()),
@@ -202,7 +204,7 @@ export class ResearchPlanner {
           openCodeEnabled: input.settings.openCode.enabled,
           availableTools: input.availableTools
         })}`,
-        "If EngineeringProgramTool is selected, build programRequests from runtimeToolDiagnostics.engineeringProgramRequestTemplates. Use only templates marked ready=true. For artifactPath, use only runtimeToolDiagnostics.engineeringArtifactCandidates entries marked ready=true; do not invent paths. If no engineering template is ready, do not request EngineeringProgramTool.",
+        "If EngineeringProgramTool is selected, build programRequests from runtimeToolDiagnostics.engineeringProgramRequestTemplates. Use only templates marked ready=true. For artifactPath, use only runtimeToolDiagnostics.engineeringArtifactCandidates entries marked ready=true; do not invent paths. For xfoil-wasm-polar, named airfoils such as Clark Y must use a real artifactPath or public sourceUrl coordinate file; do not run a default NACA code for a named non-NACA airfoil. If no engineering template is ready, do not request EngineeringProgramTool.",
         "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria, fetchCandidateUrls, programRequests."
       ].join("\n\n"),
       timeoutMs: 120_000
@@ -408,6 +410,7 @@ function normalizeProgramRequests(value: unknown, defaultValue: EngineeringProgr
       request.kind !== "toolchain-check" &&
       request.kind !== "mesh-inspect" &&
       request.kind !== "xfoil-polar" &&
+      request.kind !== "xfoil-wasm-polar" &&
       request.kind !== "openfoam-case-run" &&
       request.kind !== "su2-case-run" &&
       request.kind !== "cad-script-run" &&
@@ -418,6 +421,7 @@ function normalizeProgramRequests(value: unknown, defaultValue: EngineeringProgr
     if (
       request.target === "all" ||
       request.target === "xfoil" ||
+      request.target === "xfoil-wasm" ||
       request.target === "modeling" ||
       request.target === "openfoam" ||
       request.target === "su2" ||
@@ -430,6 +434,9 @@ function normalizeProgramRequests(value: unknown, defaultValue: EngineeringProgr
     }
     if (typeof request.artifactPath === "string" && request.artifactPath.trim()) {
       normalized.artifactPath = request.artifactPath.trim();
+    }
+    if (typeof request.sourceUrl === "string" && /^https?:\/\//i.test(request.sourceUrl.trim())) {
+      normalized.sourceUrl = request.sourceUrl.trim();
     }
     if (typeof request.outputFileName === "string" && request.outputFileName.trim()) {
       normalized.outputFileName = request.outputFileName.trim();
@@ -462,13 +469,18 @@ function readyProgramRequests(requests: EngineeringProgramRequest[], diagnostics
       .filter((candidate) => candidate.ready)
       .map((candidate) => candidate.relativePath)
   );
+  const readyArtifactsByFormat = new Map(
+    diagnostics.engineeringArtifactCandidates
+      .filter((candidate) => candidate.ready)
+      .map((candidate) => [candidate.relativePath, candidate.format] as const)
+  );
   const filtered: EngineeringProgramRequest[] = [];
   for (const request of requests) {
     const target = request.target ?? (targetRequiredForKind(request.kind) ? undefined : defaultTargetForKind(request.kind));
     if (!target) continue;
     const templateRequest = readyTemplates.get(`${request.kind}:${target}`);
     if (!templateRequest) continue;
-    const safeRequest = mergeWithReadyProgramTemplate(templateRequest, request, readyArtifacts);
+    const safeRequest = mergeWithReadyProgramTemplate(templateRequest, request, readyArtifacts, readyArtifactsByFormat);
     if (!safeRequest) continue;
     filtered.push(safeRequest);
     if (filtered.length >= 4) break;
@@ -479,28 +491,45 @@ function readyProgramRequests(requests: EngineeringProgramRequest[], diagnostics
 function mergeWithReadyProgramTemplate(
   templateRequest: EngineeringProgramRequest,
   request: EngineeringProgramRequest,
-  readyArtifacts: Set<string>
+  readyArtifacts: Set<string>,
+  readyArtifactsByFormat: Map<string, "obj" | "stl" | "airfoil-coordinate">
 ): EngineeringProgramRequest | undefined {
   const safeRequest: EngineeringProgramRequest = { ...templateRequest };
   if (request.outputFileName?.trim()) safeRequest.outputFileName = request.outputFileName.trim();
   if (request.reason?.trim()) safeRequest.reason = request.reason.trim();
   if (request.naca?.trim()) safeRequest.naca = request.naca.trim();
+  if (request.sourceUrl?.trim() && /^https?:\/\//i.test(request.sourceUrl.trim())) safeRequest.sourceUrl = request.sourceUrl.trim();
   if (request.reynolds !== undefined) safeRequest.reynolds = request.reynolds;
   if (request.mach !== undefined) safeRequest.mach = request.mach;
   if (request.alphaStart !== undefined) safeRequest.alphaStart = request.alphaStart;
   if (request.alphaEnd !== undefined) safeRequest.alphaEnd = request.alphaEnd;
   if (request.alphaStep !== undefined) safeRequest.alphaStep = request.alphaStep;
   if (request.artifactPath?.trim() && readyArtifacts.has(request.artifactPath.trim())) {
-    safeRequest.artifactPath = request.artifactPath.trim();
+    const artifactPath = request.artifactPath.trim();
+    const format = readyArtifactsByFormat.get(artifactPath);
+    if (artifactFormatAllowedForRequest(safeRequest.kind, format)) safeRequest.artifactPath = artifactPath;
+  }
+  if ((safeRequest.kind === "xfoil-polar" || safeRequest.kind === "xfoil-wasm-polar") && (safeRequest.artifactPath || safeRequest.sourceUrl)) {
+    delete safeRequest.naca;
   }
   if (safeRequest.kind === "mesh-inspect" && !safeRequest.artifactPath) return undefined;
+  if (safeRequest.kind === "commercial-cfd-run" && safeRequest.artifactPath && !artifactFormatAllowedForRequest(safeRequest.kind, readyArtifactsByFormat.get(safeRequest.artifactPath))) return undefined;
+  if (safeRequest.kind === "xfoil-wasm-polar" && !safeRequest.naca && !safeRequest.artifactPath && !safeRequest.sourceUrl) return undefined;
   return safeRequest;
+}
+
+function artifactFormatAllowedForRequest(kind: EngineeringProgramRequest["kind"], format: "obj" | "stl" | "airfoil-coordinate" | undefined): boolean {
+  if (!format) return false;
+  if (kind === "xfoil-polar" || kind === "xfoil-wasm-polar") return format === "airfoil-coordinate";
+  if (kind === "mesh-inspect" || kind === "commercial-cfd-run") return format === "obj" || format === "stl";
+  return true;
 }
 
 function defaultTargetForKind(kind: EngineeringProgramRequest["kind"]): EngineeringProgramRequest["target"] | undefined {
   if (kind === "toolchain-check") return "all";
   if (kind === "mesh-inspect") return "modeling";
   if (kind === "xfoil-polar") return "xfoil";
+  if (kind === "xfoil-wasm-polar") return "xfoil-wasm";
   if (kind === "openfoam-case-run") return "openfoam";
   if (kind === "su2-case-run") return "su2";
   if (kind === "cad-script-run") return "freecad";

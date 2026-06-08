@@ -1,6 +1,6 @@
-import { readdirSync, statSync, type Dirent, type Stats } from "node:fs";
+import { readFileSync, readdirSync, statSync, type Dirent, type Stats } from "node:fs";
 import { extname, isAbsolute, relative, resolve } from "node:path";
-import { describeEngineeringProgramCapabilities, hasExecutableEngineeringTool, inspectConfiguredMeshArtifact } from "./engineeringProgramTool.js";
+import { describeEngineeringProgramCapabilities, hasExecutableEngineeringTool, inspectConfiguredMeshArtifact, validateAirfoilCoordinateText } from "./engineeringProgramTool.js";
 import { nowIso } from "../shared/ids.js";
 import type {
   AppSettings,
@@ -30,7 +30,7 @@ export function buildRuntimeToolDiagnostics(settings: AppSettings): RuntimeToolD
     blockers.push({ key: "codeExecution", message: "Code execution is disabled in app settings." });
   }
   if (settings.allowCodeExecution && !hasExecutableEngineeringTool(settings)) {
-    blockers.push({ key: "engineeringPrograms", message: "No configured XFOIL, modeling artifact root, OpenFOAM case, SU2 case, FreeCAD script, OpenVSP script, or commercial CFD adapter is available." });
+    blockers.push({ key: "engineeringPrograms", message: "No configured XFOIL, bundled XFOIL-WASM, modeling artifact root, OpenFOAM case, SU2 case, FreeCAD script, OpenVSP script, or commercial CFD adapter is available." });
   }
   if (artifactScan.blockedReason) {
     blockers.push({ key: "engineeringArtifacts", message: artifactScan.blockedReason });
@@ -129,15 +129,16 @@ function collectEngineeringArtifactCandidates(settings: AppSettings): { candidat
       }
       if (!entry.isFile()) continue;
       const extension = extname(entry.name).toLowerCase();
-      if (extension !== ".obj" && extension !== ".stl") continue;
+      const format = engineeringArtifactFormatFromExtension(extension);
+      if (!format) continue;
       const stats = safeStat(childPath);
       if (!stats?.isFile()) continue;
       const relativePath = normalizeRelativePath(relative(root, childPath));
-      const validation = validateArtifactCandidate(settings, relativePath, stats.size);
+      const validation = validateArtifactCandidate(settings, relativePath, stats.size, format);
       candidates.push({
         relativePath,
         fileName: entry.name,
-        format: extension === ".obj" ? "obj" : "stl",
+        format,
         byteLength: stats.size,
         validated: validation.validated,
         ready: validation.ready,
@@ -148,10 +149,10 @@ function collectEngineeringArtifactCandidates(settings: AppSettings): { candidat
 
   const sorted = candidates.sort((left, right) => Number(right.ready) - Number(left.ready) || left.relativePath.localeCompare(right.relativePath));
   if (!sorted.length) {
-    return { candidates: sorted, blockedReason: `No OBJ/STL artifacts were found under the configured modeling artifact root: ${root}` };
+    return { candidates: sorted, blockedReason: `No OBJ/STL or airfoil coordinate artifacts were found under the configured modeling artifact root: ${root}` };
   }
-  if (!readyArtifactCandidate(sorted)) {
-    return { candidates: sorted, blockedReason: "No parser-valid OBJ/STL artifact candidate is available under the configured modeling root within maxMeshBytes." };
+  if (!readyArtifactCandidate(sorted, ["obj", "stl", "airfoil-coordinate"])) {
+    return { candidates: sorted, blockedReason: "No parser-valid OBJ/STL or airfoil coordinate artifact candidate is available under the configured modeling root within maxMeshBytes." };
   }
   return { candidates: sorted };
 }
@@ -159,19 +160,32 @@ function collectEngineeringArtifactCandidates(settings: AppSettings): { candidat
 function validateArtifactCandidate(
   settings: AppSettings,
   relativePath: string,
-  byteLength: number
+  byteLength: number,
+  format: EngineeringArtifactCandidate["format"]
 ): { ready: boolean; validated: boolean; blockedReason?: string } {
   const maxBytes = settings.engineeringTools.modeling.maxMeshBytes;
   if (byteLength > maxBytes) {
     return { ready: false, validated: false, blockedReason: `exceeds maxMeshBytes (${byteLength} > ${maxBytes})` };
   }
   try {
-    inspectConfiguredMeshArtifact(settings, relativePath);
+    if (format === "airfoil-coordinate") {
+      const artifactRoot = resolve(settings.engineeringTools.modeling.artifactRoot as string);
+      validateAirfoilCoordinateText(readFileSync(resolve(artifactRoot, relativePath), "utf8"));
+    } else {
+      inspectConfiguredMeshArtifact(settings, relativePath);
+    }
     return { ready: true, validated: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { ready: false, validated: false, blockedReason: `mesh validation failed: ${message}` };
+    return { ready: false, validated: false, blockedReason: `${format === "airfoil-coordinate" ? "airfoil coordinate" : "mesh"} validation failed: ${message}` };
   }
+}
+
+function engineeringArtifactFormatFromExtension(extension: string): EngineeringArtifactCandidate["format"] | undefined {
+  if (extension === ".obj") return "obj";
+  if (extension === ".stl") return "stl";
+  if (extension === ".dat" || extension === ".txt") return "airfoil-coordinate";
+  return undefined;
 }
 
 function safeStat(path: string): Stats | undefined {
@@ -199,9 +213,10 @@ function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
-function readyArtifactCandidate(candidates: EngineeringArtifactCandidate[]): EngineeringArtifactCandidate | undefined {
+function readyArtifactCandidate(candidates: EngineeringArtifactCandidate[], formats?: EngineeringArtifactCandidate["format"][]): EngineeringArtifactCandidate | undefined {
+  const allowedFormats = formats ? new Set(formats) : undefined;
   for (const candidate of candidates) {
-    if (candidate.ready) return candidate;
+    if (candidate.ready && (!allowedFormats || allowedFormats.has(candidate.format))) return candidate;
   }
   return undefined;
 }
@@ -237,6 +252,9 @@ function engineeringTemplateReadiness(
   if (capability.kind === "mesh-inspect" && !readyArtifactCandidate(artifactCandidates)) {
     return { ready: false, blockedReason: "No OBJ/STL artifact candidate is available under the configured modeling root within maxMeshBytes." };
   }
+  if (capability.kind === "mesh-inspect" && !readyArtifactCandidate(artifactCandidates, ["obj", "stl"])) {
+    return { ready: false, blockedReason: "No OBJ/STL artifact candidate is available under the configured modeling root within maxMeshBytes." };
+  }
   if (capability.kind === "openfoam-case-run") {
     if (!settings.engineeringTools.openFoam.runArgsTemplate.length) {
       return { ready: false, blockedReason: "OpenFOAM run args template is not configured." };
@@ -269,7 +287,7 @@ function engineeringTemplateReadiness(
   if (capability.kind === "commercial-cfd-run") {
     const runArgs = commercialRunArgsTemplate(settings, capability.target);
     if (!runArgs.length) return { ready: false, blockedReason: `${commercialTargetLabel(capability.target)} run args template is not configured.` };
-    if (runArgs.some((arg) => arg.includes("{input}")) && !readyArtifactCandidate(artifactCandidates)) {
+    if (runArgs.some((arg) => arg.includes("{input}")) && !readyArtifactCandidate(artifactCandidates, ["obj", "stl"])) {
       return { ready: false, blockedReason: `${commercialTargetLabel(capability.target)} args require {input}, but no ready OBJ/STL artifact candidate is available.` };
     }
   }
@@ -281,7 +299,8 @@ function engineeringTemplateRequest(
   capability: EngineeringProgramCapability,
   artifactCandidates: EngineeringArtifactCandidate[]
 ): EngineeringProgramRequest {
-  const artifact = readyArtifactCandidate(artifactCandidates);
+  const meshArtifact = readyArtifactCandidate(artifactCandidates, ["obj", "stl"]);
+  const airfoilArtifact = readyArtifactCandidate(artifactCandidates, ["airfoil-coordinate"]);
   if (capability.kind === "toolchain-check") {
     return {
       kind: "toolchain-check",
@@ -293,15 +312,15 @@ function engineeringTemplateRequest(
     const request: EngineeringProgramRequest = {
       kind: "mesh-inspect",
       target: "modeling",
-      reason: artifact
+      reason: meshArtifact
         ? "Inspect a discovered OBJ/STL artifact under the configured modeling artifact root."
         : "Configure at least one real OBJ/STL artifact under the modeling artifact root before requesting mesh inspection."
     };
-    if (artifact) request.artifactPath = artifact.relativePath;
+    if (meshArtifact) request.artifactPath = meshArtifact.relativePath;
     return request;
   }
   if (capability.kind === "xfoil-polar") {
-    return {
+    const request: EngineeringProgramRequest = {
       kind: "xfoil-polar",
       target: "xfoil",
       naca: "2412",
@@ -312,6 +331,26 @@ function engineeringTemplateRequest(
       alphaStep: 2,
       reason: "Generate an aerodynamic polar with the configured XFOIL executable."
     };
+    if (airfoilArtifact) {
+      delete request.naca;
+      request.artifactPath = airfoilArtifact.relativePath;
+      request.reason = "Generate an aerodynamic polar from a discovered airfoil coordinate file with the configured XFOIL executable.";
+    }
+    return request;
+  }
+  if (capability.kind === "xfoil-wasm-polar") {
+    const request: EngineeringProgramRequest = {
+      kind: "xfoil-wasm-polar",
+      target: "xfoil-wasm",
+      reynolds: 1_000_000,
+      mach: 0,
+      alphaStart: -4,
+      alphaEnd: 12,
+      alphaStep: 2,
+      reason: "Generate a real XFOIL polar with bundled WebXFOIL. For named airfoils such as Clark Y, provide artifactPath or sourceUrl instead of a default NACA code."
+    };
+    if (airfoilArtifact) request.artifactPath = airfoilArtifact.relativePath;
+    return request;
   }
   if (capability.kind === "openfoam-case-run") {
     return {
@@ -351,8 +390,8 @@ function engineeringTemplateRequest(
     outputFileName: `${capability.target}-result.txt`,
     reason: `Run the configured ${capability.target} adapter against a real prepared input artifact.`
   };
-  if (artifact && commercialRunArgsTemplate(settings, capability.target).some((arg) => arg.includes("{input}"))) {
-    request.artifactPath = artifact.relativePath;
+  if (meshArtifact && commercialRunArgsTemplate(settings, capability.target).some((arg) => arg.includes("{input}"))) {
+    request.artifactPath = meshArtifact.relativePath;
   }
   return request;
 }
@@ -361,6 +400,7 @@ function engineeringTemplateLabel(capability: EngineeringProgramCapability): str
   if (capability.kind === "toolchain-check") return "Preflight configured toolchain";
   if (capability.kind === "mesh-inspect") return "Inspect mesh artifact";
   if (capability.kind === "xfoil-polar") return "Generate XFOIL polar";
+  if (capability.kind === "xfoil-wasm-polar") return "Generate XFOIL-WASM polar";
   if (capability.kind === "openfoam-case-run") return "Run OpenFOAM case";
   if (capability.kind === "su2-case-run") return "Run SU2 case";
   if (capability.kind === "cad-script-run") return "Run FreeCAD script";

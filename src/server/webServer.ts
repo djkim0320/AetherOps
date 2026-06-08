@@ -241,7 +241,18 @@ function optionalString(value: unknown): string | undefined {
 }
 
 function optionalEngineeringProgramTarget(value: unknown): EngineeringProgramTarget {
-  if (value === "xfoil" || value === "modeling" || value === "openfoam" || value === "su2" || value === "freecad" || value === "openvsp" || value === "flightstream" || value === "starccm" || value === "all") {
+  if (
+    value === "xfoil" ||
+    value === "xfoil-wasm" ||
+    value === "modeling" ||
+    value === "openfoam" ||
+    value === "su2" ||
+    value === "freecad" ||
+    value === "openvsp" ||
+    value === "flightstream" ||
+    value === "starccm" ||
+    value === "all"
+  ) {
     return value;
   }
   return "all";

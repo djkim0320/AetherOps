@@ -60,6 +60,40 @@ interface XfoilPolarSummary {
   stderrExcerpt: string;
 }
 
+interface XfoilWasmPolarSummary {
+  airfoil: string;
+  runtime: "webxfoil-wasm";
+  runtimeVersion: string;
+  runtimeLicense: "GPL-2.0-or-later";
+  sourceKind: "artifact" | "source" | "direct-url" | "naca";
+  sourceLabel: string;
+  sourceUrl?: string;
+  sourceArtifactPath?: string;
+  coordinateFormat?: string;
+  reynolds: number;
+  mach: number;
+  alphaStart: number;
+  alphaEnd: number;
+  alphaStep: number;
+  rowCount: number;
+  rows: XfoilPolarRow[];
+  stdoutExcerpt: string;
+  stderrExcerpt: string;
+  convergence: {
+    hasNaN: boolean;
+    hasFortranError: boolean;
+    hasConvergenceFail: boolean;
+  };
+}
+
+interface AirfoilCoordinateInput {
+  text?: string;
+  label: string;
+  sourceKind: XfoilWasmPolarSummary["sourceKind"];
+  sourceUrl?: string;
+  sourceArtifactPath?: string;
+}
+
 interface CommercialAdapterConfig {
   target: Extract<EngineeringProgramTarget, "flightstream" | "starccm">;
   label: string;
@@ -231,6 +265,13 @@ export class EngineeringProgramTool implements ResearchTool {
           evidence.push(xfoilPolarEvidence(input, summary, nowIso()));
           continue;
         }
+        if (request.kind === "xfoil-wasm-polar") {
+          const summary = await runXfoilWasmPolar(request, settings, input);
+          outputs.push({ kind: request.kind, target: "xfoil-wasm", summary: { ...summary, rows: summary.rows.slice(0, 12) } });
+          artifacts.push(xfoilWasmPolarArtifact(input, summary, nowIso()));
+          evidence.push(xfoilWasmPolarEvidence(input, summary, nowIso()));
+          continue;
+        }
         if (request.kind === "openfoam-case-run") {
           const summary = await runOpenFoamCase(request, settings);
           outputs.push({ kind: request.kind, target: "openfoam", summary });
@@ -291,6 +332,7 @@ export function hasExecutableEngineeringTool(settings: AppSettings): boolean {
   if (!settings.engineeringTools.enabled) return false;
   return (
     hasConfiguredXfoil(settings) ||
+    hasConfiguredXfoilWasm(settings) ||
     hasConfiguredModelingRoot(settings) ||
     hasConfiguredOpenFoam(settings) ||
     hasConfiguredSu2(settings) ||
@@ -304,6 +346,7 @@ export function hasExecutableEngineeringTool(settings: AppSettings): boolean {
 export function describeEngineeringProgramCapabilities(settings: AppSettings): EngineeringProgramCapability[] {
   const toolsEnabled = settings.engineeringTools.enabled;
   const xfoilReady = toolsEnabled && hasConfiguredXfoil(settings);
+  const xfoilWasmReady = toolsEnabled && hasConfiguredXfoilWasm(settings);
   const modelingReady = toolsEnabled && hasConfiguredModelingRoot(settings);
   const openFoamReady = toolsEnabled && hasConfiguredOpenFoam(settings);
   const su2Ready = toolsEnabled && hasConfiguredSu2(settings);
@@ -315,7 +358,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
     {
       kind: "toolchain-check",
       target: "all",
-      ready: toolsEnabled && (xfoilReady || modelingReady || openFoamReady || su2Ready || freeCadReady || openVspReady || flightStreamReady || starCcmReady),
+      ready: toolsEnabled && (xfoilReady || xfoilWasmReady || modelingReady || openFoamReady || su2Ready || freeCadReady || openVspReady || flightStreamReady || starCcmReady),
       requiredFields: ["kind"],
       optionalFields: ["target", "reason"],
       description: "Probe configured engineering programs and report unavailable targets without inventing substitutes.",
@@ -338,6 +381,15 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       optionalFields: ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "reason"],
       description: "Run the configured XFOIL executable to generate a polar table.",
       blockedReason: xfoilReady ? undefined : "XFOIL command is not configured or not available on PATH."
+    },
+    {
+      kind: "xfoil-wasm-polar",
+      target: "xfoil-wasm",
+      ready: xfoilWasmReady,
+      requiredFields: ["kind", "naca or artifactPath or sourceUrl"],
+      optionalFields: ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "reason"],
+      description: "Run the bundled WebXFOIL WebAssembly solver to generate a real XFOIL polar without requiring a local xfoil executable.",
+      blockedReason: xfoilWasmReady ? undefined : "XFOIL WebAssembly solver is unavailable because engineering program tools are disabled."
     },
     {
       kind: "openfoam-case-run",
@@ -449,6 +501,7 @@ function normalizeProgramRequests(value: unknown): EngineeringProgramRequest[] {
       request.kind !== "toolchain-check" &&
       request.kind !== "mesh-inspect" &&
       request.kind !== "xfoil-polar" &&
+      request.kind !== "xfoil-wasm-polar" &&
       request.kind !== "openfoam-case-run" &&
       request.kind !== "su2-case-run" &&
       request.kind !== "cad-script-run" &&
@@ -459,6 +512,7 @@ function normalizeProgramRequests(value: unknown): EngineeringProgramRequest[] {
       kind: request.kind,
       target: normalizeTarget(request.target),
       artifactPath: typeof request.artifactPath === "string" ? request.artifactPath : undefined,
+      sourceUrl: typeof request.sourceUrl === "string" ? request.sourceUrl : undefined,
       outputFileName: typeof request.outputFileName === "string" ? request.outputFileName : undefined,
       naca: typeof request.naca === "string" ? request.naca : undefined,
       reynolds: finiteNumber(request.reynolds),
@@ -473,11 +527,12 @@ function normalizeProgramRequests(value: unknown): EngineeringProgramRequest[] {
 }
 
 function supportedEngineeringProgramKinds(): EngineeringProgramRequest["kind"][] {
-  return ["toolchain-check", "mesh-inspect", "xfoil-polar", "openfoam-case-run", "su2-case-run", "cad-script-run", "vsp-script-run", "commercial-cfd-run"];
+  return ["toolchain-check", "mesh-inspect", "xfoil-polar", "xfoil-wasm-polar", "openfoam-case-run", "su2-case-run", "cad-script-run", "vsp-script-run", "commercial-cfd-run"];
 }
 
 async function runToolchainCheck(target: EngineeringProgramTarget, settings: AppSettings): Promise<unknown> {
   const wantsXfoil = target === "all" || target === "xfoil";
+  const wantsXfoilWasm = target === "all" || target === "xfoil-wasm";
   const wantsModeling = target === "all" || target === "modeling";
   const wantsOpenFoam = target === "all" || target === "openfoam";
   const wantsSu2 = target === "all" || target === "su2";
@@ -496,6 +551,21 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
     } else {
       unavailable.push({ target: "xfoil", reason: "XFOIL command is not configured." });
       if (target === "xfoil") throw new Error("XFOIL command is not configured.");
+    }
+  }
+
+  if (wantsXfoilWasm) {
+    if (hasConfiguredXfoilWasm(settings)) {
+      checked.push("xfoil-wasm");
+      output.xfoilWasm = {
+        runtime: "webxfoil-wasm",
+        version: "0.1.1",
+        license: "GPL-2.0-or-later",
+        bundled: true
+      };
+    } else {
+      unavailable.push({ target: "xfoil-wasm", reason: "XFOIL WebAssembly solver is unavailable because engineering tools are disabled." });
+      if (target === "xfoil-wasm") throw new Error("XFOIL WebAssembly solver is unavailable.");
     }
   }
 
@@ -686,6 +756,93 @@ async function runXfoilPolar(request: EngineeringProgramRequest, settings: AppSe
     };
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function runXfoilWasmPolar(request: EngineeringProgramRequest, settings: AppSettings, input: OpenCodeRunInput): Promise<XfoilWasmPolarSummary> {
+  if (!hasConfiguredXfoilWasm(settings)) {
+    throw new Error("XFOIL WebAssembly polar execution requires engineering program tools to be enabled.");
+  }
+  const coordinateInput = await resolveWasmAirfoilInput(request, settings, input);
+  const reynolds = boundedPositiveNumber(request.reynolds, 1_000, 100_000_000, 1_000_000, "reynolds");
+  const mach = boundedPositiveNumber(request.mach, 0, 0.8, 0, "mach");
+  const alphaStart = boundedNumber(request.alphaStart, -30, 30, -4, "alphaStart");
+  const alphaEnd = boundedNumber(request.alphaEnd, -30, 30, 12, "alphaEnd");
+  const alphaStep = boundedPositiveNumber(request.alphaStep, 0.1, 10, 2, "alphaStep");
+  if (alphaEnd < alphaStart) {
+    throw new Error("XFOIL WebAssembly polar request requires alphaEnd >= alphaStart.");
+  }
+
+  const { WebXFOIL } = await import("webxfoil-wasm");
+  const xfoil = await WebXFOIL.load();
+  try {
+    const session = WebXFOIL.input();
+    let airfoil = coordinateInput.label;
+    let coordinateFormat: string | undefined;
+    if (coordinateInput.text) {
+      const loaded = session.loadAirfoilText(coordinateInput.text, {
+        path: `${safeOutputFileName(coordinateInput.label, "airfoil")}.dat`,
+        name: coordinateInput.label
+      });
+      airfoil = loaded.name || coordinateInput.label;
+      coordinateFormat = loaded.format;
+    } else {
+      const naca = request.naca?.trim();
+      if (!naca || !/^\d{4,5}$/.test(naca)) {
+        throw new Error("XFOIL WebAssembly NACA request must be a 4 or 5 digit series code.");
+      }
+      session.naca(naca);
+      airfoil = `NACA ${naca}`;
+    }
+
+    const polarPath = "xfoil-wasm-polar.txt";
+    session
+      .add("PANE")
+      .oper()
+      .add("ITER 160")
+      .add(`VISC ${reynolds}`)
+      .add(`MACH ${mach}`)
+      .add("PACC")
+      .add(polarPath)
+      .blank()
+      .add(`ASEQ ${alphaStart} ${alphaEnd} ${alphaStep}`)
+      .add("PACC")
+      .blank()
+      .quit();
+
+    const result = xfoil.run(session.toString(), { workDir: "/work", files: session.files, scalarKeys: ["CL", "CD", "Cm", "a"] });
+    const polarText = String(xfoil.readFile(`/work/${polarPath}`, "utf8"));
+    const rows = parseXfoilPolarRows(polarText);
+    if (!rows.length) {
+      throw new Error(`XFOIL WebAssembly produced no polar rows. stdout=${excerpt(result.raw.stdout)} stderr=${excerpt(result.raw.stderr)}`);
+    }
+    return {
+      airfoil,
+      runtime: "webxfoil-wasm",
+      runtimeVersion: "0.1.1",
+      runtimeLicense: "GPL-2.0-or-later",
+      sourceKind: coordinateInput.sourceKind,
+      sourceLabel: coordinateInput.label,
+      sourceUrl: coordinateInput.sourceUrl,
+      sourceArtifactPath: coordinateInput.sourceArtifactPath,
+      coordinateFormat,
+      reynolds,
+      mach,
+      alphaStart,
+      alphaEnd,
+      alphaStep,
+      rowCount: rows.length,
+      rows,
+      stdoutExcerpt: excerpt(result.raw.stdout),
+      stderrExcerpt: excerpt(result.raw.stderr),
+      convergence: {
+        hasNaN: Boolean(result.output.hasNaN),
+        hasFortranError: Boolean(result.output.hasFortranError),
+        hasConvergenceFail: Boolean(result.output.hasConvergenceFail)
+      }
+    };
+  } finally {
+    xfoil.destroy();
   }
 }
 
@@ -1109,6 +1266,185 @@ function xfoilAirfoilInput(request: EngineeringProgramRequest, settings: AppSett
   return { command: `LOAD ${targetPath}\n${basename(targetPath, extname(targetPath))}\nPANE`, label: basename(targetPath) };
 }
 
+async function resolveWasmAirfoilInput(request: EngineeringProgramRequest, settings: AppSettings, input: OpenCodeRunInput): Promise<AirfoilCoordinateInput> {
+  if (request.artifactPath?.trim()) {
+    if (!hasConfiguredModelingRoot(settings)) {
+      throw new Error("XFOIL WebAssembly coordinate-file execution requires a configured modeling artifact root.");
+    }
+    const artifactRoot = resolve(settings.engineeringTools.modeling.artifactRoot as string);
+    const targetPath = resolveInsideRoot(artifactRoot, request.artifactPath.trim());
+    if (!existsSync(targetPath) || !statSync(targetPath).isFile()) {
+      throw new Error(`XFOIL WebAssembly airfoil coordinate file does not exist under configured root: ${request.artifactPath}`);
+    }
+    const stats = statSync(targetPath);
+    if (stats.size > settings.engineeringTools.modeling.maxMeshBytes) {
+      throw new Error(`XFOIL WebAssembly airfoil coordinate file exceeds maxMeshBytes (${stats.size} > ${settings.engineeringTools.modeling.maxMeshBytes}).`);
+    }
+    const text = readFileSync(targetPath, "utf8");
+    validateAirfoilCoordinateText(text);
+    return {
+      text,
+      label: basename(targetPath, extname(targetPath)),
+      sourceKind: "artifact",
+      sourceArtifactPath: request.artifactPath.trim()
+    };
+  }
+
+  const sourceUrl = request.sourceUrl?.trim();
+  if (sourceUrl) {
+    const fetchedSource = findFetchedAirfoilSource(input, sourceUrl);
+    if (fetchedSource) return fetchedSource;
+    if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
+      throw new Error("XFOIL WebAssembly sourceUrl execution requires WebFetchTool-provided rawText or external search permission for direct coordinate fetch.");
+    }
+    const text = await fetchAirfoilCoordinateText(sourceUrl);
+    validateAirfoilCoordinateText(text);
+    return {
+      text,
+      label: airfoilLabelFromUrl(sourceUrl),
+      sourceKind: "direct-url",
+      sourceUrl
+    };
+  }
+
+  const discoveredSource = findFetchedAirfoilSource(input);
+  if (discoveredSource) return discoveredSource;
+
+  const naca = request.naca?.trim();
+  if (naca) {
+    if (!/^\d{4,5}$/.test(naca)) {
+      throw new Error("XFOIL WebAssembly NACA request must be a 4 or 5 digit series code.");
+    }
+    return {
+      label: `NACA ${naca}`,
+      sourceKind: "naca"
+    };
+  }
+
+  throw new Error("XFOIL WebAssembly polar execution requires naca, artifactPath, sourceUrl, or a fetched airfoil coordinate source.");
+}
+
+function findFetchedAirfoilSource(input: OpenCodeRunInput, sourceUrl?: string): AirfoilCoordinateInput | undefined {
+  const requestedUrl = sourceUrl ? normalizeUrlForCompare(sourceUrl) : undefined;
+  for (const source of input.sources ?? []) {
+    const url = typeof source.url === "string" ? source.url : "";
+    if (requestedUrl && normalizeUrlForCompare(url) !== requestedUrl) continue;
+    const rawText = source.metadata && typeof source.metadata.rawText === "string" ? source.metadata.rawText : "";
+    if (!rawText) continue;
+    try {
+      validateAirfoilCoordinateText(rawText);
+      return {
+        text: rawText,
+        label: source.title || airfoilLabelFromUrl(url),
+        sourceKind: "source",
+        sourceUrl: url
+      };
+    } catch {
+      if (requestedUrl) throw new Error(`Fetched source does not contain a valid airfoil coordinate file: ${sourceUrl}`);
+    }
+  }
+  return undefined;
+}
+
+export function validateAirfoilCoordinateText(text: string): { pointCount: number; xMin: number; xMax: number; yMin: number; yMax: number } {
+  const points: Array<{ x: number; y: number }> = [];
+  for (const line of text.split(/\r?\n/)) {
+    const parts = line.trim().split(/[\s,]+/);
+    if (parts.length < 2) continue;
+    const x = Number(parts[0]);
+    const y = Number(parts[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (Math.abs(x) > 2 || Math.abs(y) > 2) continue;
+    points.push({ x, y });
+  }
+  if (points.length < 10) {
+    throw new Error(`Airfoil coordinate file must contain at least 10 finite coordinate pairs; found ${points.length}.`);
+  }
+  const xValues = points.map((point) => point.x);
+  const yValues = points.map((point) => point.y);
+  const xMin = Math.min(...xValues);
+  const xMax = Math.max(...xValues);
+  const yMin = Math.min(...yValues);
+  const yMax = Math.max(...yValues);
+  if (xMax - xMin < 0.01) {
+    throw new Error("Airfoil coordinate file does not span a usable chord length.");
+  }
+  if (yMax - yMin <= 0) {
+    throw new Error("Airfoil coordinate file does not contain a usable thickness/camber range.");
+  }
+  return { pointCount: points.length, xMin, xMax, yMin, yMax };
+}
+
+async function fetchAirfoilCoordinateText(sourceUrl: string): Promise<string> {
+  assertPublicCoordinateUrl(sourceUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(sourceUrl, { headers: { accept: "text/plain,text/*,*/*" }, signal: controller.signal });
+    assertPublicCoordinateUrl(response.url || sourceUrl);
+    if (!response.ok) {
+      throw new Error(`airfoil coordinate fetch failed for ${sourceUrl}: ${response.status} ${response.statusText}`);
+    }
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > 2 * 1024 * 1024) {
+      throw new Error(`airfoil coordinate content-length exceeds 2MB for ${sourceUrl}`);
+    }
+    const text = await response.text();
+    if (text.length > 2 * 1024 * 1024) {
+      throw new Error(`airfoil coordinate response exceeds 2MB for ${sourceUrl}`);
+    }
+    return text;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function assertPublicCoordinateUrl(rawUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid airfoil coordinate URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`Unsupported airfoil coordinate URL protocol: ${parsed.protocol}`);
+  }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local")) {
+    throw new Error(`blocked internal airfoil coordinate hostname: ${parsed.hostname}`);
+  }
+  if (isPrivateIpv4(hostname) || hostname === "::1" || hostname.startsWith("fc") || hostname.startsWith("fd") || hostname.startsWith("fe80")) {
+    throw new Error(`blocked internal airfoil coordinate IP address: ${parsed.hostname}`);
+  }
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const parts = hostname.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || !parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) return false;
+  const [a, b] = parts as [number, number, number, number];
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a === 0;
+}
+
+function normalizeUrlForCompare(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return rawUrl.trim();
+  }
+}
+
+function airfoilLabelFromUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    const file = basename(parsed.pathname) || parsed.hostname;
+    return file.replace(/\.[A-Za-z0-9]+$/, "") || "airfoil";
+  } catch {
+    return "airfoil";
+  }
+}
+
 function parseXfoilPolarRows(text: string): XfoilPolarRow[] {
   const rows: XfoilPolarRow[] = [];
   for (const line of text.split(/\r?\n/)) {
@@ -1122,11 +1458,15 @@ function parseXfoilPolarRows(text: string): XfoilPolarRow[] {
       cd: values[2] as number,
       cdp: Number.isFinite(values[3]) ? values[3] : undefined,
       cm: Number.isFinite(values[4]) ? values[4] : undefined,
-      topXtr: Number.isFinite(values[5]) ? values[5] : undefined,
-      botXtr: Number.isFinite(values[6]) ? values[6] : undefined
+      topXtr: unitIntervalNumber(values[5]),
+      botXtr: unitIntervalNumber(values[6])
     });
   }
   return rows;
+}
+
+function unitIntervalNumber(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
 }
 
 function resolveInsideRoot(root: string, artifactPath: string): string {
@@ -1388,6 +1728,68 @@ function xfoilPolarEvidence(input: OpenCodeRunInput, summary: XfoilPolarSummary,
       generatedBy: "EngineeringProgramTool",
       program: "xfoil",
       airfoil: summary.airfoil,
+      reynolds: summary.reynolds,
+      mach: summary.mach,
+      rowCount: summary.rowCount,
+      canSupportHypothesis: true,
+      sourceQualityTier: "tool_observation"
+    },
+    createdAt
+  };
+}
+
+function xfoilWasmPolarArtifact(input: OpenCodeRunInput, summary: XfoilWasmPolarSummary, createdAt: string): ResearchArtifact {
+  const safeName = summary.airfoil.replace(/[^A-Za-z0-9._-]+/g, "-");
+  return {
+    id: createId("artifact"),
+    projectId: input.project.id,
+    category: "experiment_log",
+    title: `XFOIL-WASM polar: ${summary.airfoil}`,
+    relativePath: `artifacts/iteration-${input.iteration}/engineering-program/xfoil-wasm-polar-${safeName}.json`,
+    mimeType: "application/json",
+    summary: `WebXFOIL polar for ${summary.airfoil}: ${summary.rowCount} alpha rows at Re=${summary.reynolds}, Mach=${summary.mach}.`,
+    content: `${JSON.stringify(summary, null, 2)}\n`,
+    metadata: {
+      traceabilityKind: "tool_observation",
+      generatedBy: "EngineeringProgramTool",
+      program: "xfoil-wasm",
+      runtimeLicense: summary.runtimeLicense,
+      canSupportHypothesis: true
+    },
+    createdAt
+  };
+}
+
+function xfoilWasmPolarEvidence(input: OpenCodeRunInput, summary: XfoilWasmPolarSummary, createdAt: string): EvidenceItem {
+  const previewRows = summary.rows.slice(0, 6).map((row) => `alpha=${row.alpha}, CL=${row.cl}, CD=${row.cd}`);
+  return {
+    id: createId("evidence"),
+    projectId: input.project.id,
+    category: "experiment_log",
+    title: `XFOIL-WASM polar observation: ${summary.airfoil}`,
+    summary: `Computed ${summary.rowCount} WebXFOIL polar rows for ${summary.airfoil}. ${previewRows.join("; ")}`,
+    quote: previewRows.join("\n"),
+    keywords: ["xfoil", "wasm", "polar", "cfd", "aerodynamics", "tool_observation"],
+    linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
+    reliabilityScore: 0.76,
+    relevanceScore: 0.8,
+    evidenceStrength: "medium",
+    limitations: [
+      "WebXFOIL runs the open-source XFOIL solver compiled to WebAssembly; results still depend on XFOIL convergence, Reynolds/Mach assumptions, and input airfoil geometry.",
+      "This is a 2D airfoil solver, not an OpenFOAM/SU2 Navier-Stokes CFD field solve.",
+      `Runtime license recorded by AetherOps: ${summary.runtimeLicense}.`
+    ],
+    metadata: {
+      traceabilityKind: "tool_observation",
+      generatedBy: "EngineeringProgramTool",
+      program: "xfoil-wasm",
+      runtime: summary.runtime,
+      runtimeVersion: summary.runtimeVersion,
+      runtimeLicense: summary.runtimeLicense,
+      airfoil: summary.airfoil,
+      sourceKind: summary.sourceKind,
+      sourceUrl: summary.sourceUrl,
+      sourceArtifactPath: summary.sourceArtifactPath,
       reynolds: summary.reynolds,
       mach: summary.mach,
       rowCount: summary.rowCount,
@@ -1662,6 +2064,10 @@ function hasConfiguredXfoil(settings: AppSettings): boolean {
   return settings.engineeringTools.xfoil.enabled && hasAvailableCommand(settings.engineeringTools.xfoil.command);
 }
 
+function hasConfiguredXfoilWasm(settings: AppSettings): boolean {
+  return settings.engineeringTools.enabled;
+}
+
 function hasConfiguredModelingRoot(settings: AppSettings): boolean {
   if (!settings.engineeringTools.modeling.enabled || !settings.engineeringTools.modeling.artifactRoot?.trim()) return false;
   try {
@@ -1801,7 +2207,18 @@ function commercialAdapterConfig(settings: AppSettings, target: Extract<Engineer
 }
 
 function normalizeTarget(value: unknown): EngineeringProgramTarget | undefined {
-  if (value === "all" || value === "xfoil" || value === "modeling" || value === "openfoam" || value === "su2" || value === "freecad" || value === "openvsp" || value === "flightstream" || value === "starccm") return value;
+  if (
+    value === "all" ||
+    value === "xfoil" ||
+    value === "xfoil-wasm" ||
+    value === "modeling" ||
+    value === "openfoam" ||
+    value === "su2" ||
+    value === "freecad" ||
+    value === "openvsp" ||
+    value === "flightstream" ||
+    value === "starccm"
+  ) return value;
   return undefined;
 }
 

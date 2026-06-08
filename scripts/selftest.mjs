@@ -258,8 +258,14 @@ function assertEngineeringTemplateContract(toolDiagnostics = {}) {
   const templates = Array.isArray(toolDiagnostics.engineeringProgramRequestTemplates) ? toolDiagnostics.engineeringProgramRequestTemplates : [];
   const openVspTemplate = templates.find((template) => template.id === "vsp-script-run:openvsp");
   const su2Template = templates.find((template) => template.id === "su2-case-run:su2");
-  if (templates.length !== 9) {
-    results.findings.high.push(`Engineering program template contract changed: expected 9 templates, found ${templates.length}.`);
+  const xfoilWasmTemplate = templates.find((template) => template.id === "xfoil-wasm-polar:xfoil-wasm");
+  if (templates.length !== 10) {
+    results.findings.high.push(`Engineering program template contract changed: expected 10 templates, found ${templates.length}.`);
+  }
+  if (!xfoilWasmTemplate) {
+    results.findings.high.push("Engineering program template contract is missing xfoil-wasm-polar:xfoil-wasm.");
+  } else if (xfoilWasmTemplate.request?.kind !== "xfoil-wasm-polar" || xfoilWasmTemplate.request?.target !== "xfoil-wasm") {
+    results.findings.high.push("XFOIL-WASM request template does not expose kind=xfoil-wasm-polar and target=xfoil-wasm.");
   }
   if (!su2Template) {
     results.findings.high.push("Engineering program template contract is missing su2-case-run:su2.");

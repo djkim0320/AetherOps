@@ -2135,7 +2135,7 @@ function SettingsTab({
                   </div>
                 ))
               ) : (
-                <p className="artifactCandidateEmpty">No OBJ/STL files are visible under the configured modeling artifact root.</p>
+                <p className="artifactCandidateEmpty">No OBJ/STL or airfoil coordinate files are visible under the configured modeling artifact root.</p>
               )}
               {engineeringArtifactCandidates.length > 8 ? (
                 <p className="artifactCandidateEmpty">+{engineeringArtifactCandidates.length - 8} more candidate files are hidden from this view.</p>
@@ -3239,6 +3239,7 @@ function buildResearchToolReadiness(
   const codeAllowed = Boolean(settings?.allowCodeExecution && snapshot.project.autonomyPolicy.allowCodeExecution);
   const metadataReady = Boolean(externalAllowed && (diagnostics ? diagnostics.researchMetadata.ready : settings?.researchMetadata.enabled));
   const xfoilCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "xfoil-polar");
+  const xfoilWasmCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "xfoil-wasm-polar");
   const modelingCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "mesh-inspect");
   const openFoamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "openfoam-case-run");
   const su2Capability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "su2-case-run");
@@ -3247,6 +3248,7 @@ function buildResearchToolReadiness(
   const flightStreamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "flightstream");
   const starCcmCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "starccm");
   const xfoilConfigured = diagnostics ? Boolean(codeAllowed && xfoilCapability?.ready) : Boolean(settings?.engineeringTools.xfoil.enabled && settings.engineeringTools.xfoil.command?.trim());
+  const xfoilWasmConfigured = diagnostics ? Boolean(codeAllowed && xfoilWasmCapability?.ready) : Boolean(codeAllowed && settings?.engineeringTools.enabled);
   const modelingConfigured = diagnostics
     ? Boolean(codeAllowed && modelingCapability?.ready)
     : Boolean(settings?.engineeringTools.modeling.enabled && settings.engineeringTools.modeling.artifactRoot?.trim());
@@ -3264,7 +3266,7 @@ function buildResearchToolReadiness(
     : Boolean(settings?.engineeringTools.openVsp.enabled && settings.engineeringTools.openVsp.command?.trim() && settings.engineeringTools.openVsp.scriptPath?.trim());
   const flightStreamConfigured = Boolean(codeAllowed && flightStreamCapability?.ready);
   const starCcmConfigured = Boolean(codeAllowed && starCcmCapability?.ready);
-  const engineeringReady = Boolean(codeAllowed && (xfoilConfigured || modelingConfigured || openFoamConfigured || su2Configured || freeCadConfigured || openVspConfigured));
+  const engineeringReady = Boolean(codeAllowed && (xfoilConfigured || xfoilWasmConfigured || modelingConfigured || openFoamConfigured || su2Configured || freeCadConfigured || openVspConfigured));
   const commercialConfigured = diagnostics
     ? Boolean(flightStreamConfigured || starCcmConfigured)
     : Boolean(
@@ -3300,8 +3302,8 @@ function buildResearchToolReadiness(
       label: "Headless program tools",
       badge: engineeringReady ? "실행 가능" : "설정 필요",
       detail: engineeringReady
-        ? `XFOIL ${xfoilConfigured ? "on" : "off"} / mesh ${modelingConfigured ? "on" : "off"} / OpenFOAM ${openFoamConfigured ? "on" : "off"} / SU2 ${su2Configured ? "on" : "off"} / FreeCAD ${freeCadConfigured ? "on" : "off"} / OpenVSP ${openVspConfigured ? "on" : "off"}`
-        : "코드 실행 허용과 XFOIL, parser-valid mesh, OpenFOAM/SU2 case, FreeCAD script, 또는 OpenVSP script 설정 필요",
+        ? `XFOIL ${xfoilConfigured ? "on" : "off"} / XFOIL-WASM ${xfoilWasmConfigured ? "on" : "off"} / mesh ${modelingConfigured ? "on" : "off"} / OpenFOAM ${openFoamConfigured ? "on" : "off"} / SU2 ${su2Configured ? "on" : "off"} / FreeCAD ${freeCadConfigured ? "on" : "off"} / OpenVSP ${openVspConfigured ? "on" : "off"}`
+        : "코드 실행 허용과 XFOIL, XFOIL-WASM, parser-valid mesh, OpenFOAM/SU2 case, FreeCAD script, 또는 OpenVSP script 설정 필요",
       status: engineeringReady ? "ready" : "blocked",
       icon: Wrench
     },
@@ -3331,6 +3333,7 @@ function buildRuntimeResearchToolReadiness(
   const flightStreamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "flightstream");
   const starCcmCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "starccm");
   const xfoilTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-polar:xfoil");
+  const xfoilWasmTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-wasm-polar:xfoil-wasm");
   const modelingTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "mesh-inspect:modeling");
   const openFoamTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "openfoam-case-run:openfoam");
   const su2Template = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "su2-case-run:su2");
@@ -3339,6 +3342,7 @@ function buildRuntimeResearchToolReadiness(
   const flightStreamTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "commercial-cfd-run:flightstream");
   const starCcmTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "commercial-cfd-run:starccm");
   const xfoilReady = diagnostics ? Boolean(codeAllowed && xfoilTemplate?.ready) : Boolean(codeAllowed && settings?.engineeringTools.xfoil.enabled && settings.engineeringTools.xfoil.command?.trim());
+  const xfoilWasmReady = diagnostics ? Boolean(codeAllowed && xfoilWasmTemplate?.ready) : Boolean(codeAllowed && settings?.engineeringTools.enabled);
   const modelingReady = diagnostics
     ? Boolean(codeAllowed && modelingTemplate?.ready)
     : Boolean(codeAllowed && settings?.engineeringTools.modeling.enabled && settings.engineeringTools.modeling.artifactRoot?.trim());
@@ -3360,7 +3364,7 @@ function buildRuntimeResearchToolReadiness(
   const starCcmReady = diagnostics
     ? Boolean(codeAllowed && starCcmTemplate?.ready)
     : Boolean(codeAllowed && settings?.engineeringTools.commercialCfd.starCcmConfigured && settings.engineeringTools.commercialCfd.starCcmCommand?.trim());
-  const engineeringReady = xfoilReady || modelingReady || openFoamReady || su2Ready || freeCadReady || openVspReady;
+  const engineeringReady = xfoilReady || xfoilWasmReady || modelingReady || openFoamReady || su2Ready || freeCadReady || openVspReady;
   const commercialReady = flightStreamReady || starCcmReady;
   const engineeringArtifactBlockedReason = diagnostics?.blockers.find((blocker) => blocker.key === "engineeringArtifacts")?.message;
   const metadataBlockedReason = projectExternalAllowed
@@ -3394,7 +3398,7 @@ function buildRuntimeResearchToolReadiness(
       label: "Headless program tools",
       badge: engineeringReady ? "Ready" : "Blocked",
       detail: engineeringReady
-        ? `XFOIL ${xfoilReady ? "ready" : "blocked"} / mesh ${modelingReady ? "ready" : "blocked"} / OpenFOAM ${openFoamReady ? "ready" : "blocked"} / SU2 ${su2Ready ? "ready" : "blocked"} / FreeCAD ${freeCadReady ? "ready" : "blocked"} / OpenVSP ${openVspReady ? "ready" : "blocked"}`
+        ? `XFOIL ${xfoilReady ? "ready" : "blocked"} / XFOIL-WASM ${xfoilWasmReady ? "ready" : "blocked"} / mesh ${modelingReady ? "ready" : "blocked"} / OpenFOAM ${openFoamReady ? "ready" : "blocked"} / SU2 ${su2Ready ? "ready" : "blocked"} / FreeCAD ${freeCadReady ? "ready" : "blocked"} / OpenVSP ${openVspReady ? "ready" : "blocked"}`
         : engineeringBlockedReason,
       status: engineeringReady ? "ready" : "blocked",
       icon: Wrench

@@ -218,17 +218,29 @@ export type EngineeringProgramRequestKind =
   | "toolchain-check"
   | "mesh-inspect"
   | "xfoil-polar"
+  | "xfoil-wasm-polar"
   | "openfoam-case-run"
   | "su2-case-run"
   | "cad-script-run"
   | "vsp-script-run"
   | "commercial-cfd-run";
-export type EngineeringProgramTarget = "all" | "xfoil" | "modeling" | "openfoam" | "su2" | "freecad" | "openvsp" | "flightstream" | "starccm";
+export type EngineeringProgramTarget =
+  | "all"
+  | "xfoil"
+  | "xfoil-wasm"
+  | "modeling"
+  | "openfoam"
+  | "su2"
+  | "freecad"
+  | "openvsp"
+  | "flightstream"
+  | "starccm";
 
 export interface EngineeringProgramRequest {
   kind: EngineeringProgramRequestKind;
   target?: EngineeringProgramTarget;
   artifactPath?: string;
+  sourceUrl?: string;
   outputFileName?: string;
   naca?: string;
   reynolds?: number;
@@ -252,7 +264,7 @@ export interface EngineeringProgramCapability {
 export interface EngineeringArtifactCandidate {
   relativePath: string;
   fileName: string;
-  format: "obj" | "stl";
+  format: "obj" | "stl" | "airfoil-coordinate";
   byteLength: number;
   validated: boolean;
   ready: boolean;

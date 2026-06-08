@@ -213,6 +213,8 @@ function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
+const CLARK_Y_COORDINATE_URL = "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat";
+
 function readyArtifactCandidate(candidates: EngineeringArtifactCandidate[], formats?: EngineeringArtifactCandidate["format"][]): EngineeringArtifactCandidate | undefined {
   const allowedFormats = formats ? new Set(formats) : undefined;
   for (const candidate of candidates) {
@@ -284,6 +286,12 @@ function engineeringTemplateReadiness(
       return { ready: false, blockedReason: "OpenVSP run args template must include {script}." };
     }
   }
+  if (capability.kind === "xfoil-wasm-polar") {
+    const airfoilArtifact = readyArtifactCandidate(artifactCandidates, ["airfoil-coordinate"]);
+    if (!airfoilArtifact && !settings.allowExternalSearch) {
+      return { ready: false, blockedReason: "XFOIL-WASM Clark Y URL execution requires external search/direct fetch permission or a ready airfoil coordinate artifact." };
+    }
+  }
   if (capability.kind === "commercial-cfd-run") {
     const runArgs = commercialRunArgsTemplate(settings, capability.target);
     if (!runArgs.length) return { ready: false, blockedReason: `${commercialTargetLabel(capability.target)} run args template is not configured.` };
@@ -342,14 +350,19 @@ function engineeringTemplateRequest(
     const request: EngineeringProgramRequest = {
       kind: "xfoil-wasm-polar",
       target: "xfoil-wasm",
+      sourceUrl: CLARK_Y_COORDINATE_URL,
       reynolds: 1_000_000,
       mach: 0,
       alphaStart: -4,
       alphaEnd: 12,
       alphaStep: 2,
-      reason: "Generate a real XFOIL polar with bundled WebXFOIL. For named airfoils such as Clark Y, provide artifactPath or sourceUrl instead of a default NACA code."
+      reason: "Generate a real Clark Y aerodynamic polar with bundled WebXFOIL from the UIUC coordinate file."
     };
-    if (airfoilArtifact) request.artifactPath = airfoilArtifact.relativePath;
+    if (airfoilArtifact) {
+      delete request.sourceUrl;
+      request.artifactPath = airfoilArtifact.relativePath;
+      request.reason = "Generate a real aerodynamic polar from a discovered airfoil coordinate file with bundled WebXFOIL.";
+    }
     return request;
   }
   if (capability.kind === "openfoam-case-run") {

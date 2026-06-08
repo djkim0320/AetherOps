@@ -625,8 +625,10 @@ function mainFilesRoot(projectRoot: string): string {
 
 function normalizeArtifactPath(relativePath: string, iteration: number, title: string): string {
   const defaultRelativePath = `artifacts/iteration-${iteration}/${sanitizeFilename(title)}.md`;
-  const candidate = relativePath.trim() || defaultRelativePath;
-  return candidate.startsWith("artifacts/") ? candidate : `artifacts/iteration-${iteration}/${candidate.replace(/^\/+/, "")}`;
+  const candidate = (relativePath.trim() || defaultRelativePath).replace(/^\/+/, "");
+  return candidate.startsWith("artifacts/") || candidate.startsWith("reports/")
+    ? candidate
+    : `artifacts/iteration-${iteration}/${candidate}`;
 }
 
 function safeJoin(root: string, target: string): string {

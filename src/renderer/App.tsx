@@ -2360,13 +2360,14 @@ function SettingsTab({
             </label>
             <label>
               Mailto
-              <StringSelect
+              <input
+                type="email"
                 value={settingsDraft.researchMetadata.mailto ?? ""}
-                options={[""]}
-                onChange={(mailto) =>
+                placeholder="name@example.com"
+                onChange={(event) =>
                   onSettingsDraftChange({
                     ...settingsDraft,
-                    researchMetadata: { ...settingsDraft.researchMetadata, mailto: mailto || undefined }
+                    researchMetadata: { ...settingsDraft.researchMetadata, mailto: event.target.value.trim() || undefined }
                   })
                 }
               />

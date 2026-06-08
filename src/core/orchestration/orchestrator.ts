@@ -432,7 +432,7 @@ export class AetherOpsOrchestrator {
       if ((await this.checkAbortOrPause(projectId)) !== "running") {
         return this.store.getSnapshot(projectId);
       }
-      return this.finalizeOutputs(projectId);
+      return await this.finalizeOutputs(projectId);
     } catch (error) {
       if (error instanceof RuntimeRequirementError) {
         return this.blockProject(projectId, error);

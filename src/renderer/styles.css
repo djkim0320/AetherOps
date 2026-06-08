@@ -1505,11 +1505,10 @@ label {
 
 .runStepRail {
   min-width: 0;
-  overflow-x: auto;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(12, minmax(44px, 1fr));
-  gap: 5px;
-  padding-bottom: 2px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 4px;
 }
 
 .runMetricRail {
@@ -1546,12 +1545,12 @@ label {
   border-left: 3px solid var(--step-accent);
   border-radius: 7px;
   background: #ffffff;
-  padding: 6px 7px;
+  padding: 6px 5px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
   text-align: left;
-  gap: 7px;
+  gap: 0;
   color: #475467;
 }
 
@@ -1632,11 +1631,11 @@ label {
 .contentGrid {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(292px, 350px);
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
   grid-template-areas:
+    "workbench final"
     "workbench status"
     "agent more"
-    "final final"
     "evidence evidence";
   gap: 12px;
   align-content: start;
@@ -1652,6 +1651,21 @@ label {
 
 .contentGrid > .panel.finalPanel {
   grid-area: final;
+  align-self: start;
+}
+
+.contentGrid > .panel.finalPanel .finalGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.contentGrid > .panel.finalPanel .finalItem {
+  min-height: 116px;
+  padding: 11px;
+}
+
+.contentGrid > .panel.finalPanel .finalItem p {
+  max-height: 124px;
 }
 
 .contentGrid > .panel.agentPanel {

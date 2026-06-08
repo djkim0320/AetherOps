@@ -39,6 +39,12 @@ class CapturingOpenCodeAdapter extends DeterministicOpenCodeAdapter {
   }
 }
 
+class FailingFinalOutputStorage extends NodeProjectStorage {
+  override async writeFinalOutputFiles(): ReturnType<NodeProjectStorage["writeFinalOutputFiles"]> {
+    throw new Error("forced final output write failure");
+  }
+}
+
 class MetadataFirstPlanner extends DeterministicLlmProvider {
   override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
     if (request.schemaName === "AetherOpsResearchPlan") {
@@ -210,6 +216,39 @@ describe("AetherOps strict execution loop", () => {
     expect(openCode.inputs[0]?.specification?.sourceResearchInputId).toBe(activeInputId);
     expect(openCode.inputs[0]?.researchPlan?.sourceResearchInputId).toBe(activeInputId);
     expect(JSON.stringify(openCode.inputs[0])).not.toContain(input.goal);
+  });
+
+  it("fails at FinalizeOutputs when the final report cannot be written", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-loop-"));
+    const orchestrator = createStrictTestOrchestrator({
+      storage: new FailingFinalOutputStorage(),
+      projectRootBase: join(tempDir, "projects")
+    });
+
+    let snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: {
+        ...input.autonomyPolicy,
+        maxLoopIterations: 1
+      }
+    });
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.project.status).toBe("failed");
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.FinalizeOutputs);
+    expect(snapshot.stepErrors.at(-1)).toMatchObject({
+      step: ResearchLoopStep.FinalizeOutputs,
+      cause: "step_failed"
+    });
+    expect(snapshot.stepErrors.at(-1)?.message).toContain("forced final output write failure");
+    expect(snapshot.report).toBeUndefined();
+    expect(snapshot.finalOutputs).toHaveLength(0);
+    expect(snapshot.runAuditOutputs).toHaveLength(1);
+    expect(snapshot.runAuditOutputs[0]).toMatchObject({
+      finalStatus: "failed",
+      failedStep: ResearchLoopStep.FinalizeOutputs
+    });
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
   });
 
   it("blocks clearly when the OpenCode execution engine is not configured", async () => {

@@ -250,13 +250,13 @@ function requireLegacyRpc(method: string): void {
   console.warn(`[AetherOps] Legacy RPC method ${method} was called. Set AETHEROPS_ENABLE_LEGACY_RPC=false to block old clients.`);
 }
 
-async function runEngineeringProgramDirect(
+export async function runEngineeringProgramDirect(
   payload: EngineeringProgramDirectRunInput,
   settings: AppSettings,
   orchestrator?: AetherOpsOrchestrator
 ): Promise<EngineeringProgramDirectRunResult> {
   const startedAt = nowIso();
-  const programRequests = normalizeDirectProgramRequests(payload?.programRequests);
+  const programRequests = normalizeDirectProgramRequests(payload?.programRequests, settings);
   const question = payload?.question?.trim() || "Run a direct engineering program analysis and report the computed values.";
   const title = payload?.title?.trim() || "Direct engineering program run";
   const persistentProjectId = optionalProjectId(payload?.projectId);
@@ -415,7 +415,32 @@ async function saveEngineeringDirectReport(
   return artifact;
 }
 
-function normalizeDirectProgramRequests(value: unknown): EngineeringProgramRequest[] {
+const engineeringRequestKinds = new Set<EngineeringProgramRequest["kind"]>([
+  "toolchain-check",
+  "mesh-inspect",
+  "xfoil-polar",
+  "xfoil-wasm-polar",
+  "openfoam-case-run",
+  "su2-case-run",
+  "cad-script-run",
+  "vsp-script-run",
+  "commercial-cfd-run"
+]);
+
+const engineeringTargets = new Set<NonNullable<EngineeringProgramRequest["target"]>>([
+  "all",
+  "xfoil",
+  "xfoil-wasm",
+  "modeling",
+  "openfoam",
+  "su2",
+  "freecad",
+  "openvsp",
+  "flightstream",
+  "starccm"
+]);
+
+function normalizeDirectProgramRequests(value: unknown, settings: AppSettings): EngineeringProgramRequest[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error("engineering.runProgram requires at least one program request.");
   }
@@ -424,24 +449,71 @@ function normalizeDirectProgramRequests(value: unknown): EngineeringProgramReque
       throw new Error("Engineering program request must be an object.");
     }
     const request = item as Partial<EngineeringProgramRequest>;
-    if (typeof request.kind !== "string") {
+    if (typeof request.kind !== "string" || !engineeringRequestKinds.has(request.kind as EngineeringProgramRequest["kind"])) {
       throw new Error("Engineering program request requires kind.");
     }
-    return {
+    const target = normalizeDirectTarget(request.target);
+    const normalized: EngineeringProgramRequest = {
       kind: request.kind as EngineeringProgramRequest["kind"],
-      target: request.target,
-      artifactPath: request.artifactPath,
-      sourceUrl: request.sourceUrl,
-      outputFileName: request.outputFileName,
-      naca: request.naca,
-      reynolds: request.reynolds,
-      mach: request.mach,
-      alphaStart: request.alphaStart,
-      alphaEnd: request.alphaEnd,
-      alphaStep: request.alphaStep,
-      reason: request.reason
+      target,
+      artifactPath: normalizeDirectText(request.artifactPath, "artifactPath"),
+      sourceUrl: normalizeDirectText(request.sourceUrl, "sourceUrl"),
+      outputFileName: normalizeDirectText(request.outputFileName, "outputFileName"),
+      naca: normalizeDirectText(request.naca, "naca"),
+      reynolds: normalizeDirectNumber(request.reynolds, "reynolds"),
+      mach: normalizeDirectNumber(request.mach, "mach"),
+      alphaStart: normalizeDirectNumber(request.alphaStart, "alphaStart"),
+      alphaEnd: normalizeDirectNumber(request.alphaEnd, "alphaEnd"),
+      alphaStep: normalizeDirectNumber(request.alphaStep, "alphaStep"),
+      reason: normalizeDirectText(request.reason, "reason")
     };
+    validateDirectProgramRequest(normalized, settings);
+    return normalized;
   });
+}
+
+function normalizeDirectTarget(value: unknown): EngineeringProgramRequest["target"] | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !engineeringTargets.has(value as NonNullable<EngineeringProgramRequest["target"]>)) {
+    throw new Error("Engineering program request target is not supported.");
+  }
+  return value as EngineeringProgramRequest["target"];
+}
+
+function normalizeDirectText(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new Error(`Engineering program request ${field} must be a string.`);
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeDirectNumber(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Engineering program request ${field} must be a finite number.`);
+  return value;
+}
+
+function validateDirectProgramRequest(request: EngineeringProgramRequest, settings: AppSettings): void {
+  if (request.kind === "xfoil-wasm-polar") {
+    if (request.target && request.target !== "xfoil-wasm") {
+      throw new Error("xfoil-wasm-polar requests must target xfoil-wasm.");
+    }
+    if (!request.sourceUrl && !request.artifactPath && !request.naca) {
+      throw new Error("xfoil-wasm-polar requires sourceUrl, artifactPath, or naca.");
+    }
+    if (request.sourceUrl && !settings.allowExternalSearch) {
+      throw new Error("xfoil-wasm-polar sourceUrl execution requires external data access to be enabled.");
+    }
+    if (request.naca && !/^\d{4,5}$/.test(request.naca)) {
+      throw new Error("xfoil-wasm-polar naca must be a 4 or 5 digit series code.");
+    }
+  }
+  if (request.kind === "xfoil-polar" && request.naca && !/^\d{4,5}$/.test(request.naca)) {
+    throw new Error("xfoil-polar naca must be a 4 or 5 digit series code.");
+  }
+  if (request.alphaStart !== undefined && request.alphaEnd !== undefined && request.alphaEnd < request.alphaStart) {
+    throw new Error("Engineering program request requires alphaEnd >= alphaStart.");
+  }
 }
 
 function optionalProjectId(value: unknown): string | undefined {

@@ -48,6 +48,7 @@ const results = {
   toolDiagnostics: {},
   toolPreflight: {},
   uiVerify: { status: "SKIPPED" },
+  metadataVerify: { status: "SKIPPED" },
   blockedPath: { status: "SKIPPED" },
   livePath: { status: "SKIPPED" },
   artifacts: {},
@@ -69,6 +70,7 @@ try {
   await startServer(requestedPort);
   await runServerVerify();
   await runUiVerify();
+  await runMetadataVerify();
   const liveGate = await assessLiveGate();
   if (mode !== "live") {
     await runBlockedPath();
@@ -266,6 +268,8 @@ function assertEngineeringTemplateContract(toolDiagnostics = {}) {
     results.findings.high.push("Engineering program template contract is missing xfoil-wasm-polar:xfoil-wasm.");
   } else if (xfoilWasmTemplate.request?.kind !== "xfoil-wasm-polar" || xfoilWasmTemplate.request?.target !== "xfoil-wasm") {
     results.findings.high.push("XFOIL-WASM request template does not expose kind=xfoil-wasm-polar and target=xfoil-wasm.");
+  } else if (!xfoilWasmTemplate.request?.sourceUrl && !xfoilWasmTemplate.request?.artifactPath && !xfoilWasmTemplate.request?.naca) {
+    results.findings.high.push("XFOIL-WASM request template does not name sourceUrl, artifactPath, or naca.");
   }
   if (!su2Template) {
     results.findings.high.push("Engineering program template contract is missing su2-case-run:su2.");
@@ -291,16 +295,43 @@ function assertEngineeringTemplateContract(toolDiagnostics = {}) {
 
 async function runUiVerify() {
   const port = Number(results.server.port ?? 0) || findPortInServerOutput(results.server.stdout) || await currentServerPort();
-  const check = runTimed(process.execPath, [join(repoRoot, "scripts", "ui-layout-verify.mjs"), "--url", `http://127.0.0.1:${port}`], "npm run ui:verify");
+  const check = runTimed(process.execPath, [join(repoRoot, "scripts", "ui-layout-verify.mjs"), "--url", `http://127.0.0.1:${port}`], "npm run ui:verify", 120_000);
   results.uiVerify = {
     status: check.exitCode === 0 ? "PASS" : "FAIL",
     exitCode: check.exitCode,
+    signal: check.signal,
+    timedOut: check.timedOut,
     seconds: check.seconds,
     stdout: check.stdout,
     stderr: check.stderr
   };
   if (check.exitCode !== 0) {
     results.findings.high.push("UI layout verification failed against the self-test server.");
+  }
+}
+
+async function runMetadataVerify() {
+  if (mode === "blocked") {
+    results.metadataVerify = { status: "SKIPPED", reason: "blocked mode" };
+    return;
+  }
+  const check = runTimed(
+    process.execPath,
+    [join(repoRoot, "scripts", "research-metadata-verify.mjs"), "--query", "Clark Y airfoil", "--max-results", "5", "--timeout-ms", "30000"],
+    "npm run metadata:verify",
+    90_000
+  );
+  results.metadataVerify = {
+    status: check.exitCode === 0 ? "PASS" : "FAIL",
+    exitCode: check.exitCode,
+    signal: check.signal,
+    timedOut: check.timedOut,
+    seconds: check.seconds,
+    stdout: check.stdout,
+    stderr: check.stderr
+  };
+  if (check.exitCode !== 0) {
+    results.findings.high.push("Live OpenAlex metadata verification failed.");
   }
 }
 
@@ -781,7 +812,17 @@ ${grepCheckList(data.grepChecks)}
 - Stdout sample: \`${sampleOutput(data.uiVerify.stdout ?? "", 700)}\`
 - Stderr sample: \`${sampleOutput(data.uiVerify.stderr ?? "", 700)}\`
 
-## 5. Blocked-path E2E
+## 5. Research Metadata Verification
+
+- Status: \`${data.metadataVerify.status}\`
+- Exit code: \`${data.metadataVerify.exitCode ?? "n/a"}\`
+- Signal: \`${data.metadataVerify.signal ?? "n/a"}\`
+- Timed out: \`${Boolean(data.metadataVerify.timedOut)}\`
+- Seconds: \`${data.metadataVerify.seconds ?? "n/a"}\`
+- Stdout sample: \`${sampleOutput(data.metadataVerify.stdout ?? "", 700)}\`
+- Stderr sample: \`${sampleOutput(data.metadataVerify.stderr ?? "", 700)}\`
+
+## 6. Blocked-path E2E
 
 - Status: \`${data.blockedPath.status}\`
 - Project ID: \`${data.blockedPath.projectId ?? "n/a"}\`
@@ -798,14 +839,14 @@ ${grepCheckList(data.grepChecks)}
 
 ${table(["Evidence ID", "traceabilityKind", "canSupportHypothesis", "citation", "quote", "sourceQualityTier", "generatedBy", "verdict"], evidencePolicyTableRows(data.blockedPath.evidencePolicyRows)) || "No evidence rows."}
 
-## 6. Live-path E2E
+## 7. Live-path E2E
 
 - Status: \`${data.livePath.status}\`
 - Reason: ${data.livePath.reason ?? "n/a"}
 - Prerequisites: \`${JSON.stringify(data.livePath.prerequisites ?? {})}\`
 - Counts: \`${JSON.stringify(data.livePath.counts ?? {})}\`
 
-## 7. File / DB Artifact Validation
+## 8. File / DB Artifact Validation
 
 - Required paths: ${requiredPathSummary(data.artifacts.requiredPaths)}
 - rawText SQLite hits: ${data.artifacts.rawTextHits ?? "not run"}
@@ -813,14 +854,14 @@ ${table(["Evidence ID", "traceabilityKind", "canSupportHypothesis", "citation", 
 - Project web source files: ${data.artifacts.projectWebSourceFiles ?? 0}
 - DB summaries: \`${dbSummariesJson(data.artifacts.dbSummaries)}\`
 
-## 8. Security Tests
+## 9. Security Tests
 
 - Unsafe URL pre-fetch block: ${data.security.unsafeBlocked ? "PASS" : "not run/fail"}
 - Unsafe harness fetch calls: ${data.security.unsafeFetchCalls ?? "n/a"}
 - Public URL stub accepted: ${data.security.publicUrlAccepted ? "PASS" : "not run/fail"}
 - Timeout/size/content-type coverage: covered by \`npm test\` and source invariant checks.
 
-## 9. UTF-8 Test
+## 10. UTF-8 Test
 
 - Korean blocked-path input preserved: ${data.utf8.blockedJsonHasKorean ? "PASS" : "not run/fail"}
 - Korean blocked-path sentinels: \`${JSON.stringify(data.utf8.blockedJsonKoreanSentinels ?? {})}\`
@@ -838,7 +879,7 @@ ${table(["Evidence ID", "traceabilityKind", "canSupportHypothesis", "citation", 
 
 Windows PowerShell note: if default \`Get-Content <path>\` displays Korean as garbled text, this is a console decoding issue, not evidence that AetherOps rewrote the bytes. Use \`Get-Content -Encoding UTF8 <path>\` for generated Markdown, JSON, JSONL, NT, and source files. For example: \`Get-Content -Encoding UTF8 docs/aetherops-self-test-report.md\`.
 
-## 10. Findings
+## 11. Findings
 
 ### Critical
 ${list(data.findings.critical)}
@@ -852,7 +893,7 @@ ${list(data.findings.medium)}
 ### Low
 ${list(data.findings.low)}
 
-## 11. Recommended Fixes
+## 12. Recommended Fixes
 
 ${list(data.recommendations.length ? data.recommendations : ["No mandatory fixes. Configure real embedding/search credentials to exercise live-path E2E."])}
 
@@ -901,22 +942,30 @@ async function fetchJson(url, timeoutMs, init = {}) {
   }
 }
 
-function runTimed(commandName, commandArgs, label) {
+function runTimed(commandName, commandArgs, label, timeoutMs) {
   const started = performance.now();
-  const result = runProcess(commandName, commandArgs);
+  const result = runProcess(commandName, commandArgs, timeoutMs);
   return {
     label,
     exitCode: result.exitCode,
+    signal: result.signal,
+    timedOut: result.timedOut,
     seconds: Number(((performance.now() - started) / 1000).toFixed(2)),
     stdout: sampleOutput(result.stdout, 1_500),
     stderr: sampleOutput(result.stderr, 1_500)
   };
 }
 
-function runProcess(commandName, commandArgs) {
+function runProcess(commandName, commandArgs, timeoutMs) {
   const needsShell = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(commandName);
-  const result = spawnSync(commandName, commandArgs, { cwd: repoRoot, encoding: "utf8", shell: needsShell, windowsHide: true });
-  return { exitCode: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  const result = spawnSync(commandName, commandArgs, { cwd: repoRoot, encoding: "utf8", shell: needsShell, timeout: timeoutMs, windowsHide: true });
+  return {
+    exitCode: result.status ?? 1,
+    signal: result.signal ?? undefined,
+    timedOut: result.error?.code === "ETIMEDOUT",
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? ""
+  };
 }
 
 function command(commandName, commandArgs) {

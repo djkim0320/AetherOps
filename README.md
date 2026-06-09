@@ -47,7 +47,7 @@ npm run selftest:live
 ```
 
 - `doctor`: Node 버전, scripts, data root, 포트, provider 설정, legacy RPC gate, production synthetic-substitute adapter 부재를 점검합니다.
-- `ui:verify`: 실행 중인 실제 AetherOps UI(`AETHEROPS_UI_URL` 또는 기본 `http://127.0.0.1:5180`)에 Playwright로 접속해 `1920x1080`, `1440x900`, `1366x768`, `761px`, `760px`, `390x844`에서 sidebar 배치, settings 탭, Engineering request template 10개, SU2/OpenVSP/XFOIL-WASM template, 수평 overflow 부재를 검증합니다.
+- `ui:verify`: 실행 중인 실제 AetherOps UI(`AETHEROPS_UI_URL` 또는 기본 `http://127.0.0.1:5180`)에 Playwright로 접속해 `1920x1080`, `1440x900`, `1366x768`, `761px`, `760px`, `390x844`에서 sidebar 배치, settings 탭, Engineering request template 7개, SU2/OpenVSP/XFLR5/XFOIL-WASM template, 수평 overflow 부재를 검증합니다.
 - `metadata:verify`: server build 후 실제 OpenAlex API를 호출해 `ResearchMetadataTool`이 DOI/URL이 있는 paper source와 citation/quote가 있는 evidence를 생성하는지 검증합니다. synthetic-substitute 없이 외부 네트워크를 사용합니다.
 - `selftest`: 정적 검사, 빌드, 서버 verify, RPC, blocked-path E2E, DB/artifact/rawText, WebFetch 보안 verify, UTF-8 검증을 수행하고 `docs/aetherops-self-test-report.md`를 갱신합니다.
 - `selftest:blocked`: live provider credential 없이도 deterministic blocked-path를 검증합니다.
@@ -85,11 +85,10 @@ AetherOps는 설정된 실제 도구만 `ResearchPlan.programRequests`로 실행
 
 - `ResearchMetadataTool`: 실제 OpenAlex API에서 논문 metadata, DOI, 저자, abstract, citation count를 가져와 traceable source/evidence로 저장합니다.
 - `EngineeringProgramTool`: `runtimeToolDiagnostics.engineeringProgramRequestTemplates`에서 `ready=true`인 template만 LLM 계획에 사용할 수 있습니다.
-- 지원 template: `toolchain-check`, `mesh-inspect`, `xfoil-polar`, `xfoil-wasm-polar`, `openfoam-case-run`, `su2-case-run`(SU2), `cad-script-run`(FreeCAD), `vsp-script-run`(OpenVSP), `commercial-cfd-run`(FlightStream/STAR-CCM+ adapter).
+- 지원 template: `toolchain-check`, `mesh-inspect`, `xfoil-polar`, `xfoil-wasm-polar`, `su2-case-run`(SU2), `openvsp-analysis-run`(OpenVSP), `xflr5-analysis-run`(XFLR5).
 - `xfoil-wasm-polar`는 bundled `webxfoil-wasm@0.1.1`(GPL-2.0-or-later)을 사용해 로컬 `xfoil` 실행 파일 없이 실제 XFOIL polar를 생성합니다. 명명 airfoil(예: Clark Y)은 `artifactPath` 또는 public `sourceUrl` 좌표 파일을 사용해야 하며, AetherOps는 NACA 기본값으로 대체하지 않습니다.
-- OpenFOAM은 command와 `system/controlDict`가 있는 case root가 필요합니다. SU2는 command, case root, case root 안의 `.cfg` config file, `{config}`가 포함된 args template가 필요합니다.
-- FreeCAD/OpenVSP는 command, 기존 script path, `{script}`가 포함된 args template가 필요합니다. AetherOps는 누락된 script 또는 solver 인자를 추측하지 않습니다.
-- FlightStream/STAR-CCM+는 라이선스가 있는 외부 adapter command와 명시적 args template가 준비된 경우에만 실행됩니다.
+- SU2는 command, case root, case root 안의 `.cfg` config file, `{config}`가 포함된 args template가 필요합니다. LLM이 생성한 `cfdRunSpec`은 검증 후 임시 SU2 config로 렌더링되어 실행됩니다.
+- OpenVSP/XFLR5는 command가 필요합니다. custom script path가 비어 있으면 AetherOps의 내장 실행 어댑터가 실제 OpenVSP/XFLR5 command를 호출하고, custom script path가 있으면 `{script}`와 `{spec}`이 포함된 args template를 요구합니다. AetherOps는 누락된 case, mesh, solver 인자를 추측하지 않습니다.
 - OBJ/STL mesh inspection과 adapter input은 configured modeling artifact root 내부의 parser-valid mesh artifact만 사용합니다. XFOIL 계열 좌표 입력은 `.dat`/`.txt` airfoil coordinate artifact 또는 traceable public coordinate source를 사용합니다.
 
 ## 12단계 연구 검증 루프

@@ -420,11 +420,9 @@ const engineeringRequestKinds = new Set<EngineeringProgramRequest["kind"]>([
   "mesh-inspect",
   "xfoil-polar",
   "xfoil-wasm-polar",
-  "openfoam-case-run",
   "su2-case-run",
-  "cad-script-run",
-  "vsp-script-run",
-  "commercial-cfd-run"
+  "openvsp-analysis-run",
+  "xflr5-analysis-run"
 ]);
 
 const engineeringTargets = new Set<NonNullable<EngineeringProgramRequest["target"]>>([
@@ -432,12 +430,9 @@ const engineeringTargets = new Set<NonNullable<EngineeringProgramRequest["target
   "xfoil",
   "xfoil-wasm",
   "modeling",
-  "openfoam",
   "su2",
-  "freecad",
   "openvsp",
-  "flightstream",
-  "starccm"
+  "xflr5"
 ]);
 
 function normalizeDirectProgramRequests(value: unknown, settings: AppSettings): EngineeringProgramRequest[] {
@@ -456,6 +451,7 @@ function normalizeDirectProgramRequests(value: unknown, settings: AppSettings): 
     const normalized: EngineeringProgramRequest = {
       kind: request.kind as EngineeringProgramRequest["kind"],
       target,
+      cfdRunSpec: normalizeDirectCfdRunSpec(request.cfdRunSpec),
       artifactPath: normalizeDirectText(request.artifactPath, "artifactPath"),
       sourceUrl: normalizeDirectText(request.sourceUrl, "sourceUrl"),
       outputFileName: normalizeDirectText(request.outputFileName, "outputFileName"),
@@ -493,6 +489,20 @@ function normalizeDirectNumber(value: unknown, field: string): number | undefine
   return value;
 }
 
+function normalizeDirectCfdRunSpec(value: unknown): EngineeringProgramRequest["cfdRunSpec"] {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Engineering program request cfdRunSpec must be an object.");
+  }
+  const spec = value as NonNullable<EngineeringProgramRequest["cfdRunSpec"]>;
+  if (spec.target !== "xfoil" && spec.target !== "xfoil-wasm" && spec.target !== "su2" && spec.target !== "openvsp" && spec.target !== "xflr5") {
+    throw new Error("Engineering program request cfdRunSpec target is not supported.");
+  }
+  if (!spec.geometry || typeof spec.geometry !== "object") throw new Error("Engineering program request cfdRunSpec.geometry is required.");
+  if (!spec.solver || typeof spec.solver !== "object") throw new Error("Engineering program request cfdRunSpec.solver is required.");
+  return spec;
+}
+
 function validateDirectProgramRequest(request: EngineeringProgramRequest, settings: AppSettings): void {
   if (request.kind === "xfoil-wasm-polar") {
     if (request.target && request.target !== "xfoil-wasm") {
@@ -510,6 +520,18 @@ function validateDirectProgramRequest(request: EngineeringProgramRequest, settin
   }
   if (request.kind === "xfoil-polar" && request.naca && !/^\d{4,5}$/.test(request.naca)) {
     throw new Error("xfoil-polar naca must be a 4 or 5 digit series code.");
+  }
+  if (
+    request.kind === "su2-case-run" ||
+    request.kind === "openvsp-analysis-run" ||
+    request.kind === "xflr5-analysis-run"
+  ) {
+    if (!request.cfdRunSpec) {
+      throw new Error(`${request.kind} requires cfdRunSpec.`);
+    }
+    if (request.kind === "su2-case-run" && request.cfdRunSpec.target !== "su2") throw new Error("su2-case-run requires cfdRunSpec.target su2.");
+    if (request.kind === "openvsp-analysis-run" && request.cfdRunSpec.target !== "openvsp") throw new Error("openvsp-analysis-run requires cfdRunSpec.target openvsp.");
+    if (request.kind === "xflr5-analysis-run" && request.cfdRunSpec.target !== "xflr5") throw new Error("xflr5-analysis-run requires cfdRunSpec.target xflr5.");
   }
   if (request.alphaStart !== undefined && request.alphaEnd !== undefined && request.alphaEnd < request.alphaStart) {
     throw new Error("Engineering program request requires alphaEnd >= alphaStart.");
@@ -591,12 +613,9 @@ function optionalEngineeringProgramTarget(value: unknown): EngineeringProgramTar
     value === "xfoil" ||
     value === "xfoil-wasm" ||
     value === "modeling" ||
-    value === "openfoam" ||
     value === "su2" ||
-    value === "freecad" ||
     value === "openvsp" ||
-    value === "flightstream" ||
-    value === "starccm" ||
+    value === "xflr5" ||
     value === "all"
   ) {
     return value;

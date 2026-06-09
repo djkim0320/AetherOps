@@ -24,9 +24,9 @@ export async function writePdfReport(input: PdfReportRenderInput): Promise<void>
       preferCSSPageSize: true,
       displayHeaderFooter: true,
       headerTemplate:
-        '<div style="font-family: Arial, sans-serif; font-size: 8px; color: #6b7280; padding-left: 36px; width: 100%;">AetherOps research report</div>',
+        '<div style="font-family: Arial, sans-serif; font-size: 8px; color: #6b7280; padding-left: 36px; width: 100%;">AetherOps 연구 보고서</div>',
       footerTemplate:
-        '<div style="font-family: Arial, sans-serif; font-size: 8px; color: #6b7280; padding: 0 36px; width: 100%; display: flex; justify-content: space-between;"><span>AetherOps research report</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
+        '<div style="font-family: Arial, sans-serif; font-size: 8px; color: #6b7280; padding: 0 36px; width: 100%; display: flex; justify-content: space-between;"><span>AetherOps 연구 보고서</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
       margin: {
         top: "18mm",
         right: "16mm",
@@ -54,11 +54,11 @@ function renderPdfHtml(input: PdfReportRenderInput): string {
     "<body>",
     '<main class="report">',
     '<section class="cover">',
-    '<p class="eyebrow">AetherOps Research Report</p>',
+    '<p class="eyebrow">AetherOps 연구 보고서</p>',
     `<h1>${escapeHtml(input.title)}</h1>`,
     '<dl class="meta">',
-    `<div><dt>Project ID</dt><dd>${escapeHtml(input.projectId)}</dd></div>`,
-    `<div><dt>Created</dt><dd>${escapeHtml(input.createdAt)}</dd></div>`,
+    `<div><dt>프로젝트 ID</dt><dd>${escapeHtml(input.projectId)}</dd></div>`,
+    `<div><dt>작성 시각</dt><dd>${escapeHtml(input.createdAt)}</dd></div>`,
     "</dl>",
     "</section>",
     renderMarkdown(input.markdown),
@@ -111,6 +111,7 @@ h1 {
   line-height: 1.18;
   margin: 0 0 12px;
   page-break-after: avoid;
+  break-after: avoid-page;
 }
 
 h2 {
@@ -121,6 +122,7 @@ h2 {
   margin: 20px 0 8px;
   padding-top: 12px;
   page-break-after: avoid;
+  break-after: avoid-page;
 }
 
 h3 {
@@ -128,10 +130,13 @@ h3 {
   font-size: 12pt;
   margin: 14px 0 6px;
   page-break-after: avoid;
+  break-after: avoid-page;
 }
 
 p {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
+  orphans: 3;
+  widows: 3;
 }
 
 ul,
@@ -191,10 +196,19 @@ pre code {
   padding: 0;
 }
 
+.table-block {
+  break-inside: auto;
+  margin: 8px 0 14px;
+  page-break-inside: auto;
+  width: 100%;
+}
+
 table {
   border-collapse: collapse;
-  font-size: 8.5pt;
-  margin: 8px 0 14px;
+  break-inside: auto;
+  font-size: 8pt;
+  margin: 0;
+  page-break-inside: auto;
   table-layout: fixed;
   width: 100%;
 }
@@ -204,7 +218,8 @@ thead {
 }
 
 tr {
-  break-inside: avoid;
+  break-inside: avoid-page;
+  page-break-inside: avoid;
 }
 
 th,
@@ -214,6 +229,7 @@ td {
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 th {
@@ -228,6 +244,7 @@ blockquote {
   margin: 8px 0 12px;
   padding: 4px 0 4px 10px;
 }
+
 `;
 
 let cachedReportFontFace: string | undefined;
@@ -291,7 +308,7 @@ function renderMarkdown(markdown: string): string {
   };
   const closeTable = () => {
     if (!inTable) return;
-    html.push(tableRows <= 1 ? "</tbody></table>" : "</tbody></table>");
+    html.push("</tbody></table></div>");
     inTable = false;
     tableRows = 0;
   };
@@ -341,12 +358,15 @@ function renderMarkdown(markdown: string): string {
       closeList();
       if (isTableSeparator(trimmed)) continue;
       if (!inTable) {
-        html.push("<table><tbody>");
+        html.push('<div class="table-block"><table>');
         inTable = true;
       }
       const cells = splitTableCells(trimmed);
-      const tag = tableRows === 0 ? "th" : "td";
-      html.push(`<tr>${cells.map((cell) => `<${tag}>${formatInline(cell)}</${tag}>`).join("")}</tr>`);
+      if (tableRows === 0) {
+        html.push(`<thead><tr>${cells.map((cell) => `<th>${formatInline(cell)}</th>`).join("")}</tr></thead><tbody>`);
+      } else {
+        html.push(`<tr>${cells.map((cell) => `<td>${formatInline(cell)}</td>`).join("")}</tr>`);
+      }
       tableRows += 1;
       continue;
     }

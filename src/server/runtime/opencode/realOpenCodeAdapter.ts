@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { extname, join, relative } from "node:path";
 import { createId, nowIso } from "../../../core/shared/ids.js";
 import type {
   AppSettings,
@@ -16,6 +18,9 @@ import { isWindowsShellCommand, resolveOpenCodeCommand, type OpenCodeCommandOpti
 import { decodeStrictUtf8Chunks } from "../support/strictUtf8.js";
 
 type SettingsGetter = () => AppSettings | Promise<AppSettings>;
+
+const OPTIMIZATION_INTENT_PATTERN =
+  /\b(optimi[sz]e|optimisation|optimization|optimizer|parametric|sweep|trade[-\s]?off|maximi[sz]e|minimi[sz]e|objective function|design variable|pareto)\b|최적화|최적|최대화|최소화|목적\s*함수|설계\s*변수/i;
 
 export class RealOpenCodeAdapter implements OpenCodeAdapter {
   constructor(
@@ -74,7 +79,29 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     }
 
     const resolution = resolveOpenCodeCommand(settings.openCode.command, this.commandOptions);
-    const raw = await runCommand(resolution.command, this.buildArgs(input, settings), settings.openCode.timeoutMs);
+    const prompt = this.buildPrompt(input);
+    let raw: CommandResult;
+    try {
+      raw = await runCommand(
+        resolution.command,
+        this.buildArgs(input, settings, prompt),
+        settings.openCode.timeoutMs,
+        () => recoverOpenCodeFilesystemArtifacts(
+          input,
+          startedAt,
+          nowIso(),
+          prompt,
+          commandError("OpenCode filesystem optimization artifacts became available before CLI JSON output.", {
+            artifactCompletion: true
+          })
+        )
+      );
+    } catch (error) {
+      const recovered = recoverOpenCodeFilesystemArtifacts(input, startedAt, nowIso(), prompt, error);
+      if (recovered) return recovered;
+      throw error;
+    }
+    if (raw.recoveredOutput) return raw.recoveredOutput;
     const completedAt = nowIso();
     if (raw.exitCode !== 0) {
       throw commandError(`OpenCode CLI exited with code ${raw.exitCode} using ${describeResolution(resolution)}: ${raw.stderr || raw.stdout || "no output"}`, {
@@ -85,27 +112,32 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
     }
     const parsed = parseOpenCodeJson(raw.stdout);
     if (!parsed) {
-      throw commandError(`OpenCode output JSON parsing failed using ${describeResolution(resolution)}: ${(raw.stdout || raw.stderr || "no output").slice(0, 2000)}`, {
+      const parseError = commandError(`OpenCode output JSON parsing failed using ${describeResolution(resolution)}: ${(raw.stdout || raw.stderr || "no output").slice(0, 2000)}`, {
         parseFailure: true,
         stdoutTail: raw.stdout.slice(-2000),
         stderrTail: sanitizeCommandOutput(raw.stderr.slice(-2000))
       });
+      const recovered = recoverOpenCodeFilesystemArtifacts(input, startedAt, completedAt, prompt, parseError);
+      if (recovered) return recovered;
+      throw parseError;
     }
 
     return this.fromParsed(input, parsed, startedAt, completedAt, raw.stderr);
   }
 
-  private buildArgs(input: OpenCodeRunInput, settings: AppSettings): string[] {
+  private buildArgs(input: OpenCodeRunInput, settings: AppSettings, prompt = this.buildPrompt(input)): string[] {
     const args = ["run", "--format", "json"];
     const model = formatOpenCodeModel(settings);
     if (model) {
       args.push("--model", model);
     }
-    args.push(this.buildPrompt(input));
+    args.push(prompt);
     return args;
   }
 
   private buildPrompt(input: OpenCodeRunInput): string {
+    const optimizationRequired = hasOptimizationIntent(input);
+    if (optimizationRequired) return this.buildOptimizationPrompt(input);
     return [
       "You are the execution engine for AetherOps.",
       "Return a single JSON object matching this schema:",
@@ -123,6 +155,9 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
       "Never invent paper citations, URLs, DOI values, or experimental results.",
       "Do not return hypothesis-support evidence. Return source candidates, claims, and observations only; WebFetch/PDF/paper tools create citation-backed evidence later.",
       "If a tool/source is unavailable, report the problem in the summary and do not present it as evidence.",
+      "Use the ToolContext below as the authoritative record of previous AetherOps tool outputs. Do not replace it with synthetic, fallback, or guessed data.",
+      "When the project asks for optimization, perform the OpenCode optimization work yourself: create runnable optimization code, run or validate it against the provided numeric tool context, and return both the code artifact and an optimization result artifact.",
+      "If optimization execution is impossible, report the exact blocker and do not fabricate optimum values.",
       "",
       `Project: ${JSON.stringify(input.project)}`,
       `Questions: ${JSON.stringify(input.questions)}`,
@@ -130,6 +165,50 @@ export class RealOpenCodeAdapter implements OpenCodeAdapter {
       `RAG Context: ${JSON.stringify(input.ragContext)}`,
       `ResearchPlan: ${JSON.stringify(input.researchPlan)}`,
       `ProjectContextSnapshot: ${JSON.stringify(projectContextPromptSummary(input))}`,
+      `ToolContext: ${JSON.stringify(toolContextPromptSummary(input))}`,
+      `OptimizationRequired: ${JSON.stringify(optimizationRequired)}`,
+      optimizationRequired ? optimizationExecutionContract(input) : "Optimization execution contract: not requested by project/specification/plan text.",
+      `Iteration: ${input.iteration}`
+    ].join("\n");
+  }
+
+  private buildOptimizationPrompt(input: OpenCodeRunInput): string {
+    const outputDir = `artifacts/iteration-${input.iteration}/opencode-optimization`;
+    return [
+      "You are the OpenCode execution engine for AetherOps optimization work.",
+      "Return one JSON object matching this schema after writing the requested files:",
+      JSON.stringify({
+        summary: "string",
+        toolPlan: ["OpenCodeTool"],
+        artifacts: [{ title: "Optimization Code", relativePath: `${outputDir}/optimize.py`, mimeType: "text/x-python", content: "string", summary: "string" }],
+        claims: [],
+        observations: [{ title: "OpenCode optimization result", content: "string", sourceUri: "string", citation: "string" }],
+        sourceCandidates: [],
+        nextActions: ["string"],
+        needsMoreEvidence: false,
+        needsMoreAnalysis: false
+      }),
+      "Do not invent paper citations, URLs, DOI values, or experimental results.",
+      "Use only the ToolContext below as numeric input. Do not use synthetic, fallback, substitute, interpolated, or guessed data.",
+      `Project root: ${input.project.projectRoot ?? ""}`,
+      `Write files under: ${outputDir}/`,
+      "Required first action: create runnable optimization code and optimization_result.json in the output directory before returning JSON.",
+      "The result JSON must include objective, variables, constraints, inputDataProvenance, candidates or comparedCandidates, selectedOptimum or optimum, and validationNotes.",
+      "If file writing or execution is impossible, return the exact blocker and do not fabricate optimum values.",
+      "",
+      `Project: ${JSON.stringify({
+        topic: input.project.topic,
+        goal: textExcerpt(input.project.goal, 1200),
+        scope: textExcerpt(input.project.scope, 600)
+      })}`,
+      `ResearchPlan: ${JSON.stringify({
+        objective: input.researchPlan?.objective,
+        requiredTools: input.researchPlan?.requiredTools,
+        fetchCandidateUrls: input.researchPlan?.fetchCandidateUrls,
+        programRequests: input.researchPlan?.programRequests
+      })}`,
+      `ToolContext: ${JSON.stringify(toolContextPromptSummary(input))}`,
+      optimizationExecutionContract(input),
       `Iteration: ${input.iteration}`
     ].join("\n");
   }
@@ -188,6 +267,7 @@ interface CommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  recoveredOutput?: OpenCodeRunOutput;
 }
 
 interface OpenCodeSchema {
@@ -203,8 +283,364 @@ interface OpenCodeSchema {
   needsMoreAnalysis?: boolean;
 }
 
-function runCommand(command: string, args: string[], timeoutMs: number): Promise<CommandResult> {
+interface FilesystemOptimizationValidation {
+  summary: string;
+  resultPath: string;
+  codePath: string;
+  selected: Record<string, unknown>;
+  provenance: Record<string, unknown>;
+}
+
+function recoverOpenCodeFilesystemArtifacts(
+  input: OpenCodeRunInput,
+  startedAt: string,
+  completedAt: string,
+  prompt: string,
+  error: unknown
+): OpenCodeRunOutput | undefined {
+  if (!hasOptimizationIntent(input) || !isOpenCodeOutputContractError(error)) return undefined;
+  const artifacts = collectOpenCodeFilesystemArtifacts(input, startedAt, completedAt);
+  const validation = validateFilesystemOptimizationArtifacts(artifacts);
+  if (!validation) return undefined;
+  const observations: OpenCodeObservation[] = [{
+    title: "OpenCode optimization result",
+    content: formatOptimizationObservation(validation),
+    metadata: {
+      traceabilityKind: "tool_observation",
+      canSupportHypothesis: false,
+      filesystemArtifactsValidated: true,
+      resultPath: validation.resultPath,
+      codePath: validation.codePath
+    }
+  }];
+  const toolRuns = normalizeStructuredOutputToolRuns(input, [], observations, [], startedAt, completedAt);
+  return {
+    run: {
+      id: input.openCodeRunId ?? createId("opencode"),
+      projectId: input.project.id,
+      iteration: input.iteration,
+      prompt,
+      toolPlan: ["OpenCodeTool", "OpenCodeFilesystemArtifactValidation"],
+      status: "completed",
+      logs: [
+        `OpenCode CLI output contract was not completed: ${formatError(error)}`,
+        `Validated ${artifacts.length} real OpenCode filesystem artifact(s) available for iteration ${input.iteration}.`,
+        validation.summary
+      ],
+      artifactIds: collectIds(artifacts),
+      evidenceIds: [],
+      metadata: {
+        completionSource: "opencode-filesystem-artifacts",
+        commandError: formatError(error),
+        commandErrorMetadata: errorMetadata(error),
+        resultPath: validation.resultPath,
+        codePath: validation.codePath
+      },
+      startedAt,
+      completedAt
+    },
+    artifacts,
+    evidence: [],
+    sources: [],
+    sourceCandidates: [],
+    claims: [],
+    observations,
+    toolRuns,
+    nextActions: [],
+    needsMoreEvidence: false,
+    needsMoreAnalysis: false
+  };
+}
+
+function collectOpenCodeFilesystemArtifacts(
+  input: OpenCodeRunInput,
+  startedAt: string,
+  createdAt: string
+): ResearchArtifact[] {
+  const projectRoot = input.project.projectRoot?.trim();
+  if (!projectRoot) return [];
+  const outputDir = join(projectRoot, "artifacts", `iteration-${input.iteration}`, "opencode-optimization");
+  if (!existsSync(outputDir)) return [];
+  const startedMs = Date.parse(startedAt);
+  const fileEntries: Array<{ filePath: string; mtimeMs: number; mtimeIso: string }> = [];
+  for (const filePath of listFiles(outputDir)) {
+    try {
+      const stat = statSync(filePath);
+      fileEntries.push({ filePath, mtimeMs: Number(stat.mtimeMs), mtimeIso: stat.mtime.toISOString() });
+    } catch {
+      continue;
+    }
+  }
+  const validResultEntries = fileEntries.filter(({ filePath }) =>
+    isOptimizationResultPath(filePath) &&
+    validateOptimizationResultJson(readTextFile(filePath))
+  );
+  const freshResultExists = validResultEntries.some(({ mtimeMs }) => isFreshFilesystemArtifact(mtimeMs, startedMs));
+  const recentResultExists = validResultEntries.some(({ mtimeMs }) => isRecentFilesystemArtifact(mtimeMs));
+  const artifacts: ResearchArtifact[] = [];
+  for (const { filePath, mtimeMs, mtimeIso } of fileEntries.slice(0, 24)) {
+    const usableOptimizationArtifact =
+      (freshResultExists || recentResultExists) &&
+      (isOptimizationCodePath(filePath) || isOptimizationResultPath(filePath));
+    if (!isFreshFilesystemArtifact(mtimeMs, startedMs) && !usableOptimizationArtifact) {
+      continue;
+    }
+    const content = readTextFile(filePath);
+    if (!content) continue;
+    const relativePath = normalizeRelativePath(projectRoot, filePath);
+    artifacts.push({
+      id: createId("artifact"),
+      projectId: input.project.id,
+      category: "generated_artifact",
+      title: inferFilesystemArtifactTitle(relativePath, content),
+      relativePath,
+      mimeType: mimeTypeForPath(filePath),
+      summary: summarizeFilesystemArtifact(relativePath, content),
+      content,
+      rawPath: filePath,
+      metadata: {
+        provider: "opencode",
+        completionSource: "opencode-filesystem-artifacts",
+        fileMtime: mtimeIso
+      },
+      createdAt
+    });
+  }
+  return artifacts.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+function isFreshFilesystemArtifact(mtimeMs: number, startedMs: number): boolean {
+  return !Number.isFinite(startedMs) || mtimeMs >= startedMs - 5_000;
+}
+
+function isRecentFilesystemArtifact(mtimeMs: number): boolean {
+  return Number.isFinite(mtimeMs) && Date.now() - mtimeMs <= 30 * 60_000;
+}
+
+function isOptimizationCodePath(filePath: string): boolean {
+  return /optimization/i.test(filePath) && /\.(py|ts|js|mjs|cjs)$/i.test(filePath);
+}
+
+function isOptimizationResultPath(filePath: string): boolean {
+  return /optimization/i.test(filePath) && /\.json$/i.test(filePath);
+}
+
+function listFiles(root: string): string[] {
+  const files: string[] = [];
+  const entries = readdirSync(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listFiles(fullPath));
+    } else if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+function readTextFile(filePath: string): string | undefined {
+  try {
+    return readFileSync(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeRelativePath(projectRoot: string, filePath: string): string {
+  return relative(projectRoot, filePath).replace(/\\/g, "/");
+}
+
+function inferFilesystemArtifactTitle(relativePath: string, content: string): string {
+  const lower = relativePath.toLowerCase();
+  if (lower.includes("optimization") && lower.endsWith(".json")) {
+    const parsed = parseJsonObject(content);
+    const title = parsed ? cleanString(parsed.title) : "";
+    return title || "Optimization Result";
+  }
+  if (lower.includes("optimization")) return "Optimization Code";
+  return `OpenCode artifact ${relativePath.split("/").pop() ?? ""}`.trim();
+}
+
+function summarizeFilesystemArtifact(relativePath: string, content: string): string {
+  const lower = relativePath.toLowerCase();
+  if (lower.endsWith(".json")) {
+    const parsed = parseJsonObject(content);
+    const objective = parsed ? cleanString(parsed.objective) : "";
+    const selected = parsed && typeof parsed.selectedOptimum === "object" ? parsed.selectedOptimum as Record<string, unknown> : undefined;
+    if (objective && selected) {
+      return `OpenCode optimization result for ${objective}; selected ${formatSelectedOptimum(selected)}.`;
+    }
+  }
+  return textExcerpt(content, 500) || "OpenCode generated artifact.";
+}
+
+function mimeTypeForPath(filePath: string): string {
+  const extension = extname(filePath).toLowerCase();
+  if (extension === ".json") return "application/json";
+  if (extension === ".py") return "text/x-python";
+  if (extension === ".ts") return "text/typescript";
+  if (extension === ".js" || extension === ".mjs" || extension === ".cjs") return "text/javascript";
+  if (extension === ".md") return "text/markdown";
+  return "text/plain";
+}
+
+function validateFilesystemOptimizationArtifacts(artifacts: ResearchArtifact[]): FilesystemOptimizationValidation | undefined {
+  const codeArtifact = artifacts.find((artifact) =>
+    /optimization/i.test(`${artifact.title}\n${artifact.relativePath}`) &&
+    /\.(py|ts|js|mjs|cjs)$/i.test(artifact.relativePath)
+  );
+  const resultArtifact = artifacts.find((artifact) =>
+    /optimization/i.test(`${artifact.title}\n${artifact.relativePath}`) &&
+    /\.json$/i.test(artifact.relativePath) &&
+    validateOptimizationResultJson(artifact.content)
+  );
+  if (!codeArtifact || !resultArtifact) return undefined;
+  const parsed = parseJsonObject(resultArtifact.content);
+  if (!parsed) return undefined;
+  const selected = optimizationSelectedRecord(parsed);
+  if (!selected) return undefined;
+  const provenance = parsed.inputDataProvenance as Record<string, unknown>;
+  return {
+    summary: `OpenCode optimization files are valid: ${codeArtifact.relativePath} and ${resultArtifact.relativePath}.`,
+    resultPath: resultArtifact.relativePath,
+    codePath: codeArtifact.relativePath,
+    selected,
+    provenance
+  };
+}
+
+function validateOptimizationResultJson(content: string | undefined): boolean {
+  const parsed = parseJsonObject(content);
+  if (!parsed) return false;
+  if (!cleanString(parsed.objective)) return false;
+  const candidates = optimizationCandidateRows(parsed);
+  if (!candidates.length) return false;
+  const selected = optimizationSelectedRecord(parsed);
+  if (!selected) return false;
+  if (!hasFiniteNumber(selectedAlphaValue(selected)) || !hasFiniteNumber(optimizationScoreValue(parsed, selected))) return false;
+  const provenance = parsed.inputDataProvenance;
+  if (!provenance || typeof provenance !== "object") return false;
+  const provenanceRecord = provenance as Record<string, unknown>;
+  const provenanceTool = provenanceToolName(provenanceRecord);
+  const provenanceArtifact = provenanceArtifactPath(provenanceRecord);
+  return /EngineeringProgramTool/i.test(provenanceTool) || /engineering-program/i.test(provenanceArtifact);
+}
+
+function optimizationCandidateRows(parsed: Record<string, unknown>): unknown[] {
+  const rows = parsed.candidates ?? parsed.comparedCandidates ?? parsed.evaluatedCandidates ?? parsed.rows;
+  return Array.isArray(rows) ? rows : [];
+}
+
+function optimizationSelectedRecord(parsed: Record<string, unknown>): Record<string, unknown> | undefined {
+  const selected = parsed.selectedOptimum ?? parsed.optimum ?? parsed.bestCandidate ?? parsed.selected;
+  return selected && typeof selected === "object" && !Array.isArray(selected) ? selected as Record<string, unknown> : undefined;
+}
+
+function formatOptimizationObservation(validation: FilesystemOptimizationValidation): string {
+  const selected = formatSelectedOptimum(validation.selected);
+  const provenanceArtifact = provenanceArtifactPath(validation.provenance);
+  const provenanceRuntime = cleanString(validation.provenance.runtime);
+  const provenanceSource = cleanString(validation.provenance.sourceUrl);
+  return [
+    `Validated OpenCode optimization output from ${validation.resultPath}.`,
+    `Selected optimum: ${selected}.`,
+    provenanceArtifact ? `Input artifact: ${provenanceArtifact}.` : "",
+    provenanceRuntime ? `Runtime: ${provenanceRuntime}.` : "",
+    provenanceSource ? `Source URL: ${provenanceSource}.` : ""
+  ].filter(Boolean).join(" ");
+}
+
+function provenanceToolName(provenance: Record<string, unknown>): string {
+  return (
+    cleanString(provenance.tool) ||
+    cleanString(provenance.toolContext) ||
+    cleanString(provenance.sourceTool) ||
+    cleanString(provenance.generatedBy)
+  );
+}
+
+function provenanceArtifactPath(provenance: Record<string, unknown>): string {
+  return (
+    cleanString(provenance.artifact) ||
+    cleanString(provenance.artifactPath) ||
+    cleanString(provenance.sourceArtifact) ||
+    cleanString(provenance.sourceArtifactPath) ||
+    cleanString(provenance.sourceArtifactRelativePath) ||
+    cleanString(provenance.engineeringArtifact) ||
+    cleanString(provenance.inputArtifact) ||
+    cleanString(provenance.artifactRelativePath)
+  );
+}
+
+function formatSelectedOptimum(selected: Record<string, unknown>): string {
+  const parts = [
+    numericPart("alpha", selectedAlphaValue(selected)),
+    numericPart("CL", selectedCoefficientValue(selected, "cl")),
+    numericPart("CD", selectedCoefficientValue(selected, "cd")),
+    numericPart("L/D", optimizationScoreValue(undefined, selected))
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : JSON.stringify(boundedObject(selected, 8, 300));
+}
+
+function optimizationScoreValue(parsed: Record<string, unknown> | undefined, selected: Record<string, unknown>): unknown {
+  return selected.liftToDrag ?? selected.ld ?? selected.lOverD ?? selected.l_d ?? selected.score ?? selected.objectiveValue ?? parsed?.score;
+}
+
+function selectedAlphaValue(selected: Record<string, unknown>): unknown {
+  if (selected.alpha !== undefined) return selected.alpha;
+  const variables = selected.variables;
+  return variables && typeof variables === "object" && !Array.isArray(variables)
+    ? (variables as Record<string, unknown>).alpha
+    : undefined;
+}
+
+function selectedCoefficientValue(selected: Record<string, unknown>, key: "cl" | "cd"): unknown {
+  if (selected[key] !== undefined) return selected[key];
+  const coefficients = selected.coefficients;
+  return coefficients && typeof coefficients === "object" && !Array.isArray(coefficients)
+    ? (coefficients as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function numericPart(label: string, value: unknown): string | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? `${label}=${value}` : undefined;
+}
+
+function hasFiniteNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function parseJsonObject(content: unknown): Record<string, unknown> | undefined {
+  const text = cleanString(content);
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isOpenCodeOutputContractError(error: unknown): boolean {
+  const metadata = errorMetadata(error);
+  return metadata?.timeout === true || metadata?.parseFailure === true || metadata?.artifactCompletion === true;
+}
+
+function errorMetadata(error: unknown): Record<string, unknown> | undefined {
+  return error && typeof error === "object" && "metadata" in error
+    ? (error as { metadata?: Record<string, unknown> }).metadata
+    : undefined;
+}
+
+function runCommand(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  artifactProbe?: () => OpenCodeRunOutput | undefined
+): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const child = spawn(command, args, {
       windowsHide: true,
       shell: isWindowsShellCommand(command),
@@ -218,15 +654,47 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
     });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
+    const clearTimers = () => {
+      clearTimeout(timer);
+      if (probeTimer) clearInterval(probeTimer);
+    };
+    const settleResolve = (result: CommandResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      resolve(result);
+    };
+    const settleReject = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      reject(error);
+    };
     const timer = setTimeout(() => {
       child.kill();
-      reject(commandError(`OpenCode CLI timeout after ${timeoutMs}ms`, {
+      settleReject(commandError(`OpenCode CLI timeout after ${timeoutMs}ms`, {
         timeout: true,
         timeoutMs,
         stdoutTail: decodeCommandTail(stdoutChunks),
         stderrTail: sanitizeCommandOutput(decodeCommandTail(stderrChunks))
       }));
     }, timeoutMs);
+    const probeTimer = artifactProbe ? setInterval(() => {
+      let recoveredOutput: OpenCodeRunOutput | undefined;
+      try {
+        recoveredOutput = artifactProbe();
+      } catch {
+        recoveredOutput = undefined;
+      }
+      if (!recoveredOutput) return;
+      child.kill();
+      settleResolve({
+        stdout: decodeCommandTail(stdoutChunks),
+        stderr: sanitizeCommandOutput(decodeCommandTail(stderrChunks)),
+        exitCode: 0,
+        recoveredOutput
+      });
+    }, 2_000) : undefined;
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
     });
@@ -234,19 +702,18 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
       stderrChunks.push(chunk);
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      settleReject(error);
     });
     child.on("close", (exitCode) => {
-      clearTimeout(timer);
+      if (settled) return;
       try {
-        resolve({
+        settleResolve({
           stdout: decodeStrictUtf8Chunks(stdoutChunks, "OpenCode stdout"),
           stderr: decodeStrictUtf8Chunks(stderrChunks, "OpenCode stderr"),
           exitCode: exitCode ?? 0
         });
       } catch (error) {
-        reject(error);
+        settleReject(error);
       }
     });
   });
@@ -437,6 +904,175 @@ function normalizeStructuredOutputToolRuns(
     startedAt,
     completedAt
   }];
+}
+
+function hasOptimizationIntent(input: OpenCodeRunInput): boolean {
+  const parts = [
+    input.project.goal,
+    input.project.topic,
+    input.project.scope,
+    input.specification?.scope,
+    input.researchPlan?.objective,
+    ...(input.questions ?? []).map((item) => item.text),
+    ...(input.hypotheses ?? []).map((item) => item.statement),
+    ...(input.specification?.researchQuestions ?? []),
+    ...(input.specification?.refinedHypotheses ?? []),
+    ...(input.specification?.constraints ?? []),
+    ...(input.specification?.successCriteria ?? []),
+    ...(input.specification?.evaluationMetrics ?? []),
+    ...(input.researchPlan?.expectedArtifacts ?? []),
+    ...(input.researchPlan?.executionSteps ?? []),
+    ...(input.researchPlan?.stopCriteria ?? [])
+  ];
+  return OPTIMIZATION_INTENT_PATTERN.test(parts.filter(Boolean).join("\n"));
+}
+
+function optimizationExecutionContract(input: OpenCodeRunInput): string {
+  return [
+    "Optimization execution contract:",
+    "- Build an optimizer from the actual ToolContext rows/artifacts, not from invented data.",
+    "- Prefer a small deterministic script in Python or TypeScript when no project-specific optimizer already exists.",
+    "- The optimizer artifact must include objective, variables, constraints, and exact input data provenance.",
+    "- The result artifact must include the chosen optimum, evaluated score, compared candidates, and run/validation notes.",
+    "- For aerodynamic polar optimization, optimize against the recorded polar rows unless a richer CFD result is present.",
+    "- Write artifact relative paths under artifacts/iteration-" + input.iteration + "/opencode-optimization/.",
+    "- Use artifact titles that contain Optimization Code and Optimization Result."
+  ].join("\n");
+}
+
+function toolContextPromptSummary(input: OpenCodeRunInput): Record<string, unknown> {
+  return {
+    sources: sourcePromptRows(input.sources ?? []),
+    evidence: evidencePromptRows(input.evidence ?? []),
+    artifacts: artifactPromptRows(input.artifacts ?? []),
+    toolRuns: toolRunPromptRows(input.toolRuns ?? [])
+  };
+}
+
+function sourcePromptRows(sources: ResearchSource[]): Array<Record<string, unknown>> {
+  return sources.slice(-12).map((source) => ({
+    id: source.id,
+    kind: source.kind,
+    title: source.title,
+    url: source.url,
+    doi: source.doi,
+    citation: cleanString(source.metadata?.citation),
+    excerpt: textExcerpt(cleanString(source.metadata?.excerpt) || cleanString(source.metadata?.snippet) || cleanString(source.metadata?.rawText), 800)
+  }));
+}
+
+function evidencePromptRows(evidence: EvidenceItem[]): Array<Record<string, unknown>> {
+  return evidence.slice(-16).map((item) => ({
+    id: item.id,
+    category: item.category,
+    title: item.title,
+    summary: textExcerpt(item.summary, 900),
+    sourceUri: item.sourceUri,
+    citation: item.citation,
+    quote: textExcerpt(item.quote, 600),
+    limitations: item.limitations?.slice(0, 4)
+  }));
+}
+
+function artifactPromptRows(artifacts: ResearchArtifact[]): Array<Record<string, unknown>> {
+  return artifacts
+    .filter((artifact) => artifact.category !== "conversation_memo")
+    .slice(-16)
+    .map((artifact) => ({
+      id: artifact.id,
+      category: artifact.category,
+      title: artifact.title,
+      relativePath: artifact.relativePath,
+      mimeType: artifact.mimeType,
+      summary: textExcerpt(artifact.summary, 900),
+      contentExcerpt: textExcerpt(artifact.content, 1200)
+    }));
+}
+
+function toolRunPromptRows(toolRuns: ToolRun[]): Array<Record<string, unknown>> {
+  return toolRuns.slice(-16).map((run) => ({
+    id: run.id,
+    toolName: run.toolName,
+    status: run.status,
+    error: run.error,
+    output: toolRunOutputPromptSummary(run)
+  }));
+}
+
+function toolRunOutputPromptSummary(run: ToolRun): unknown {
+  if (run.toolName === "EngineeringProgramTool") {
+    return engineeringProgramOutputPromptSummary(run.output);
+  }
+  if (run.toolName === "DataAnalysisTool") {
+    return boundedObject(run.output, 16, 1200);
+  }
+  return boundedObject(run.output, 8, 1000);
+}
+
+function engineeringProgramOutputPromptSummary(output: unknown): unknown {
+  const record = output && typeof output === "object" ? output as Record<string, unknown> : undefined;
+  if (!record) return output;
+  const outputs = Array.isArray(record.outputs) ? record.outputs : [];
+  return {
+    artifactCount: record.artifactCount,
+    outputCount: outputs.length,
+    outputs: outputs.slice(0, 8).map((item) => {
+      const outputRecord = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      const summary = outputRecord.summary && typeof outputRecord.summary === "object" ? outputRecord.summary as Record<string, unknown> : undefined;
+      return {
+        kind: outputRecord.kind,
+        target: outputRecord.target,
+        artifactPath: outputRecord.artifactPath,
+        summary: summary ? engineeringSummaryPrompt(summary) : boundedObject(outputRecord.summary, 12, 1200)
+      };
+    })
+  };
+}
+
+function engineeringSummaryPrompt(summary: Record<string, unknown>): Record<string, unknown> {
+  const rows = Array.isArray(summary.rows) ? summary.rows : undefined;
+  return {
+    airfoil: summary.airfoil,
+    runtime: summary.runtime,
+    runtimeVersion: summary.runtimeVersion,
+    runtimeLicense: summary.runtimeLicense,
+    sourceUrl: summary.sourceUrl,
+    coordinateFormat: summary.coordinateFormat,
+    reynolds: summary.reynolds,
+    mach: summary.mach,
+    alphaStart: summary.alphaStart,
+    alphaEnd: summary.alphaEnd,
+    alphaStep: summary.alphaStep,
+    rowCount: summary.rowCount,
+    convergence: summary.convergence,
+    rows: rows ? rows.slice(0, 80) : undefined
+  };
+}
+
+function boundedObject(value: unknown, maxKeys: number, maxTextLength: number): unknown {
+  if (value === undefined || value === null) return value;
+  if (typeof value === "string") return textExcerpt(value, maxTextLength);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.slice(0, maxKeys).map((item) => boundedObject(item, maxKeys, maxTextLength));
+  if (typeof value !== "object") return String(value);
+  const output: Record<string, unknown> = {};
+  let count = 0;
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (count >= maxKeys) break;
+    if (/stdout|stderr|rawText|prompt/i.test(key)) {
+      output[key] = textExcerpt(cleanString(item), Math.min(maxTextLength, 500));
+    } else {
+      output[key] = boundedObject(item, maxKeys, maxTextLength);
+    }
+    count += 1;
+  }
+  return output;
+}
+
+function textExcerpt(value: unknown, limit: number): string | undefined {
+  const text = cleanString(value);
+  if (!text) return undefined;
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
 }
 
 function projectContextPromptSummary(input: OpenCodeRunInput): {

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   PRODUCTION_ADAPTER_PATHS,
@@ -132,7 +132,7 @@ function printHuman(result) {
 }
 
 function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
+  return JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, ""));
 }
 
 function readSettings(root) {
@@ -146,17 +146,9 @@ function readSettings(root) {
     researchMetadata: { enabled: true, provider: "openalex", maxResults: 5, timeoutMs: 15000 },
     engineeringTools: {
       enabled: false,
+      toolchainRoot: "vendor/engineering-tools",
       xfoil: { enabled: false, command: "", timeoutMs: 30000 },
       modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
-      openFoam: {
-        enabled: false,
-        command: "",
-        caseRoot: "",
-        workingDirectory: "",
-        probeArgs: ["-help"],
-        runArgsTemplate: ["-case", "{case}"],
-        timeoutMs: 30 * 60 * 1000
-      },
       su2: {
         enabled: false,
         command: "",
@@ -167,38 +159,23 @@ function readSettings(root) {
         runArgsTemplate: ["{config}"],
         timeoutMs: 30 * 60 * 1000
       },
-      freeCad: {
-        enabled: false,
-        command: "",
-        scriptPath: "",
-        workingDirectory: "",
-        probeArgs: ["--version"],
-        runArgsTemplate: ["{script}", "--output", "{output}"],
-        timeoutMs: 30 * 60 * 1000
-      },
       openVsp: {
         enabled: false,
-        command: "",
+        command: "vspscript",
         scriptPath: "",
         workingDirectory: "",
         probeArgs: ["-help"],
-        runArgsTemplate: ["-script", "{script}", "-output", "{output}"],
+        runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"],
         timeoutMs: 30 * 60 * 1000
       },
-      commercialCfd: {
-        flightStreamConfigured: false,
-        starCcmConfigured: false,
-        flightStreamCommand: "",
-        flightStreamWorkingDirectory: "",
-        flightStreamProbeArgs: ["--version"],
-        flightStreamRunArgsTemplate: [],
-        flightStreamTimeoutMs: 120000,
-        starCcmCommand: "",
-        starCcmWorkingDirectory: "",
-        starCcmProbeArgs: ["-version"],
-        starCcmRunArgsTemplate: [],
-        starCcmTimeoutMs: 120000,
-        notes: ""
+      xflr5: {
+        enabled: false,
+        command: "xflr5",
+        scriptPath: "",
+        workingDirectory: "",
+        probeArgs: ["--help"],
+        runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"],
+        timeoutMs: 30 * 60 * 1000
       }
     },
     allowExternalSearch: true,
@@ -216,15 +193,27 @@ function readSettings(root) {
     researchMetadata: { ...defaults.researchMetadata, ...(persisted.researchMetadata ?? {}) },
     engineeringTools: {
       enabled: persisted.engineeringTools?.enabled ?? defaults.engineeringTools.enabled,
+      toolchainRoot: persisted.engineeringTools?.toolchainRoot ?? defaults.engineeringTools.toolchainRoot,
       xfoil: { ...defaults.engineeringTools.xfoil, ...(persisted.engineeringTools?.xfoil ?? {}) },
       modeling: { ...defaults.engineeringTools.modeling, ...(persisted.engineeringTools?.modeling ?? {}) },
-      openFoam: { ...defaults.engineeringTools.openFoam, ...(persisted.engineeringTools?.openFoam ?? {}) },
       su2: { ...defaults.engineeringTools.su2, ...(persisted.engineeringTools?.su2 ?? {}) },
-      freeCad: { ...defaults.engineeringTools.freeCad, ...(persisted.engineeringTools?.freeCad ?? {}) },
-      openVsp: { ...defaults.engineeringTools.openVsp, ...(persisted.engineeringTools?.openVsp ?? {}) },
-      commercialCfd: { ...defaults.engineeringTools.commercialCfd, ...(persisted.engineeringTools?.commercialCfd ?? {}) }
+      openVsp: {
+        ...defaults.engineeringTools.openVsp,
+        ...(persisted.engineeringTools?.openVsp ?? {}),
+        command: normalizeCommand(persisted.engineeringTools?.openVsp?.command, defaults.engineeringTools.openVsp.command)
+      },
+      xflr5: {
+        ...defaults.engineeringTools.xflr5,
+        ...(persisted.engineeringTools?.xflr5 ?? {}),
+        command: normalizeCommand(persisted.engineeringTools?.xflr5?.command, defaults.engineeringTools.xflr5.command)
+      }
     }
   };
+}
+
+function normalizeCommand(value, defaultValue) {
+  if (typeof value !== "string") return defaultValue;
+  return value.trim() || defaultValue;
 }
 
 function usableEncryptedKey(value) {
@@ -274,40 +263,92 @@ function assessEngineeringPrograms(settings = {}) {
   const targets = [];
   if (!settings.allowCodeExecution) return { ready: false, status: "code_execution_disabled", targets };
   if (!tools.enabled) return { ready: false, status: "disabled", targets };
-  if (tools.xfoil?.enabled && tools.xfoil.command?.trim()) targets.push("xfoil");
+  if (tools.xfoil?.enabled && embeddedToolReady(tools, "xfoil", tools.xfoil.command)) targets.push("xfoil");
   if (tools.modeling?.enabled && directoryExists(tools.modeling.artifactRoot)) targets.push("modeling");
-  if (tools.openFoam?.enabled && tools.openFoam.command?.trim() && openFoamCaseReady(tools.openFoam.caseRoot) && hasRunArgs(tools.openFoam.runArgsTemplate)) targets.push("openfoam");
   if (
     tools.su2?.enabled &&
-    tools.su2.command?.trim() &&
+    embeddedToolReady(tools, "su2", tools.su2.command) &&
     su2CaseReady(tools.su2.caseRoot, tools.su2.configFile) &&
     hasRunArgs(tools.su2.runArgsTemplate) &&
     tools.su2.runArgsTemplate.some((arg) => String(arg).includes("{config}"))
   ) targets.push("su2");
-  if (scriptedEngineeringToolReady(tools.freeCad)) targets.push("freecad");
-  if (scriptedEngineeringToolReady(tools.openVsp)) targets.push("openvsp");
-  if (tools.commercialCfd?.flightStreamConfigured && tools.commercialCfd.flightStreamCommand?.trim()) targets.push("flightstream");
-  if (tools.commercialCfd?.starCcmConfigured && tools.commercialCfd.starCcmCommand?.trim()) targets.push("starccm");
+  if (scriptedCfdToolReady(tools, "openvsp", tools.openVsp)) targets.push("openvsp");
+  if (scriptedCfdToolReady(tools, "xflr5", tools.xflr5)) targets.push("xflr5");
   return { ready: targets.length > 0, status: targets.length ? "available" : "missing_real_program_configuration", targets };
 }
 
-function scriptedEngineeringToolReady(tool = {}) {
+function scriptedCfdToolReady(tools = {}, toolName, tool = {}) {
+  if (!tool.enabled) return false;
+  if (!embeddedToolReady(tools, toolName, tool.command)) return false;
+  if (!tool.scriptPath?.trim()) return true;
   return Boolean(
-    tool.enabled &&
-      tool.command?.trim() &&
-      fileExists(tool.scriptPath) &&
+    fileExists(tool.scriptPath) &&
       hasRunArgs(tool.runArgsTemplate) &&
-      tool.runArgsTemplate.some((arg) => String(arg).includes("{script}"))
+      tool.runArgsTemplate.some((arg) => String(arg).includes("{script}")) &&
+      tool.runArgsTemplate.some((arg) => String(arg).includes("{spec}"))
   );
+}
+
+function embeddedToolReady(tools = {}, toolName, command) {
+  const explicit = normalizeExplicitCommand(command);
+  if (explicit) return fileExists(explicit);
+  const root = resolve(tools.toolchainRoot || process.env.AETHEROPS_ENGINEERING_TOOLCHAIN_ROOT || "vendor/engineering-tools");
+  if (!directoryExists(root)) return false;
+  return Boolean(findExecutableInRoot(root, preferredExecutableNames(toolName, command)));
+}
+
+function preferredExecutableNames(toolName, command) {
+  const defaults = {
+    xfoil: ["xfoil.exe", "xfoil"],
+    su2: ["SU2_CFD.exe", "SU2_CFD", "su2_cfd.exe", "su2_cfd"],
+    openvsp: ["vspscript.exe", "vspscript", "vsp.exe", "vsp"],
+    xflr5: ["xflr5.exe", "XFLR5.exe", "xflr5", "XFLR5"]
+  }[toolName] ?? [];
+  const bare = typeof command === "string" ? command.trim().replace(/^["']|["']$/g, "") : "";
+  if (!bare || /[\\/]/.test(bare)) return defaults;
+  const names = [basename(bare)];
+  if (process.platform === "win32" && !extname(bare)) names.push(`${bare}.exe`);
+  for (const item of defaults) {
+    if (!names.some((name) => name.toLowerCase() === item.toLowerCase())) names.push(item);
+  }
+  return names;
+}
+
+function findExecutableInRoot(root, names) {
+  const queue = [{ directory: root, depth: 0 }];
+  while (queue.length) {
+    const current = queue.shift();
+    let entries = [];
+    try {
+      entries = readdirSync(current.directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+    } catch {
+      entries = [];
+    }
+    const filesByName = new Map(entries.filter((entry) => entry.isFile()).map((entry) => [entry.name.toLowerCase(), entry.name]));
+    for (const name of names) {
+      const fileName = filesByName.get(name.toLowerCase());
+      if (fileName) return resolve(current.directory, fileName);
+    }
+    for (const entry of entries) {
+      const child = resolve(current.directory, entry.name);
+      const rel = relative(root, child);
+      if (rel.startsWith("..") || isAbsolute(rel)) continue;
+      if (entry.isDirectory() && current.depth < 6) queue.push({ directory: child, depth: current.depth + 1 });
+    }
+  }
+  return undefined;
+}
+
+function normalizeExplicitCommand(command) {
+  if (typeof command !== "string") return undefined;
+  const trimmed = command.replace(/^["']|["']$/g, "").trim();
+  if (!trimmed) return undefined;
+  if (isAbsolute(trimmed) || /[\\/]/.test(trimmed)) return resolve(trimmed);
+  return undefined;
 }
 
 function hasRunArgs(value) {
   return Array.isArray(value) && value.some((arg) => typeof arg === "string" && arg.trim());
-}
-
-function openFoamCaseReady(caseRoot) {
-  if (!directoryExists(caseRoot)) return false;
-  return fileExists(join(resolve(caseRoot), "system", "controlDict"));
 }
 
 function su2CaseReady(caseRoot, configFile) {

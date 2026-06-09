@@ -38,12 +38,16 @@ export class RuntimeRequirementChecker {
     }
 
     if (step === ResearchLoopStep.ExecuteTools) {
-      requirements.push(requirement("opencode.enabled", "OpenCode 사용 설정", step, settings.openCode.enabled, "OpenCode 도구 엔진을 활성화해야 합니다."));
-      requirements.push(requirement("opencode.command", "OpenCode command/path", step, Boolean(settings.openCode.command?.trim()), "OpenCode command/path가 필요합니다."));
-      if (context.openCodeReady !== undefined) {
-        requirements.push(requirement("opencode.preflight", "OpenCode CLI 준비 상태", step, context.openCodeReady, "OpenCode CLI를 실행할 수 없습니다."));
+      const requiredTools = context.snapshot.researchPlans.at(-1)?.requiredTools ?? [];
+      const openCodeRequired = normalizedToolSet(requiredTools).has("opencodetool");
+      if (openCodeRequired) {
+        requirements.push(requirement("opencode.enabled", "OpenCode 사용 설정", step, settings.openCode.enabled, "OpenCode 도구 엔진을 활성화해야 합니다."));
+        requirements.push(requirement("opencode.command", "OpenCode command/path", step, Boolean(settings.openCode.command?.trim()), "OpenCode command/path가 필요합니다."));
+        if (context.openCodeReady !== undefined) {
+          requirements.push(requirement("opencode.preflight", "OpenCode CLI 준비 상태", step, context.openCodeReady, "OpenCode CLI를 실행할 수 없습니다."));
+        }
       }
-      requirements.push(...requiredToolRequirements(step, project, settings, context.snapshot.researchPlans.at(-1)?.requiredTools ?? [], context.registeredToolNames ?? []));
+      requirements.push(...requiredToolRequirements(step, project, settings, requiredTools, context.registeredToolNames ?? []));
     }
 
     if (step === ResearchLoopStep.BuildVectorIndex) {
@@ -146,7 +150,7 @@ function requiredToolRequirements(
   }
 
   if (normalizedTools.has("engineeringprogramtool")) {
-      requirements.push(requirement("engineeringTools.configured", "Engineering program toolchain", step, hasExecutableEngineeringTool(settings), "EngineeringProgramTool requires a configured XFOIL command, modeling artifact root, OpenFOAM case, SU2 case, FreeCAD script, OpenVSP script, or commercial CFD command adapter."));
+      requirements.push(requirement("engineeringTools.configured", "Engineering program toolchain", step, hasExecutableEngineeringTool(settings), "EngineeringProgramTool requires an embedded XFOIL/SU2/OpenVSP/XFLR5 executable, bundled XFOIL-WASM path, or configured modeling artifact root."));
   }
 
   return requirements;

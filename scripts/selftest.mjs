@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -65,12 +66,11 @@ try {
   await prepareDataRoot();
   await runStaticChecks();
   await runGrepChecks();
+  await runMetadataVerify();
   const requestedPort = args.port !== undefined ? Number(args.port) : await findFreePort();
   await assertPortSafe(requestedPort);
   await startServer(requestedPort);
   await runServerVerify();
-  await runUiVerify();
-  await runMetadataVerify();
   const liveGate = await assessLiveGate();
   if (mode !== "live") {
     await runBlockedPath();
@@ -90,6 +90,7 @@ try {
   await validateArtifactsAndDb();
   await runSecurityHarness();
   await validateUtf8();
+  await runUiVerify();
 } catch (error) {
   results.findings.critical.push(error instanceof Error ? error.message : String(error));
 } finally {
@@ -211,8 +212,14 @@ async function startServer(port) {
   serverProcess = spawn(process.execPath, [serverPath], { cwd: repoRoot, env, windowsHide: true });
   serverProcess.stdout.setEncoding("utf8");
   serverProcess.stderr.setEncoding("utf8");
-  serverProcess.stdout.on("data", (chunk) => stdout.push(String(chunk)));
-  serverProcess.stderr.on("data", (chunk) => stderr.push(String(chunk)));
+  serverProcess.stdout.on("data", (chunk) => {
+    stdout.push(String(chunk));
+    results.server.stdout = stdout.join("");
+  });
+  serverProcess.stderr.on("data", (chunk) => {
+    stderr.push(String(chunk));
+    results.server.stderr = stderr.join("");
+  });
 
   const deadline = Date.now() + 30_000;
   let lastError;
@@ -258,11 +265,12 @@ async function runServerVerify() {
 
 function assertEngineeringTemplateContract(toolDiagnostics = {}) {
   const templates = Array.isArray(toolDiagnostics.engineeringProgramRequestTemplates) ? toolDiagnostics.engineeringProgramRequestTemplates : [];
-  const openVspTemplate = templates.find((template) => template.id === "vsp-script-run:openvsp");
+  const openVspTemplate = templates.find((template) => template.id === "openvsp-analysis-run:openvsp");
+  const xflr5Template = templates.find((template) => template.id === "xflr5-analysis-run:xflr5");
   const su2Template = templates.find((template) => template.id === "su2-case-run:su2");
   const xfoilWasmTemplate = templates.find((template) => template.id === "xfoil-wasm-polar:xfoil-wasm");
-  if (templates.length !== 10) {
-    results.findings.high.push(`Engineering program template contract changed: expected 10 templates, found ${templates.length}.`);
+  if (templates.length !== 7) {
+    results.findings.high.push(`Engineering program template contract changed: expected 7 templates, found ${templates.length}.`);
   }
   if (!xfoilWasmTemplate) {
     results.findings.high.push("Engineering program template contract is missing xfoil-wasm-polar:xfoil-wasm.");
@@ -280,16 +288,29 @@ function assertEngineeringTemplateContract(toolDiagnostics = {}) {
     if (su2Template.request?.outputFileName !== "su2-run-output.txt") {
       results.findings.high.push("SU2 request template outputFileName changed unexpectedly.");
     }
+    if (!su2Template.request?.cfdRunSpec) {
+      results.findings.high.push("SU2 request template does not expose cfdRunSpec.");
+    }
   }
   if (!openVspTemplate) {
-    results.findings.high.push("Engineering program template contract is missing vsp-script-run:openvsp.");
+    results.findings.high.push("Engineering program template contract is missing openvsp-analysis-run:openvsp.");
     return;
   }
-  if (openVspTemplate.request?.kind !== "vsp-script-run" || openVspTemplate.request?.target !== "openvsp") {
-    results.findings.high.push("OpenVSP request template does not expose kind=vsp-script-run and target=openvsp.");
+  if (openVspTemplate.request?.kind !== "openvsp-analysis-run" || openVspTemplate.request?.target !== "openvsp") {
+    results.findings.high.push("OpenVSP request template does not expose kind=openvsp-analysis-run and target=openvsp.");
   }
-  if (openVspTemplate.request?.outputFileName !== "openvsp-script-output.json") {
+  if (!openVspTemplate.request?.cfdRunSpec) {
+    results.findings.high.push("OpenVSP request template does not expose cfdRunSpec.");
+  }
+  if (openVspTemplate.request?.outputFileName !== "openvsp-analysis-output.json") {
     results.findings.high.push("OpenVSP request template outputFileName changed unexpectedly.");
+  }
+  if (!xflr5Template) {
+    results.findings.high.push("Engineering program template contract is missing xflr5-analysis-run:xflr5.");
+  } else if (xflr5Template.request?.kind !== "xflr5-analysis-run" || xflr5Template.request?.target !== "xflr5") {
+    results.findings.high.push("XFLR5 request template does not expose kind=xflr5-analysis-run and target=xflr5.");
+  } else if (!xflr5Template.request?.cfdRunSpec) {
+    results.findings.high.push("XFLR5 request template does not expose cfdRunSpec.");
   }
 }
 
@@ -396,15 +417,18 @@ async function runBlockedPath() {
 
 async function assessLiveGate() {
   const port = results.server.port;
-  const llmStatus = await rpc(port, "llm.status", [], { allowFailure: true });
   const settings = results.settings;
   const prerequisites = {
-    llm: Boolean(llmStatus.result?.available),
+    llm: true,
     openCode: Boolean(settings.openCode?.enabled && settings.openCode?.command),
     embedding: Boolean(settings.embedding?.apiKeyConfigured),
     externalSearch: Boolean(settings.allowExternalSearch && ((settings.webSearch?.provider !== "disabled" && settings.webSearch?.apiKeyConfigured) || settings.browserUse?.enabled)),
     noSubstituteAdapters: hasNoFailedGrepCheck("production synthetic-substitute adapters")
   };
+  if (prerequisites.embedding && prerequisites.externalSearch && prerequisites.openCode && prerequisites.noSubstituteAdapters) {
+    const llmStatus = await rpc(port, "llm.status", [], { allowFailure: true });
+    prerequisites.llm = Boolean(llmStatus.result?.available);
+  }
   const ready = Object.values(prerequisites).every(Boolean);
   return {
     ready,
@@ -924,22 +948,68 @@ async function rpc(port, method, rpcArgs, options = {}) {
   if (!response.body?.ok) {
     const message = response.body?.error ?? `RPC ${method} failed`;
     if (options.allowFailure) return { error: message, status: response.status };
-    throw new Error(message);
+    throw new Error(`RPC ${method} failed: ${message}`);
   }
   return response.body;
 }
 
 async function fetchJson(url, timeoutMs, init = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
-    const text = await response.text();
-    const body = text ? JSON.parse(text) : {};
-    return { status: response.status, contentType: response.headers.get("content-type") ?? "", body };
-  } finally {
-    clearTimeout(timeout);
+  const parsed = new URL(url);
+  const body = typeof init.body === "string" ? init.body : init.body ? String(init.body) : undefined;
+  const headers = { ...(init.headers ?? {}) };
+  if (body !== undefined && !Object.keys(headers).some((key) => key.toLowerCase() === "content-length")) {
+    headers["Content-Length"] = Buffer.byteLength(body);
   }
+  return new Promise((resolveJson, reject) => {
+    const request = httpRequest(
+      {
+        protocol: parsed.protocol,
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: `${parsed.pathname}${parsed.search}`,
+        method: init.method ?? "GET",
+        headers
+      },
+      (response) => {
+        const chunks = [];
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => chunks.push(String(chunk)));
+        response.on("end", () => {
+          try {
+            const text = chunks.join("");
+            resolveJson({
+              status: response.statusCode ?? 0,
+              contentType: String(response.headers["content-type"] ?? ""),
+              body: text ? JSON.parse(text) : {}
+            });
+          } catch (error) {
+            reject(withLocalServerState(url, error, body));
+          }
+        });
+      }
+    );
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`Timed out after ${timeoutMs}ms`));
+    });
+    request.on("error", (error) => reject(withLocalServerState(url, error, body)));
+    if (body !== undefined) request.write(body);
+    request.end();
+  });
+}
+
+function withLocalServerState(url, error, requestBody) {
+  let rpcMethod = "";
+  try {
+    const parsedBody = typeof requestBody === "string" ? JSON.parse(requestBody) : undefined;
+    rpcMethod = parsedBody?.method ? ` rpc=${parsedBody.method}` : "";
+  } catch {
+    rpcMethod = "";
+  }
+  const serverState =
+    serverProcess && url.includes("127.0.0.1")
+      ? ` serverExit=${serverProcess.exitCode ?? "running"} serverSignal=${serverProcess.signalCode ?? "none"} stderr=${sampleOutput(results.server.stderr ?? "", 500)}`
+      : "";
+  return new Error(`fetchJson failed for ${url}${rpcMethod}: ${error instanceof Error ? error.message : String(error)}${serverState}`);
 }
 
 function runTimed(commandName, commandArgs, label, timeoutMs) {

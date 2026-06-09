@@ -4,6 +4,7 @@ import { describeEngineeringProgramCapabilities, hasExecutableEngineeringTool, i
 import { nowIso } from "../shared/ids.js";
 import type {
   AppSettings,
+  CfdRunSpec,
   EngineeringArtifactCandidate,
   EngineeringProgramCapability,
   EngineeringProgramRequest,
@@ -30,7 +31,7 @@ export function buildRuntimeToolDiagnostics(settings: AppSettings): RuntimeToolD
     blockers.push({ key: "codeExecution", message: "Code execution is disabled in app settings." });
   }
   if (settings.allowCodeExecution && !hasExecutableEngineeringTool(settings)) {
-    blockers.push({ key: "engineeringPrograms", message: "No configured XFOIL, bundled XFOIL-WASM, modeling artifact root, OpenFOAM case, SU2 case, FreeCAD script, OpenVSP script, or commercial CFD adapter is available." });
+    blockers.push({ key: "engineeringPrograms", message: "No embedded XFOIL, bundled XFOIL-WASM, modeling artifact root, SU2 case, OpenVSP runner, or XFLR5 runner is available." });
   }
   if (artifactScan.blockedReason) {
     blockers.push({ key: "engineeringArtifacts", message: artifactScan.blockedReason });
@@ -149,10 +150,10 @@ function collectEngineeringArtifactCandidates(settings: AppSettings): { candidat
 
   const sorted = candidates.sort((left, right) => Number(right.ready) - Number(left.ready) || left.relativePath.localeCompare(right.relativePath));
   if (!sorted.length) {
-    return { candidates: sorted, blockedReason: `No OBJ/STL or airfoil coordinate artifacts were found under the configured modeling artifact root: ${root}` };
+    return { candidates: sorted, blockedReason: `No OBJ/STL/VSP3 or airfoil coordinate artifacts were found under the configured modeling artifact root: ${root}` };
   }
-  if (!readyArtifactCandidate(sorted, ["obj", "stl", "airfoil-coordinate"])) {
-    return { candidates: sorted, blockedReason: "No parser-valid OBJ/STL or airfoil coordinate artifact candidate is available under the configured modeling root within maxMeshBytes." };
+  if (!readyArtifactCandidate(sorted, ["obj", "stl", "vsp3", "airfoil-coordinate"])) {
+    return { candidates: sorted, blockedReason: "No parser-valid OBJ/STL, VSP3, or airfoil coordinate artifact candidate is available under the configured modeling root within maxMeshBytes." };
   }
   return { candidates: sorted };
 }
@@ -171,6 +172,8 @@ function validateArtifactCandidate(
     if (format === "airfoil-coordinate") {
       const artifactRoot = resolve(settings.engineeringTools.modeling.artifactRoot as string);
       validateAirfoilCoordinateText(readFileSync(resolve(artifactRoot, relativePath), "utf8"));
+    } else if (format === "vsp3") {
+      if (!relativePath.toLowerCase().endsWith(".vsp3")) throw new Error("OpenVSP artifacts must use .vsp3 extension.");
     } else {
       inspectConfiguredMeshArtifact(settings, relativePath);
     }
@@ -184,6 +187,7 @@ function validateArtifactCandidate(
 function engineeringArtifactFormatFromExtension(extension: string): EngineeringArtifactCandidate["format"] | undefined {
   if (extension === ".obj") return "obj";
   if (extension === ".stl") return "stl";
+  if (extension === ".vsp3") return "vsp3";
   if (extension === ".dat" || extension === ".txt") return "airfoil-coordinate";
   return undefined;
 }
@@ -257,11 +261,6 @@ function engineeringTemplateReadiness(
   if (capability.kind === "mesh-inspect" && !readyArtifactCandidate(artifactCandidates, ["obj", "stl"])) {
     return { ready: false, blockedReason: "No OBJ/STL artifact candidate is available under the configured modeling root within maxMeshBytes." };
   }
-  if (capability.kind === "openfoam-case-run") {
-    if (!settings.engineeringTools.openFoam.runArgsTemplate.length) {
-      return { ready: false, blockedReason: "OpenFOAM run args template is not configured." };
-    }
-  }
   if (capability.kind === "su2-case-run") {
     if (!settings.engineeringTools.su2.runArgsTemplate.length) {
       return { ready: false, blockedReason: "SU2 run args template is not configured." };
@@ -270,33 +269,38 @@ function engineeringTemplateReadiness(
       return { ready: false, blockedReason: "SU2 run args template must include {config}." };
     }
   }
-  if (capability.kind === "cad-script-run") {
-    if (!settings.engineeringTools.freeCad.runArgsTemplate.length) {
-      return { ready: false, blockedReason: "FreeCAD run args template is not configured." };
-    }
-    if (!settings.engineeringTools.freeCad.runArgsTemplate.some((arg) => arg.includes("{script}"))) {
-      return { ready: false, blockedReason: "FreeCAD run args template must include {script}." };
+  if (capability.kind === "openvsp-analysis-run") {
+    if (settings.engineeringTools.openVsp.scriptPath?.trim()) {
+      if (!settings.engineeringTools.openVsp.runArgsTemplate.length) {
+        return { ready: false, blockedReason: "OpenVSP custom script run args template is not configured." };
+      }
+      if (!settings.engineeringTools.openVsp.runArgsTemplate.some((arg) => arg.includes("{script}"))) {
+        return { ready: false, blockedReason: "OpenVSP custom script run args template must include {script}." };
+      }
+      if (!settings.engineeringTools.openVsp.runArgsTemplate.some((arg) => arg.includes("{spec}"))) {
+        return { ready: false, blockedReason: "OpenVSP custom script run args template must include {spec}." };
+      }
+    } else if (!readyArtifactCandidate(artifactCandidates, ["vsp3"])) {
+      return { ready: false, blockedReason: "Built-in OpenVSP runner requires a ready .vsp3 geometry artifact under the modeling artifact root." };
     }
   }
-  if (capability.kind === "vsp-script-run") {
-    if (!settings.engineeringTools.openVsp.runArgsTemplate.length) {
-      return { ready: false, blockedReason: "OpenVSP run args template is not configured." };
-    }
-    if (!settings.engineeringTools.openVsp.runArgsTemplate.some((arg) => arg.includes("{script}"))) {
-      return { ready: false, blockedReason: "OpenVSP run args template must include {script}." };
+  if (capability.kind === "xflr5-analysis-run") {
+    if (settings.engineeringTools.xflr5.scriptPath?.trim()) {
+      if (!settings.engineeringTools.xflr5.runArgsTemplate.length) {
+        return { ready: false, blockedReason: "XFLR5 custom script run args template is not configured." };
+      }
+      if (!settings.engineeringTools.xflr5.runArgsTemplate.some((arg) => arg.includes("{script}"))) {
+        return { ready: false, blockedReason: "XFLR5 custom script run args template must include {script}." };
+      }
+      if (!settings.engineeringTools.xflr5.runArgsTemplate.some((arg) => arg.includes("{spec}"))) {
+        return { ready: false, blockedReason: "XFLR5 custom script run args template must include {spec}." };
+      }
     }
   }
   if (capability.kind === "xfoil-wasm-polar") {
     const airfoilArtifact = readyArtifactCandidate(artifactCandidates, ["airfoil-coordinate"]);
     if (!airfoilArtifact && !settings.allowExternalSearch) {
       return { ready: false, blockedReason: "XFOIL-WASM Clark Y URL execution requires external search/direct fetch permission or a ready airfoil coordinate artifact." };
-    }
-  }
-  if (capability.kind === "commercial-cfd-run") {
-    const runArgs = commercialRunArgsTemplate(settings, capability.target);
-    if (!runArgs.length) return { ready: false, blockedReason: `${commercialTargetLabel(capability.target)} run args template is not configured.` };
-    if (runArgs.some((arg) => arg.includes("{input}")) && !readyArtifactCandidate(artifactCandidates, ["obj", "stl"])) {
-      return { ready: false, blockedReason: `${commercialTargetLabel(capability.target)} args require {input}, but no ready OBJ/STL artifact candidate is available.` };
     }
   }
   return { ready: true };
@@ -307,7 +311,8 @@ function engineeringTemplateRequest(
   capability: EngineeringProgramCapability,
   artifactCandidates: EngineeringArtifactCandidate[]
 ): EngineeringProgramRequest {
-  const meshArtifact = readyArtifactCandidate(artifactCandidates, ["obj", "stl"]);
+  const meshArtifact = readyArtifactCandidate(artifactCandidates, ["obj", "stl", "vsp3"]);
+  const vspArtifact = readyArtifactCandidate(artifactCandidates, ["vsp3"]);
   const airfoilArtifact = readyArtifactCandidate(artifactCandidates, ["airfoil-coordinate"]);
   if (capability.kind === "toolchain-check") {
     return {
@@ -337,6 +342,7 @@ function engineeringTemplateRequest(
       alphaStart: -4,
       alphaEnd: 12,
       alphaStep: 2,
+      cfdRunSpec: cfdSpecForXfoil("xfoil", airfoilArtifact?.relativePath),
       reason: "Generate an aerodynamic polar with the configured XFOIL executable."
     };
     if (airfoilArtifact) {
@@ -356,57 +362,42 @@ function engineeringTemplateRequest(
       alphaStart: -4,
       alphaEnd: 12,
       alphaStep: 2,
+      cfdRunSpec: cfdSpecForXfoil("xfoil-wasm", undefined, CLARK_Y_COORDINATE_URL),
       reason: "Generate a real Clark Y aerodynamic polar with bundled WebXFOIL from the UIUC coordinate file."
     };
     if (airfoilArtifact) {
       delete request.sourceUrl;
       request.artifactPath = airfoilArtifact.relativePath;
+      request.cfdRunSpec = cfdSpecForXfoil("xfoil-wasm", airfoilArtifact.relativePath);
       request.reason = "Generate a real aerodynamic polar from a discovered airfoil coordinate file with bundled WebXFOIL.";
     }
     return request;
-  }
-  if (capability.kind === "openfoam-case-run") {
-    return {
-      kind: "openfoam-case-run",
-      target: "openfoam",
-      outputFileName: "openfoam-run-output.txt",
-      reason: "Run the configured OpenFOAM-compatible command against the configured case root."
-    };
   }
   if (capability.kind === "su2-case-run") {
     return {
       kind: "su2-case-run",
       target: "su2",
       outputFileName: "su2-run-output.txt",
-      reason: "Run the configured SU2_CFD-compatible command against the configured case config."
+      cfdRunSpec: cfdSpecForCaseTarget("su2", meshArtifact?.relativePath),
+      reason: "Generate a validated SU2 config from the LLM CFD spec, then run the embedded SU2_CFD executable."
     };
   }
-  if (capability.kind === "cad-script-run") {
+  if (capability.kind === "openvsp-analysis-run") {
     return {
-      kind: "cad-script-run",
-      target: "freecad",
-      outputFileName: "freecad-script-output.json",
-      reason: "Run the configured FreeCAD-compatible headless script with the configured command."
-    };
-  }
-  if (capability.kind === "vsp-script-run") {
-    return {
-      kind: "vsp-script-run",
+      kind: "openvsp-analysis-run",
       target: "openvsp",
-      outputFileName: "openvsp-script-output.json",
-      reason: "Run the configured OpenVSP-compatible headless script with the configured command."
+      outputFileName: "openvsp-analysis-output.json",
+      cfdRunSpec: cfdSpecForCaseTarget("openvsp", vspArtifact?.relativePath),
+      reason: "Run OpenVSP/VSPAERO with the LLM-generated CFD run spec JSON."
     };
   }
-  const request: EngineeringProgramRequest = {
-    kind: "commercial-cfd-run",
-    target: capability.target,
-    outputFileName: `${capability.target}-result.txt`,
-    reason: `Run the configured ${capability.target} adapter against a real prepared input artifact.`
+  return {
+    kind: "xflr5-analysis-run",
+    target: "xflr5",
+    outputFileName: "xflr5-analysis-output.json",
+    cfdRunSpec: airfoilArtifact ? cfdSpecForCaseTarget("xflr5", airfoilArtifact.relativePath) : cfdSpecForXflr5Naca(),
+    reason: "Run XFLR5 with the LLM-generated CFD run spec JSON."
   };
-  if (meshArtifact && commercialRunArgsTemplate(settings, capability.target).some((arg) => arg.includes("{input}"))) {
-    request.artifactPath = meshArtifact.relativePath;
-  }
-  return request;
 }
 
 function engineeringTemplateLabel(capability: EngineeringProgramCapability): string {
@@ -414,21 +405,90 @@ function engineeringTemplateLabel(capability: EngineeringProgramCapability): str
   if (capability.kind === "mesh-inspect") return "Inspect mesh artifact";
   if (capability.kind === "xfoil-polar") return "Generate XFOIL polar";
   if (capability.kind === "xfoil-wasm-polar") return "Generate XFOIL-WASM polar";
-  if (capability.kind === "openfoam-case-run") return "Run OpenFOAM case";
   if (capability.kind === "su2-case-run") return "Run SU2 case";
-  if (capability.kind === "cad-script-run") return "Run FreeCAD script";
-  if (capability.kind === "vsp-script-run") return "Run OpenVSP script";
-  return capability.target === "flightstream" ? "Run FlightStream adapter" : "Run STAR-CCM+ adapter";
+  if (capability.kind === "openvsp-analysis-run") return "Run OpenVSP analysis";
+  return "Run XFLR5 analysis";
 }
 
-function commercialRunArgsTemplate(settings: AppSettings, target: EngineeringProgramCapability["target"]): string[] {
-  if (target === "flightstream") return settings.engineeringTools.commercialCfd.flightStreamRunArgsTemplate;
-  if (target === "starccm") return settings.engineeringTools.commercialCfd.starCcmRunArgsTemplate;
-  return [];
+function cfdSpecForXfoil(
+  target: Extract<CfdRunSpec["target"], "xfoil" | "xfoil-wasm">,
+  artifactPath?: string,
+  sourceUrl?: string
+): CfdRunSpec {
+  return {
+    target,
+    geometry: artifactPath
+      ? { source: "artifact", artifactPath }
+      : sourceUrl
+        ? { source: "sourceUrl", sourceUrl, description: "Public airfoil coordinate file selected by the ready request template." }
+        : { source: "naca", naca: "2412", description: "Template NACA airfoil; LLM may replace with a ready airfoil coordinate artifact." },
+    flightCondition: {
+      reynolds: 1_000_000,
+      mach: 0,
+      alphaStart: -4,
+      alphaEnd: 12,
+      alphaStep: 2
+    },
+    mesh: { strategy: "toolGenerated", boundaryLayer: false },
+    solver: {
+      name: target === "xfoil" ? "xfoil" : "webxfoil-wasm",
+      model: "viscous-panel",
+      maxIterations: 160
+    },
+    output: { polar: true, forceCoefficients: true },
+    rationale: "Use XFOIL-family analysis when 2D airfoil polar evidence is sufficient."
+  };
 }
 
-function commercialTargetLabel(target: EngineeringProgramCapability["target"]): string {
-  if (target === "flightstream") return "FlightStream";
-  if (target === "starccm") return "STAR-CCM+";
-  return String(target);
+function cfdSpecForCaseTarget(
+  target: Extract<CfdRunSpec["target"], "su2" | "openvsp" | "xflr5">,
+  artifactPath?: string
+): CfdRunSpec {
+  const solverName = target === "su2" ? "su2" : target === "openvsp" ? "openvsp-vspaero" : "xflr5";
+  const geometry = artifactPath
+    ? { source: "artifact" as const, artifactPath }
+    : { source: "configuredCase" as const, description: "Use the configured case or adapter script input; no path is invented by the LLM." };
+  return {
+    target,
+    geometry,
+    flightCondition: {
+      reynolds: 1_000_000,
+      mach: 0,
+      alphaStart: -4,
+      alphaEnd: 12,
+      alphaStep: 2
+    },
+    mesh: { strategy: artifactPath ? "existing" : "caseGenerated", artifactPath, boundaryLayer: target === "su2" ? true : undefined },
+    solver: {
+      name: solverName,
+      model: target === "su2" ? "euler" : "panel",
+      turbulenceModel: target === "su2" ? "none" : undefined,
+      maxIterations: target === "su2" ? 1_000 : undefined,
+      convergenceTolerance: target === "su2" ? 1e-6 : undefined
+    },
+    output: { polar: true, forceCoefficients: true, pressureField: target === "su2" },
+    rationale: `Use ${target} when the research plan needs computed aerodynamic/CFD evidence beyond source metadata.`
+  };
+}
+
+function cfdSpecForXflr5Naca(): CfdRunSpec {
+  return {
+    target: "xflr5",
+    geometry: { source: "naca", naca: "2412", description: "Template NACA airfoil; LLM may replace with a ready airfoil coordinate artifact." },
+    flightCondition: {
+      reynolds: 1_000_000,
+      mach: 0,
+      alphaStart: -4,
+      alphaEnd: 12,
+      alphaStep: 2
+    },
+    mesh: { strategy: "toolGenerated", boundaryLayer: false },
+    solver: {
+      name: "xflr5",
+      model: "panel",
+      maxIterations: 160
+    },
+    output: { polar: true, forceCoefficients: true },
+    rationale: "Use XFLR5 when a local XFLR5 batch run is needed for airfoil polar evidence."
+  };
 }

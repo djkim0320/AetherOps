@@ -7,6 +7,18 @@ interface OpenAlexResponse {
   results?: OpenAlexWork[];
 }
 
+class OpenAlexRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly statusText: string,
+    readonly responseText: string
+  ) {
+    super(message);
+    this.name = "OpenAlexRequestError";
+  }
+}
+
 interface OpenAlexWork {
   id?: string;
   doi?: string;
@@ -127,7 +139,7 @@ function buildMetadataQueries(input: OpenCodeRunInput): string[] {
   parts.push(input.researchPlan?.objective ?? "", input.project.topic, input.project.goal);
   const candidates = [
     input.project.topic,
-    keywordQuery(parts),
+    safeKeywordQuery(parts),
     expandedAcronymQuery(parts),
     ...parts
   ];
@@ -151,12 +163,23 @@ async function fetchFirstUsableOpenAlexWorks(queries: string[], settings: AppSet
 
   let lastQuery = queries[0] ?? "";
   let lastWorks: OpenAlexWork[] = [];
+  let lastError: Error | undefined;
   for (const query of queries) {
-    const works = await fetchOpenAlexWorks(query, settings);
+    let works: OpenAlexWork[];
+    try {
+      works = await fetchOpenAlexWorks(query, settings);
+    } catch (error) {
+      if (isRecoverableOpenAlexQueryError(error)) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        continue;
+      }
+      throw error;
+    }
     lastQuery = query;
     lastWorks = works;
     if (works.some((work) => cleanString(work.display_name))) return { query, works };
   }
+  if (!lastWorks.length && lastError) throw lastError;
   return { query: lastQuery, works: lastWorks };
 }
 
@@ -181,6 +204,27 @@ function keywordQuery(parts: string[]): string {
   return output.join(" ");
 }
 
+function safeKeywordQuery(parts: string[]): string {
+  const joined = parts
+    .map((part) => sanitizeOpenAlexQuery(part))
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\bRAG\b/gi, "retrieval augmented generation");
+  const keywords = joined
+    .split(/[^\p{L}\p{N}]+/u)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.length >= 4 && !metadataStopwords.has(part));
+  const output: string[] = [];
+  const seen = new Set<string>();
+  for (const keyword of keywords) {
+    if (seen.has(keyword)) continue;
+    seen.add(keyword);
+    output.push(keyword);
+    if (output.length >= 9) break;
+  }
+  return output.join(" ");
+}
+
 function expandedAcronymQuery(parts: string[]): string {
   const joined = parts.join(" ");
   if (!/\bRAG\b|retrieval/i.test(joined)) return "";
@@ -192,7 +236,14 @@ function expandedAcronymQuery(parts: string[]): string {
 }
 
 function boundedQuery(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, MAX_QUERY_LENGTH);
+  return sanitizeOpenAlexQuery(value).slice(0, MAX_QUERY_LENGTH).trim();
+}
+
+function sanitizeOpenAlexQuery(value: string): string {
+  return value
+    .replace(/[?*]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function fetchOpenAlexWorks(query: string, settings: AppSettings): Promise<OpenAlexWork[]> {
@@ -211,13 +262,25 @@ async function fetchOpenAlexWorks(query: string, settings: AppSettings): Promise
   try {
     const response = await fetch(url, { headers: { accept: "application/json" }, signal: controller.signal });
     if (!response.ok) {
-      throw new Error(`OpenAlex metadata request failed: ${response.status} ${response.statusText}`);
+      const responseText = await response.text().catch(() => "");
+      throw new OpenAlexRequestError(
+        `OpenAlex metadata request failed: ${response.status} ${response.statusText}${responseText ? ` - ${responseText.slice(0, 300)}` : ""}`,
+        response.status,
+        response.statusText,
+        responseText
+      );
     }
     const parsed = (await response.json()) as OpenAlexResponse;
     return Array.isArray(parsed.results) ? parsed.results : [];
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isRecoverableOpenAlexQueryError(error: unknown): boolean {
+  if (!(error instanceof OpenAlexRequestError)) return false;
+  if (error.status !== 400) return false;
+  return /wildcard|Invalid query parameters/i.test(error.responseText);
 }
 
 function normalizeOpenAlexWork(

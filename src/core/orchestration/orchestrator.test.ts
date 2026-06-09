@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { LlmJsonRequest, LlmProvider } from "../providers/llm.js";
 import { InMemoryResearchStore } from "../memory/memoryStore.js";
-import { createInputProject, createStrictTestOrchestrator } from "../testing/orchestratorTestHarness.js";
-import { ResearchLoopStep, type ResearchProjectInput } from "../shared/types.js";
+import { createInputProject, createStrictTestOrchestrator, DeterministicLlmProvider, strictTestSettings } from "../testing/orchestratorTestHarness.js";
+import { ResearchLoopStep, type AppSettings, type ResearchProjectInput } from "../shared/types.js";
 
 const input: ResearchProjectInput = {
   goal: "Verify that the autonomous research loop follows the 12-step structure.",
@@ -110,6 +111,42 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.project.status).toBe("completed");
   });
 
+  it("runs registered research tools without requiring OpenCode when the LLM plan excludes OpenCodeTool", async () => {
+    const settings: AppSettings = {
+      ...strictTestSettings,
+      openCode: { ...strictTestSettings.openCode, enabled: false },
+      allowExternalSearch: false,
+      allowCodeExecution: false
+    };
+    const llm = new ToolOnlyPlanLlmProvider();
+    const orchestrator = createStrictTestOrchestrator({
+      settings,
+      llm,
+      openCode: {
+        preflight: async () => {
+          throw new Error("OpenCode preflight should not run for a tool-only plan.");
+        },
+        run: async () => {
+          throw new Error("OpenCode run should not run for a tool-only plan.");
+        }
+      }
+    });
+    let snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: {
+        ...input.autonomyPolicy,
+        maxLoopIterations: 1
+      }
+    });
+
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    expect(snapshot.project.status).toBe("completed");
+    expect(snapshot.openCodeRuns).toHaveLength(0);
+    expect(snapshot.toolRuns.map((toolRun) => toolRun.toolName)).toEqual(["ArtifactWriterTool", "DataAnalysisTool"]);
+    expect(snapshot.iterations.some((iteration) => iteration.message.includes("Autonomous registered research tools completed"))).toBe(true);
+  });
+
 
   it("does not synthesize without a ProjectContextSnapshot", async () => {
     const orchestrator = createStrictTestOrchestrator();
@@ -138,6 +175,26 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.ontologyEntities.length).toBeGreaterThan(0);
   });
 
+  it("stores compressed project context as durable searchable memory during long loops", async () => {
+    const orchestrator = createStrictTestOrchestrator();
+    let snapshot = await createInputProject(orchestrator, input);
+    snapshot = await orchestrator.startLoop(snapshot.project.id);
+
+    const compressionRecords = snapshot.normalizedRecords.filter((record) => record.metadata.contextCompression === true);
+    const compressionRecordIds = new Set(compressionRecords.map((record) => record.id));
+    const compressionChunks = snapshot.chunks.filter((chunk) => chunk.recordId && compressionRecordIds.has(chunk.recordId));
+
+    expect(compressionRecords.length).toBeGreaterThan(0);
+    expect(compressionRecords[0]?.metadata).toMatchObject({
+      sourceKind: "context_compression",
+      traceabilityKind: "project_provenance",
+      canSupportHypothesis: false
+    });
+    expect(compressionRecords[0]?.content).toContain("Project Context Compression");
+    expect(compressionChunks.length).toBeGreaterThan(0);
+    expect(snapshot.iterations.some((iteration) => iteration.message.includes("Context compression stored"))).toBe(true);
+  });
+
   it("deletes chat sessions without removing project progress", async () => {
     const orchestrator = createStrictTestOrchestrator({ store: new InMemoryResearchStore() });
     let snapshot = await orchestrator.createProject(input);
@@ -154,3 +211,28 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.iterations.at(-1)?.message).toBeTruthy();
   });
 });
+
+class ToolOnlyPlanLlmProvider implements LlmProvider {
+  readonly name = "tool-only-plan-test-llm";
+  private readonly base = new DeterministicLlmProvider();
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async completeJson<T>(request: LlmJsonRequest): Promise<T> {
+    if (request.schemaName !== "AetherOpsResearchPlan") {
+      return this.base.completeJson<T>(request);
+    }
+    return {
+      objective: "Iteration 1: run registered AetherOps research tools without OpenCode.",
+      targetQuestions: ["q1"],
+      targetHypotheses: ["h1"],
+      requiredTools: ["ArtifactWriterTool", "DataAnalysisTool"],
+      expectedSources: ["tool log", "artifact"],
+      expectedArtifacts: ["research-note.md"],
+      executionSteps: ["Run registered research tools"],
+      stopCriteria: ["Internal safety cap reached"]
+    } as T;
+  }
+}

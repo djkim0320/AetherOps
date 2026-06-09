@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describeEngineeringProgramCapabilities, EngineeringProgramTool, runEngineeringProgramPreflight } from "./engineeringProgramTool.js";
+import { describeEngineeringProgramCapabilities, EngineeringProgramTool, runEngineeringProgramPreflight, validateAirfoilCoordinateText } from "./engineeringProgramTool.js";
 import { ResearchMetadataTool } from "./researchMetadataTool.js";
 import { buildRuntimeToolDiagnostics } from "./runtimeToolDiagnostics.js";
 import { createDefaultResearchTools, DataAnalysisTool, PdfIngestionTool, WebFetchTool, WebSearchTool, type ResearchTool, type ResearchToolResult } from "./toolRegistry.js";
 import { dedupeResearchTools, normalizeToolName, orderToolNames, ToolRunner, ToolRunnerError } from "./toolRunner.js";
-import { ResearchLoopStep, type AppSettings, type OpenCodeRunInput, type ResearchSource } from "../shared/types.js";
+import { ResearchLoopStep, type AppSettings, type CfdRunSpec, type OpenCodeRunInput, type ResearchSource } from "../shared/types.js";
 
 const createdAt = "2026-05-26T00:00:00.000Z";
 const CLARK_Y_COORDINATES = `
@@ -150,30 +150,30 @@ const settings: AppSettings = {
     enabled: false,
     xfoil: { enabled: false, command: "", timeoutMs: 30_000 },
     modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
-    openFoam: { enabled: false, command: "", caseRoot: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-case", "{case}"], timeoutMs: 30 * 60_000 },
     su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 30 * 60_000 },
-    freeCad: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--version"], runArgsTemplate: ["{script}", "--output", "{output}"], timeoutMs: 30 * 60_000 },
-    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
-    commercialCfd: {
-      flightStreamConfigured: false,
-      starCcmConfigured: false,
-      flightStreamCommand: "",
-      flightStreamWorkingDirectory: "",
-      flightStreamProbeArgs: ["--version"],
-      flightStreamRunArgsTemplate: [],
-      flightStreamTimeoutMs: 120_000,
-      starCcmCommand: "",
-      starCcmWorkingDirectory: "",
-      starCcmProbeArgs: ["-version"],
-      starCcmRunArgsTemplate: [],
-      starCcmTimeoutMs: 120_000,
-      notes: ""
-    }
+    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
+    xflr5: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"], timeoutMs: 30 * 60_000 }
   },
   allowExternalSearch: true,
   allowCodeExecution: false,
   updatedAt: createdAt
 };
+
+function cfdRunSpec(target: Extract<CfdRunSpec["target"], "su2" | "openvsp" | "xflr5">): CfdRunSpec {
+  return {
+    target,
+    geometry: { source: "configuredCase", description: "Test case explicitly configured by settings." },
+    flightCondition: { reynolds: 1_000_000, mach: 0.05, alphaStart: 2, alphaEnd: 2, alphaStep: 1 },
+    mesh: { strategy: "existing", boundaryLayer: false },
+    solver: {
+      name: target === "openvsp" ? "openvsp-vspaero" : target,
+      model: target === "su2" ? "euler" : "panel",
+      maxIterations: 100,
+      convergenceTolerance: 1e-6
+    },
+    output: { polar: true, pressureField: false, mesh: false }
+  };
+}
 
 function runInput(requiredTools: string[] = []): OpenCodeRunInput {
   return {
@@ -474,7 +474,7 @@ describe("ToolRunner web tool pipeline", () => {
     }
   });
 
-  it("exposes EngineeringProgramTool when a commercial CFD adapter command is configured", () => {
+  it("exposes EngineeringProgramTool when an XFLR5 adapter command is configured", () => {
     const runner = new ToolRunner(createDefaultResearchTools());
     const input = runInput();
     input.project.autonomyPolicy.allowCodeExecution = true;
@@ -486,23 +486,24 @@ describe("ToolRunner web tool pipeline", () => {
       toolRuns: [],
       continuationDecisions: []
     } as unknown as Parameters<ToolRunner["listExecutableToolNames"]>[0]["snapshot"];
-    const executable = runner.listExecutableToolNames({
-      snapshot,
-      settings: {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          commercialCfd: {
-            ...settings.engineeringTools.commercialCfd,
-            flightStreamConfigured: true,
-            flightStreamCommand: process.execPath,
-            flightStreamRunArgsTemplate: ["--batch", "{input}", "--output", "{output}"]
+      const executable = runner.listExecutableToolNames({
+        snapshot,
+        settings: {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
+            enabled: true,
+            xflr5: {
+              ...settings.engineeringTools.xflr5,
+              enabled: true,
+              command: process.execPath,
+              scriptPath: process.execPath,
+              runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"]
+            }
           }
         }
-      }
-    });
+      });
 
     expect(executable).toContain("EngineeringProgramTool");
   });
@@ -511,7 +512,7 @@ describe("ToolRunner web tool pipeline", () => {
     const blockedCapabilities = describeEngineeringProgramCapabilities(settings);
     expect(blockedCapabilities.find((capability) => capability.kind === "xfoil-polar")?.ready).toBe(false);
     expect(blockedCapabilities.find((capability) => capability.kind === "xfoil-wasm-polar")?.ready).toBe(false);
-    expect(blockedCapabilities.find((capability) => capability.target === "flightstream")?.blockedReason).toContain("FlightStream");
+    expect(blockedCapabilities.find((capability) => capability.target === "xflr5")?.ready).toBe(false);
 
     const configuredCapabilities = describeEngineeringProgramCapabilities({
       ...settings,
@@ -520,19 +521,19 @@ describe("ToolRunner web tool pipeline", () => {
         ...settings.engineeringTools,
         enabled: true,
         xfoil: { ...settings.engineeringTools.xfoil, enabled: true, command: process.execPath },
-        commercialCfd: {
-          ...settings.engineeringTools.commercialCfd,
-          flightStreamConfigured: true,
-          flightStreamCommand: process.execPath,
-          flightStreamRunArgsTemplate: ["--batch", "{input}", "--output", "{output}"]
+        xflr5: {
+          ...settings.engineeringTools.xflr5,
+          enabled: true,
+          command: process.execPath,
+          scriptPath: process.execPath
         }
       }
     });
 
     expect(configuredCapabilities.find((capability) => capability.kind === "xfoil-polar")?.ready).toBe(true);
     expect(configuredCapabilities.find((capability) => capability.kind === "xfoil-wasm-polar")?.ready).toBe(true);
-    expect(configuredCapabilities.find((capability) => capability.target === "flightstream")?.ready).toBe(true);
-    expect(configuredCapabilities.find((capability) => capability.target === "flightstream")?.requiredFields).toEqual(["kind", "target"]);
+    expect(configuredCapabilities.find((capability) => capability.target === "xflr5")?.ready).toBe(true);
+    expect(configuredCapabilities.find((capability) => capability.target === "xflr5")?.requiredFields).toEqual(["kind", "target", "cfdRunSpec"]);
 
     const missingCommandCapabilities = describeEngineeringProgramCapabilities({
       ...settings,
@@ -565,16 +566,13 @@ describe("ToolRunner web tool pipeline", () => {
 
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-diagnostics-mesh-"));
     try {
-      const openFoamCaseRoot = join(tempRoot, "openfoam-case");
-      mkdirSync(join(openFoamCaseRoot, "system"), { recursive: true });
-      writeFileSync(join(openFoamCaseRoot, "system", "controlDict"), "application simpleFoam;\n", "utf8");
       const su2CaseRoot = join(tempRoot, "su2-case");
       mkdirSync(su2CaseRoot, { recursive: true });
       writeFileSync(join(su2CaseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
-      const freeCadScriptPath = join(tempRoot, "freecad-script.mjs");
-      writeFileSync(freeCadScriptPath, "console.log('FreeCAD harness ready');\n", "utf8");
       const openVspScriptPath = join(tempRoot, "openvsp-script.mjs");
       writeFileSync(openVspScriptPath, "console.log('OpenVSP harness ready');\n", "utf8");
+      const xflr5ScriptPath = join(tempRoot, "xflr5-script.mjs");
+      writeFileSync(xflr5ScriptPath, "console.log('XFLR5 harness ready');\n", "utf8");
       writeFileSync(join(tempRoot, "wing.obj"), ["v 0 0 0", "v 1 0 0", "v 0 1 0", "f 1 2 3", ""].join("\n"), "utf8");
       writeFileSync(join(tempRoot, "clarky.dat"), CLARK_Y_COORDINATES, "utf8");
       writeFileSync(join(tempRoot, "invalid.obj"), "not a mesh\n", "utf8");
@@ -587,13 +585,6 @@ describe("ToolRunner web tool pipeline", () => {
           ...settings.engineeringTools,
           enabled: true,
           modeling: { ...settings.engineeringTools.modeling, enabled: true, artifactRoot: tempRoot, maxMeshBytes: 16 * 1024 },
-          openFoam: {
-            ...settings.engineeringTools.openFoam,
-            enabled: true,
-            command: process.execPath,
-            caseRoot: openFoamCaseRoot,
-            runArgsTemplate: ["--version"]
-          },
           su2: {
             ...settings.engineeringTools.su2,
             enabled: true,
@@ -603,25 +594,19 @@ describe("ToolRunner web tool pipeline", () => {
             probeArgs: ["--version"],
             runArgsTemplate: ["{config}", "--output", "{output}"]
           },
-          freeCad: {
-            ...settings.engineeringTools.freeCad,
-            enabled: true,
-            command: process.execPath,
-            scriptPath: freeCadScriptPath,
-            runArgsTemplate: ["{script}", "--output", "{output}"]
-          },
           openVsp: {
             ...settings.engineeringTools.openVsp,
             enabled: true,
             command: process.execPath,
             scriptPath: openVspScriptPath,
-            runArgsTemplate: ["{script}", "--output", "{output}"]
+            runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"]
           },
-          commercialCfd: {
-            ...settings.engineeringTools.commercialCfd,
-            flightStreamConfigured: true,
-            flightStreamCommand: process.execPath,
-            flightStreamRunArgsTemplate: ["--input", "{input}", "--output", "{output}"]
+          xflr5: {
+            ...settings.engineeringTools.xflr5,
+            enabled: true,
+            command: process.execPath,
+            scriptPath: xflr5ScriptPath,
+            runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"]
           }
         }
       });
@@ -636,13 +621,10 @@ describe("ToolRunner web tool pipeline", () => {
         blockedReason: expect.stringContaining("mesh validation failed")
       });
       expect(configured.engineeringArtifactCandidates.find((candidate) => candidate.relativePath === "oversize.stl")).toMatchObject({ ready: false, validated: false, format: "stl" });
-      expect(configured.engineeringPrograms.find((capability) => capability.target === "flightstream")?.ready).toBe(true);
       expect(configured.engineeringPrograms.find((capability) => capability.target === "xfoil-wasm")?.ready).toBe(true);
-      expect(configured.engineeringPrograms.find((capability) => capability.target === "openfoam")?.ready).toBe(true);
       expect(configured.engineeringPrograms.find((capability) => capability.target === "su2")?.ready).toBe(true);
-      expect(configured.engineeringPrograms.find((capability) => capability.target === "freecad")?.ready).toBe(true);
       expect(configured.engineeringPrograms.find((capability) => capability.target === "openvsp")?.ready).toBe(true);
-      expect(configured.engineeringPrograms.find((capability) => capability.target === "starccm")?.ready).toBe(false);
+      expect(configured.engineeringPrograms.find((capability) => capability.target === "xflr5")?.ready).toBe(true);
       expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "mesh-inspect:modeling")).toMatchObject({
         ready: true,
         request: { kind: "mesh-inspect", target: "modeling", artifactPath: "wing.obj" }
@@ -651,44 +633,17 @@ describe("ToolRunner web tool pipeline", () => {
         ready: true,
         request: { kind: "xfoil-wasm-polar", target: "xfoil-wasm", artifactPath: "clarky.dat" }
       });
-      expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "openfoam-case-run:openfoam")).toMatchObject({
-        ready: true,
-        request: { kind: "openfoam-case-run", target: "openfoam", outputFileName: "openfoam-run-output.txt" }
-      });
       expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "su2-case-run:su2")).toMatchObject({
         ready: true,
-        request: { kind: "su2-case-run", target: "su2", outputFileName: "su2-run-output.txt" }
+        request: { kind: "su2-case-run", target: "su2", outputFileName: "su2-run-output.txt", cfdRunSpec: expect.any(Object) }
       });
-      expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "cad-script-run:freecad")).toMatchObject({
+      expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp")).toMatchObject({
         ready: true,
-        request: { kind: "cad-script-run", target: "freecad", outputFileName: "freecad-script-output.json" }
+        request: { kind: "openvsp-analysis-run", target: "openvsp", outputFileName: "openvsp-analysis-output.json", cfdRunSpec: expect.any(Object) }
       });
-      expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "vsp-script-run:openvsp")).toMatchObject({
+      expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "xflr5-analysis-run:xflr5")).toMatchObject({
         ready: true,
-        request: { kind: "vsp-script-run", target: "openvsp", outputFileName: "openvsp-script-output.json" }
-      });
-      expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "commercial-cfd-run:flightstream")).toMatchObject({
-        ready: true,
-        request: { kind: "commercial-cfd-run", target: "flightstream", artifactPath: "wing.obj" }
-      });
-      const missingRunArgs = buildRuntimeToolDiagnostics({
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          openFoam: {
-            ...settings.engineeringTools.openFoam,
-            enabled: true,
-            command: process.execPath,
-            caseRoot: openFoamCaseRoot,
-            runArgsTemplate: []
-          }
-        }
-      });
-      expect(missingRunArgs.engineeringProgramRequestTemplates.find((template) => template.id === "openfoam-case-run:openfoam")).toMatchObject({
-        ready: false,
-        blockedReason: expect.stringContaining("run args template")
+        request: { kind: "xflr5-analysis-run", target: "xflr5", outputFileName: "xflr5-analysis-output.json", cfdRunSpec: expect.any(Object) }
       });
       const missingSu2RunArgs = buildRuntimeToolDiagnostics({
         ...settings,
@@ -730,25 +685,6 @@ describe("ToolRunner web tool pipeline", () => {
         ready: false,
         blockedReason: expect.stringContaining("{config}")
       });
-      const missingFreeCadRunArgs = buildRuntimeToolDiagnostics({
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          freeCad: {
-            ...settings.engineeringTools.freeCad,
-            enabled: true,
-            command: process.execPath,
-            scriptPath: freeCadScriptPath,
-            runArgsTemplate: []
-          }
-        }
-      });
-      expect(missingFreeCadRunArgs.engineeringProgramRequestTemplates.find((template) => template.id === "cad-script-run:freecad")).toMatchObject({
-        ready: false,
-        blockedReason: expect.stringContaining("run args template")
-      });
       const missingOpenVspRunArgs = buildRuntimeToolDiagnostics({
         ...settings,
         allowCodeExecution: true,
@@ -764,7 +700,7 @@ describe("ToolRunner web tool pipeline", () => {
           }
         }
       });
-      expect(missingOpenVspRunArgs.engineeringProgramRequestTemplates.find((template) => template.id === "vsp-script-run:openvsp")).toMatchObject({
+      expect(missingOpenVspRunArgs.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp")).toMatchObject({
         ready: false,
         blockedReason: expect.stringContaining("run args template")
       });
@@ -783,9 +719,47 @@ describe("ToolRunner web tool pipeline", () => {
           }
         }
       });
-      expect(missingOpenVspScriptPlaceholder.engineeringProgramRequestTemplates.find((template) => template.id === "vsp-script-run:openvsp")).toMatchObject({
+      expect(missingOpenVspScriptPlaceholder.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp")).toMatchObject({
         ready: false,
         blockedReason: expect.stringContaining("{script}")
+      });
+      const missingOpenVspSpecPlaceholder = buildRuntimeToolDiagnostics({
+        ...settings,
+        allowCodeExecution: true,
+        engineeringTools: {
+          ...settings.engineeringTools,
+          enabled: true,
+          openVsp: {
+            ...settings.engineeringTools.openVsp,
+            enabled: true,
+            command: process.execPath,
+            scriptPath: openVspScriptPath,
+            runArgsTemplate: ["{script}", "--output", "{output}"]
+          }
+        }
+      });
+      expect(missingOpenVspSpecPlaceholder.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp")).toMatchObject({
+        ready: false,
+        blockedReason: expect.stringContaining("{spec}")
+      });
+      const missingXflr5SpecPlaceholder = buildRuntimeToolDiagnostics({
+        ...settings,
+        allowCodeExecution: true,
+        engineeringTools: {
+          ...settings.engineeringTools,
+          enabled: true,
+          xflr5: {
+            ...settings.engineeringTools.xflr5,
+            enabled: true,
+            command: process.execPath,
+            scriptPath: xflr5ScriptPath,
+            runArgsTemplate: ["--script", "{script}", "--output", "{output}"]
+          }
+        }
+      });
+      expect(missingXflr5SpecPlaceholder.engineeringProgramRequestTemplates.find((template) => template.id === "xflr5-analysis-run:xflr5")).toMatchObject({
+        ready: false,
+        blockedReason: expect.stringContaining("{spec}")
       });
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
@@ -808,61 +782,6 @@ describe("ToolRunner web tool pipeline", () => {
     const blocked = await runEngineeringProgramPreflight(settings, "all");
     expect(blocked.status).toBe("failed");
     expect(blocked.error).toContain("code execution");
-
-    const configured = await runEngineeringProgramPreflight(
-      {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          commercialCfd: {
-            ...settings.engineeringTools.commercialCfd,
-            flightStreamConfigured: true,
-            flightStreamCommand: process.execPath,
-            flightStreamProbeArgs: ["--version"],
-            flightStreamRunArgsTemplate: ["--input", "{input}", "--output", "{output}"]
-          }
-        }
-      },
-      "flightstream"
-    );
-
-    expect(configured.status).toBe("completed");
-    expect(JSON.stringify(configured.output)).toContain("flightstream");
-    expect(JSON.stringify(configured.output)).toContain(process.version);
-
-    const openFoamTempRoot = mkdtempSync(join(tmpdir(), "aetherops-openfoam-preflight-"));
-    try {
-      const caseRoot = join(openFoamTempRoot, "case");
-      mkdirSync(join(caseRoot, "system"), { recursive: true });
-      writeFileSync(join(caseRoot, "system", "controlDict"), "application simpleFoam;\n", "utf8");
-      const openFoam = await runEngineeringProgramPreflight(
-        {
-          ...settings,
-          allowCodeExecution: true,
-          engineeringTools: {
-            ...settings.engineeringTools,
-            enabled: true,
-            openFoam: {
-              ...settings.engineeringTools.openFoam,
-              enabled: true,
-              command: process.execPath,
-              caseRoot,
-              probeArgs: ["--version"],
-              runArgsTemplate: ["--version"]
-            }
-          }
-        },
-        "openfoam"
-      );
-
-      expect(openFoam.status).toBe("completed");
-      expect(JSON.stringify(openFoam.output)).toContain("openfoam");
-      expect(JSON.stringify(openFoam.output)).toContain(process.version);
-    } finally {
-      rmSync(openFoamTempRoot, { recursive: true, force: true });
-    }
 
     const su2TempRoot = mkdtempSync(join(tmpdir(), "aetherops-su2-preflight-"));
     try {
@@ -897,37 +816,6 @@ describe("ToolRunner web tool pipeline", () => {
       rmSync(su2TempRoot, { recursive: true, force: true });
     }
 
-    const freeCadTempRoot = mkdtempSync(join(tmpdir(), "aetherops-freecad-preflight-"));
-    try {
-      const scriptPath = join(freeCadTempRoot, "freecad-script.mjs");
-      writeFileSync(scriptPath, "console.log('FreeCAD harness ready');\n", "utf8");
-      const freeCad = await runEngineeringProgramPreflight(
-        {
-          ...settings,
-          allowCodeExecution: true,
-          engineeringTools: {
-            ...settings.engineeringTools,
-            enabled: true,
-            freeCad: {
-              ...settings.engineeringTools.freeCad,
-              enabled: true,
-              command: process.execPath,
-              scriptPath,
-              probeArgs: ["--version"],
-              runArgsTemplate: ["{script}", "--output", "{output}"]
-            }
-          }
-        },
-        "freecad"
-      );
-
-      expect(freeCad.status).toBe("completed");
-      expect(JSON.stringify(freeCad.output)).toContain("freecad");
-      expect(JSON.stringify(freeCad.output)).toContain(process.version);
-    } finally {
-      rmSync(freeCadTempRoot, { recursive: true, force: true });
-    }
-
     const openVspTempRoot = mkdtempSync(join(tmpdir(), "aetherops-openvsp-preflight-"));
     try {
       const scriptPath = join(openVspTempRoot, "openvsp-script.mjs");
@@ -945,7 +833,7 @@ describe("ToolRunner web tool pipeline", () => {
               command: process.execPath,
               scriptPath,
               probeArgs: ["--version"],
-              runArgsTemplate: ["{script}", "--output", "{output}"]
+              runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"]
             }
           }
         },
@@ -957,6 +845,37 @@ describe("ToolRunner web tool pipeline", () => {
       expect(JSON.stringify(openVsp.output)).toContain(process.version);
     } finally {
       rmSync(openVspTempRoot, { recursive: true, force: true });
+    }
+
+    const xflr5TempRoot = mkdtempSync(join(tmpdir(), "aetherops-xflr5-preflight-"));
+    try {
+      const scriptPath = join(xflr5TempRoot, "xflr5-script.mjs");
+      writeFileSync(scriptPath, "console.log('XFLR5 harness ready');\n", "utf8");
+      const xflr5 = await runEngineeringProgramPreflight(
+        {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
+            enabled: true,
+            xflr5: {
+              ...settings.engineeringTools.xflr5,
+              enabled: true,
+              command: process.execPath,
+              scriptPath,
+              probeArgs: ["--version"],
+              runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"]
+            }
+          }
+        },
+        "xflr5"
+      );
+
+      expect(xflr5.status).toBe("completed");
+      expect(JSON.stringify(xflr5.output)).toContain("xflr5");
+      expect(JSON.stringify(xflr5.output)).toContain(process.version);
+    } finally {
+      rmSync(xflr5TempRoot, { recursive: true, force: true });
     }
   });
 
@@ -1056,6 +975,62 @@ describe("ToolRunner web tool pipeline", () => {
     expect(result.toolRun.input).toMatchObject({ provider: "openalex" });
   });
 
+  it("sanitizes OpenAlex wildcard characters and retries recoverable invalid query errors", async () => {
+    const input = runInput(["ResearchMetadataTool"]);
+    input.project.topic = "Clark-Y ?? ??";
+    input.project.goal = "Clark-Y airfoil polar analysis with XFOIL evidence.";
+
+    const requestedSearches: string[] = [];
+    let callCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: URL) => {
+        callCount += 1;
+        const search = url.searchParams.get("search") ?? "";
+        requestedSearches.push(search);
+        expect(search).not.toMatch(/[?*]/);
+        if (callCount === 1) {
+          return {
+            ok: false,
+            status: 400,
+            statusText: "Bad Request",
+            text: async () => '{"error":"Invalid query parameters error.","message":"Leading wildcards are not supported."}'
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => ({
+            results: [
+              {
+                id: "https://openalex.org/W3",
+                doi: "https://doi.org/10.1234/airfoil",
+                display_name: "Airfoil polar analysis with XFOIL evidence",
+                publication_year: 2024,
+                cited_by_count: 4,
+                abstract_inverted_index: {
+                  Airfoil: [0],
+                  polar: [1],
+                  analysis: [2],
+                  uses: [3],
+                  XFOIL: [4]
+                },
+                authorships: [{ author: { display_name: "Theo Lee" } }]
+              }
+            ]
+          })
+        };
+      })
+    );
+
+    const result = await new ResearchMetadataTool().run(input, settings);
+
+    expect(requestedSearches.length).toBeGreaterThan(1);
+    expect(result.toolRun.status).toBe("completed");
+    expect(result.sources[0]?.title).toContain("Airfoil polar");
+  });
+
   it("inspects OBJ mesh artifacts only from the configured modeling root", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-mesh-"));
     try {
@@ -1085,22 +1060,20 @@ describe("ToolRunner web tool pipeline", () => {
     }
   });
 
-  it("runs an OpenFOAM-compatible case command only from explicit settings", async () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-openfoam-run-"));
+  it("runs an XFLR5 adapter only from explicit settings and a CFD run spec", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-xflr5-run-"));
     try {
-      const caseRoot = join(tempRoot, "case");
-      mkdirSync(join(caseRoot, "system"), { recursive: true });
-      writeFileSync(join(caseRoot, "system", "controlDict"), "application simpleFoam;\n", "utf8");
-      const runnerPath = join(tempRoot, "openfoam-runner.mjs");
+      const scriptPath = join(tempRoot, "xflr5-runner.mjs");
       writeFileSync(
-        runnerPath,
+        scriptPath,
         [
-          "import { writeFileSync } from 'node:fs';",
-          "const caseIndex = process.argv.indexOf('--case');",
+          "import { readFileSync, writeFileSync } from 'node:fs';",
+          "const specIndex = process.argv.indexOf('--spec');",
           "const outputIndex = process.argv.indexOf('--output');",
-          "if (caseIndex < 0 || outputIndex < 0) process.exit(2);",
-          "writeFileSync(process.argv[outputIndex + 1], `case=${process.argv[caseIndex + 1]}\\nresidual=0.001\\n`, 'utf8');",
-          "console.log('OpenFOAM harness completed');"
+          "if (specIndex < 0 || outputIndex < 0) process.exit(2);",
+          "const spec = JSON.parse(readFileSync(process.argv[specIndex + 1], 'utf8'));",
+          "writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ program: 'xflr5', target: spec.target, alpha: spec.flightCondition.alphaStart }) + '\\n', 'utf8');",
+          "console.log('XFLR5 harness completed');"
         ].join("\n"),
         "utf8"
       );
@@ -1109,7 +1082,7 @@ describe("ToolRunner web tool pipeline", () => {
       input.project.autonomyPolicy.allowCodeExecution = true;
       input.researchPlan = {
         ...input.researchPlan!,
-        programRequests: [{ kind: "openfoam-case-run", target: "openfoam", outputFileName: "openfoam-result.txt" }]
+        programRequests: [{ kind: "xflr5-analysis-run", target: "xflr5", outputFileName: "xflr5-result.json", cfdRunSpec: cfdRunSpec("xflr5") }]
       };
       const result = await new EngineeringProgramTool().run(input, {
         ...settings,
@@ -1117,21 +1090,21 @@ describe("ToolRunner web tool pipeline", () => {
         engineeringTools: {
           ...settings.engineeringTools,
           enabled: true,
-          openFoam: {
-            ...settings.engineeringTools.openFoam,
+          xflr5: {
+            ...settings.engineeringTools.xflr5,
             enabled: true,
             command: process.execPath,
-            caseRoot,
-            runArgsTemplate: [runnerPath, "--case", "{case}", "--output", "{output}"],
+            scriptPath,
+            runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"],
             probeArgs: ["--version"]
           }
         }
       });
 
       expect(result.toolRun.status).toBe("completed");
-      expect(result.artifacts[0]?.content).toContain("openfoam-result.txt");
-      expect(result.artifacts[0]?.content).toContain("residual=0.001");
-      expect(result.evidence[0]?.metadata).toMatchObject({ program: "openfoam", traceabilityKind: "tool_observation" });
+      expect(result.artifacts[0]?.content).toContain("xflr5-result.json");
+      expect(result.artifacts[0]?.content).toContain("xflr5");
+      expect(result.evidence[0]?.metadata).toMatchObject({ program: "xflr5", traceabilityKind: "tool_observation" });
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -1161,7 +1134,7 @@ describe("ToolRunner web tool pipeline", () => {
       input.project.autonomyPolicy.allowCodeExecution = true;
       input.researchPlan = {
         ...input.researchPlan!,
-        programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt" }]
+        programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt", cfdRunSpec: cfdRunSpec("su2") }]
       };
       const result = await new EngineeringProgramTool().run(input, {
         ...settings,
@@ -1201,7 +1174,7 @@ describe("ToolRunner web tool pipeline", () => {
       withoutConfig.project.autonomyPolicy.allowCodeExecution = true;
       withoutConfig.researchPlan = {
         ...withoutConfig.researchPlan!,
-        programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt" }]
+        programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt", cfdRunSpec: cfdRunSpec("su2") }]
       };
       const missingConfigResult = await new EngineeringProgramTool().run(withoutConfig, {
         ...settings,
@@ -1259,54 +1232,6 @@ describe("ToolRunner web tool pipeline", () => {
     }
   });
 
-  it("runs a FreeCAD-compatible headless script only from explicit settings", async () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-freecad-run-"));
-    try {
-      const scriptPath = join(tempRoot, "freecad-runner.mjs");
-      writeFileSync(
-        scriptPath,
-        [
-          "import { writeFileSync } from 'node:fs';",
-          "const outputIndex = process.argv.indexOf('--output');",
-          "if (outputIndex < 0) process.exit(2);",
-          "writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ program: 'freecad', solids: 1, units: 'mm' }) + '\\n', 'utf8');",
-          "console.log('FreeCAD harness completed');"
-        ].join("\n"),
-        "utf8"
-      );
-
-      const input = runInput(["EngineeringProgramTool"]);
-      input.project.autonomyPolicy.allowCodeExecution = true;
-      input.researchPlan = {
-        ...input.researchPlan!,
-        programRequests: [{ kind: "cad-script-run", target: "freecad", outputFileName: "freecad-result.json" }]
-      };
-      const result = await new EngineeringProgramTool().run(input, {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          freeCad: {
-            ...settings.engineeringTools.freeCad,
-            enabled: true,
-            command: process.execPath,
-            scriptPath,
-            runArgsTemplate: ["{script}", "--output", "{output}"],
-            probeArgs: ["--version"]
-          }
-        }
-      });
-
-      expect(result.toolRun.status).toBe("completed");
-      expect(result.artifacts[0]?.content).toContain("freecad-result.json");
-      expect(result.artifacts[0]?.content).toContain("solids");
-      expect(result.evidence[0]?.metadata).toMatchObject({ program: "freecad", traceabilityKind: "tool_observation" });
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
-  });
-
   it("runs an OpenVSP-compatible headless script only from explicit settings", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-openvsp-run-"));
     try {
@@ -1314,10 +1239,12 @@ describe("ToolRunner web tool pipeline", () => {
       writeFileSync(
         scriptPath,
         [
-          "import { writeFileSync } from 'node:fs';",
+          "import { readFileSync, writeFileSync } from 'node:fs';",
+          "const specIndex = process.argv.indexOf('--spec');",
           "const outputIndex = process.argv.indexOf('--output');",
-          "if (outputIndex < 0) process.exit(2);",
-          "writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ program: 'openvsp', components: 2, units: 'm' }) + '\\n', 'utf8');",
+          "if (specIndex < 0 || outputIndex < 0) process.exit(2);",
+          "const spec = JSON.parse(readFileSync(process.argv[specIndex + 1], 'utf8'));",
+          "writeFileSync(process.argv[outputIndex + 1], JSON.stringify({ program: 'openvsp', target: spec.target, components: 2, units: 'm' }) + '\\n', 'utf8');",
           "console.log('OpenVSP harness completed');"
         ].join("\n"),
         "utf8"
@@ -1327,7 +1254,7 @@ describe("ToolRunner web tool pipeline", () => {
       input.project.autonomyPolicy.allowCodeExecution = true;
       input.researchPlan = {
         ...input.researchPlan!,
-        programRequests: [{ kind: "vsp-script-run", target: "openvsp", outputFileName: "openvsp-result.json" }]
+        programRequests: [{ kind: "openvsp-analysis-run", target: "openvsp", outputFileName: "openvsp-result.json", cfdRunSpec: cfdRunSpec("openvsp") }]
       };
       const result = await new EngineeringProgramTool().run(input, {
         ...settings,
@@ -1340,7 +1267,7 @@ describe("ToolRunner web tool pipeline", () => {
             enabled: true,
             command: process.execPath,
             scriptPath,
-            runArgsTemplate: ["{script}", "--output", "{output}"],
+            runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"],
             probeArgs: ["--version"]
           }
         }
@@ -1374,7 +1301,7 @@ describe("ToolRunner web tool pipeline", () => {
     });
 
     expect(result.toolRun.status).toBe("failed");
-    expect(result.toolRun.error).toContain("configured XFOIL command");
+    expect(result.toolRun.error).toContain("embedded XFOIL executable");
     expect(result.artifacts).toHaveLength(0);
     expect(result.evidence).toHaveLength(0);
   });
@@ -1384,6 +1311,16 @@ describe("ToolRunner web tool pipeline", () => {
     const input = {
       ...runInput(["EngineeringProgramTool"]),
       sources: [
+        {
+          id: "source-clark-y-stale",
+          projectId: "project-1",
+          kind: "web" as const,
+          title: "Stale CLARK Y AIRFOIL",
+          url: clarkYUrl,
+          retrievedAt: createdAt,
+          metadata: { rawText: "CLARK Y AIRFOIL 61.0 61.0 0.0000000 0.0000000", contentType: "text/plain", fetchStatus: "fetched" },
+          createdAt
+        },
         {
           id: "source-clark-y",
           projectId: "project-1",
@@ -1443,7 +1380,7 @@ describe("ToolRunner web tool pipeline", () => {
       input.project.autonomyPolicy.allowCodeExecution = true;
       input.researchPlan = {
         ...input.researchPlan!,
-        programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt" }]
+        programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt", cfdRunSpec: cfdRunSpec("su2") }]
       };
 
       const result = await new EngineeringProgramTool().run(input, {
@@ -1473,7 +1410,7 @@ describe("ToolRunner web tool pipeline", () => {
     }
   });
 
-  it("fails closed for OpenVSP script runs when the args template omits the script placeholder", async () => {
+  it("fails closed for OpenVSP analysis runs when the args template omits the script placeholder", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-openvsp-fail-"));
     try {
       const scriptPath = join(tempRoot, "openvsp-runner.mjs");
@@ -1482,7 +1419,7 @@ describe("ToolRunner web tool pipeline", () => {
       input.project.autonomyPolicy.allowCodeExecution = true;
       input.researchPlan = {
         ...input.researchPlan!,
-        programRequests: [{ kind: "vsp-script-run", target: "openvsp", outputFileName: "openvsp-result.json" }]
+        programRequests: [{ kind: "openvsp-analysis-run", target: "openvsp", outputFileName: "openvsp-result.json", cfdRunSpec: cfdRunSpec("openvsp") }]
       };
 
       const result = await new EngineeringProgramTool().run(input, {
@@ -1509,35 +1446,6 @@ describe("ToolRunner web tool pipeline", () => {
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
-  });
-
-  it("fails closed for commercial CFD runs when args template is not configured", async () => {
-    const input = runInput(["EngineeringProgramTool"]);
-    input.project.autonomyPolicy.allowCodeExecution = true;
-    input.researchPlan = {
-      ...input.researchPlan!,
-      programRequests: [{ kind: "commercial-cfd-run", target: "flightstream", outputFileName: "result.txt" }]
-    };
-
-    const result = await new EngineeringProgramTool().run(input, {
-      ...settings,
-      allowCodeExecution: true,
-      engineeringTools: {
-        ...settings.engineeringTools,
-        enabled: true,
-        commercialCfd: {
-          ...settings.engineeringTools.commercialCfd,
-          flightStreamConfigured: true,
-          flightStreamCommand: process.execPath,
-          flightStreamRunArgsTemplate: []
-        }
-      }
-    });
-
-    expect(result.toolRun.status).toBe("failed");
-    expect(result.toolRun.error).toContain("runArgsTemplate");
-    expect(result.artifacts).toHaveLength(0);
-    expect(result.evidence).toHaveLength(0);
   });
 
   it("fetches web sources before evidence URLs, dedupes normalized URLs, caps at three, and reports partial failures as completed", async () => {
@@ -1623,6 +1531,47 @@ describe("ToolRunner web tool pipeline", () => {
     expect((result.toolRun.output as { urls: string[] }).urls[0]).toBe("https://example.edu/from-plan");
     expect(fetched).toContain("https://example.edu/from-source");
     expect(fetched).toContain("https://example.edu/from-citation");
+  });
+
+  it("refetches engineering program source URLs even when stale fetched sources exist", async () => {
+    const clarkYUrl = "https://93.184.216.34/clarky.dat";
+    const input = {
+      ...runInput(["WebFetchTool"]),
+      sources: [
+        {
+          ...webSource("stale-clark-y", clarkYUrl),
+          metadata: { fetchStatus: "fetched", rawText: "CLARK Y AIRFOIL 61.0 61.0 0.0000000 0.0000000" }
+        }
+      ]
+    };
+    input.researchPlan = {
+      ...input.researchPlan!,
+      programRequests: [{ kind: "xfoil-wasm-polar", target: "xfoil-wasm", sourceUrl: clarkYUrl }]
+    };
+    const fetched: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        fetched.push(url);
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          url,
+          headers: new Headers(),
+          body: undefined,
+          arrayBuffer: async () => new TextEncoder().encode(CLARK_Y_COORDINATES).buffer
+        };
+      })
+    );
+
+    const result = await new WebFetchTool().run(input, settings);
+    const rawText = result.sources[0]?.metadata.rawText;
+
+    expect(result.toolRun.status).toBe("completed");
+    expect((result.toolRun.output as { urls: string[] }).urls).toEqual([clarkYUrl]);
+    expect(fetched).toEqual([clarkYUrl]);
+    expect(() => validateAirfoilCoordinateText(String(rawText))).not.toThrow();
   });
 
   it("fetches up to two URLs concurrently while preserving failure mapping order", async () => {
@@ -1782,17 +1731,20 @@ describe("ToolRunner web tool pipeline", () => {
         url,
         headers: new Headers(),
         body: undefined,
-        arrayBuffer: async () => new TextEncoder().encode("CLARK Y AIRFOIL\n61.0 61.0\n0.000000 0.000000\n").buffer
+        arrayBuffer: async () => new TextEncoder().encode(CLARK_Y_COORDINATES).buffer
       }))
     );
 
     const result = await new WebFetchTool().run(input, settings);
+    const rawText = result.sources[0]?.metadata.rawText;
 
     expect(result.toolRun.status).toBe("completed");
     expect(result.sources[0]).toMatchObject({
       title: "https://93.184.216.34/clarky.dat",
       url: "https://93.184.216.34/clarky.dat"
     });
+    expect(rawText).toContain("\n 0.0000000 0.0000000\n");
+    expect(() => validateAirfoilCoordinateText(String(rawText))).not.toThrow();
     expect(result.evidence[0]?.quote).toContain("CLARK Y AIRFOIL");
   });
 

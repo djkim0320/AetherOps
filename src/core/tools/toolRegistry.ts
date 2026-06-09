@@ -111,7 +111,7 @@ export class WebFetchTool implements ResearchTool {
     }
     const { urls, skippedUrls, duplicateUrls } = selectFetchTargets(input);
     if (!urls.length) {
-      throw new Error("WebFetchTool requires at least one external source URL from ResearchPlan.fetchCandidateUrls, input.sources, citation URLs, or previous ProjectContextSnapshot.");
+      throw new Error("WebFetchTool requires at least one external source URL from ResearchPlan.fetchCandidateUrls, ResearchPlan.programRequests.sourceUrl, input.sources, citation URLs, or previous ProjectContextSnapshot.");
     }
     const settledPages = await runWithConcurrency(urls, WEB_FETCH_CONCURRENCY, (url) => fetchPage(url));
     const completedAt = nowIso();
@@ -159,10 +159,10 @@ export class WebFetchTool implements ResearchTool {
           contentType: page.contentType,
           status: page.status,
           excerpt: page.text.slice(0, 1_000),
-          rawText: page.text,
+          rawText: page.rawText,
           fetchedAt: completedAt,
           fetchStatus: "fetched",
-          characterCount: page.text.length,
+          characterCount: page.rawText.length,
           ...(pdfUrl ? { pdfUrl } : {}),
           ...sourceQualityMetadata(page.url, page.title)
         },
@@ -604,6 +604,7 @@ function failedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: str
 function selectFetchTargets(input: OpenCodeRunInput): { urls: string[]; skippedUrls: string[]; duplicateUrls: string[] } {
   const alreadyFetched = new Set<string>();
   const sourceCandidates: Array<string | undefined> = [];
+  const programSourceCandidates: Array<string | undefined> = [];
   for (const source of input.sources ?? []) {
     if (source.rawPath || source.metadata.fetchStatus === "fetched") {
       const fetchedUrl = normalizeHttpUrl(source.url);
@@ -619,16 +620,19 @@ function selectFetchTargets(input: OpenCodeRunInput): { urls: string[]; skippedU
       readString(source.metadata.pdfUrl)
     );
   }
+  for (const request of input.researchPlan?.programRequests ?? []) {
+    programSourceCandidates.push(request.sourceUrl);
+  }
   const selected = new Map<string, string>();
   const skippedUrls: string[] = [];
   const duplicateUrls: string[] = [];
-  const considerCandidate = (candidate: string | undefined): boolean => {
+  const considerCandidate = (candidate: string | undefined, options: { allowRefetch?: boolean } = {}): boolean => {
     const normalized = normalizeHttpUrl(candidate);
     if (!normalized) {
       if (candidate?.trim()) skippedUrls.push(candidate.trim());
       return false;
     }
-    if (alreadyFetched.has(normalized) || selected.has(normalized)) {
+    if ((!options.allowRefetch && alreadyFetched.has(normalized)) || selected.has(normalized)) {
       duplicateUrls.push(candidate?.trim() ?? normalized);
       return false;
     }
@@ -637,6 +641,9 @@ function selectFetchTargets(input: OpenCodeRunInput): { urls: string[]; skippedU
   };
   for (const candidate of input.researchPlan?.fetchCandidateUrls ?? []) {
     if (considerCandidate(candidate)) return { urls: [...selected.values()], skippedUrls, duplicateUrls };
+  }
+  for (const candidate of programSourceCandidates) {
+    if (considerCandidate(candidate, { allowRefetch: true })) return { urls: [...selected.values()], skippedUrls, duplicateUrls };
   }
   for (const candidate of sourceCandidates) {
     if (considerCandidate(candidate)) return { urls: [...selected.values()], skippedUrls, duplicateUrls };
@@ -790,7 +797,7 @@ function buildPublicResearchQuery(input: OpenCodeRunInput): string {
   return parts.join(" ").replace(/\s+/g, " ").trim().slice(0, 280);
 }
 
-async function fetchPage(url: string): Promise<{ url: string; title: string; text: string; contentType: string; status: number }> {
+async function fetchPage(url: string): Promise<{ url: string; title: string; text: string; rawText: string; contentType: string; status: number }> {
   await assertPublicHttpUrl(url);
   const controller = new AbortController();
   const deadline = Date.now() + FETCH_TIMEOUT_MS;
@@ -816,13 +823,15 @@ async function fetchPage(url: string): Promise<{ url: string; title: string; tex
     if (Number.isFinite(contentLength) && contentLength > MAX_FETCH_BYTES) {
       throw new Error(`content-length exceeds 2MB for ${url}`);
     }
+    const resolvedUrl = response.url || url;
     const raw = await readLimitedText(response, url, deadline, contentType);
     const title = extractTitle(raw) || url;
-    const text = normalizePageText(raw);
+    const isHtml = isHtmlFetchedText(contentType, raw);
+    const text = isHtml ? normalizePageText(raw) : normalizePlainFetchedText(raw);
     if (!text) {
       throw new Error(`fetch produced no readable text for ${url}`);
     }
-    return { url: response.url || url, title, text, contentType, status: response.status };
+    return { url: resolvedUrl, title, text, rawText: isHtml ? text : normalizeFetchedRawText(raw), contentType, status: response.status };
   } finally {
     clearTimeout(timeout);
   }
@@ -1244,6 +1253,21 @@ function normalizePageText(raw: string): string {
       .replace(/\s+/g, " ")
       .trim()
   ).slice(0, 20_000);
+}
+
+function normalizePlainFetchedText(raw: string): string {
+  return normalizeFetchedRawText(raw).slice(0, 20_000);
+}
+
+function normalizeFetchedRawText(raw: string): string {
+  return raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+}
+
+function isHtmlFetchedText(contentType: string, raw: string): boolean {
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mediaType === "text/html" || mediaType === "application/xhtml+xml") return true;
+  const sample = raw.slice(0, 2048).toLowerCase();
+  return /<!doctype\s+html\b|<html\b|<head\b|<body\b/.test(sample);
 }
 
 function decodeEntities(value: string): string {

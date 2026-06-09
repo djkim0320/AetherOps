@@ -17,7 +17,7 @@ import { ResultSynthesizer } from "../reasoning/resultSynthesizer.js";
 import { WebSearchTool } from "../tools/toolRegistry.js";
 import { ValidationEngine } from "../reasoning/validationEngine.js";
 import { VectorIndexEngine } from "../retrieval/vectorIndexEngine.js";
-import { ResearchLoopStep, type AppSettings, type ResearchSnapshot } from "../shared/types.js";
+import { ResearchLoopStep, type AppSettings, type CfdRunSpec, type ResearchSnapshot } from "../shared/types.js";
 
 const createdAt = "2026-05-20T00:00:00.000Z";
 const settings: AppSettings = {
@@ -31,25 +31,9 @@ const settings: AppSettings = {
     enabled: false,
     xfoil: { enabled: false, command: "", timeoutMs: 30_000 },
     modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
-    openFoam: { enabled: false, command: "", caseRoot: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-case", "{case}"], timeoutMs: 30 * 60_000 },
     su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 30 * 60_000 },
-    freeCad: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--version"], runArgsTemplate: ["{script}", "--output", "{output}"], timeoutMs: 30 * 60_000 },
-    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
-    commercialCfd: {
-      flightStreamConfigured: false,
-      starCcmConfigured: false,
-      flightStreamCommand: "",
-      flightStreamWorkingDirectory: "",
-      flightStreamProbeArgs: ["--version"],
-      flightStreamRunArgsTemplate: [],
-      flightStreamTimeoutMs: 120_000,
-      starCcmCommand: "",
-      starCcmWorkingDirectory: "",
-      starCcmProbeArgs: ["-version"],
-      starCcmRunArgsTemplate: [],
-      starCcmTimeoutMs: 120_000,
-      notes: ""
-    }
+    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
+    xflr5: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"], timeoutMs: 30 * 60_000 }
   },
   allowExternalSearch: false,
   allowCodeExecution: false,
@@ -57,6 +41,22 @@ const settings: AppSettings = {
   finalOutputExport: { markdown: true, json: true, ontologyGraph: true, artifactPackage: true },
   updatedAt: createdAt
 };
+
+function cfdRunSpec(target: Extract<CfdRunSpec["target"], "su2" | "openvsp">): CfdRunSpec {
+  return {
+    target,
+    geometry: { source: "configuredCase", description: "Planner test uses an explicitly configured case." },
+    flightCondition: { reynolds: 1_000_000, mach: 0.05, alphaStart: 2, alphaEnd: 2, alphaStep: 1 },
+    mesh: { strategy: "existing", boundaryLayer: false },
+    solver: {
+      name: target === "openvsp" ? "openvsp-vspaero" : "su2",
+      model: target === "su2" ? "euler" : "panel",
+      maxIterations: 100,
+      convergenceTolerance: 1e-6
+    },
+    output: { polar: true, pressureField: false, mesh: false }
+  };
+}
 
 function snapshot(): ResearchSnapshot {
   return {
@@ -255,17 +255,50 @@ describe("12-step research architecture modules", () => {
     expect(plan.stopCriteria.length).toBeGreaterThan(0);
   });
 
-  it("filters LLM engineering program requests through ready runtime templates", async () => {
+  it("does not let scholarly metadata collection block engineering-only airfoil program plans", async () => {
+    const clarkYUrl = "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat";
     const base = snapshot();
-    const spec = base.specifications[0]!;
+    base.project.topic = "Clark-Y airfoil polar analysis";
+    base.project.goal = "Build and run a real Clark-Y aerodynamic polar experiment with XFOIL-WASM.";
+    base.project.scope = "Use a traceable Clark-Y coordinate source and produce CL, CD, and L/D results.";
+    base.questions = [
+      { id: "q-aero", projectId: "project-1", text: "What Clark-Y polar is computed at Re 1,000,000 from alpha -4 to 12?", status: "open", createdAt }
+    ];
+    base.hypotheses = [
+      { id: "h-aero", projectId: "project-1", questionId: "q-aero", statement: "Clark-Y lift increases through the pre-stall alpha sweep.", status: "untested", confidence: 0.35, createdAt }
+    ];
+    const spec = {
+      ...base.specifications[0]!,
+      researchQuestions: ["What Clark-Y polar is computed at Re 1,000,000 from alpha -4 to 12?"],
+      initialHypotheses: ["Clark-Y lift increases through the pre-stall alpha sweep."],
+      refinedHypotheses: ["Clark-Y lift increases across the requested XFOIL-WASM sweep before stall effects dominate."],
+      scope: "Engineering-only 2D airfoil polar computation.",
+      requiredEvidenceTypes: ["airfoil coordinate source", "tool log", "polar result", "final report"],
+      evaluationMetrics: ["CL", "CD", "L/D", "solver completion"],
+      successCriteria: ["EngineeringProgramTool completes with numeric polar rows."]
+    };
     const llm: LlmProvider = {
-      name: "unsafe-engineering-request-test",
+      name: "engineering-metadata-gating-test",
       isAvailable: async () => true,
       completeJson: async <T,>(): Promise<T> =>
         ({
-          objective: "Try an unavailable OpenVSP run.",
-          requiredTools: ["EngineeringProgramTool", "ArtifactWriterTool"],
-          programRequests: [{ kind: "vsp-script-run", target: "openvsp", outputFileName: "unsafe.json" }]
+          objective: "Run Clark-Y with XFOIL-WASM.",
+          requiredTools: ["WebFetchTool", "ResearchMetadataTool", "EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"],
+          expectedSources: ["UIUC Clark-Y coordinate file"],
+          fetchCandidateUrls: [clarkYUrl],
+          programRequests: [
+            {
+              kind: "xfoil-wasm-polar",
+              target: "xfoil-wasm",
+              sourceUrl: clarkYUrl,
+              reynolds: 1_000_000,
+              mach: 0,
+              alphaStart: -4,
+              alphaEnd: 12,
+              alphaStep: 2,
+              outputFileName: "clark-y-polar.json"
+            }
+          ]
         }) as T
     };
 
@@ -275,14 +308,87 @@ describe("12-step research architecture modules", () => {
       iteration: 1,
       settings: {
         ...settings,
+        allowExternalSearch: true,
+        allowCodeExecution: true,
+        engineeringTools: { ...settings.engineeringTools, enabled: true }
+      },
+      availableTools: ["WebFetchTool", "ResearchMetadataTool", "EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
+    });
+
+    expect(plan.requiredTools).not.toContain("ResearchMetadataTool");
+    expect(plan.requiredTools).toEqual(expect.arrayContaining(["WebFetchTool", "EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]));
+    expect(plan.programRequests).toEqual([
+      expect.objectContaining({
+        kind: "xfoil-wasm-polar",
+        target: "xfoil-wasm",
+        sourceUrl: clarkYUrl,
+        reynolds: 1_000_000,
+        mach: 0,
+        alphaStart: -4,
+        alphaEnd: 12,
+        alphaStep: 2,
+        outputFileName: "clark-y-polar.json"
+      })
+    ]);
+  });
+
+  it("keeps research metadata collection when scholarly paper metadata is explicitly requested", async () => {
+    const base = snapshot();
+    base.project.topic = "Citation-aware literature review";
+    base.project.goal = "Collect scholarly paper metadata and DOI-backed citation metadata for a literature review.";
+    const spec = {
+      ...base.specifications[0]!,
+      researchQuestions: ["Which scholarly papers support citation-aware retrieval?"],
+      refinedHypotheses: ["Citation metadata improves traceable literature review evidence."],
+      requiredEvidenceTypes: ["scholarly paper metadata", "DOI", "citation metadata"],
+      successCriteria: ["OpenAlex paper metadata is imported."]
+    };
+    const llm: LlmProvider = {
+      name: "scholarly-metadata-gating-test",
+      isAvailable: async () => true,
+      completeJson: async <T,>(): Promise<T> =>
+        ({
+          objective: "Collect scholarly metadata.",
+          requiredTools: ["ResearchMetadataTool", "ArtifactWriterTool", "DataAnalysisTool"]
+        }) as T
+    };
+
+    const plan = await new ResearchPlanner(llm).plan({
+      snapshot: base,
+      specification: spec,
+      iteration: 1,
+      settings: { ...settings, allowExternalSearch: true },
+      availableTools: ["ResearchMetadataTool", "ArtifactWriterTool", "DataAnalysisTool"]
+    });
+
+    expect(plan.requiredTools).toContain("ResearchMetadataTool");
+  });
+
+  it("fails closed when LLM engineering program requests are not backed by ready runtime templates", async () => {
+    const base = snapshot();
+    const spec = base.specifications[0]!;
+    const llm: LlmProvider = {
+      name: "unsafe-engineering-request-test",
+      isAvailable: async () => true,
+      completeJson: async <T,>(): Promise<T> =>
+        ({
+          objective: "Try an unavailable OpenVSP run.",
+          requiredTools: ["EngineeringProgramTool", "ArtifactWriterTool"],
+          programRequests: [{ kind: "openvsp-analysis-run", target: "openvsp", outputFileName: "unsafe.json" }]
+        }) as T
+    };
+
+    await expect(new ResearchPlanner(llm).plan({
+      snapshot: base,
+      specification: spec,
+      iteration: 1,
+      settings: {
+        ...settings,
         allowCodeExecution: true,
         engineeringTools: { ...settings.engineeringTools, enabled: true }
       },
       availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
-    });
-
-    expect(plan.requiredTools).not.toContain("EngineeringProgramTool");
-    expect(plan.programRequests).toBeUndefined();
+    })).rejects.toThrow(/EngineeringProgramTool was selected/);
   });
 
   it("keeps ready OpenVSP program requests and normalizes them from the template contract", async () => {
@@ -301,10 +407,11 @@ describe("12-step research architecture modules", () => {
             requiredTools: ["EngineeringProgramTool", "ArtifactWriterTool"],
             programRequests: [
               {
-                kind: "vsp-script-run",
+                kind: "openvsp-analysis-run",
                 target: "openvsp",
                 artifactPath: "../outside.vsp3",
                 outputFileName: "openvsp-custom.json",
+                cfdRunSpec: cfdRunSpec("openvsp"),
                 reason: "Use the ready OpenVSP template."
               }
             ]
@@ -327,7 +434,7 @@ describe("12-step research architecture modules", () => {
               command: process.execPath,
               scriptPath,
               probeArgs: ["--version"],
-              runArgsTemplate: ["{script}", "--output", "{output}"]
+              runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"]
             }
           }
         },
@@ -337,9 +444,14 @@ describe("12-step research architecture modules", () => {
       expect(plan.requiredTools).toContain("EngineeringProgramTool");
       expect(plan.programRequests).toEqual([
         {
-          kind: "vsp-script-run",
+          kind: "openvsp-analysis-run",
           target: "openvsp",
           outputFileName: "openvsp-custom.json",
+          cfdRunSpec: expect.objectContaining({
+            target: "openvsp",
+            geometry: expect.objectContaining({ source: "configuredCase" }),
+            solver: expect.objectContaining({ name: "openvsp-vspaero" })
+          }),
           reason: "Use the ready OpenVSP template."
         }
       ]);
@@ -348,7 +460,7 @@ describe("12-step research architecture modules", () => {
     }
   });
 
-  it("filters SU2 program requests that omit the required target", async () => {
+  it("fails closed on SU2 program requests that omit the required target", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-planner-su2-missing-target-"));
     try {
       const caseRoot = join(tempRoot, "case");
@@ -367,7 +479,7 @@ describe("12-step research architecture modules", () => {
           }) as T
       };
 
-      const plan = await new ResearchPlanner(llm).plan({
+      await expect(new ResearchPlanner(llm).plan({
         snapshot: base,
         specification: spec,
         iteration: 1,
@@ -389,10 +501,7 @@ describe("12-step research architecture modules", () => {
           }
         },
         availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
-      });
-
-      expect(plan.requiredTools).not.toContain("EngineeringProgramTool");
-      expect(plan.programRequests).toBeUndefined();
+      })).rejects.toThrow(/EngineeringProgramTool was selected/);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -419,6 +528,7 @@ describe("12-step research architecture modules", () => {
                 target: "su2",
                 artifactPath: "../outside.su2",
                 outputFileName: "su2-custom.txt",
+                cfdRunSpec: cfdRunSpec("su2"),
                 reason: "Use the ready SU2 template."
               }
             ]
@@ -455,6 +565,11 @@ describe("12-step research architecture modules", () => {
           kind: "su2-case-run",
           target: "su2",
           outputFileName: "su2-custom.txt",
+          cfdRunSpec: expect.objectContaining({
+            target: "su2",
+            geometry: expect.objectContaining({ source: "configuredCase" }),
+            solver: expect.objectContaining({ name: "su2" })
+          }),
           reason: "Use the ready SU2 template."
         }
       ]);

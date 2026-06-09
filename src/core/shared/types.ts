@@ -219,26 +219,66 @@ export type EngineeringProgramRequestKind =
   | "mesh-inspect"
   | "xfoil-polar"
   | "xfoil-wasm-polar"
-  | "openfoam-case-run"
   | "su2-case-run"
-  | "cad-script-run"
-  | "vsp-script-run"
-  | "commercial-cfd-run";
+  | "openvsp-analysis-run"
+  | "xflr5-analysis-run";
 export type EngineeringProgramTarget =
   | "all"
   | "xfoil"
   | "xfoil-wasm"
   | "modeling"
-  | "openfoam"
   | "su2"
-  | "freecad"
   | "openvsp"
-  | "flightstream"
-  | "starccm";
+  | "xflr5";
+
+export interface CfdRunSpec {
+  target: Extract<EngineeringProgramTarget, "xfoil" | "xfoil-wasm" | "su2" | "openvsp" | "xflr5">;
+  geometry: {
+    source: "artifact" | "sourceUrl" | "naca" | "configuredCase";
+    artifactPath?: string;
+    sourceUrl?: string;
+    naca?: string;
+    description?: string;
+  };
+  flightCondition: {
+    reynolds?: number;
+    mach?: number;
+    alphaStart?: number;
+    alphaEnd?: number;
+    alphaStep?: number;
+    velocity?: number;
+    density?: number;
+    viscosity?: number;
+  };
+  mesh?: {
+    strategy: "existing" | "toolGenerated" | "caseGenerated";
+    artifactPath?: string;
+    maxCells?: number;
+    boundaryLayer?: boolean;
+    yPlusTarget?: number;
+    notes?: string;
+  };
+  solver: {
+    name: "xfoil" | "webxfoil-wasm" | "su2" | "openvsp-vspaero" | "xflr5";
+    model?: "inviscid" | "euler" | "rans" | "panel" | "viscous-panel";
+    turbulenceModel?: "sa" | "sst" | "kepsilon" | "none";
+    maxIterations?: number;
+    convergenceTolerance?: number;
+    configOverrides?: Record<string, string | number | boolean>;
+  };
+  output?: {
+    forceCoefficients?: boolean;
+    polar?: boolean;
+    pressureField?: boolean;
+    mesh?: boolean;
+  };
+  rationale?: string;
+}
 
 export interface EngineeringProgramRequest {
   kind: EngineeringProgramRequestKind;
   target?: EngineeringProgramTarget;
+  cfdRunSpec?: CfdRunSpec;
   artifactPath?: string;
   sourceUrl?: string;
   outputFileName?: string;
@@ -264,7 +304,7 @@ export interface EngineeringProgramCapability {
 export interface EngineeringArtifactCandidate {
   relativePath: string;
   fileName: string;
-  format: "obj" | "stl" | "airfoil-coordinate";
+  format: "obj" | "stl" | "vsp3" | "airfoil-coordinate";
   byteLength: number;
   validated: boolean;
   ready: boolean;
@@ -895,6 +935,7 @@ export interface ResearchMetadataSettings {
 
 export interface EngineeringProgramSettings {
   enabled: boolean;
+  toolchainRoot?: string;
   xfoil: {
     enabled: boolean;
     command?: string;
@@ -905,29 +946,11 @@ export interface EngineeringProgramSettings {
     artifactRoot?: string;
     maxMeshBytes: number;
   };
-  openFoam: {
-    enabled: boolean;
-    command?: string;
-    caseRoot?: string;
-    workingDirectory?: string;
-    probeArgs: string[];
-    runArgsTemplate: string[];
-    timeoutMs: number;
-  };
   su2: {
     enabled: boolean;
     command?: string;
     caseRoot?: string;
     configFile?: string;
-    workingDirectory?: string;
-    probeArgs: string[];
-    runArgsTemplate: string[];
-    timeoutMs: number;
-  };
-  freeCad: {
-    enabled: boolean;
-    command?: string;
-    scriptPath?: string;
     workingDirectory?: string;
     probeArgs: string[];
     runArgsTemplate: string[];
@@ -942,20 +965,14 @@ export interface EngineeringProgramSettings {
     runArgsTemplate: string[];
     timeoutMs: number;
   };
-  commercialCfd: {
-    flightStreamConfigured: boolean;
-    starCcmConfigured: boolean;
-    flightStreamCommand?: string;
-    flightStreamWorkingDirectory?: string;
-    flightStreamProbeArgs: string[];
-    flightStreamRunArgsTemplate: string[];
-    flightStreamTimeoutMs: number;
-    starCcmCommand?: string;
-    starCcmWorkingDirectory?: string;
-    starCcmProbeArgs: string[];
-    starCcmRunArgsTemplate: string[];
-    starCcmTimeoutMs: number;
-    notes?: string;
+  xflr5: {
+    enabled: boolean;
+    command?: string;
+    scriptPath?: string;
+    workingDirectory?: string;
+    probeArgs: string[];
+    runArgsTemplate: string[];
+    timeoutMs: number;
   };
 }
 

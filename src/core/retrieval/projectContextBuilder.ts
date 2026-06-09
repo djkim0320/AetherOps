@@ -1,5 +1,6 @@
 import { createId, nowIso } from "../shared/ids.js";
 import { EMPTY_EVIDENCE_GRAPH_PATH, graphPathByEvidenceId, isSupportEligibleEvidenceRecord, type EvidenceGraphPath } from "../evidence/evidenceEligibility.js";
+import { isContextCompressionRecord } from "../memory/contextCompression.js";
 import { normalizeMemoryScope } from "../memory/researchMemory.js";
 import type { ProjectContextSnapshot, ResearchSnapshot, ResearchStore } from "../shared/types.js";
 
@@ -54,6 +55,7 @@ export class ProjectContextBuilder {
       if (record.kind === "error") excludedError += 1;
       if (record.validationStatus === "rejected") excludedRejected += 1;
       if (
+        !isContextCompressionRecord(record) &&
         (record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") &&
         record.metadata.canSupportHypothesis !== true
       ) excludedUnsupportedInternal += 1;
@@ -76,7 +78,7 @@ export class ProjectContextBuilder {
         ? globalRecordRelevanceById.get(record.id) ?? lexicalScore(queryTokens, recordSearchText(record))
         : lexicalScore(queryTokens, recordSearchText(record));
       if (scope === "global" && relevance <= 0) continue;
-      insertTopRanked(rankedRecords, { record, relevance, score: relevance + statusBoost(record.validationStatus) + qualityBoost(record.metadata.sourceQualityTier) }, 24);
+      insertTopRanked(rankedRecords, { record, relevance, score: relevance + statusBoost(record.validationStatus) + qualityBoost(record.metadata.sourceQualityTier) + contextCompressionBoost(record) }, 24);
     }
 
     const selectedRecordIds = new Set<string>();
@@ -236,7 +238,7 @@ export class ProjectContextBuilder {
         `Candidates: global=${candidateGlobalRecords}, project=${candidateProjectRecords}.`,
         `Context candidates: records=${snapshot.normalizedRecords.length}, chunks=${candidateChunks}, entities=${candidateEntities}, relations=${candidateRelations}.`,
         `Selected context: records=${selectedRecordIds.size}, chunks=${selectedChunkIds.length}, entities=${selectedEntityIds.length}, relations=${selectedRelationIds.size}, evidence=${selectedEvidenceIds.size}.`,
-        `Selected records: global=${selectedGlobalRecords}, project=${selectedProjectRecords}.`,
+        `Selected records: global=${selectedGlobalRecords}, project=${selectedProjectRecords}, compressed=${countContextCompressionRecords(selectedRecords)}.`,
         `Reverse-included parents: fromChunks=${reverseIncludedFromChunks}, fromGraphRecords=${reverseIncludedFromGraphRecords}, fromGraphEvidence=${reverseIncludedFromGraphEvidence}.`,
         `Excluded records: ephemeral=${excludedEphemeral}, error=${excludedError}, rejected=${excludedRejected}, unsupportedInternal=${excludedUnsupportedInternal}, weakSupport=${excludedWeakSupport}, lowRelevanceGlobal=${excludedLowRelevanceGlobal}.`,
         "Ephemeral, error, rejected, unsupported internal, weak/general support, and low-relevance global records were excluded from ProjectContextSnapshot selection."
@@ -253,7 +255,8 @@ function isEligibleRecord(record: ResearchSnapshot["normalizedRecords"][number])
   return record.kind !== "error" &&
     record.validationStatus !== "rejected" &&
     !(record.kind === "evidence" && SUPPORT_EXCLUDED_TIERS.has(String(record.metadata.sourceQualityTier ?? ""))) &&
-    !((record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") && record.metadata.canSupportHypothesis !== true);
+    (isContextCompressionRecord(record) ||
+      !((record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") && record.metadata.canSupportHypothesis !== true));
 }
 
 function buildProjectQuery(snapshot: ResearchSnapshot): string {
@@ -320,6 +323,18 @@ function qualityBoost(tier: unknown): number {
   if (tier === "education" || tier === "credible_web") return 0.1;
   if (typeof tier === "string" && SUPPORT_EXCLUDED_TIERS.has(tier)) return -0.3;
   return 0;
+}
+
+function contextCompressionBoost(record: ResearchSnapshot["normalizedRecords"][number]): number {
+  return isContextCompressionRecord(record) ? 0.35 : 0;
+}
+
+function countContextCompressionRecords(records: Array<ResearchSnapshot["normalizedRecords"][number]>): number {
+  let count = 0;
+  for (const record of records) {
+    if (isContextCompressionRecord(record)) count += 1;
+  }
+  return count;
 }
 
 function isInternalCitation(value: string): boolean {

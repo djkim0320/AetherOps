@@ -6,6 +6,7 @@ import { createId, createStableId, nowIso } from "../shared/ids.js";
 import { LlmTimeoutError, type LlmProvider } from "../providers/llm.js";
 import { deriveResultWithLlm } from "../planning/llmPlanning.js";
 import { LoopDecisionEngine } from "../planning/loopDecision.js";
+import { ContextCompressionEngine } from "../memory/contextCompression.js";
 import { MemoryPromotionEngine } from "../memory/memoryPromotion.js";
 import { OntologyGraphEngine } from "../retrieval/ontologyGraphEngine.js";
 import type { ProjectStorage } from "../storage/projectStorage.js";
@@ -13,7 +14,7 @@ import { ProjectContextBuilder } from "../retrieval/projectContextBuilder.js";
 import { ReasoningEngine } from "../reasoning/reasoningEngine.js";
 import { buildResearchInputPayloadFromBrief, createResearchInput, type ResearchInputPayload } from "../input/researchInput.js";
 import { buildResearchReport } from "../output/report.js";
-import { ResearchPlanner } from "../planning/researchPlanner.js";
+import { filterResearchMetadataTool, ResearchPlanner } from "../planning/researchPlanner.js";
 import { buildBenchmarkPlan, buildRunAuditOutput, RunAuditWriter } from "../output/runAuditWriter.js";
 import { createDefaultSessions } from "../input/researchSeed.js";
 import { dedupeSourcesByIdUrlDoi } from "../evidence/sourceDedupe.js";
@@ -78,25 +79,9 @@ const defaultSettings: AppSettings = {
     enabled: false,
     xfoil: { enabled: false, command: "", timeoutMs: 30_000 },
     modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
-    openFoam: { enabled: false, command: "", caseRoot: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-case", "{case}"], timeoutMs: 30 * 60_000 },
     su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 30 * 60_000 },
-    freeCad: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--version"], runArgsTemplate: ["{script}", "--output", "{output}"], timeoutMs: 30 * 60_000 },
-    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
-    commercialCfd: {
-      flightStreamConfigured: false,
-      starCcmConfigured: false,
-      flightStreamCommand: "",
-      flightStreamWorkingDirectory: "",
-      flightStreamProbeArgs: ["--version"],
-      flightStreamRunArgsTemplate: [],
-      flightStreamTimeoutMs: 120_000,
-      starCcmCommand: "",
-      starCcmWorkingDirectory: "",
-      starCcmProbeArgs: ["-version"],
-      starCcmRunArgsTemplate: [],
-      starCcmTimeoutMs: 120_000,
-      notes: ""
-    }
+    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
+    xflr5: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"], timeoutMs: 30 * 60_000 }
   },
   allowExternalSearch: false,
   allowCodeExecution: false,
@@ -126,6 +111,7 @@ export class AetherOpsOrchestrator {
   private readonly specificationBuilder: ResearchSpecificationBuilder;
   private readonly planner: ResearchPlanner;
   private readonly normalizer = new EvidenceNormalizer();
+  private readonly contextCompression = new ContextCompressionEngine();
   private readonly ontologyGraph = new OntologyGraphEngine();
   private readonly reasoning = new ReasoningEngine();
   private readonly validation = new ValidationEngine();
@@ -472,9 +458,15 @@ export class AetherOpsOrchestrator {
     const activeIteration = iteration ?? nextExecutionIteration(snapshot);
     await this.moveProject(projectId, ResearchLoopStep.ExecuteTools);
     await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", `Iteration ${activeIteration} 도구 실행 및 연구 수행을 시작합니다.`);
-    const researchPlan = snapshot.researchPlans.at(-1);
+    const storedResearchPlan = snapshot.researchPlans.at(-1);
+    const researchPlan = planForExecution(storedResearchPlan, snapshot);
+    if (storedResearchPlan && researchPlan && researchPlan !== storedResearchPlan) {
+      await this.store.saveResearchPlan(researchPlan);
+      await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", "Execution plan refreshed to avoid scholarly metadata collection blocking non-literature engineering tool execution.");
+    }
     const projectContextSnapshot = snapshot.projectContextSnapshots.at(-1);
     const continuationSources = sourceCandidatesFromPlan(projectId, activeIteration, researchPlan, projectContextSnapshot);
+    const shouldRunOpenCode = planRequiresTool(researchPlan, "OpenCodeTool");
     const runInput: OpenCodeRunInput = {
       project: snapshot.project,
       questions: snapshot.questions,
@@ -496,6 +488,28 @@ export class AetherOpsOrchestrator {
     try {
       const database = await this.requireDatabase(projectId);
       const settings = await this.getSettings();
+      if (!shouldRunOpenCode) {
+        if (!this.toolRunner) {
+          throw new Error("Autonomous tool execution requires a configured ToolRunner.");
+        }
+        let toolResults: ResearchToolResult[] = [];
+        try {
+          toolResults = await this.toolRunner.runAll(runInput, settings);
+        } catch (toolError) {
+          if (toolError instanceof ToolRunnerError) {
+            const resultsToPersist = [
+              ...toolError.partialResults,
+              ...(toolError.failedResult ? [toolError.failedResult] : [])
+            ];
+            await this.persistToolResults(snapshot.project, database, activeIteration, resultsToPersist);
+          }
+          throw toolError;
+        }
+        await this.persistToolResults(snapshot.project, database, activeIteration, toolResults);
+        await this.ingestSources(projectId);
+        await this.record(projectId, ResearchLoopStep.ExecuteTools, "Agent Control", "Autonomous registered research tools completed without a manual workbench or OpenCodeTool step.");
+        return this.store.getSnapshot(projectId);
+      }
       const acquisitionTools = preOpenCodeToolNames(researchPlan);
       let preToolResults: ResearchToolResult[] = [];
       let openCodeInput = runInput;
@@ -719,8 +733,20 @@ export class AetherOpsOrchestrator {
     await this.record(projectId, ResearchLoopStep.NormalizeData, "Storage Flow", "데이터 수집 및 정규화 단계를 시작합니다.");
     await this.ingestSources(projectId);
     const snapshot = activeResearchSnapshot(await this.store.getSnapshot(projectId));
-    const records = this.normalizer.normalize(snapshot, iteration ?? nextIteration(snapshot));
+    const activeIteration = iteration ?? nextIteration(snapshot);
+    const records = this.normalizer.normalize(snapshot, activeIteration);
     await this.store.saveNormalizedRecords(records);
+    const snapshotWithRecords = activeResearchSnapshot(await this.store.getSnapshot(projectId));
+    const compressionRecords = this.contextCompression.build(snapshotWithRecords, activeIteration);
+    if (compressionRecords.length) {
+      await this.store.saveNormalizedRecords(compressionRecords);
+      await this.record(
+        projectId,
+        ResearchLoopStep.NormalizeData,
+        "Knowledge Flow",
+        `Context compression stored ${compressionRecords.length} source-backed memory record(s) for iteration ${activeIteration}.`
+      );
+    }
     await this.record(projectId, ResearchLoopStep.NormalizeData, "Storage Flow", `정규화 레코드 ${records.length}개가 Main Research Memory에 저장되고 프로젝트에는 링크되었습니다.`);
     return this.store.getSnapshot(projectId);
   }
@@ -1068,8 +1094,10 @@ export class AetherOpsOrchestrator {
     step: ResearchLoopStep,
     options: { checkOpenCodePreflight?: boolean; storageWritable?: boolean } = {}
   ): Promise<void> {
+    const snapshot = await this.store.getSnapshot(projectId);
+    const settings = await this.getSettings();
     let openCodeReady: boolean | undefined;
-    if (options.checkOpenCodePreflight) {
+    if (options.checkOpenCodePreflight && stepRequiresOpenCode(step, snapshot)) {
       try {
         await this.preflightExecutionEngine(projectId);
         openCodeReady = true;
@@ -1078,8 +1106,8 @@ export class AetherOpsOrchestrator {
       }
     }
     this.requirements.assertStepReady(step, {
-      snapshot: await this.store.getSnapshot(projectId),
-      settings: await this.getSettings(),
+      snapshot,
+      settings,
       llmAvailable: this.llm ? await this.llm.isAvailable() : false,
       openCodeReady,
       storageWritable: options.storageWritable,
@@ -1492,6 +1520,31 @@ function preOpenCodeToolNames(plan: ResearchPlan | undefined): string[] {
     if (requested.has(tool)) output.push(tool);
   }
   return output;
+}
+
+function planForExecution(plan: ResearchPlan | undefined, snapshot: ResearchSnapshot): ResearchPlan | undefined {
+  if (!plan) return undefined;
+  const specification = snapshot.specifications.at(-1);
+  if (!specification) return plan;
+  const requiredTools = filterResearchMetadataTool(plan.requiredTools, {
+    snapshot,
+    specification,
+    continuationDecision: snapshot.continuationDecisions.at(-1)
+  });
+  if (sameStringArray(requiredTools, plan.requiredTools)) return plan;
+  return { ...plan, requiredTools };
+}
+
+function planRequiresTool(plan: ResearchPlan | undefined, toolName: string): boolean {
+  const normalizedTarget = normalizeToolName(toolName);
+  for (const tool of plan?.requiredTools ?? []) {
+    if (normalizeToolName(tool) === normalizedTarget) return true;
+  }
+  return false;
+}
+
+function stepRequiresOpenCode(step: ResearchLoopStep, snapshot: ResearchSnapshot): boolean {
+  return step === ResearchLoopStep.ExecuteTools && planRequiresTool(snapshot.researchPlans.at(-1), "OpenCodeTool");
 }
 
 function applyToolResultsToOpenCodeInput(input: OpenCodeRunInput, results: ResearchToolResult[]): OpenCodeRunInput {

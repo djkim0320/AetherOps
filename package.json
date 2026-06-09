@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "vitest run",
     "doctor": "node scripts/doctor.mjs",
+    "engineering:install-tools": "node scripts/engineering/install-embedded-toolchain.mjs",
     "ui:verify": "node scripts/ui-layout-verify.mjs",
     "metadata:verify": "npm run server:build && node scripts/research-metadata-verify.mjs",
     "selftest": "node scripts/selftest.mjs",

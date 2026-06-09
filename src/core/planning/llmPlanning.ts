@@ -183,16 +183,21 @@ function requestResultJson(
         "hypothesisUpdates uses zero-based hypothesisIndex and status among supported, rejected, needs_more_evidence, untested.",
         forceStop ? "The internal runaway-prevention safety cap has been reached; synthesize cautiously, set needsMoreEvidence=false, needsMoreAnalysis=false, and list unresolved limits instead of requesting another loop." : "",
         "",
-        `Project: ${JSON.stringify(snapshot.project)}`,
-        `Questions: ${JSON.stringify(snapshot.questions)}`,
-        `Hypotheses: ${JSON.stringify(snapshot.hypotheses)}`,
-        `ProjectContextSnapshot: ${JSON.stringify(snapshot.projectContextSnapshots.at(-1))}`,
+        `Project: ${JSON.stringify({
+          topic: snapshot.project.topic,
+          goal: snapshot.project.goal.slice(0, 1_200),
+          scope: snapshot.project.scope.slice(0, 1_200),
+          status: snapshot.project.status
+        })}`,
+        `Questions: ${JSON.stringify(questionPromptRows(snapshot.questions))}`,
+        `Hypotheses: ${JSON.stringify(hypothesisPromptRows(snapshot.hypotheses))}`,
+        `ProjectContextSnapshot: ${JSON.stringify(projectContextPromptSummary(snapshot.projectContextSnapshots.at(-1)))}`,
         `ValidationResults: ${JSON.stringify(validationResultsForIteration(snapshot.validationResults, iteration))}`,
-        `Hybrid Context: ${JSON.stringify(snapshot.hybridContexts.at(-1))}`,
+        `Hybrid Context: ${JSON.stringify(hybridContextPromptSummary(snapshot.hybridContexts.at(-1)))}`,
         `Selected Evidence: ${JSON.stringify(selectedEvidencePromptRows(snapshot))}`,
         `Selected Chunks: ${JSON.stringify(selectedChunkPromptRows(snapshot))}`,
         `OpenCode Runs: ${JSON.stringify(openCodeRunPromptRows(snapshot.openCodeRuns))}`,
-        `Tool Runs: ${JSON.stringify(lastItems(snapshot.toolRuns, 12))}`
+        `Tool Runs: ${JSON.stringify(toolRunPromptRows(snapshot.toolRuns, 12))}`
       ].join("\n");
   return llm.completeJson<LlmResultResponse>({
     schemaName: "AetherOpsEvidenceBasedResult",
@@ -291,6 +296,15 @@ function latestEvidenceCitationRows(
   return rows;
 }
 
+function questionPromptRows(questions: ResearchQuestion[]): Array<{ index: number; text: string; status: string }> {
+  const rows: Array<{ index: number; text: string; status: string }> = [];
+  for (let index = 0; index < questions.length; index += 1) {
+    const question = questions[index];
+    rows.push({ index, text: question.text.slice(0, 600), status: question.status });
+  }
+  return rows;
+}
+
 function validationResultsForIteration(
   validations: ResearchSnapshot["validationResults"],
   iteration: number
@@ -353,6 +367,7 @@ function selectedChunkPromptRows(snapshot: ResearchSnapshot): Array<{ id: string
       text: chunk.text.slice(0, 500),
       citation: chunk.citation
     });
+    if (rows.length >= 12) break;
   }
   return rows;
 }
@@ -365,11 +380,113 @@ function openCodeRunPromptRows(openCodeRuns: ResearchSnapshot["openCodeRuns"]): 
   return rows;
 }
 
-function lastItems<T>(items: T[], limit: number): T[] {
-  const output: T[] = [];
-  const start = Math.max(0, items.length - limit);
-  for (let index = start; index < items.length; index += 1) {
-    output.push(items[index]);
+function projectContextPromptSummary(context: ResearchSnapshot["projectContextSnapshots"][number] | undefined): unknown {
+  if (!context) return undefined;
+  return {
+    id: context.id,
+    iteration: context.iteration,
+    query: context.query.slice(0, 800),
+    selectedRecordIds: context.selectedRecordIds.slice(0, 20),
+    selectedSourceIds: context.selectedSourceIds.slice(0, 20),
+    selectedEvidenceIds: context.selectedEvidenceIds.slice(0, 20),
+    selectedChunkIds: context.selectedChunkIds.slice(0, 20),
+    selectedEntityCount: context.selectedEntityIds.length,
+    selectedRelationCount: context.selectedRelationIds.length,
+    citations: limitedStrings(context.citations, 12),
+    selectionReason: context.selectionReason.slice(0, 1_000)
+  };
+}
+
+function hybridContextPromptSummary(context: ResearchSnapshot["hybridContexts"][number] | undefined): unknown {
+  if (!context) return undefined;
+  return {
+    id: context.id,
+    iteration: context.iteration,
+    query: context.query.slice(0, 800),
+    evidenceIds: context.evidenceIds.slice(0, 20),
+    artifactIds: context.artifactIds.slice(0, 20),
+    vectorChunkCount: context.vectorChunkIds.length,
+    ontologyEntityCount: context.ontologyEntityIds.length,
+    ontologyRelationCount: context.ontologyRelationIds.length,
+    citations: limitedStrings(context.citations, 12),
+    vectorSummary: context.vectorSummary.slice(0, 1_500),
+    graphSummary: context.graphSummary.slice(0, 1_500)
+  };
+}
+
+function toolRunPromptRows(toolRuns: ResearchSnapshot["toolRuns"], limit: number): Array<{
+  toolName: string;
+  status: string;
+  error?: string;
+  outputSummary?: unknown;
+}> {
+  const rows: Array<{
+    toolName: string;
+    status: string;
+    error?: string;
+    outputSummary?: unknown;
+  }> = [];
+  const start = Math.max(0, toolRuns.length - limit);
+  for (let index = start; index < toolRuns.length; index += 1) {
+    const toolRun = toolRuns[index];
+    rows.push({
+      toolName: toolRun.toolName,
+      status: toolRun.status,
+      error: toolRun.error,
+      outputSummary: summarizeToolOutput(toolRun.output)
+    });
+  }
+  return rows;
+}
+
+function summarizeToolOutput(output: unknown): unknown {
+  if (!output || typeof output !== "object") return output;
+  const record = output as Record<string, unknown>;
+  if (Array.isArray(record.outputs)) {
+    return {
+      outputs: record.outputs.slice(0, 4).map((item) => summarizeProgramOutput(item))
+    };
+  }
+  return summarizePlainObject(record, 12);
+}
+
+function summarizeProgramOutput(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  const summary = record.summary && typeof record.summary === "object" ? record.summary as Record<string, unknown> : undefined;
+  if (summary) {
+    return {
+      kind: record.kind,
+      target: record.target,
+      status: record.status,
+      summary: {
+        airfoil: summary.airfoil,
+        runtime: summary.runtime,
+        runtimeVersion: summary.runtimeVersion,
+        runtimeLicense: summary.runtimeLicense,
+        sourceKind: summary.sourceKind,
+        sourceUrl: summary.sourceUrl,
+        coordinateFormat: summary.coordinateFormat,
+        reynolds: summary.reynolds,
+        mach: summary.mach,
+        alphaStart: summary.alphaStart,
+        alphaEnd: summary.alphaEnd,
+        alphaStep: summary.alphaStep,
+        rowCount: summary.rowCount,
+        rows: Array.isArray(summary.rows) ? summary.rows.slice(0, 24) : undefined,
+        convergence: summary.convergence
+      }
+    };
+  }
+  return summarizePlainObject(record, 12);
+}
+
+function summarizePlainObject(record: Record<string, unknown>, limit: number): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record).slice(0, limit)) {
+    if (typeof value === "string") output[key] = value.slice(0, 1_000);
+    else if (Array.isArray(value)) output[key] = value.slice(0, 12);
+    else output[key] = value;
   }
   return output;
 }

@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { createId, nowIso } from "../shared/ids.js";
+import { resolveEngineeringToolCommand } from "./engineeringToolchain.js";
 import type { ResearchTool, ResearchToolResult } from "./toolRegistry.js";
 import type {
   AppSettings,
@@ -13,6 +14,7 @@ import type {
   EvidenceItem,
   OpenCodeRunInput,
   ResearchArtifact,
+  CfdRunSpec,
   ToolRun
 } from "../shared/types.js";
 
@@ -94,25 +96,6 @@ interface AirfoilCoordinateInput {
   sourceArtifactPath?: string;
 }
 
-interface CommercialAdapterConfig {
-  target: Extract<EngineeringProgramTarget, "flightstream" | "starccm">;
-  label: string;
-  command?: string;
-  workingDirectory?: string;
-  probeArgs: string[];
-  runArgsTemplate: string[];
-  timeoutMs: number;
-}
-
-interface OpenFoamConfig {
-  command?: string;
-  caseRoot?: string;
-  workingDirectory?: string;
-  probeArgs: string[];
-  runArgsTemplate: string[];
-  timeoutMs: number;
-}
-
 interface Su2Config {
   command?: string;
   caseRoot?: string;
@@ -123,50 +106,15 @@ interface Su2Config {
   timeoutMs: number;
 }
 
-interface FreeCadConfig {
-  command?: string;
-  scriptPath?: string;
-  workingDirectory?: string;
-  probeArgs: string[];
-  runArgsTemplate: string[];
-  timeoutMs: number;
-}
-
-interface OpenVspConfig {
-  command?: string;
-  scriptPath?: string;
-  workingDirectory?: string;
-  probeArgs: string[];
-  runArgsTemplate: string[];
-  timeoutMs: number;
-}
-
-interface CommercialCfdRunSummary {
-  target: Extract<EngineeringProgramTarget, "flightstream" | "starccm">;
+interface ScriptedCfdConfig {
+  target: Extract<EngineeringProgramTarget, "openvsp" | "xflr5">;
   label: string;
-  command: string;
-  args: string[];
-  exitCode: number | null;
-  timedOut: boolean;
-  inputArtifactPath?: string;
-  outputFileName: string;
-  outputTextExcerpt?: string;
-  stdoutExcerpt: string;
-  stderrExcerpt: string;
-}
-
-interface OpenFoamCaseRunSummary {
-  target: "openfoam";
-  command: string;
-  args: string[];
-  caseRoot: string;
+  command?: string;
+  scriptPath?: string;
   workingDirectory?: string;
-  outputFileName: string;
-  outputTextExcerpt?: string;
-  exitCode: number | null;
-  timedOut: boolean;
-  stdoutExcerpt: string;
-  stderrExcerpt: string;
+  probeArgs: string[];
+  runArgsTemplate: string[];
+  timeoutMs: number;
 }
 
 interface Su2CaseRunSummary {
@@ -175,6 +123,8 @@ interface Su2CaseRunSummary {
   args: string[];
   caseRoot: string;
   configPath: string;
+  generatedConfigText?: string;
+  cfdRunSpec?: CfdRunSpec;
   workingDirectory?: string;
   outputFileName: string;
   outputTextExcerpt?: string;
@@ -184,25 +134,19 @@ interface Su2CaseRunSummary {
   stderrExcerpt: string;
 }
 
-interface FreeCadScriptRunSummary {
-  target: "freecad";
+interface ScriptedCfdRunSummary {
+  target: Extract<EngineeringProgramTarget, "openvsp" | "xflr5">;
+  label: string;
   command: string;
+  launcherCommand: string;
   args: string[];
-  scriptPath: string;
-  workingDirectory?: string;
-  outputFileName: string;
-  outputTextExcerpt?: string;
-  exitCode: number | null;
-  timedOut: boolean;
-  stdoutExcerpt: string;
-  stderrExcerpt: string;
-}
-
-interface OpenVspScriptRunSummary {
-  target: "openvsp";
-  command: string;
-  args: string[];
-  scriptPath: string;
+  adapterMode: "builtin" | "custom";
+  scriptPath?: string;
+  builtinAdapterPath?: string;
+  geometryPath?: string;
+  meshPath?: string;
+  cfdSpecPath: string;
+  cfdRunSpec: CfdRunSpec;
   workingDirectory?: string;
   outputFileName: string;
   outputTextExcerpt?: string;
@@ -272,13 +216,6 @@ export class EngineeringProgramTool implements ResearchTool {
           evidence.push(xfoilWasmPolarEvidence(input, summary, nowIso()));
           continue;
         }
-        if (request.kind === "openfoam-case-run") {
-          const summary = await runOpenFoamCase(request, settings);
-          outputs.push({ kind: request.kind, target: "openfoam", summary });
-          artifacts.push(openFoamCaseRunArtifact(input, summary, nowIso()));
-          evidence.push(openFoamCaseRunEvidence(input, summary, nowIso()));
-          continue;
-        }
         if (request.kind === "su2-case-run") {
           const summary = await runSu2Case(request, settings);
           outputs.push({ kind: request.kind, target: "su2", summary });
@@ -286,25 +223,18 @@ export class EngineeringProgramTool implements ResearchTool {
           evidence.push(su2CaseRunEvidence(input, summary, nowIso()));
           continue;
         }
-        if (request.kind === "cad-script-run") {
-          const summary = await runFreeCadScript(request, settings);
-          outputs.push({ kind: request.kind, target: "freecad", summary });
-          artifacts.push(freeCadScriptRunArtifact(input, summary, nowIso()));
-          evidence.push(freeCadScriptRunEvidence(input, summary, nowIso()));
-          continue;
-        }
-        if (request.kind === "vsp-script-run") {
-          const summary = await runOpenVspScript(request, settings);
+        if (request.kind === "openvsp-analysis-run") {
+          const summary = await runScriptedCfdAnalysis(request, settings, "openvsp");
           outputs.push({ kind: request.kind, target: "openvsp", summary });
-          artifacts.push(openVspScriptRunArtifact(input, summary, nowIso()));
-          evidence.push(openVspScriptRunEvidence(input, summary, nowIso()));
+          artifacts.push(scriptedCfdRunArtifact(input, summary, nowIso()));
+          evidence.push(scriptedCfdRunEvidence(input, summary, nowIso()));
           continue;
         }
-        if (request.kind === "commercial-cfd-run") {
-          const summary = await runCommercialCfdAdapter(request, settings);
-          outputs.push({ kind: request.kind, target: summary.target, summary });
-          artifacts.push(commercialCfdRunArtifact(input, summary, nowIso()));
-          evidence.push(commercialCfdRunEvidence(input, summary, nowIso()));
+        if (request.kind === "xflr5-analysis-run") {
+          const summary = await runScriptedCfdAnalysis(request, settings, "xflr5");
+          outputs.push({ kind: request.kind, target: "xflr5", summary });
+          artifacts.push(scriptedCfdRunArtifact(input, summary, nowIso()));
+          evidence.push(scriptedCfdRunEvidence(input, summary, nowIso()));
           continue;
         }
         throw new Error(`Unsupported EngineeringProgramTool request kind: ${request.kind}`);
@@ -334,12 +264,9 @@ export function hasExecutableEngineeringTool(settings: AppSettings): boolean {
     hasConfiguredXfoil(settings) ||
     hasConfiguredXfoilWasm(settings) ||
     hasConfiguredModelingRoot(settings) ||
-    hasConfiguredOpenFoam(settings) ||
     hasConfiguredSu2(settings) ||
-    hasConfiguredFreeCad(settings) ||
     hasConfiguredOpenVsp(settings) ||
-    hasConfiguredCommercialAdapter(settings, "flightstream") ||
-    hasConfiguredCommercialAdapter(settings, "starccm")
+    hasConfiguredXflr5(settings)
   );
 }
 
@@ -348,20 +275,17 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
   const xfoilReady = toolsEnabled && hasConfiguredXfoil(settings);
   const xfoilWasmReady = toolsEnabled && hasConfiguredXfoilWasm(settings);
   const modelingReady = toolsEnabled && hasConfiguredModelingRoot(settings);
-  const openFoamReady = toolsEnabled && hasConfiguredOpenFoam(settings);
   const su2Ready = toolsEnabled && hasConfiguredSu2(settings);
-  const freeCadReady = toolsEnabled && hasConfiguredFreeCad(settings);
   const openVspReady = toolsEnabled && hasConfiguredOpenVsp(settings);
-  const flightStreamReady = toolsEnabled && hasConfiguredCommercialAdapter(settings, "flightstream");
-  const starCcmReady = toolsEnabled && hasConfiguredCommercialAdapter(settings, "starccm");
+  const xflr5Ready = toolsEnabled && hasConfiguredXflr5(settings);
   const capabilities: EngineeringProgramCapability[] = [
     {
       kind: "toolchain-check",
       target: "all",
-      ready: toolsEnabled && (xfoilReady || xfoilWasmReady || modelingReady || openFoamReady || su2Ready || freeCadReady || openVspReady || flightStreamReady || starCcmReady),
+      ready: toolsEnabled && (xfoilReady || xfoilWasmReady || modelingReady || su2Ready || openVspReady || xflr5Ready),
       requiredFields: ["kind"],
       optionalFields: ["target", "reason"],
-      description: "Probe configured engineering programs and report unavailable targets without inventing substitutes.",
+      description: "Probe configured XFOIL, SU2, OpenVSP, and XFLR5 targets and report unavailable targets without inventing substitutes.",
       blockedReason: toolsEnabled ? "No engineering target is configured." : "Engineering program tools are disabled."
     },
     {
@@ -379,8 +303,8 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       ready: xfoilReady,
       requiredFields: ["kind", "naca or artifactPath"],
       optionalFields: ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "reason"],
-      description: "Run the configured XFOIL executable to generate a polar table.",
-      blockedReason: xfoilReady ? undefined : "XFOIL command is not configured or not available on PATH."
+      description: "Run the embedded XFOIL executable to generate a polar table.",
+      blockedReason: xfoilReady ? undefined : "Embedded XFOIL executable is not available under the AetherOps engineering toolchain."
     },
     {
       kind: "xfoil-wasm-polar",
@@ -392,58 +316,31 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       blockedReason: xfoilWasmReady ? undefined : "XFOIL WebAssembly solver is unavailable because engineering program tools are disabled."
     },
     {
-      kind: "openfoam-case-run",
-      target: "openfoam",
-      ready: openFoamReady,
-      requiredFields: ["kind", "target"],
-      optionalFields: ["outputFileName", "reason"],
-      description: "Run a configured OpenFOAM-compatible solver command against the saved case root using its args template.",
-      blockedReason: openFoamReady ? undefined : "OpenFOAM command is not available, or parser-visible case root is not configured."
-    },
-    {
       kind: "su2-case-run",
       target: "su2",
       ready: su2Ready,
-      requiredFields: ["kind", "target"],
+      requiredFields: ["kind", "target", "cfdRunSpec"],
       optionalFields: ["outputFileName", "reason"],
-      description: "Run a configured SU2_CFD-compatible command against the saved case config using its args template.",
-      blockedReason: su2Ready ? undefined : "SU2 command is not available, or parser-visible case config is not configured."
+      description: "Generate a validated SU2 case config from LLM-selected CFD parameters, then run the embedded SU2_CFD-compatible executable.",
+      blockedReason: su2Ready ? undefined : "Embedded SU2 executable is not available, or parser-visible case config is not configured."
     },
     {
-      kind: "cad-script-run",
-      target: "freecad",
-      ready: freeCadReady,
-      requiredFields: ["kind", "target"],
-      optionalFields: ["outputFileName", "reason"],
-      description: "Run the configured FreeCAD-compatible headless command with the saved script and args template.",
-      blockedReason: freeCadReady ? undefined : "FreeCAD command is not available, or script path is not configured."
-    },
-    {
-      kind: "vsp-script-run",
+      kind: "openvsp-analysis-run",
       target: "openvsp",
       ready: openVspReady,
-      requiredFields: ["kind", "target"],
+      requiredFields: ["kind", "target", "cfdRunSpec"],
       optionalFields: ["outputFileName", "reason"],
-      description: "Run the configured OpenVSP-compatible headless command with the saved script and args template.",
-      blockedReason: openVspReady ? undefined : "OpenVSP command is not available, or script path is not configured."
+      description: "Run the embedded OpenVSP/VSPAERO command through the built-in runner, or through an explicitly configured custom script.",
+      blockedReason: openVspReady ? undefined : "Embedded OpenVSP executable is not available, or the configured custom script contract is invalid."
     },
     {
-      kind: "commercial-cfd-run",
-      target: "flightstream",
-      ready: flightStreamReady,
-      requiredFields: ["kind", "target"],
-      optionalFields: ["artifactPath", "outputFileName", "reason"],
-      description: "Run the configured FlightStream adapter command using its saved args template.",
-      blockedReason: flightStreamReady ? undefined : "FlightStream command adapter is not configured or not available on PATH."
-    },
-    {
-      kind: "commercial-cfd-run",
-      target: "starccm",
-      ready: starCcmReady,
-      requiredFields: ["kind", "target"],
-      optionalFields: ["artifactPath", "outputFileName", "reason"],
-      description: "Run the configured STAR-CCM+ adapter command using its saved args template.",
-      blockedReason: starCcmReady ? undefined : "STAR-CCM+ command adapter is not configured or not available on PATH."
+      kind: "xflr5-analysis-run",
+      target: "xflr5",
+      ready: xflr5Ready,
+      requiredFields: ["kind", "target", "cfdRunSpec"],
+      optionalFields: ["outputFileName", "reason"],
+      description: "Run the embedded XFLR5 command through the built-in runner, or through an explicitly configured custom script.",
+      blockedReason: xflr5Ready ? undefined : "Embedded XFLR5 executable is not available, or the configured custom script contract is invalid."
     }
   ];
   return capabilities.map((capability) => (capability.ready ? { ...capability, blockedReason: undefined } : capability));
@@ -502,15 +399,14 @@ function normalizeProgramRequests(value: unknown): EngineeringProgramRequest[] {
       request.kind !== "mesh-inspect" &&
       request.kind !== "xfoil-polar" &&
       request.kind !== "xfoil-wasm-polar" &&
-      request.kind !== "openfoam-case-run" &&
       request.kind !== "su2-case-run" &&
-      request.kind !== "cad-script-run" &&
-      request.kind !== "vsp-script-run" &&
-      request.kind !== "commercial-cfd-run"
+      request.kind !== "openvsp-analysis-run" &&
+      request.kind !== "xflr5-analysis-run"
     ) continue;
     requests.push({
       kind: request.kind,
       target: normalizeTarget(request.target),
+      cfdRunSpec: normalizeCfdRunSpec(request.cfdRunSpec),
       artifactPath: typeof request.artifactPath === "string" ? request.artifactPath : undefined,
       sourceUrl: typeof request.sourceUrl === "string" ? request.sourceUrl : undefined,
       outputFileName: typeof request.outputFileName === "string" ? request.outputFileName : undefined,
@@ -527,19 +423,16 @@ function normalizeProgramRequests(value: unknown): EngineeringProgramRequest[] {
 }
 
 function supportedEngineeringProgramKinds(): EngineeringProgramRequest["kind"][] {
-  return ["toolchain-check", "mesh-inspect", "xfoil-polar", "xfoil-wasm-polar", "openfoam-case-run", "su2-case-run", "cad-script-run", "vsp-script-run", "commercial-cfd-run"];
+  return ["toolchain-check", "mesh-inspect", "xfoil-polar", "xfoil-wasm-polar", "su2-case-run", "openvsp-analysis-run", "xflr5-analysis-run"];
 }
 
 async function runToolchainCheck(target: EngineeringProgramTarget, settings: AppSettings): Promise<unknown> {
   const wantsXfoil = target === "all" || target === "xfoil";
   const wantsXfoilWasm = target === "all" || target === "xfoil-wasm";
   const wantsModeling = target === "all" || target === "modeling";
-  const wantsOpenFoam = target === "all" || target === "openfoam";
   const wantsSu2 = target === "all" || target === "su2";
-  const wantsFreeCad = target === "all" || target === "freecad";
   const wantsOpenVsp = target === "all" || target === "openvsp";
-  const wantsFlightStream = target === "all" || target === "flightstream";
-  const wantsStarCcm = target === "all" || target === "starccm";
+  const wantsXflr5 = target === "all" || target === "xflr5";
   const checked: string[] = [];
   const unavailable: Array<{ target: string; reason: string }> = [];
   const output: Record<string, unknown> = { kind: "toolchain-check", target, checked, unavailable };
@@ -547,10 +440,10 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
   if (wantsXfoil) {
     if (hasConfiguredXfoil(settings)) {
       checked.push("xfoil");
-      output.xfoil = await probeXfoil(settings.engineeringTools.xfoil.command as string, settings.engineeringTools.xfoil.timeoutMs);
+      output.xfoil = await probeXfoil(resolveXfoilCommand(settings), settings.engineeringTools.xfoil.timeoutMs);
     } else {
-      unavailable.push({ target: "xfoil", reason: "XFOIL command is not configured." });
-      if (target === "xfoil") throw new Error("XFOIL command is not configured.");
+      unavailable.push({ target: "xfoil", reason: "Embedded XFOIL executable is not available under the AetherOps engineering toolchain." });
+      if (target === "xfoil") throw new Error("Embedded XFOIL executable is not available.");
     }
   }
 
@@ -581,20 +474,6 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
     }
   }
 
-  if (wantsOpenFoam) {
-    if (hasConfiguredOpenFoam(settings)) {
-      checked.push("openfoam");
-      const config = openFoamConfig(settings);
-      output.openFoam = {
-        caseRoot: validateOpenFoamCaseRoot(config.caseRoot),
-        probe: await probeOpenFoam(config)
-      };
-    } else {
-      unavailable.push({ target: "openfoam", reason: "OpenFOAM requires an enabled command and a case root containing system/controlDict." });
-      if (target === "openfoam") throw new Error("OpenFOAM command or case root is not configured.");
-    }
-  }
-
   if (wantsSu2) {
     if (hasConfiguredSu2(settings)) {
       checked.push("su2");
@@ -606,60 +485,42 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
         probe: await probeSu2(config)
       };
     } else {
-      unavailable.push({ target: "su2", reason: "SU2 requires an enabled command and a case root containing the configured .cfg file." });
-      if (target === "su2") throw new Error("SU2 command or case config is not configured.");
-    }
-  }
-
-  if (wantsFreeCad) {
-    if (hasConfiguredFreeCad(settings)) {
-      checked.push("freecad");
-      const config = freeCadConfig(settings);
-      output.freeCad = {
-        scriptPath: validateFreeCadScriptPath(config.scriptPath),
-        probe: await probeFreeCad(config)
-      };
-    } else {
-      unavailable.push({ target: "freecad", reason: "FreeCAD requires an enabled command and an existing configured script path." });
-      if (target === "freecad") throw new Error("FreeCAD command or script path is not configured.");
+      unavailable.push({ target: "su2", reason: "SU2 requires an embedded executable and a case root containing the configured .cfg file." });
+      if (target === "su2") throw new Error("Embedded SU2 executable or case config is not configured.");
     }
   }
 
   if (wantsOpenVsp) {
     if (hasConfiguredOpenVsp(settings)) {
       checked.push("openvsp");
-      const config = openVspConfig(settings);
+      const config = scriptedCfdConfig(settings, "openvsp");
+      const customScriptPath = validateOptionalScriptedCfdScriptPath(config);
       output.openVsp = {
-        scriptPath: validateOpenVspScriptPath(config.scriptPath),
-        probe: await probeOpenVsp(config)
+        adapterMode: customScriptPath ? "custom" : "builtin",
+        scriptPath: customScriptPath,
+        builtinAdapterPath: customScriptPath ? undefined : validateBuiltinScriptedCfdAdapterPath("openvsp"),
+        probe: await probeScriptedCfd(config)
       };
     } else {
-      unavailable.push({ target: "openvsp", reason: "OpenVSP requires an enabled command and an existing configured script path." });
-      if (target === "openvsp") throw new Error("OpenVSP command or script path is not configured.");
+      unavailable.push({ target: "openvsp", reason: "OpenVSP requires an embedded executable and either the built-in adapter or a valid custom script contract." });
+      if (target === "openvsp") throw new Error("Embedded OpenVSP executable or adapter contract is not configured.");
     }
   }
 
-  if (wantsFlightStream) {
-    if (hasConfiguredCommercialAdapter(settings, "flightstream")) {
-      checked.push("flightstream");
-      const adapter = commercialAdapterConfig(settings, "flightstream");
-      output.flightStream = await probeCommercialAdapter(adapter);
+  if (wantsXflr5) {
+    if (hasConfiguredXflr5(settings)) {
+      checked.push("xflr5");
+      const config = scriptedCfdConfig(settings, "xflr5");
+      const customScriptPath = validateOptionalScriptedCfdScriptPath(config);
+      output.xflr5 = {
+        adapterMode: customScriptPath ? "custom" : "builtin",
+        scriptPath: customScriptPath,
+        builtinAdapterPath: customScriptPath ? undefined : validateBuiltinScriptedCfdAdapterPath("xflr5"),
+        probe: await probeScriptedCfd(config)
+      };
     } else {
-      output.flightStream = { configured: settings.engineeringTools.commercialCfd.flightStreamConfigured, executableAdapter: false };
-      unavailable.push({ target: "flightstream", reason: "FlightStream requires a configured command and licensed execution adapter before AetherOps can run it." });
-      if (target === "flightstream") throw new Error("FlightStream execution adapter is not configured.");
-    }
-  }
-
-  if (wantsStarCcm) {
-    if (hasConfiguredCommercialAdapter(settings, "starccm")) {
-      checked.push("starccm");
-      const adapter = commercialAdapterConfig(settings, "starccm");
-      output.starCcm = await probeCommercialAdapter(adapter);
-    } else {
-      output.starCcm = { configured: settings.engineeringTools.commercialCfd.starCcmConfigured, executableAdapter: false };
-      unavailable.push({ target: "starccm", reason: "STAR-CCM+ requires a configured command and licensed execution adapter before AetherOps can run it." });
-      if (target === "starccm") throw new Error("STAR-CCM+ execution adapter is not configured.");
+      unavailable.push({ target: "xflr5", reason: "XFLR5 requires an embedded executable and either the built-in adapter or a valid custom script contract." });
+      if (target === "xflr5") throw new Error("Embedded XFLR5 executable or adapter contract is not configured.");
     }
   }
 
@@ -702,14 +563,15 @@ export function inspectConfiguredMeshArtifact(settings: AppSettings, artifactPat
 
 async function runXfoilPolar(request: EngineeringProgramRequest, settings: AppSettings): Promise<XfoilPolarSummary> {
   if (!hasConfiguredXfoil(settings)) {
-    throw new Error("XFOIL polar execution requires a configured XFOIL command.");
+    throw new Error("XFOIL polar execution requires an embedded XFOIL executable or explicit executable path.");
   }
-  const airfoil = xfoilAirfoilInput(request, settings);
-  const reynolds = boundedPositiveNumber(request.reynolds, 1_000, 100_000_000, 1_000_000, "reynolds");
-  const mach = boundedPositiveNumber(request.mach, 0, 0.8, 0, "mach");
-  const alphaStart = boundedNumber(request.alphaStart, -30, 30, -4, "alphaStart");
-  const alphaEnd = boundedNumber(request.alphaEnd, -30, 30, 12, "alphaEnd");
-  const alphaStep = boundedPositiveNumber(request.alphaStep, 0.1, 10, 2, "alphaStep");
+  const executionRequest = requestWithCfdSpecDefaults(request, "xfoil", settings);
+  const airfoil = xfoilAirfoilInput(executionRequest, settings);
+  const reynolds = boundedPositiveNumber(executionRequest.reynolds, 1_000, 100_000_000, 1_000_000, "reynolds");
+  const mach = boundedPositiveNumber(executionRequest.mach, 0, 0.8, 0, "mach");
+  const alphaStart = boundedNumber(executionRequest.alphaStart, -30, 30, -4, "alphaStart");
+  const alphaEnd = boundedNumber(executionRequest.alphaEnd, -30, 30, 12, "alphaEnd");
+  const alphaStep = boundedPositiveNumber(executionRequest.alphaStep, 0.1, 10, 2, "alphaStep");
   if (alphaEnd < alphaStart) {
     throw new Error("XFOIL polar request requires alphaEnd >= alphaStart.");
   }
@@ -733,7 +595,7 @@ async function runXfoilPolar(request: EngineeringProgramRequest, settings: AppSe
   ].join("\n");
 
   try {
-    const probe = await runCommandWithInput(settings.engineeringTools.xfoil.command as string, commandInput, settings.engineeringTools.xfoil.timeoutMs);
+    const probe = await runCommandWithInput(resolveXfoilCommand(settings), commandInput, settings.engineeringTools.xfoil.timeoutMs);
     if (!existsSync(polarPath)) {
       throw new Error(`XFOIL did not produce a polar file. stdout=${probe.stdoutExcerpt} stderr=${probe.stderrExcerpt}`);
     }
@@ -763,12 +625,13 @@ async function runXfoilWasmPolar(request: EngineeringProgramRequest, settings: A
   if (!hasConfiguredXfoilWasm(settings)) {
     throw new Error("XFOIL WebAssembly polar execution requires engineering program tools to be enabled.");
   }
-  const coordinateInput = await resolveWasmAirfoilInput(request, settings, input);
-  const reynolds = boundedPositiveNumber(request.reynolds, 1_000, 100_000_000, 1_000_000, "reynolds");
-  const mach = boundedPositiveNumber(request.mach, 0, 0.8, 0, "mach");
-  const alphaStart = boundedNumber(request.alphaStart, -30, 30, -4, "alphaStart");
-  const alphaEnd = boundedNumber(request.alphaEnd, -30, 30, 12, "alphaEnd");
-  const alphaStep = boundedPositiveNumber(request.alphaStep, 0.1, 10, 2, "alphaStep");
+  const executionRequest = requestWithCfdSpecDefaults(request, "xfoil-wasm", settings);
+  const coordinateInput = await resolveWasmAirfoilInput(executionRequest, settings, input);
+  const reynolds = boundedPositiveNumber(executionRequest.reynolds, 1_000, 100_000_000, 1_000_000, "reynolds");
+  const mach = boundedPositiveNumber(executionRequest.mach, 0, 0.8, 0, "mach");
+  const alphaStart = boundedNumber(executionRequest.alphaStart, -30, 30, -4, "alphaStart");
+  const alphaEnd = boundedNumber(executionRequest.alphaEnd, -30, 30, 12, "alphaEnd");
+  const alphaStep = boundedPositiveNumber(executionRequest.alphaStep, 0.1, 10, 2, "alphaStep");
   if (alphaEnd < alphaStart) {
     throw new Error("XFOIL WebAssembly polar request requires alphaEnd >= alphaStart.");
   }
@@ -846,54 +709,12 @@ async function runXfoilWasmPolar(request: EngineeringProgramRequest, settings: A
   }
 }
 
-async function runOpenFoamCase(request: EngineeringProgramRequest, settings: AppSettings): Promise<OpenFoamCaseRunSummary> {
-  if (request.target !== "openfoam") {
-    throw new Error("openfoam-case-run requires target openfoam.");
-  }
-  if (!hasConfiguredOpenFoam(settings)) {
-    throw new Error("OpenFOAM case execution requires an enabled command and a case root containing system/controlDict.");
-  }
-  const config = openFoamConfig(settings);
-  if (!config.runArgsTemplate.length) {
-    throw new Error("OpenFOAM runArgsTemplate is not configured; AetherOps will not invent solver command arguments.");
-  }
-  const caseRoot = validateOpenFoamCaseRoot(config.caseRoot);
-  const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-openfoam-"));
-  const outputFileName = safeOutputFileName(request.outputFileName, "openfoam-run-output.txt");
-  const outputPath = join(tempRoot, outputFileName);
-  const args = renderOpenFoamArgs(config.runArgsTemplate, { caseRoot, outputPath, workingDirectory: config.workingDirectory });
-  const cwd = normalizeWorkingDirectory(config.workingDirectory) ?? caseRoot;
-
-  try {
-    const result = await runCommandWithArgs(config.command as string, args, config.timeoutMs, cwd);
-    if (result.exitCode !== 0 || result.timedOut) {
-      throw new Error(`OpenFOAM command exited unsuccessfully: exitCode=${result.exitCode}, timedOut=${result.timedOut}, stderr=${result.stderrExcerpt}`);
-    }
-    const outputTextExcerpt = existsSync(outputPath) ? excerpt(readFileSync(outputPath, "utf8")) : undefined;
-    return {
-      target: "openfoam",
-      command: config.command as string,
-      args,
-      caseRoot,
-      workingDirectory: cwd,
-      outputFileName,
-      outputTextExcerpt,
-      exitCode: result.exitCode,
-      timedOut: result.timedOut,
-      stdoutExcerpt: result.stdoutExcerpt,
-      stderrExcerpt: result.stderrExcerpt
-    };
-  } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
-  }
-}
-
 async function runSu2Case(request: EngineeringProgramRequest, settings: AppSettings): Promise<Su2CaseRunSummary> {
   if (request.target !== "su2") {
     throw new Error("su2-case-run requires target su2.");
   }
   if (!hasConfiguredSu2(settings)) {
-    throw new Error("SU2 case execution requires an enabled command, configured case root, and explicit config file.");
+    throw new Error("SU2 case execution requires an embedded executable, configured case root, and explicit config file.");
   }
   const config = su2Config(settings);
   if (!config.runArgsTemplate.length) {
@@ -902,13 +723,17 @@ async function runSu2Case(request: EngineeringProgramRequest, settings: AppSetti
   if (!config.runArgsTemplate.some((arg) => arg.includes("{config}"))) {
     throw new Error("SU2 runArgsTemplate must include {config}; AetherOps will not infer an implicit SU2 config file.");
   }
+  const cfdRunSpec = validateCfdRunSpecForTarget(request.cfdRunSpec, "su2", settings);
   const su2Case = validateSu2CaseConfig(config.caseRoot, config.configFile);
   const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-su2-"));
   const outputFileName = safeOutputFileName(request.outputFileName, "su2-run-output.txt");
   const outputPath = join(tempRoot, outputFileName);
+  const generatedConfigPath = join(tempRoot, "aetherops-generated-su2.cfg");
+  const generatedConfigText = renderSu2Config(readFileSync(su2Case.configPath, "utf8"), cfdRunSpec);
+  writeFileSync(generatedConfigPath, generatedConfigText, "utf8");
   const args = renderSu2Args(config.runArgsTemplate, {
     caseRoot: su2Case.caseRoot,
-    configPath: su2Case.configPath,
+    configPath: generatedConfigPath,
     outputPath,
     workingDirectory: config.workingDirectory
   });
@@ -925,7 +750,9 @@ async function runSu2Case(request: EngineeringProgramRequest, settings: AppSetti
       command: config.command as string,
       args,
       caseRoot: su2Case.caseRoot,
-      configPath: su2Case.configPath,
+      configPath: generatedConfigPath,
+      generatedConfigText,
+      cfdRunSpec,
       workingDirectory: cwd,
       outputFileName,
       outputTextExcerpt,
@@ -939,38 +766,49 @@ async function runSu2Case(request: EngineeringProgramRequest, settings: AppSetti
   }
 }
 
-async function runFreeCadScript(request: EngineeringProgramRequest, settings: AppSettings): Promise<FreeCadScriptRunSummary> {
-  if (request.target !== "freecad") {
-    throw new Error("cad-script-run requires target freecad.");
+async function runScriptedCfdAnalysis(
+  request: EngineeringProgramRequest,
+  settings: AppSettings,
+  target: Extract<EngineeringProgramTarget, "openvsp" | "xflr5">
+): Promise<ScriptedCfdRunSummary> {
+  if (request.target !== target) {
+    throw new Error(`${target} analysis requires target ${target}.`);
   }
-  if (!hasConfiguredFreeCad(settings)) {
-    throw new Error("FreeCAD script execution requires an enabled command and an existing configured script path.");
+  const config = scriptedCfdConfig(settings, target);
+  if (target === "openvsp" && !hasConfiguredOpenVsp(settings)) {
+    throw new Error("OpenVSP analysis requires an embedded executable and either the built-in runner or a valid custom script contract.");
   }
-  const config = freeCadConfig(settings);
-  if (!config.runArgsTemplate.length) {
-    throw new Error("FreeCAD runArgsTemplate is not configured; AetherOps will not invent CAD command arguments.");
+  if (target === "xflr5" && !hasConfiguredXflr5(settings)) {
+    throw new Error("XFLR5 analysis requires an embedded executable and either the built-in runner or a valid custom script contract.");
   }
-  if (!config.runArgsTemplate.some((arg) => arg.includes("{script}"))) {
-    throw new Error("FreeCAD runArgsTemplate must include {script}; AetherOps will not run an implicit CAD script.");
-  }
-  const scriptPath = validateFreeCadScriptPath(config.scriptPath);
-  const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-freecad-"));
-  const outputFileName = safeOutputFileName(request.outputFileName, "freecad-script-output.json");
+  const cfdRunSpec = validateCfdRunSpecForTarget(request.cfdRunSpec, target, settings);
+  const tempRoot = mkdtempSync(join(tmpdir(), `aetherops-${target}-`));
+  const outputFileName = safeOutputFileName(request.outputFileName, `${target}-analysis-output.json`);
   const outputPath = join(tempRoot, outputFileName);
+  const cfdSpecPath = join(tempRoot, "aetherops-cfd-run-spec.json");
+  writeFileSync(cfdSpecPath, `${JSON.stringify(cfdRunSpec, null, 2)}\n`, "utf8");
   const cwd = normalizeWorkingDirectory(config.workingDirectory);
-  const args = renderScriptedToolArgs(config.runArgsTemplate, { scriptPath, outputPath, workingDirectory: cwd });
+  const runPlan = createScriptedCfdRunPlan(config, cfdRunSpec, settings, cfdSpecPath, outputPath, cwd);
 
   try {
-    const result = await runCommandWithArgs(config.command as string, args, config.timeoutMs, cwd);
+    const result = await runCommandWithArgs(runPlan.launcherCommand, runPlan.args, config.timeoutMs, cwd);
     if (result.exitCode !== 0 || result.timedOut) {
-      throw new Error(`FreeCAD-compatible command exited unsuccessfully: exitCode=${result.exitCode}, timedOut=${result.timedOut}, stderr=${result.stderrExcerpt}`);
+      throw new Error(`${config.label} adapter exited unsuccessfully: exitCode=${result.exitCode}, timedOut=${result.timedOut}, stderr=${result.stderrExcerpt}`);
     }
     const outputTextExcerpt = existsSync(outputPath) ? excerpt(readFileSync(outputPath, "utf8")) : undefined;
     return {
-      target: "freecad",
+      target,
+      label: config.label,
       command: config.command as string,
-      args,
-      scriptPath,
+      launcherCommand: runPlan.launcherCommand,
+      args: runPlan.args,
+      adapterMode: runPlan.adapterMode,
+      scriptPath: runPlan.scriptPath,
+      builtinAdapterPath: runPlan.builtinAdapterPath,
+      geometryPath: runPlan.geometryPath,
+      meshPath: runPlan.meshPath,
+      cfdSpecPath,
+      cfdRunSpec,
       workingDirectory: cwd,
       outputFileName,
       outputTextExcerpt,
@@ -982,147 +820,6 @@ async function runFreeCadScript(request: EngineeringProgramRequest, settings: Ap
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
-}
-
-async function runOpenVspScript(request: EngineeringProgramRequest, settings: AppSettings): Promise<OpenVspScriptRunSummary> {
-  if (request.target !== "openvsp") {
-    throw new Error("vsp-script-run requires target openvsp.");
-  }
-  if (!hasConfiguredOpenVsp(settings)) {
-    throw new Error("OpenVSP script execution requires an enabled command and an existing configured script path.");
-  }
-  const config = openVspConfig(settings);
-  if (!config.runArgsTemplate.length) {
-    throw new Error("OpenVSP runArgsTemplate is not configured; AetherOps will not invent OpenVSP command arguments.");
-  }
-  if (!config.runArgsTemplate.some((arg) => arg.includes("{script}"))) {
-    throw new Error("OpenVSP runArgsTemplate must include {script}; AetherOps will not run an implicit OpenVSP script.");
-  }
-  const scriptPath = validateOpenVspScriptPath(config.scriptPath);
-  const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-openvsp-"));
-  const outputFileName = safeOutputFileName(request.outputFileName, "openvsp-script-output.json");
-  const outputPath = join(tempRoot, outputFileName);
-  const cwd = normalizeWorkingDirectory(config.workingDirectory);
-  const args = renderScriptedToolArgs(config.runArgsTemplate, { scriptPath, outputPath, workingDirectory: cwd });
-
-  try {
-    const result = await runCommandWithArgs(config.command as string, args, config.timeoutMs, cwd);
-    if (result.exitCode !== 0 || result.timedOut) {
-      throw new Error(`OpenVSP-compatible command exited unsuccessfully: exitCode=${result.exitCode}, timedOut=${result.timedOut}, stderr=${result.stderrExcerpt}`);
-    }
-    const outputTextExcerpt = existsSync(outputPath) ? excerpt(readFileSync(outputPath, "utf8")) : undefined;
-    return {
-      target: "openvsp",
-      command: config.command as string,
-      args,
-      scriptPath,
-      workingDirectory: cwd,
-      outputFileName,
-      outputTextExcerpt,
-      exitCode: result.exitCode,
-      timedOut: result.timedOut,
-      stdoutExcerpt: result.stdoutExcerpt,
-      stderrExcerpt: result.stderrExcerpt
-    };
-  } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
-  }
-}
-
-async function runCommercialCfdAdapter(request: EngineeringProgramRequest, settings: AppSettings): Promise<CommercialCfdRunSummary> {
-  if (request.target !== "flightstream" && request.target !== "starccm") {
-    throw new Error("commercial-cfd-run requires target flightstream or starccm.");
-  }
-  const adapter = commercialAdapterConfig(settings, request.target);
-  if (!hasConfiguredCommercialAdapter(settings, request.target)) {
-    throw new Error(`${adapter.label} execution adapter requires enabled license flag and command.`);
-  }
-  if (!adapter.runArgsTemplate.length) {
-    throw new Error(`${adapter.label} runArgsTemplate is not configured; AetherOps will not invent commercial CFD command arguments.`);
-  }
-
-  const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-commercial-cfd-"));
-  const outputFileName = safeOutputFileName(request.outputFileName, `${request.target}-run-output.txt`);
-  const outputPath = join(tempRoot, outputFileName);
-  const inputArtifactPath = request.artifactPath ? resolveCommercialInputPath(request.artifactPath, settings) : undefined;
-  const args = renderAdapterArgs(adapter.runArgsTemplate, { inputArtifactPath, outputPath, workingDirectory: adapter.workingDirectory });
-
-  try {
-    const result = await runCommandWithArgs(adapter.command as string, args, adapter.timeoutMs, adapter.workingDirectory);
-    if (result.exitCode !== 0 || result.timedOut) {
-      throw new Error(`${adapter.label} adapter exited unsuccessfully: exitCode=${result.exitCode}, timedOut=${result.timedOut}, stderr=${result.stderrExcerpt}`);
-    }
-    const outputTextExcerpt = existsSync(outputPath) ? excerpt(readFileSync(outputPath, "utf8")) : undefined;
-    return {
-      target: request.target,
-      label: adapter.label,
-      command: adapter.command as string,
-      args,
-      exitCode: result.exitCode,
-      timedOut: result.timedOut,
-      inputArtifactPath,
-      outputFileName,
-      outputTextExcerpt,
-      stdoutExcerpt: result.stdoutExcerpt,
-      stderrExcerpt: result.stderrExcerpt
-    };
-  } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
-  }
-}
-
-function resolveCommercialInputPath(artifactPath: string, settings: AppSettings): string {
-  if (!hasConfiguredModelingRoot(settings)) {
-    throw new Error("commercial-cfd-run artifactPath requires a configured modeling artifact root.");
-  }
-  const artifactRoot = resolve(settings.engineeringTools.modeling.artifactRoot as string);
-  const targetPath = resolveInsideRoot(artifactRoot, artifactPath);
-  if (!existsSync(targetPath)) {
-    throw new Error(`Commercial CFD input artifact does not exist under configured root: ${artifactPath}`);
-  }
-  const stats = statSync(targetPath);
-  if (!stats.isFile()) {
-    throw new Error(`Commercial CFD input artifact is not a file: ${artifactPath}`);
-  }
-  if (stats.size > settings.engineeringTools.modeling.maxMeshBytes) {
-    throw new Error(`Commercial CFD input artifact exceeds maxMeshBytes (${stats.size} > ${settings.engineeringTools.modeling.maxMeshBytes}).`);
-  }
-  return targetPath;
-}
-
-function renderAdapterArgs(
-  template: string[],
-  values: { inputArtifactPath?: string; outputPath: string; workingDirectory?: string }
-): string[] {
-  const args: string[] = [];
-  for (const arg of template) {
-    if (arg.includes("{input}") && !values.inputArtifactPath) {
-      throw new Error("Adapter args template requires {input}, but no artifactPath was provided.");
-    }
-    args.push(
-      arg
-        .replaceAll("{input}", values.inputArtifactPath ?? "")
-        .replaceAll("{output}", values.outputPath)
-        .replaceAll("{workdir}", values.workingDirectory ?? "")
-    );
-  }
-  return args;
-}
-
-function renderOpenFoamArgs(
-  template: string[],
-  values: { caseRoot: string; outputPath: string; workingDirectory?: string }
-): string[] {
-  const args: string[] = [];
-  for (const arg of template) {
-    args.push(
-      arg
-        .replaceAll("{case}", values.caseRoot)
-        .replaceAll("{output}", values.outputPath)
-        .replaceAll("{workdir}", values.workingDirectory ?? "")
-    );
-  }
-  return args;
 }
 
 function renderSu2Args(
@@ -1142,15 +839,16 @@ function renderSu2Args(
   return args;
 }
 
-function renderScriptedToolArgs(
+function renderScriptedCfdArgs(
   template: string[],
-  values: { scriptPath: string; outputPath: string; workingDirectory?: string }
+  values: { scriptPath: string; cfdSpecPath: string; outputPath: string; workingDirectory?: string }
 ): string[] {
   const args: string[] = [];
   for (const arg of template) {
     args.push(
       arg
         .replaceAll("{script}", values.scriptPath)
+        .replaceAll("{spec}", values.cfdSpecPath)
         .replaceAll("{output}", values.outputPath)
         .replaceAll("{workdir}", values.workingDirectory ?? "")
     );
@@ -1158,39 +856,66 @@ function renderScriptedToolArgs(
   return args;
 }
 
-function probeCommercialAdapter(adapter: CommercialAdapterConfig): Promise<CommandProbeResult> {
-  return runCommandWithArgs(adapter.command as string, adapter.probeArgs, Math.min(adapter.timeoutMs, 60_000), adapter.workingDirectory);
-}
+function createScriptedCfdRunPlan(
+  config: ScriptedCfdConfig,
+  cfdRunSpec: CfdRunSpec,
+  settings: AppSettings,
+  cfdSpecPath: string,
+  outputPath: string,
+  workingDirectory: string | undefined
+): {
+  launcherCommand: string;
+  args: string[];
+  adapterMode: "builtin" | "custom";
+  scriptPath?: string;
+  builtinAdapterPath?: string;
+  geometryPath?: string;
+  meshPath?: string;
+} {
+  const customScriptPath = validateOptionalScriptedCfdScriptPath(config);
+  if (customScriptPath) {
+    validateCustomScriptedCfdTemplate(config);
+    return {
+      launcherCommand: config.command as string,
+      args: renderScriptedCfdArgs(config.runArgsTemplate, { scriptPath: customScriptPath, cfdSpecPath, outputPath, workingDirectory }),
+      adapterMode: "custom",
+      scriptPath: customScriptPath
+    };
+  }
 
-function probeOpenFoam(config: OpenFoamConfig): Promise<CommandProbeResult> {
-  return runCommandWithArgs(config.command as string, config.probeArgs, Math.min(config.timeoutMs, 60_000), config.workingDirectory);
+  const builtinAdapterPath = validateBuiltinScriptedCfdAdapterPath(config.target);
+  const geometryPath = resolveCfdGeometryArtifactPath(cfdRunSpec, settings);
+  const meshPath = resolveCfdMeshArtifactPath(cfdRunSpec, settings);
+  const args = [
+    builtinAdapterPath,
+    "--tool-command",
+    config.command as string,
+    "--spec",
+    cfdSpecPath,
+    "--output",
+    outputPath,
+    "--timeout-ms",
+    String(Math.max(1_000, config.timeoutMs - 1_000))
+  ];
+  if (workingDirectory) args.push("--workdir", workingDirectory);
+  if (geometryPath) args.push("--geometry-path", geometryPath);
+  if (meshPath) args.push("--mesh-path", meshPath);
+  return {
+    launcherCommand: process.execPath,
+    args,
+    adapterMode: "builtin",
+    builtinAdapterPath,
+    geometryPath,
+    meshPath
+  };
 }
 
 function probeSu2(config: Su2Config): Promise<CommandProbeResult> {
   return runCommandWithArgs(config.command as string, config.probeArgs, Math.min(config.timeoutMs, 60_000), config.workingDirectory);
 }
 
-function probeFreeCad(config: FreeCadConfig): Promise<CommandProbeResult> {
+function probeScriptedCfd(config: ScriptedCfdConfig): Promise<CommandProbeResult> {
   return runCommandWithArgs(config.command as string, config.probeArgs, Math.min(config.timeoutMs, 60_000), config.workingDirectory);
-}
-
-function probeOpenVsp(config: OpenVspConfig): Promise<CommandProbeResult> {
-  return runCommandWithArgs(config.command as string, config.probeArgs, Math.min(config.timeoutMs, 60_000), config.workingDirectory);
-}
-
-function validateOpenFoamCaseRoot(caseRoot: string | undefined): string {
-  if (!caseRoot?.trim()) {
-    throw new Error("OpenFOAM case root is not configured.");
-  }
-  const resolved = resolve(caseRoot);
-  if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
-    throw new Error(`Configured OpenFOAM case root does not exist: ${resolved}`);
-  }
-  const controlDict = join(resolved, "system", "controlDict");
-  if (!existsSync(controlDict) || !statSync(controlDict).isFile()) {
-    throw new Error(`Configured OpenFOAM case root is missing system/controlDict: ${resolved}`);
-  }
-  return resolved;
 }
 
 function validateSu2CaseConfig(caseRoot: string | undefined, configFile: string | undefined): { caseRoot: string; configPath: string } {
@@ -1215,26 +940,317 @@ function validateSu2CaseConfig(caseRoot: string | undefined, configFile: string 
   return { caseRoot: resolvedRoot, configPath };
 }
 
-function validateFreeCadScriptPath(scriptPath: string | undefined): string {
-  if (!scriptPath?.trim()) {
-    throw new Error("FreeCAD script path is not configured.");
+function validateScriptedCfdScriptPath(config: ScriptedCfdConfig): string {
+  if (!config.scriptPath?.trim()) {
+    throw new Error(`${config.label} script path is not configured.`);
   }
-  const resolved = resolve(scriptPath);
+  const resolved = resolve(config.scriptPath);
   if (!existsSync(resolved) || !statSync(resolved).isFile()) {
-    throw new Error(`Configured FreeCAD script path does not exist: ${resolved}`);
+    throw new Error(`Configured ${config.label} script path does not exist: ${resolved}`);
   }
   return resolved;
 }
 
-function validateOpenVspScriptPath(scriptPath: string | undefined): string {
-  if (!scriptPath?.trim()) {
-    throw new Error("OpenVSP script path is not configured.");
+function validateOptionalScriptedCfdScriptPath(config: ScriptedCfdConfig): string | undefined {
+  if (!config.scriptPath?.trim()) return undefined;
+  return validateScriptedCfdScriptPath(config);
+}
+
+function validateCustomScriptedCfdTemplate(config: ScriptedCfdConfig): void {
+  if (!config.runArgsTemplate.length) {
+    throw new Error(`${config.label} custom script runArgsTemplate is not configured.`);
   }
-  const resolved = resolve(scriptPath);
-  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
-    throw new Error(`Configured OpenVSP script path does not exist: ${resolved}`);
+  if (!config.runArgsTemplate.some((arg) => arg.includes("{script}"))) {
+    throw new Error(`${config.label} custom script runArgsTemplate must include {script}.`);
   }
-  return resolved;
+  if (!config.runArgsTemplate.some((arg) => arg.includes("{spec}"))) {
+    throw new Error(`${config.label} custom script runArgsTemplate must include {spec}.`);
+  }
+}
+
+function validateScriptedCfdAvailability(config: ScriptedCfdConfig): void {
+  if (validateOptionalScriptedCfdScriptPath(config)) {
+    return;
+  }
+  validateBuiltinScriptedCfdAdapterPath(config.target);
+}
+
+function validateBuiltinScriptedCfdAdapterPath(target: Extract<EngineeringProgramTarget, "openvsp" | "xflr5">): string {
+  const fileName = target === "openvsp" ? "openvsp-vspaero-adapter.mjs" : "xflr5-batch-adapter.mjs";
+  const adapterPath = resolve("scripts", "engineering", fileName);
+  if (!existsSync(adapterPath) || !statSync(adapterPath).isFile()) {
+    throw new Error(`Built-in ${target} CFD adapter is missing: ${adapterPath}`);
+  }
+  return adapterPath;
+}
+
+function resolveCfdGeometryArtifactPath(spec: CfdRunSpec, settings: AppSettings): string | undefined {
+  if (spec.geometry.source !== "artifact" || !spec.geometry.artifactPath) return undefined;
+  if (!hasConfiguredModelingRoot(settings)) throw new Error("cfdRunSpec artifact geometry requires a configured modeling artifact root.");
+  const artifactRoot = resolve(settings.engineeringTools.modeling.artifactRoot as string);
+  return resolveInsideRoot(artifactRoot, spec.geometry.artifactPath);
+}
+
+function resolveCfdMeshArtifactPath(spec: CfdRunSpec, settings: AppSettings): string | undefined {
+  if (!spec.mesh?.artifactPath) return undefined;
+  if (!hasConfiguredModelingRoot(settings)) throw new Error("cfdRunSpec mesh artifact requires a configured modeling artifact root.");
+  const artifactRoot = resolve(settings.engineeringTools.modeling.artifactRoot as string);
+  return resolveInsideRoot(artifactRoot, spec.mesh.artifactPath);
+}
+
+function normalizeCfdRunSpec(value: unknown): CfdRunSpec | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Partial<CfdRunSpec>;
+  const target = normalizeCfdTarget(record.target);
+  const geometryRecord = record.geometry && typeof record.geometry === "object" ? record.geometry : undefined;
+  const flightRecord = record.flightCondition && typeof record.flightCondition === "object" ? record.flightCondition : {};
+  const solverRecord = record.solver && typeof record.solver === "object" ? record.solver : undefined;
+  if (!target || !geometryRecord || !solverRecord) return undefined;
+  const geometrySource = geometryRecord.source === "artifact" || geometryRecord.source === "sourceUrl" || geometryRecord.source === "naca" || geometryRecord.source === "configuredCase"
+    ? geometryRecord.source
+    : undefined;
+  const solverName = normalizeSolverName(solverRecord.name);
+  if (!geometrySource || !solverName) return undefined;
+  const spec: CfdRunSpec = {
+    target,
+    geometry: {
+      source: geometrySource,
+      artifactPath: stringValue(geometryRecord.artifactPath),
+      sourceUrl: stringValue(geometryRecord.sourceUrl),
+      naca: stringValue(geometryRecord.naca),
+      description: stringValue(geometryRecord.description)
+    },
+    flightCondition: {
+      reynolds: finiteNumber((flightRecord as CfdRunSpec["flightCondition"]).reynolds),
+      mach: finiteNumber((flightRecord as CfdRunSpec["flightCondition"]).mach),
+      alphaStart: finiteNumber((flightRecord as CfdRunSpec["flightCondition"]).alphaStart),
+      alphaEnd: finiteNumber((flightRecord as CfdRunSpec["flightCondition"]).alphaEnd),
+      alphaStep: finiteNumber((flightRecord as CfdRunSpec["flightCondition"]).alphaStep),
+      velocity: finiteNumber((flightRecord as CfdRunSpec["flightCondition"]).velocity),
+      density: finiteNumber((flightRecord as CfdRunSpec["flightCondition"]).density),
+      viscosity: finiteNumber((flightRecord as CfdRunSpec["flightCondition"]).viscosity)
+    },
+    solver: {
+      name: solverName,
+      model: normalizeSolverModel(solverRecord.model),
+      turbulenceModel: normalizeTurbulenceModel(solverRecord.turbulenceModel),
+      maxIterations: finiteNumber(solverRecord.maxIterations),
+      convergenceTolerance: finiteNumber(solverRecord.convergenceTolerance),
+      configOverrides: normalizeConfigOverrides(solverRecord.configOverrides)
+    },
+    rationale: stringValue(record.rationale)
+  };
+  if (record.mesh && typeof record.mesh === "object") {
+    const mesh = record.mesh;
+    const strategy = mesh.strategy === "existing" || mesh.strategy === "toolGenerated" || mesh.strategy === "caseGenerated" ? mesh.strategy : "caseGenerated";
+    spec.mesh = {
+      strategy,
+      artifactPath: stringValue(mesh.artifactPath),
+      maxCells: finiteNumber(mesh.maxCells),
+      boundaryLayer: typeof mesh.boundaryLayer === "boolean" ? mesh.boundaryLayer : undefined,
+      yPlusTarget: finiteNumber(mesh.yPlusTarget),
+      notes: stringValue(mesh.notes)
+    };
+  }
+  if (record.output && typeof record.output === "object") {
+    const output = record.output;
+    spec.output = {
+      forceCoefficients: typeof output.forceCoefficients === "boolean" ? output.forceCoefficients : undefined,
+      polar: typeof output.polar === "boolean" ? output.polar : undefined,
+      pressureField: typeof output.pressureField === "boolean" ? output.pressureField : undefined,
+      mesh: typeof output.mesh === "boolean" ? output.mesh : undefined
+    };
+  }
+  return spec;
+}
+
+function validateCfdRunSpecForTarget(
+  value: CfdRunSpec | undefined,
+  target: Extract<EngineeringProgramTarget, "xfoil" | "xfoil-wasm" | "su2" | "openvsp" | "xflr5">,
+  settings: AppSettings
+): CfdRunSpec {
+  if (!value) {
+    throw new Error(`${target} CFD execution requires cfdRunSpec; AetherOps will not invent case, mesh, or solver parameters.`);
+  }
+  const spec = normalizeCfdRunSpec(value);
+  if (!spec || spec.target !== target) {
+    throw new Error(`${target} CFD execution requires cfdRunSpec.target=${target}.`);
+  }
+  if (!solverAllowedForTarget(spec.solver.name, target)) {
+    throw new Error(`${target} CFD execution received incompatible solver ${spec.solver.name}.`);
+  }
+  const flight = spec.flightCondition;
+  const alphaStart = boundedNumber(flight.alphaStart, -30, 30, -4, "cfdRunSpec.flightCondition.alphaStart");
+  const alphaEnd = boundedNumber(flight.alphaEnd, -30, 30, 12, "cfdRunSpec.flightCondition.alphaEnd");
+  const alphaStep = boundedPositiveNumber(flight.alphaStep, 0.1, 10, 2, "cfdRunSpec.flightCondition.alphaStep");
+  if (alphaEnd < alphaStart) throw new Error("cfdRunSpec.flightCondition requires alphaEnd >= alphaStart.");
+  const normalized: CfdRunSpec = {
+    ...spec,
+    flightCondition: {
+      ...flight,
+      reynolds: boundedPositiveNumber(flight.reynolds, 1_000, 100_000_000, 1_000_000, "cfdRunSpec.flightCondition.reynolds"),
+      mach: boundedNumber(flight.mach, 0, 0.8, 0, "cfdRunSpec.flightCondition.mach"),
+      alphaStart,
+      alphaEnd,
+      alphaStep
+    },
+    solver: {
+      ...spec.solver,
+      maxIterations: spec.solver.maxIterations === undefined ? undefined : boundedPositiveNumber(spec.solver.maxIterations, 1, 1_000_000, 1_000, "cfdRunSpec.solver.maxIterations"),
+      convergenceTolerance:
+        spec.solver.convergenceTolerance === undefined
+          ? undefined
+          : boundedPositiveNumber(spec.solver.convergenceTolerance, 1e-12, 1, 1e-6, "cfdRunSpec.solver.convergenceTolerance")
+    }
+  };
+  validateCfdGeometry(normalized, target, settings);
+  validateCfdMesh(normalized, settings);
+  return normalized;
+}
+
+function requestWithCfdSpecDefaults(
+  request: EngineeringProgramRequest,
+  target: Extract<EngineeringProgramTarget, "xfoil" | "xfoil-wasm">,
+  settings: AppSettings
+): EngineeringProgramRequest {
+  if (!request.cfdRunSpec) return request;
+  const spec = validateCfdRunSpecForTarget(request.cfdRunSpec, target, settings);
+  const next: EngineeringProgramRequest = {
+    ...request,
+    cfdRunSpec: spec,
+    reynolds: request.reynolds ?? spec.flightCondition.reynolds,
+    mach: request.mach ?? spec.flightCondition.mach,
+    alphaStart: request.alphaStart ?? spec.flightCondition.alphaStart,
+    alphaEnd: request.alphaEnd ?? spec.flightCondition.alphaEnd,
+    alphaStep: request.alphaStep ?? spec.flightCondition.alphaStep
+  };
+  if (spec.geometry.source === "artifact") next.artifactPath = spec.geometry.artifactPath;
+  if (spec.geometry.source === "sourceUrl") next.sourceUrl = spec.geometry.sourceUrl;
+  if (spec.geometry.source === "naca") next.naca = spec.geometry.naca;
+  return next;
+}
+
+function renderSu2Config(baseConfig: string, spec: CfdRunSpec): string {
+  const entries = new Map<string, string>();
+  for (const line of baseConfig.split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (match) entries.set(match[1].toUpperCase(), match[2]);
+  }
+  const solver = spec.solver.model === "rans" ? "RANS" : spec.solver.model === "euler" || spec.solver.model === "inviscid" ? "EULER" : String(entries.get("SOLVER") ?? "EULER");
+  entries.set("SOLVER", solver);
+  entries.set("MACH_NUMBER", formatConfigNumber(spec.flightCondition.mach ?? 0));
+  entries.set("REYNOLDS_NUMBER", formatConfigNumber(spec.flightCondition.reynolds ?? 1_000_000));
+  entries.set("AOA", formatConfigNumber(spec.flightCondition.alphaStart ?? 0));
+  if (spec.solver.turbulenceModel && spec.solver.turbulenceModel !== "none") entries.set("KIND_TURB_MODEL", spec.solver.turbulenceModel.toUpperCase());
+  if (spec.solver.maxIterations !== undefined) entries.set("ITER", formatConfigNumber(spec.solver.maxIterations));
+  if (spec.solver.convergenceTolerance !== undefined) entries.set("CONV_RESIDUAL_MINVAL", formatConfigNumber(spec.solver.convergenceTolerance));
+  for (const [key, value] of Object.entries(spec.solver.configOverrides ?? {})) {
+    if (!/^[A-Za-z0-9_]{2,80}$/.test(key)) throw new Error(`Invalid SU2 config override key: ${key}`);
+    entries.set(key.toUpperCase(), String(value));
+  }
+  return `${Array.from(entries.entries()).map(([key, value]) => `${key}= ${value}`).join("\n")}\n`;
+}
+
+function validateCfdGeometry(
+  spec: CfdRunSpec,
+  target: Extract<EngineeringProgramTarget, "xfoil" | "xfoil-wasm" | "su2" | "openvsp" | "xflr5">,
+  settings: AppSettings
+): void {
+  const geometry = spec.geometry;
+  if (geometry.source === "naca") {
+    if (!geometry.naca || !/^\d{4,5}$/.test(geometry.naca)) throw new Error("cfdRunSpec.geometry.naca must be a 4 or 5 digit NACA code.");
+    if (target !== "xfoil" && target !== "xfoil-wasm" && target !== "xflr5") {
+      throw new Error(`${target} CFD execution cannot use NACA-only geometry without a configured case or artifact.`);
+    }
+    return;
+  }
+  if (geometry.source === "sourceUrl") {
+    if (target !== "xfoil-wasm") throw new Error(`${target} CFD execution cannot fetch geometry directly from sourceUrl.`);
+    if (!geometry.sourceUrl) throw new Error("cfdRunSpec.geometry.sourceUrl is required.");
+    assertPublicCoordinateUrl(geometry.sourceUrl);
+    return;
+  }
+  if (geometry.source === "artifact") {
+    if (!geometry.artifactPath) throw new Error("cfdRunSpec.geometry.artifactPath is required.");
+    if (!hasConfiguredModelingRoot(settings)) throw new Error("cfdRunSpec artifact geometry requires a configured modeling artifact root.");
+    const artifactRoot = resolve(settings.engineeringTools.modeling.artifactRoot as string);
+    const targetPath = resolveInsideRoot(artifactRoot, geometry.artifactPath);
+    if (!existsSync(targetPath) || !statSync(targetPath).isFile()) throw new Error(`CFD geometry artifact does not exist under configured root: ${geometry.artifactPath}`);
+    if (statSync(targetPath).size > settings.engineeringTools.modeling.maxMeshBytes) throw new Error(`CFD geometry artifact exceeds maxMeshBytes: ${geometry.artifactPath}`);
+    const extension = extname(targetPath).toLowerCase();
+    if ((target === "xfoil" || target === "xfoil-wasm") && extension !== ".dat" && extension !== ".txt") {
+      throw new Error(`${target} geometry artifact must be an airfoil coordinate .dat or .txt file.`);
+    }
+    if ((target === "openvsp" || target === "xflr5") && extension !== ".vsp3" && extension !== ".obj" && extension !== ".stl" && extension !== ".dat" && extension !== ".txt") {
+      throw new Error(`${target} geometry artifact must be a prepared .vsp3, OBJ/STL mesh, or airfoil coordinate file.`);
+    }
+    return;
+  }
+  if (geometry.source === "configuredCase") {
+    if (target !== "su2" && target !== "openvsp" && target !== "xflr5") throw new Error(`${target} does not support configuredCase geometry.`);
+    return;
+  }
+}
+
+function validateCfdMesh(spec: CfdRunSpec, settings: AppSettings): void {
+  if (!spec.mesh?.artifactPath) return;
+  if (!hasConfiguredModelingRoot(settings)) throw new Error("cfdRunSpec.mesh.artifactPath requires a configured modeling artifact root.");
+  const artifactRoot = resolve(settings.engineeringTools.modeling.artifactRoot as string);
+  const targetPath = resolveInsideRoot(artifactRoot, spec.mesh.artifactPath);
+  if (!existsSync(targetPath) || !statSync(targetPath).isFile()) throw new Error(`CFD mesh artifact does not exist under configured root: ${spec.mesh.artifactPath}`);
+  if (statSync(targetPath).size > settings.engineeringTools.modeling.maxMeshBytes) throw new Error(`CFD mesh artifact exceeds maxMeshBytes: ${spec.mesh.artifactPath}`);
+  const extension = extname(targetPath).toLowerCase();
+  if (extension !== ".obj" && extension !== ".stl" && extension !== ".su2") {
+    throw new Error("cfdRunSpec.mesh.artifactPath must point to OBJ, STL, or SU2 mesh data.");
+  }
+}
+
+function solverAllowedForTarget(solver: CfdRunSpec["solver"]["name"], target: CfdRunSpec["target"]): boolean {
+  if (target === "xfoil") return solver === "xfoil";
+  if (target === "xfoil-wasm") return solver === "webxfoil-wasm";
+  if (target === "su2") return solver === "su2";
+  if (target === "openvsp") return solver === "openvsp-vspaero";
+  if (target === "xflr5") return solver === "xflr5";
+  return false;
+}
+
+function normalizeCfdTarget(value: unknown): CfdRunSpec["target"] | undefined {
+  if (value === "xfoil" || value === "xfoil-wasm" || value === "su2" || value === "openvsp" || value === "xflr5") return value;
+  return undefined;
+}
+
+function normalizeSolverName(value: unknown): CfdRunSpec["solver"]["name"] | undefined {
+  if (value === "xfoil" || value === "webxfoil-wasm" || value === "su2" || value === "openvsp-vspaero" || value === "xflr5") return value;
+  return undefined;
+}
+
+function normalizeSolverModel(value: unknown): CfdRunSpec["solver"]["model"] | undefined {
+  if (value === "inviscid" || value === "euler" || value === "rans" || value === "panel" || value === "viscous-panel") return value;
+  return undefined;
+}
+
+function normalizeTurbulenceModel(value: unknown): CfdRunSpec["solver"]["turbulenceModel"] | undefined {
+  if (value === "sa" || value === "sst" || value === "kepsilon" || value === "none") return value;
+  return undefined;
+}
+
+function normalizeConfigOverrides(value: unknown): Record<string, string | number | boolean> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const output: Record<string, string | number | boolean> = {};
+  for (const [key, rawValue] of Object.entries(value).slice(0, 24)) {
+    if (!/^[A-Za-z0-9_]{2,80}$/.test(key)) continue;
+    if (typeof rawValue === "string" || typeof rawValue === "number" || typeof rawValue === "boolean") output[key] = rawValue;
+  }
+  return Object.keys(output).length ? output : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function formatConfigNumber(value: number): string {
+  if (!Number.isFinite(value)) throw new Error("Cannot render non-finite CFD config number.");
+  return Number(value.toPrecision(12)).toString();
 }
 
 function xfoilAirfoilInput(request: EngineeringProgramRequest, settings: AppSettings): { command: string; label: string } {
@@ -1326,7 +1342,11 @@ async function resolveWasmAirfoilInput(request: EngineeringProgramRequest, setti
 
 function findFetchedAirfoilSource(input: OpenCodeRunInput, sourceUrl?: string): AirfoilCoordinateInput | undefined {
   const requestedUrl = sourceUrl ? normalizeUrlForCompare(sourceUrl) : undefined;
-  for (const source of input.sources ?? []) {
+  let invalidRequestedSource: string | undefined;
+  const sources = input.sources ?? [];
+  for (let index = sources.length - 1; index >= 0; index -= 1) {
+    const source = sources[index];
+    if (!source) continue;
     const url = typeof source.url === "string" ? source.url : "";
     if (requestedUrl && normalizeUrlForCompare(url) !== requestedUrl) continue;
     const rawText = source.metadata && typeof source.metadata.rawText === "string" ? source.metadata.rawText : "";
@@ -1339,9 +1359,12 @@ function findFetchedAirfoilSource(input: OpenCodeRunInput, sourceUrl?: string): 
         sourceKind: "source",
         sourceUrl: url
       };
-    } catch {
-      if (requestedUrl) throw new Error(`Fetched source does not contain a valid airfoil coordinate file: ${sourceUrl}`);
+    } catch (error) {
+      if (requestedUrl) invalidRequestedSource = error instanceof Error ? error.message : String(error);
     }
+  }
+  if (requestedUrl && invalidRequestedSource) {
+    throw new Error(`Fetched source does not contain a valid airfoil coordinate file: ${sourceUrl} (${invalidRequestedSource})`);
   }
   return undefined;
 }
@@ -1795,7 +1818,7 @@ function xfoilWasmPolarEvidence(input: OpenCodeRunInput, summary: XfoilWasmPolar
     evidenceStrength: "medium",
     limitations: [
       "WebXFOIL runs the open-source XFOIL solver compiled to WebAssembly; results still depend on XFOIL convergence, Reynolds/Mach assumptions, and input airfoil geometry.",
-      "This is a 2D airfoil solver, not an OpenFOAM/SU2 Navier-Stokes CFD field solve.",
+      "This is a 2D airfoil solver, not an SU2 field CFD solve.",
       `Runtime license recorded by AetherOps: ${summary.runtimeLicense}.`
     ],
     metadata: {
@@ -1814,48 +1837,6 @@ function xfoilWasmPolarEvidence(input: OpenCodeRunInput, summary: XfoilWasmPolar
       rowCount: summary.rowCount,
       canSupportHypothesis: true,
       sourceQualityTier: "tool_observation"
-    },
-    createdAt
-  };
-}
-
-function commercialCfdRunArtifact(input: OpenCodeRunInput, summary: CommercialCfdRunSummary, createdAt: string): ResearchArtifact {
-  const safeName = `${summary.target}-${summary.outputFileName}`.replace(/[^A-Za-z0-9._-]+/g, "-");
-  return {
-    id: createId("artifact"),
-    projectId: input.project.id,
-    category: "experiment_log",
-    title: `${summary.label} adapter run`,
-    relativePath: `artifacts/iteration-${input.iteration}/engineering-program/commercial-cfd-${safeName}.json`,
-    mimeType: "application/json",
-    summary: `${summary.label} adapter completed with exitCode=${summary.exitCode}.`,
-    content: `${JSON.stringify(summary, null, 2)}\n`,
-    metadata: {
-      traceabilityKind: "tool_observation",
-      generatedBy: "EngineeringProgramTool",
-      program: summary.target,
-      canSupportHypothesis: true
-    },
-    createdAt
-  };
-}
-
-function openFoamCaseRunArtifact(input: OpenCodeRunInput, summary: OpenFoamCaseRunSummary, createdAt: string): ResearchArtifact {
-  const safeName = `openfoam-${summary.outputFileName}`.replace(/[^A-Za-z0-9._-]+/g, "-");
-  return {
-    id: createId("artifact"),
-    projectId: input.project.id,
-    category: "experiment_log",
-    title: "OpenFOAM case run",
-    relativePath: `artifacts/iteration-${input.iteration}/engineering-program/${safeName}.json`,
-    mimeType: "application/json",
-    summary: `OpenFOAM-compatible command completed with exitCode=${summary.exitCode}.`,
-    content: `${JSON.stringify(summary, null, 2)}\n`,
-    metadata: {
-      traceabilityKind: "tool_observation",
-      generatedBy: "EngineeringProgramTool",
-      program: "openfoam",
-      canSupportHypothesis: true
     },
     createdAt
   };
@@ -1882,163 +1863,51 @@ function su2CaseRunArtifact(input: OpenCodeRunInput, summary: Su2CaseRunSummary,
   };
 }
 
-function freeCadScriptRunArtifact(input: OpenCodeRunInput, summary: FreeCadScriptRunSummary, createdAt: string): ResearchArtifact {
-  const safeName = `freecad-${summary.outputFileName}`.replace(/[^A-Za-z0-9._-]+/g, "-");
+function scriptedCfdRunArtifact(input: OpenCodeRunInput, summary: ScriptedCfdRunSummary, createdAt: string): ResearchArtifact {
+  const safeName = `${summary.target}-${summary.outputFileName}`.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
     id: createId("artifact"),
     projectId: input.project.id,
     category: "experiment_log",
-    title: "FreeCAD script run",
+    title: `${summary.label} CFD analysis run`,
     relativePath: `artifacts/iteration-${input.iteration}/engineering-program/${safeName}.json`,
     mimeType: "application/json",
-    summary: `FreeCAD-compatible headless command completed with exitCode=${summary.exitCode}.`,
+    summary: `${summary.label} adapter completed with validated CFD spec and exitCode=${summary.exitCode}.`,
     content: `${JSON.stringify(summary, null, 2)}\n`,
     metadata: {
       traceabilityKind: "tool_observation",
       generatedBy: "EngineeringProgramTool",
-      program: "freecad",
+      program: summary.target,
       canSupportHypothesis: true
     },
     createdAt
   };
 }
 
-function openVspScriptRunArtifact(input: OpenCodeRunInput, summary: OpenVspScriptRunSummary, createdAt: string): ResearchArtifact {
-  const safeName = `openvsp-${summary.outputFileName}`.replace(/[^A-Za-z0-9._-]+/g, "-");
-  return {
-    id: createId("artifact"),
-    projectId: input.project.id,
-    category: "experiment_log",
-    title: "OpenVSP script run",
-    relativePath: `artifacts/iteration-${input.iteration}/engineering-program/${safeName}.json`,
-    mimeType: "application/json",
-    summary: `OpenVSP-compatible headless command completed with exitCode=${summary.exitCode}.`,
-    content: `${JSON.stringify(summary, null, 2)}\n`,
-    metadata: {
-      traceabilityKind: "tool_observation",
-      generatedBy: "EngineeringProgramTool",
-      program: "openvsp",
-      canSupportHypothesis: true
-    },
-    createdAt
-  };
-}
-
-function commercialCfdRunEvidence(input: OpenCodeRunInput, summary: CommercialCfdRunSummary, createdAt: string): EvidenceItem {
+function scriptedCfdRunEvidence(input: OpenCodeRunInput, summary: ScriptedCfdRunSummary, createdAt: string): EvidenceItem {
   return {
     id: createId("evidence"),
     projectId: input.project.id,
     category: "experiment_log",
-    title: `${summary.label} tool observation`,
+    title: `${summary.label} CFD tool observation`,
     summary: summary.outputTextExcerpt || summary.stdoutExcerpt || `${summary.label} adapter completed without captured output text.`,
     quote: summary.outputTextExcerpt || summary.stdoutExcerpt,
-    keywords: [summary.target, "commercial_cfd", "adapter_run", "tool_observation"],
+    keywords: [summary.target, "cfd", "aerodynamics", "validated_cfd_spec", "tool_observation"],
     linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
     reliabilityScore: 0.7,
-    relevanceScore: 0.72,
+    relevanceScore: 0.74,
     evidenceStrength: "medium",
     limitations: [
-      "Commercial CFD adapter output depends on the locally configured licensed program, command template, solver settings, and input artifact.",
-      "AetherOps records the adapter run and captured output but does not independently validate solver setup."
+      `${summary.label} results depend on the locally configured command, adapter script, validated cfdRunSpec, and solver convergence behavior.`,
+      "AetherOps records the run, generated spec, and captured output but does not independently certify CFD convergence."
     ],
     metadata: {
       traceabilityKind: "tool_observation",
       generatedBy: "EngineeringProgramTool",
       program: summary.target,
       command: summary.command,
-      exitCode: summary.exitCode,
-      canSupportHypothesis: true,
-      sourceQualityTier: "tool_observation"
-    },
-    createdAt
-  };
-}
-
-function freeCadScriptRunEvidence(input: OpenCodeRunInput, summary: FreeCadScriptRunSummary, createdAt: string): EvidenceItem {
-  return {
-    id: createId("evidence"),
-    projectId: input.project.id,
-    category: "experiment_log",
-    title: "FreeCAD tool observation",
-    summary: summary.outputTextExcerpt || summary.stdoutExcerpt || "FreeCAD-compatible command completed without captured output text.",
-    quote: summary.outputTextExcerpt || summary.stdoutExcerpt,
-    keywords: ["freecad", "cad", "modeling", "script_run", "tool_observation"],
-    linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
-    reliabilityScore: 0.7,
-    relevanceScore: 0.72,
-    evidenceStrength: "medium",
-    limitations: [
-      "FreeCAD results depend on the locally configured command, script, workbench availability, geometry units, and script validation.",
-      "AetherOps records the run and captured output but does not independently validate CAD model correctness."
-    ],
-    metadata: {
-      traceabilityKind: "tool_observation",
-      generatedBy: "EngineeringProgramTool",
-      program: "freecad",
-      command: summary.command,
       scriptPath: summary.scriptPath,
-      exitCode: summary.exitCode,
-      canSupportHypothesis: true,
-      sourceQualityTier: "tool_observation"
-    },
-    createdAt
-  };
-}
-
-function openVspScriptRunEvidence(input: OpenCodeRunInput, summary: OpenVspScriptRunSummary, createdAt: string): EvidenceItem {
-  return {
-    id: createId("evidence"),
-    projectId: input.project.id,
-    category: "experiment_log",
-    title: "OpenVSP tool observation",
-    summary: summary.outputTextExcerpt || summary.stdoutExcerpt || "OpenVSP-compatible command completed without captured output text.",
-    quote: summary.outputTextExcerpt || summary.stdoutExcerpt,
-    keywords: ["openvsp", "cad", "aerodynamics", "script_run", "tool_observation"],
-    linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
-    reliabilityScore: 0.7,
-    relevanceScore: 0.72,
-    evidenceStrength: "medium",
-    limitations: [
-      "OpenVSP results depend on the locally configured command, script, geometry units, analysis setup, and script validation.",
-      "AetherOps records the run and captured output but does not independently validate aircraft model correctness."
-    ],
-    metadata: {
-      traceabilityKind: "tool_observation",
-      generatedBy: "EngineeringProgramTool",
-      program: "openvsp",
-      command: summary.command,
-      scriptPath: summary.scriptPath,
-      exitCode: summary.exitCode,
-      canSupportHypothesis: true,
-      sourceQualityTier: "tool_observation"
-    },
-    createdAt
-  };
-}
-
-function openFoamCaseRunEvidence(input: OpenCodeRunInput, summary: OpenFoamCaseRunSummary, createdAt: string): EvidenceItem {
-  return {
-    id: createId("evidence"),
-    projectId: input.project.id,
-    category: "experiment_log",
-    title: "OpenFOAM tool observation",
-    summary: summary.outputTextExcerpt || summary.stdoutExcerpt || "OpenFOAM-compatible command completed without captured output text.",
-    quote: summary.outputTextExcerpt || summary.stdoutExcerpt,
-    keywords: ["openfoam", "cfd", "case_run", "tool_observation"],
-    linkedHypothesisIds: input.hypotheses.map((hypothesis) => hypothesis.id),
-    reliabilityScore: 0.7,
-    relevanceScore: 0.72,
-    evidenceStrength: "medium",
-    limitations: [
-      "OpenFOAM results depend on the locally configured solver command, case setup, mesh, numerical settings, and convergence behavior.",
-      "AetherOps records the run and captured output but does not independently validate CFD convergence."
-    ],
-    metadata: {
-      traceabilityKind: "tool_observation",
-      generatedBy: "EngineeringProgramTool",
-      program: "openfoam",
-      command: summary.command,
-      caseRoot: summary.caseRoot,
+      cfdRunSpec: summary.cfdRunSpec,
       exitCode: summary.exitCode,
       canSupportHypothesis: true,
       sourceQualityTier: "tool_observation"
@@ -2071,6 +1940,7 @@ function su2CaseRunEvidence(input: OpenCodeRunInput, summary: Su2CaseRunSummary,
       command: summary.command,
       caseRoot: summary.caseRoot,
       configPath: summary.configPath,
+      cfdRunSpec: summary.cfdRunSpec,
       exitCode: summary.exitCode,
       canSupportHypothesis: true,
       sourceQualityTier: "tool_observation"
@@ -2080,7 +1950,13 @@ function su2CaseRunEvidence(input: OpenCodeRunInput, summary: Su2CaseRunSummary,
 }
 
 function hasConfiguredXfoil(settings: AppSettings): boolean {
-  return settings.engineeringTools.xfoil.enabled && hasAvailableCommand(settings.engineeringTools.xfoil.command);
+  if (!settings.engineeringTools.xfoil.enabled) return false;
+  try {
+    resolveXfoilCommand(settings);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function hasConfiguredXfoilWasm(settings: AppSettings): boolean {
@@ -2097,19 +1973,10 @@ function hasConfiguredModelingRoot(settings: AppSettings): boolean {
   }
 }
 
-function hasConfiguredOpenFoam(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.openFoam.enabled || !hasAvailableCommand(settings.engineeringTools.openFoam.command)) return false;
-  try {
-    validateOpenFoamCaseRoot(settings.engineeringTools.openFoam.caseRoot);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function hasConfiguredSu2(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.su2.enabled || !hasAvailableCommand(settings.engineeringTools.su2.command)) return false;
+  if (!settings.engineeringTools.su2.enabled) return false;
   try {
+    su2Config(settings);
     validateSu2CaseConfig(settings.engineeringTools.su2.caseRoot, settings.engineeringTools.su2.configFile);
     return true;
   } catch {
@@ -2117,112 +1984,63 @@ function hasConfiguredSu2(settings: AppSettings): boolean {
   }
 }
 
-function hasConfiguredFreeCad(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.freeCad.enabled || !hasAvailableCommand(settings.engineeringTools.freeCad.command)) return false;
-  try {
-    validateFreeCadScriptPath(settings.engineeringTools.freeCad.scriptPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function hasConfiguredOpenVsp(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.openVsp.enabled || !hasAvailableCommand(settings.engineeringTools.openVsp.command)) return false;
+  if (!settings.engineeringTools.openVsp.enabled) return false;
   try {
-    validateOpenVspScriptPath(settings.engineeringTools.openVsp.scriptPath);
+    validateScriptedCfdAvailability(scriptedCfdConfig(settings, "openvsp"));
     return true;
   } catch {
     return false;
   }
 }
 
-function hasConfiguredCommercialAdapter(settings: AppSettings, target: Extract<EngineeringProgramTarget, "flightstream" | "starccm">): boolean {
-  const adapter = commercialAdapterConfig(settings, target);
-  const flag = target === "flightstream" ? settings.engineeringTools.commercialCfd.flightStreamConfigured : settings.engineeringTools.commercialCfd.starCcmConfigured;
-  return flag && hasAvailableCommand(adapter.command);
-}
-
-function hasAvailableCommand(command: string | undefined): boolean {
-  const trimmed = command?.trim();
-  if (!trimmed) return false;
-  const candidate = unquoteCommand(trimmed);
-  if (!candidate) return false;
-
-  if (isAbsolute(candidate) || candidate.includes("/") || candidate.includes("\\")) {
-    return isExistingFile(resolve(candidate));
-  }
-
-  const names = commandLookupNames(candidate);
-  const pathEntries = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  for (const entry of pathEntries) {
-    for (const name of names) {
-      if (isExistingFile(resolve(entry, name))) return true;
-    }
-  }
-  return false;
-}
-
-function commandLookupNames(command: string): string[] {
-  if (extname(command)) return [command];
-  if (process.platform !== "win32") return [command];
-  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
-    .split(";")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return [command, ...extensions.map((extension) => `${command}${extension.startsWith(".") ? extension : `.${extension}`}`)];
-}
-
-function unquoteCommand(command: string): string {
-  return command.replace(/^["']|["']$/g, "").trim();
-}
-
-function isExistingFile(path: string): boolean {
+function hasConfiguredXflr5(settings: AppSettings): boolean {
+  if (!settings.engineeringTools.xflr5.enabled) return false;
   try {
-    return existsSync(path) && statSync(path).isFile();
+    validateScriptedCfdAvailability(scriptedCfdConfig(settings, "xflr5"));
+    return true;
   } catch {
     return false;
   }
-}
-
-function openFoamConfig(settings: AppSettings): OpenFoamConfig {
-  return settings.engineeringTools.openFoam;
 }
 
 function su2Config(settings: AppSettings): Su2Config {
-  return settings.engineeringTools.su2;
+  const config = settings.engineeringTools.su2;
+  return {
+    ...config,
+    command: resolveEngineeringToolCommand(settings.engineeringTools, "su2", config.command).command
+  };
 }
 
-function freeCadConfig(settings: AppSettings): FreeCadConfig {
-  return settings.engineeringTools.freeCad;
-}
-
-function openVspConfig(settings: AppSettings): OpenVspConfig {
-  return settings.engineeringTools.openVsp;
-}
-
-function commercialAdapterConfig(settings: AppSettings, target: Extract<EngineeringProgramTarget, "flightstream" | "starccm">): CommercialAdapterConfig {
-  const config = settings.engineeringTools.commercialCfd;
-  if (target === "flightstream") {
+function scriptedCfdConfig(settings: AppSettings, target: Extract<EngineeringProgramTarget, "openvsp" | "xflr5">): ScriptedCfdConfig {
+  if (target === "openvsp") {
+    const config = settings.engineeringTools.openVsp;
     return {
       target,
-      label: "FlightStream",
-      command: config.flightStreamCommand,
-      workingDirectory: config.flightStreamWorkingDirectory,
-      probeArgs: config.flightStreamProbeArgs,
-      runArgsTemplate: config.flightStreamRunArgsTemplate,
-      timeoutMs: config.flightStreamTimeoutMs
+      label: "OpenVSP",
+      command: resolveEngineeringToolCommand(settings.engineeringTools, "openvsp", config.command).command,
+      scriptPath: config.scriptPath,
+      workingDirectory: config.workingDirectory,
+      probeArgs: config.probeArgs,
+      runArgsTemplate: config.runArgsTemplate,
+      timeoutMs: config.timeoutMs
     };
   }
+  const config = settings.engineeringTools.xflr5;
   return {
     target,
-    label: "STAR-CCM+",
-    command: config.starCcmCommand,
-    workingDirectory: config.starCcmWorkingDirectory,
-    probeArgs: config.starCcmProbeArgs,
-    runArgsTemplate: config.starCcmRunArgsTemplate,
-    timeoutMs: config.starCcmTimeoutMs
+    label: "XFLR5",
+    command: resolveEngineeringToolCommand(settings.engineeringTools, "xflr5", config.command).command,
+    scriptPath: config.scriptPath,
+    workingDirectory: config.workingDirectory,
+    probeArgs: config.probeArgs,
+    runArgsTemplate: config.runArgsTemplate,
+    timeoutMs: config.timeoutMs
   };
+}
+
+function resolveXfoilCommand(settings: AppSettings): string {
+  return resolveEngineeringToolCommand(settings.engineeringTools, "xfoil", settings.engineeringTools.xfoil.command).command;
 }
 
 function normalizeTarget(value: unknown): EngineeringProgramTarget | undefined {
@@ -2231,12 +2049,9 @@ function normalizeTarget(value: unknown): EngineeringProgramTarget | undefined {
     value === "xfoil" ||
     value === "xfoil-wasm" ||
     value === "modeling" ||
-    value === "openfoam" ||
     value === "su2" ||
-    value === "freecad" ||
     value === "openvsp" ||
-    value === "flightstream" ||
-    value === "starccm"
+    value === "xflr5"
   ) return value;
   return undefined;
 }

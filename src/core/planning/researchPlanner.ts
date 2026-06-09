@@ -5,6 +5,7 @@ import { buildRuntimeToolDiagnostics } from "../tools/runtimeToolDiagnostics.js"
 import { normalizeToolName, orderToolNames } from "../tools/toolRunner.js";
 import type {
   AppSettings,
+  CfdRunSpec,
   ContinuationDecision,
   EngineeringProgramRequest,
   ResearchPlan,
@@ -28,11 +29,15 @@ interface PlanLlmResponse {
 
 const WEB_SEARCH_TOOL = normalizeToolName("WebSearchTool");
 const WEB_FETCH_TOOL = normalizeToolName("WebFetchTool");
+const OPEN_CODE_TOOL = normalizeToolName("OpenCodeTool");
 const ENGINEERING_PROGRAM_TOOL = normalizeToolName("EngineeringProgramTool");
+const RESEARCH_METADATA_TOOL = normalizeToolName("ResearchMetadataTool");
 const PDF_URL_PATTERN = /\.pdf($|[?#])/i;
 const ARXIV_ABS_URL_PATTERN = /arxiv\.org\/abs\//i;
 const HTTP_URL_PATTERN = /^https?:\/\//i;
 const WEB_FETCH_HINT_PATTERN = /webfetchtool|fetch selected source urls/i;
+const RESEARCH_METADATA_INTENT_PATTERN =
+  /\b(openalex|research metadata|paper metadata|scholarly metadata|citation metadata|literature review|systematic review|related work|scholarly|peer[-\s]?reviewed|academic paper|journal article|conference paper|publication|publications|doi|bibliograph|arxiv|pubmed|semantic scholar)\b/i;
 
 export class ResearchPlanner {
   constructor(
@@ -59,13 +64,15 @@ export class ResearchPlanner {
     const expectedSources = strings(response.expectedSources, defaultPlan.expectedSources);
     const expectedSourcesWithFetchCandidates = withFetchCandidateSources(expectedSources, fetchCandidateUrls);
     const runtimeToolDiagnostics = buildRuntimeToolDiagnostics(input.settings);
-    let requiredTools = orderToolNames(ensureHintTools(strings(response.requiredTools, defaultPlan.requiredTools), { ...input, fetchCandidateUrls }));
+    let requiredTools = orderToolNames(ensureHintTools(
+      filterResearchMetadataTool(strings(response.requiredTools, defaultPlan.requiredTools), input),
+      { ...input, fetchCandidateUrls }
+    ));
     let programRequests = hasNormalizedTool(requiredTools, ENGINEERING_PROGRAM_TOOL)
-      ? readyProgramRequests(normalizeProgramRequests(response.programRequests, defaultPlan.programRequests ?? defaultEngineeringProgramRequests()), runtimeToolDiagnostics)
+      ? readyProgramRequests(normalizeProgramRequests(response.programRequests, []), runtimeToolDiagnostics)
       : undefined;
     if (programRequests && !programRequests.length) {
-      requiredTools = requiredTools.filter((tool) => normalizeToolName(tool) !== ENGINEERING_PROGRAM_TOOL);
-      programRequests = undefined;
+      throw new Error("EngineeringProgramTool was selected, but the LLM did not produce any ready programRequests.");
     }
     return {
       ...defaultPlan,
@@ -158,22 +165,20 @@ export class ResearchPlanner {
             xfoilConfigured: Boolean(input.settings.engineeringTools.xfoil.enabled && input.settings.engineeringTools.xfoil.command?.trim()),
             xfoilWasmConfigured: Boolean(input.settings.engineeringTools.enabled),
             modelingConfigured: Boolean(input.settings.engineeringTools.modeling.enabled && input.settings.engineeringTools.modeling.artifactRoot?.trim()),
-            openFoamConfigured: Boolean(input.settings.engineeringTools.openFoam.enabled && input.settings.engineeringTools.openFoam.command?.trim() && input.settings.engineeringTools.openFoam.caseRoot?.trim()),
             su2Configured: Boolean(input.settings.engineeringTools.su2.enabled && input.settings.engineeringTools.su2.command?.trim() && input.settings.engineeringTools.su2.caseRoot?.trim() && input.settings.engineeringTools.su2.configFile?.trim()),
-            freeCadConfigured: Boolean(input.settings.engineeringTools.freeCad.enabled && input.settings.engineeringTools.freeCad.command?.trim() && input.settings.engineeringTools.freeCad.scriptPath?.trim()),
-            openVspConfigured: Boolean(input.settings.engineeringTools.openVsp.enabled && input.settings.engineeringTools.openVsp.command?.trim() && input.settings.engineeringTools.openVsp.scriptPath?.trim()),
-            openFoam: input.settings.engineeringTools.openFoam,
+            openVspConfigured: Boolean(input.settings.engineeringTools.openVsp.enabled && input.settings.engineeringTools.openVsp.command?.trim()),
+            xflr5Configured: Boolean(input.settings.engineeringTools.xflr5.enabled && input.settings.engineeringTools.xflr5.command?.trim()),
             su2: input.settings.engineeringTools.su2,
-            freeCad: input.settings.engineeringTools.freeCad,
             openVsp: input.settings.engineeringTools.openVsp,
-            commercialCfd: input.settings.engineeringTools.commercialCfd,
+            xflr5: input.settings.engineeringTools.xflr5,
             capabilities: describeEngineeringProgramCapabilities(input.settings)
           },
           runtimeToolDiagnostics,
           openCodeEnabled: input.settings.openCode.enabled,
           availableTools: input.availableTools
         })}`,
-        "If EngineeringProgramTool is selected, build programRequests from runtimeToolDiagnostics.engineeringProgramRequestTemplates. Use only templates marked ready=true. For artifactPath, use only runtimeToolDiagnostics.engineeringArtifactCandidates entries marked ready=true; do not invent paths. For xfoil-wasm-polar, named airfoils such as Clark Y must use a real artifactPath or public sourceUrl coordinate file; do not run a default NACA code for a named non-NACA airfoil. If no engineering template is ready, do not request EngineeringProgramTool.",
+        "Select ResearchMetadataTool only when the specification explicitly needs scholarly paper, literature, DOI, or citation metadata. Do not use it as a prerequisite for engineering program execution or airfoil/CFD coordinate fetching.",
+        "If computed aerodynamic/CFD evidence is needed, select EngineeringProgramTool only from runtimeToolDiagnostics.engineeringProgramRequestTemplates with ready=true. Allowed solver targets are xfoil, xfoil-wasm, su2, openvsp, and xflr5 only. Copy template kind and target. Fill cfdRunSpec with geometry, mesh, solver, and flightCondition values; do not emit command, args, scriptPath, caseRoot, configFile, workingDirectory, or runArgsTemplate. Artifact paths inside artifactPath, cfdRunSpec.geometry.artifactPath, and cfdRunSpec.mesh.artifactPath must exactly match ready runtimeToolDiagnostics.engineeringArtifactCandidates; otherwise use configuredCase, a valid NACA code, a public sourceUrl for xfoil-wasm only, or omit EngineeringProgramTool and record the evidence gap. Do not request any engineering program kind or target outside the ready template list.",
         "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria, fetchCandidateUrls, programRequests."
       ].join("\n\n") : [
         `Specification: ${JSON.stringify(input.specification)}`,
@@ -189,22 +194,20 @@ export class ResearchPlanner {
             xfoilConfigured: Boolean(input.settings.engineeringTools.xfoil.enabled && input.settings.engineeringTools.xfoil.command?.trim()),
             xfoilWasmConfigured: Boolean(input.settings.engineeringTools.enabled),
             modelingConfigured: Boolean(input.settings.engineeringTools.modeling.enabled && input.settings.engineeringTools.modeling.artifactRoot?.trim()),
-            openFoamConfigured: Boolean(input.settings.engineeringTools.openFoam.enabled && input.settings.engineeringTools.openFoam.command?.trim() && input.settings.engineeringTools.openFoam.caseRoot?.trim()),
             su2Configured: Boolean(input.settings.engineeringTools.su2.enabled && input.settings.engineeringTools.su2.command?.trim() && input.settings.engineeringTools.su2.caseRoot?.trim() && input.settings.engineeringTools.su2.configFile?.trim()),
-            freeCadConfigured: Boolean(input.settings.engineeringTools.freeCad.enabled && input.settings.engineeringTools.freeCad.command?.trim() && input.settings.engineeringTools.freeCad.scriptPath?.trim()),
-            openVspConfigured: Boolean(input.settings.engineeringTools.openVsp.enabled && input.settings.engineeringTools.openVsp.command?.trim() && input.settings.engineeringTools.openVsp.scriptPath?.trim()),
-            openFoam: input.settings.engineeringTools.openFoam,
+            openVspConfigured: Boolean(input.settings.engineeringTools.openVsp.enabled && input.settings.engineeringTools.openVsp.command?.trim()),
+            xflr5Configured: Boolean(input.settings.engineeringTools.xflr5.enabled && input.settings.engineeringTools.xflr5.command?.trim()),
             su2: input.settings.engineeringTools.su2,
-            freeCad: input.settings.engineeringTools.freeCad,
             openVsp: input.settings.engineeringTools.openVsp,
-            commercialCfd: input.settings.engineeringTools.commercialCfd,
+            xflr5: input.settings.engineeringTools.xflr5,
             capabilities: describeEngineeringProgramCapabilities(input.settings)
           },
           runtimeToolDiagnostics,
           openCodeEnabled: input.settings.openCode.enabled,
           availableTools: input.availableTools
         })}`,
-        "If EngineeringProgramTool is selected, build programRequests from runtimeToolDiagnostics.engineeringProgramRequestTemplates. Use only templates marked ready=true. For artifactPath, use only runtimeToolDiagnostics.engineeringArtifactCandidates entries marked ready=true; do not invent paths. For xfoil-wasm-polar, named airfoils such as Clark Y must use a real artifactPath or public sourceUrl coordinate file; do not run a default NACA code for a named non-NACA airfoil. If no engineering template is ready, do not request EngineeringProgramTool.",
+        "Select ResearchMetadataTool only when the specification explicitly needs scholarly paper, literature, DOI, or citation metadata. Do not use it as a prerequisite for engineering program execution or airfoil/CFD coordinate fetching.",
+        "If computed aerodynamic/CFD evidence is needed, select EngineeringProgramTool only from runtimeToolDiagnostics.engineeringProgramRequestTemplates with ready=true. Allowed solver targets are xfoil, xfoil-wasm, su2, openvsp, and xflr5 only. Copy template kind and target. Fill cfdRunSpec with geometry, mesh, solver, and flightCondition values; do not emit command, args, scriptPath, caseRoot, configFile, workingDirectory, or runArgsTemplate. Artifact paths inside artifactPath, cfdRunSpec.geometry.artifactPath, and cfdRunSpec.mesh.artifactPath must exactly match ready runtimeToolDiagnostics.engineeringArtifactCandidates; otherwise use configuredCase, a valid NACA code, a public sourceUrl for xfoil-wasm only, or omit EngineeringProgramTool and record the evidence gap. Do not request any engineering program kind or target outside the ready template list.",
         "Return keys: objective, targetQuestions, targetHypotheses, requiredTools, expectedSources, expectedArtifacts, executionSteps, stopCriteria, fetchCandidateUrls, programRequests."
       ].join("\n\n"),
       timeoutMs: 120_000
@@ -233,11 +236,11 @@ export class ResearchPlanner {
       hasFetchHint,
       hasPdfTargets,
       researchMetadataReady: input.settings.allowExternalSearch && input.settings.researchMetadata.enabled,
+      researchMetadataRelevant: hasResearchMetadataIntent(input),
       engineeringProgramReady: input.settings.allowCodeExecution && hasExecutableEngineeringTool(input.settings),
       webSearchReady
     });
     const tools = orderToolNames(executableCandidateTools(candidateTools, available));
-    const programRequests = hasNormalizedTool(tools, ENGINEERING_PROGRAM_TOOL) ? defaultEngineeringProgramRequests() : undefined;
     const nextObjective = input.continuationDecision?.nextObjective;
     return {
       id: createId("plan"),
@@ -274,7 +277,6 @@ export class ResearchPlanner {
         "The internal runaway-prevention safety cap is reached."
       ],
       fetchCandidateUrls,
-      programRequests,
       createdAt: nowIso()
     };
   }
@@ -295,6 +297,18 @@ function ensureHintTools(
     result.push("WebFetchTool");
   }
   return result;
+}
+
+export function filterResearchMetadataTool(
+  tools: string[],
+  input: {
+    snapshot: ResearchSnapshot;
+    specification: ResearchSpecification;
+    continuationDecision?: ContinuationDecision;
+  }
+): string[] {
+  if (hasResearchMetadataIntent(input)) return tools;
+  return tools.filter((tool) => normalizeToolName(tool) !== RESEARCH_METADATA_TOOL);
 }
 
 function clean(value: unknown): string {
@@ -374,13 +388,15 @@ function defaultCandidateTools(
     hasFetchHint: boolean;
     hasPdfTargets: boolean;
     researchMetadataReady: boolean;
+    researchMetadataRelevant: boolean;
     engineeringProgramReady: boolean;
     webSearchReady: boolean;
   }
 ): string[] {
-  const tools = ["OpenCodeTool"];
+  const tools: string[] = [];
+  if (settings.openCode.enabled && settings.openCode.command?.trim() && state.available.has(OPEN_CODE_TOOL)) tools.push("OpenCodeTool");
   if (state.webSearchReady) tools.push("WebSearchTool");
-  if (state.researchMetadataReady) tools.push("ResearchMetadataTool");
+  if (state.researchMetadataReady && state.researchMetadataRelevant) tools.push("ResearchMetadataTool");
   if (state.externalNetworkReady && (state.hasFetchHint || state.hasExternalUrls || state.available.has(WEB_SEARCH_TOOL))) {
     tools.push("WebFetchTool");
   }
@@ -390,6 +406,36 @@ function defaultCandidateTools(
   if (state.engineeringProgramReady) tools.push("EngineeringProgramTool");
   tools.push("ArtifactWriterTool", "DataAnalysisTool");
   return tools;
+}
+
+export function hasResearchMetadataIntent(input: {
+  snapshot: ResearchSnapshot;
+  specification: ResearchSpecification;
+  continuationDecision?: ContinuationDecision;
+}): boolean {
+  const parts: string[] = [
+    input.snapshot.project.topic,
+    input.snapshot.project.goal,
+    input.snapshot.project.scope,
+    input.specification.scope,
+    ...input.snapshot.questions.map((question) => question.text),
+    ...input.snapshot.hypotheses.map((hypothesis) => hypothesis.statement),
+    ...input.snapshot.researchInputs.map((researchInput) => researchInput.researchQuestion),
+    ...input.specification.researchQuestions,
+    ...input.specification.initialHypotheses,
+    ...input.specification.refinedHypotheses,
+    ...input.specification.assumptions,
+    ...input.specification.constraints,
+    ...input.specification.successCriteria,
+    ...input.specification.requiredEvidenceTypes,
+    ...input.specification.competencyQuestions,
+    ...input.specification.evaluationMetrics,
+    input.continuationDecision?.nextObjective ?? "",
+    ...(input.continuationDecision?.nextQuestions ?? []),
+    ...(input.continuationDecision?.evidenceGaps ?? []),
+    ...(input.continuationDecision?.planRevisionHints ?? [])
+  ];
+  return RESEARCH_METADATA_INTENT_PATTERN.test(parts.filter(Boolean).join("\n"));
 }
 
 function executableCandidateTools(candidateTools: string[], available: Set<string>): string[] {
@@ -411,11 +457,9 @@ function normalizeProgramRequests(value: unknown, defaultValue: EngineeringProgr
       request.kind !== "mesh-inspect" &&
       request.kind !== "xfoil-polar" &&
       request.kind !== "xfoil-wasm-polar" &&
-      request.kind !== "openfoam-case-run" &&
       request.kind !== "su2-case-run" &&
-      request.kind !== "cad-script-run" &&
-      request.kind !== "vsp-script-run" &&
-      request.kind !== "commercial-cfd-run"
+      request.kind !== "openvsp-analysis-run" &&
+      request.kind !== "xflr5-analysis-run"
     ) continue;
     const normalized: EngineeringProgramRequest = { kind: request.kind };
     if (
@@ -423,15 +467,14 @@ function normalizeProgramRequests(value: unknown, defaultValue: EngineeringProgr
       request.target === "xfoil" ||
       request.target === "xfoil-wasm" ||
       request.target === "modeling" ||
-      request.target === "openfoam" ||
       request.target === "su2" ||
-      request.target === "freecad" ||
       request.target === "openvsp" ||
-      request.target === "flightstream" ||
-      request.target === "starccm"
+      request.target === "xflr5"
     ) {
       normalized.target = request.target;
     }
+    const cfdRunSpec = normalizeCfdRunSpec(request.cfdRunSpec);
+    if (cfdRunSpec) normalized.cfdRunSpec = cfdRunSpec;
     if (typeof request.artifactPath === "string" && request.artifactPath.trim()) {
       normalized.artifactPath = request.artifactPath.trim();
     }
@@ -456,6 +499,88 @@ function normalizeProgramRequests(value: unknown, defaultValue: EngineeringProgr
     if (requests.length >= 4) break;
   }
   return requests.length ? requests : defaultValue;
+}
+
+function normalizeCfdRunSpec(value: unknown): CfdRunSpec | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Partial<CfdRunSpec>;
+  const geometry = record.geometry && typeof record.geometry === "object" ? record.geometry : undefined;
+  const solver = record.solver && typeof record.solver === "object" ? record.solver : undefined;
+  if (!geometry || !solver) return undefined;
+  if (record.target !== "xfoil" && record.target !== "xfoil-wasm" && record.target !== "su2" && record.target !== "openvsp" && record.target !== "xflr5") return undefined;
+  if (geometry.source !== "artifact" && geometry.source !== "sourceUrl" && geometry.source !== "naca" && geometry.source !== "configuredCase") return undefined;
+  if (solver.name !== "xfoil" && solver.name !== "webxfoil-wasm" && solver.name !== "su2" && solver.name !== "openvsp-vspaero" && solver.name !== "xflr5") return undefined;
+  const flight = record.flightCondition && typeof record.flightCondition === "object" ? record.flightCondition : {};
+  const spec: CfdRunSpec = {
+    target: record.target,
+    geometry: {
+      source: geometry.source,
+      artifactPath: clean(geometry.artifactPath),
+      sourceUrl: clean(geometry.sourceUrl),
+      naca: clean(geometry.naca),
+      description: clean(geometry.description)
+    },
+    flightCondition: {
+      reynolds: finiteNumberValue(flight.reynolds),
+      mach: finiteNumberValue(flight.mach),
+      alphaStart: finiteNumberValue(flight.alphaStart),
+      alphaEnd: finiteNumberValue(flight.alphaEnd),
+      alphaStep: finiteNumberValue(flight.alphaStep),
+      velocity: finiteNumberValue(flight.velocity),
+      density: finiteNumberValue(flight.density),
+      viscosity: finiteNumberValue(flight.viscosity)
+    },
+    solver: {
+      name: solver.name,
+      model:
+        solver.model === "inviscid" || solver.model === "euler" || solver.model === "rans" || solver.model === "panel" || solver.model === "viscous-panel"
+          ? solver.model
+          : undefined,
+      turbulenceModel:
+        solver.turbulenceModel === "sa" || solver.turbulenceModel === "sst" || solver.turbulenceModel === "kepsilon" || solver.turbulenceModel === "none"
+          ? solver.turbulenceModel
+          : undefined,
+      maxIterations: finiteNumberValue(solver.maxIterations),
+      convergenceTolerance: finiteNumberValue(solver.convergenceTolerance),
+      configOverrides: normalizeConfigOverrides(solver.configOverrides)
+    },
+    rationale: clean(record.rationale)
+  };
+  if (record.mesh && typeof record.mesh === "object") {
+    const mesh = record.mesh;
+    spec.mesh = {
+      strategy: mesh.strategy === "existing" || mesh.strategy === "toolGenerated" || mesh.strategy === "caseGenerated" ? mesh.strategy : "caseGenerated",
+      artifactPath: clean(mesh.artifactPath),
+      maxCells: finiteNumberValue(mesh.maxCells),
+      boundaryLayer: typeof mesh.boundaryLayer === "boolean" ? mesh.boundaryLayer : undefined,
+      yPlusTarget: finiteNumberValue(mesh.yPlusTarget),
+      notes: clean(mesh.notes)
+    };
+  }
+  if (record.output && typeof record.output === "object") {
+    const output = record.output;
+    spec.output = {
+      forceCoefficients: typeof output.forceCoefficients === "boolean" ? output.forceCoefficients : undefined,
+      polar: typeof output.polar === "boolean" ? output.polar : undefined,
+      pressureField: typeof output.pressureField === "boolean" ? output.pressureField : undefined,
+      mesh: typeof output.mesh === "boolean" ? output.mesh : undefined
+    };
+  }
+  return spec;
+}
+
+function normalizeConfigOverrides(value: unknown): Record<string, string | number | boolean> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const output: Record<string, string | number | boolean> = {};
+  for (const [key, rawValue] of Object.entries(value).slice(0, 24)) {
+    if (!/^[A-Za-z0-9_]{2,80}$/.test(key)) continue;
+    if (typeof rawValue === "string" || typeof rawValue === "number" || typeof rawValue === "boolean") output[key] = rawValue;
+  }
+  return Object.keys(output).length ? output : undefined;
+}
+
+function finiteNumberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function readyProgramRequests(requests: EngineeringProgramRequest[], diagnostics: RuntimeToolDiagnostics): EngineeringProgramRequest[] {
@@ -492,7 +617,7 @@ function mergeWithReadyProgramTemplate(
   templateRequest: EngineeringProgramRequest,
   request: EngineeringProgramRequest,
   readyArtifacts: Set<string>,
-  readyArtifactsByFormat: Map<string, "obj" | "stl" | "airfoil-coordinate">
+  readyArtifactsByFormat: Map<string, "obj" | "stl" | "vsp3" | "airfoil-coordinate">
 ): EngineeringProgramRequest | undefined {
   const safeRequest: EngineeringProgramRequest = { ...templateRequest };
   if (request.outputFileName?.trim()) safeRequest.outputFileName = request.outputFileName.trim();
@@ -504,6 +629,11 @@ function mergeWithReadyProgramTemplate(
   if (request.alphaStart !== undefined) safeRequest.alphaStart = request.alphaStart;
   if (request.alphaEnd !== undefined) safeRequest.alphaEnd = request.alphaEnd;
   if (request.alphaStep !== undefined) safeRequest.alphaStep = request.alphaStep;
+  if (request.cfdRunSpec) {
+    const safeSpec = mergeCfdRunSpecWithReadyArtifacts(safeRequest, request.cfdRunSpec, readyArtifacts, readyArtifactsByFormat);
+    if (!safeSpec) return undefined;
+    safeRequest.cfdRunSpec = safeSpec;
+  }
   if (request.artifactPath?.trim() && readyArtifacts.has(request.artifactPath.trim())) {
     const artifactPath = request.artifactPath.trim();
     const format = readyArtifactsByFormat.get(artifactPath);
@@ -513,15 +643,44 @@ function mergeWithReadyProgramTemplate(
     delete safeRequest.naca;
   }
   if (safeRequest.kind === "mesh-inspect" && !safeRequest.artifactPath) return undefined;
-  if (safeRequest.kind === "commercial-cfd-run" && safeRequest.artifactPath && !artifactFormatAllowedForRequest(safeRequest.kind, readyArtifactsByFormat.get(safeRequest.artifactPath))) return undefined;
   if (safeRequest.kind === "xfoil-wasm-polar" && !safeRequest.naca && !safeRequest.artifactPath && !safeRequest.sourceUrl) return undefined;
+  if ((safeRequest.kind === "su2-case-run" || safeRequest.kind === "openvsp-analysis-run" || safeRequest.kind === "xflr5-analysis-run") && !safeRequest.cfdRunSpec) return undefined;
   return safeRequest;
 }
 
-function artifactFormatAllowedForRequest(kind: EngineeringProgramRequest["kind"], format: "obj" | "stl" | "airfoil-coordinate" | undefined): boolean {
+function mergeCfdRunSpecWithReadyArtifacts(
+  request: EngineeringProgramRequest,
+  spec: CfdRunSpec,
+  readyArtifacts: Set<string>,
+  readyArtifactsByFormat: Map<string, "obj" | "stl" | "vsp3" | "airfoil-coordinate">
+): CfdRunSpec | undefined {
+  const target = request.target ?? defaultTargetForKind(request.kind);
+  if (!target || spec.target !== target) return undefined;
+  const safeSpec: CfdRunSpec = JSON.parse(JSON.stringify(spec)) as CfdRunSpec;
+  const geometryArtifact = safeSpec.geometry.artifactPath?.trim();
+  if (geometryArtifact) {
+    if (!readyArtifacts.has(geometryArtifact)) return undefined;
+    const format = readyArtifactsByFormat.get(geometryArtifact);
+    if (!artifactFormatAllowedForRequest(request.kind, format)) return undefined;
+    safeSpec.geometry.artifactPath = geometryArtifact;
+  }
+  const meshArtifact = safeSpec.mesh?.artifactPath?.trim();
+  if (meshArtifact) {
+    if (!readyArtifacts.has(meshArtifact)) return undefined;
+    const format = readyArtifactsByFormat.get(meshArtifact);
+    if (format !== "obj" && format !== "stl" && format !== "vsp3") return undefined;
+    safeSpec.mesh = { strategy: safeSpec.mesh?.strategy ?? "existing", ...safeSpec.mesh, artifactPath: meshArtifact };
+  }
+  return safeSpec;
+}
+
+function artifactFormatAllowedForRequest(kind: EngineeringProgramRequest["kind"], format: "obj" | "stl" | "vsp3" | "airfoil-coordinate" | undefined): boolean {
   if (!format) return false;
   if (kind === "xfoil-polar" || kind === "xfoil-wasm-polar") return format === "airfoil-coordinate";
-  if (kind === "mesh-inspect" || kind === "commercial-cfd-run") return format === "obj" || format === "stl";
+  if (kind === "mesh-inspect") return format === "obj" || format === "stl";
+  if (kind === "openvsp-analysis-run") return format === "obj" || format === "stl" || format === "vsp3" || format === "airfoil-coordinate";
+  if (kind === "xflr5-analysis-run") return format === "airfoil-coordinate" || format === "obj" || format === "stl";
+  if (kind === "su2-case-run") return format === "obj" || format === "stl";
   return true;
 }
 
@@ -530,25 +689,18 @@ function defaultTargetForKind(kind: EngineeringProgramRequest["kind"]): Engineer
   if (kind === "mesh-inspect") return "modeling";
   if (kind === "xfoil-polar") return "xfoil";
   if (kind === "xfoil-wasm-polar") return "xfoil-wasm";
-  if (kind === "openfoam-case-run") return "openfoam";
   if (kind === "su2-case-run") return "su2";
-  if (kind === "cad-script-run") return "freecad";
-  if (kind === "vsp-script-run") return "openvsp";
+  if (kind === "openvsp-analysis-run") return "openvsp";
+  if (kind === "xflr5-analysis-run") return "xflr5";
   return undefined;
 }
 
 function targetRequiredForKind(kind: EngineeringProgramRequest["kind"]): boolean {
   return (
-    kind === "openfoam-case-run" ||
     kind === "su2-case-run" ||
-    kind === "cad-script-run" ||
-    kind === "vsp-script-run" ||
-    kind === "commercial-cfd-run"
+    kind === "openvsp-analysis-run" ||
+    kind === "xflr5-analysis-run"
   );
-}
-
-function defaultEngineeringProgramRequests(): EngineeringProgramRequest[] {
-  return [{ kind: "toolchain-check", target: "all", reason: "Verify configured engineering program availability before requesting analysis outputs." }];
 }
 
 function collectIds(items: Array<{ id: string }>): string[] {

@@ -32,25 +32,9 @@ export const strictTestSettings: AppSettings = {
     enabled: false,
     xfoil: { enabled: false, command: "", timeoutMs: 30_000 },
     modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
-    openFoam: { enabled: false, command: "", caseRoot: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-case", "{case}"], timeoutMs: 30 * 60_000 },
     su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 30 * 60_000 },
-    freeCad: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--version"], runArgsTemplate: ["{script}", "--output", "{output}"], timeoutMs: 30 * 60_000 },
-    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
-    commercialCfd: {
-      flightStreamConfigured: false,
-      starCcmConfigured: false,
-      flightStreamCommand: "",
-      flightStreamWorkingDirectory: "",
-      flightStreamProbeArgs: ["--version"],
-      flightStreamRunArgsTemplate: [],
-      flightStreamTimeoutMs: 120_000,
-      starCcmCommand: "",
-      starCcmWorkingDirectory: "",
-      starCcmProbeArgs: ["-version"],
-      starCcmRunArgsTemplate: [],
-      starCcmTimeoutMs: 120_000,
-      notes: ""
-    }
+    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
+    xflr5: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"], timeoutMs: 30 * 60_000 }
   },
   allowExternalSearch: false,
   allowCodeExecution: false,

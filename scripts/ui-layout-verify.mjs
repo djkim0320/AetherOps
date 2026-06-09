@@ -44,9 +44,10 @@ try {
         () => {
           const summaries = Array.from(document.querySelectorAll(".requestContractItem summary"));
           return (
-            summaries.length >= 10 &&
+            summaries.length >= 7 &&
             summaries.some((summary) => summary.textContent?.includes("SU2")) &&
-            summaries.some((summary) => summary.textContent?.includes("XFOIL-WASM"))
+            summaries.some((summary) => summary.textContent?.includes("XFOIL-WASM")) &&
+            summaries.some((summary) => summary.textContent?.includes("XFLR5"))
           );
         },
         undefined,
@@ -270,11 +271,11 @@ function assertLayout(viewport, layout, phase) {
   }
   if (!layout.contentFirstPanel) {
     failures.push(`${viewport.label}/${phase}: content grid did not expose a first panel`);
-  } else if (!layout.contentFirstPanel.includes("engineeringWorkbenchPanel")) {
-    failures.push(`${viewport.label}/${phase}: engineering workbench must be the first content panel, found ${layout.contentFirstPanel}`);
+  } else if (!layout.contentFirstPanel.includes("automationPanel")) {
+    failures.push(`${viewport.label}/${phase}: autonomous tool orchestration must be the first content panel, found ${layout.contentFirstPanel}`);
   }
   if (!layout.workbench) {
-    failures.push(`${viewport.label}/${phase}: engineering workbench panel is missing`);
+    failures.push(`${viewport.label}/${phase}: autonomous tool orchestration panel is missing`);
   }
   if (!layout.agentPanel) {
     failures.push(`${viewport.label}/${phase}: research summary panel is missing`);
@@ -283,10 +284,10 @@ function assertLayout(viewport, layout, phase) {
     failures.push(`${viewport.label}/${phase}: final output panel is missing`);
   }
   if (layout.agentPanel && layout.workbench && layout.workbench.y > layout.agentPanel.y) {
-    failures.push(`${viewport.label}/${phase}: engineering workbench must render before the research summary`);
+    failures.push(`${viewport.label}/${phase}: autonomous tool orchestration must render before the research summary`);
   }
   if (layout.finalPanel && layout.workbench && layout.workbench.y > layout.finalPanel.y) {
-    failures.push(`${viewport.label}/${phase}: engineering workbench must stay above final output`);
+    failures.push(`${viewport.label}/${phase}: autonomous tool orchestration must stay above final output`);
   }
   if (layout.legacyProjectComposerCount) {
     failures.push(`${viewport.label}/${phase}: legacy expanded project composer remained`);
@@ -314,8 +315,8 @@ function assertLayout(viewport, layout, phase) {
   if (layout.legacyRightRailPanels !== 0) {
     failures.push(`${viewport.label}/${phase}: old right-rail panels remained, found ${layout.legacyRightRailPanels}`);
   }
-  if (layout.runStatusItems < 3) {
-    failures.push(`${viewport.label}/${phase}: expected three compact run status items, found ${layout.runStatusItems}`);
+  if (layout.runStatusItems !== 2) {
+    failures.push(`${viewport.label}/${phase}: expected two compact run status items, found ${layout.runStatusItems}`);
   }
   if (layout.runIssueMessages > 5) {
     failures.push(`${viewport.label}/${phase}: run issue list should stay compact, found ${layout.runIssueMessages} messages`);
@@ -393,8 +394,8 @@ function assertSettingsLayout(viewport, settings) {
   if (!settings.activeSettings) {
     failures.push(`${viewport.label}/settings: settings sidebar button is not active`);
   }
-  if (settings.requestContractRows !== 10) {
-    failures.push(`${viewport.label}/settings: expected 10 engineering request templates, found ${settings.requestContractRows}`);
+  if (settings.requestContractRows !== 7) {
+    failures.push(`${viewport.label}/settings: expected 7 engineering request templates, found ${settings.requestContractRows}`);
   }
   if (settings.settingsDisclosures < 3) {
     failures.push(`${viewport.label}/settings: expected OpenCode, Research data, and engineering settings disclosures, found ${settings.settingsDisclosures}`);
@@ -425,6 +426,9 @@ function assertSettingsLayout(viewport, settings) {
   if (!settings.openVspText.includes("OpenVSP")) {
     failures.push(`${viewport.label}/settings: OpenVSP request template is missing`);
   }
+  if (!settings.xflr5Text.includes("XFLR5")) {
+    failures.push(`${viewport.label}/settings: XFLR5 request template is missing`);
+  }
   if (settings.horizontalOverflow) {
     failures.push(
       `${viewport.label}/settings: horizontal overflow body=${settings.scrollWidths.body} document=${settings.scrollWidths.documentElement}`
@@ -448,9 +452,9 @@ function assertSettingsDisclosureLayout(viewport, settingsDisclosure) {
   if (!settingsDisclosure.researchDataProviderVisible || !settingsDisclosure.researchMetadataMailtoVisible) {
     failures.push(`${viewport.label}/settings-disclosure: Research data search/metadata controls are not visible after opening`);
   }
-  if (settingsDisclosure.visibleRequestContractRows !== 10) {
+  if (settingsDisclosure.visibleRequestContractRows !== 7) {
     failures.push(
-      `${viewport.label}/settings-disclosure: expected 10 visible engineering request templates after opening, found ${settingsDisclosure.visibleRequestContractRows}`
+      `${viewport.label}/settings-disclosure: expected 7 visible engineering request templates after opening, found ${settingsDisclosure.visibleRequestContractRows}`
     );
   }
   if (!settingsDisclosure.xfoilCommandVisible) {
@@ -490,7 +494,7 @@ function collectLayout() {
   const runOverview = rectOf(".runOverview");
   const agentPanel = rectOf(".agentPanel");
   const finalPanel = rectOf(".finalPanel");
-  const workbench = rectOf(".engineeringWorkbenchPanel");
+  const workbench = rectOf(".automationPanel");
   const statusPanel = rectOf(".statusPanel");
   const morePanel = rectOf(".morePanel");
   const contentFirstPanel = document.querySelector(".contentGrid > .panel")?.className ?? "";
@@ -631,6 +635,7 @@ function collectSettingsLayout() {
   const xfoilWasm = summaries.find((summary) => summary.textContent?.includes("XFOIL-WASM"));
   const su2 = summaries.find((summary) => summary.textContent?.includes("SU2"));
   const openVsp = summaries.find((summary) => summary.textContent?.includes("OpenVSP"));
+  const xflr5 = summaries.find((summary) => summary.textContent?.includes("XFLR5"));
   const embeddingProvider = document.querySelector(".embeddingProviderSelect");
   return {
     visible: Boolean(document.querySelector("#settings-window-title")),
@@ -652,6 +657,8 @@ function collectSettingsLayout() {
     su2Rect: su2 ? rectFromElement(su2) : null,
     openVspText: openVsp?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     openVspRect: openVsp ? rectFromElement(openVsp) : null,
+    xflr5Text: xflr5?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    xflr5Rect: xflr5 ? rectFromElement(xflr5) : null,
     embeddingProviderOptions: embeddingProvider
       ? Array.from(embeddingProvider.querySelectorAll("option")).map((option) => ({ value: option.value, text: option.textContent ?? "" }))
       : [],

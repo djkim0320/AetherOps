@@ -40,7 +40,7 @@ import {
   type RuntimeToolDiagnostics,
   type EngineeringProgramPreflightResult,
   type EngineeringProgramTarget,
-  type EngineeringProgramDirectRunResult
+  type EngineeringProgramRequest
 } from "../core/shared/types.js";
 import { buildResearchInputPayloadFromBrief } from "../core/input/researchInput.js";
 import { getAetherOpsApi, getMissingAetherOpsApiMessage, waitForAetherOpsApi } from "./aetherClient.js";
@@ -76,24 +76,15 @@ interface SnapshotStats {
   storageProjectsAndReports: number;
   errorsAndBlockers: number;
 }
-interface EngineeringWorkbenchState {
-  sourceUrl: string;
-  reynolds: number;
-  mach: number;
-  alphaStart: number;
-  alphaEnd: number;
-  alphaStep: number;
-}
-
 const defaultInput: ResearchProjectInput = {
   goal: "근거 기반 반복 연구 루프가 질문, 가설, 자료, 산출물을 스스로 개선하는지 검증한다.",
   topic: "AetherOps 자율 연구 루프",
   scope: "도구 실행, Vector Index, Ontology Graph, 산출물 저장, blocked/failed 기록을 포함한 운영 12단계 검증",
   budget: "운영 제약",
   autonomyPolicy: {
-    toolApproval: "suggested",
+    toolApproval: "automatic",
     allowExternalSearch: true,
-    allowCodeExecution: false,
+    allowCodeExecution: true,
     maxLoopIterations: 1
   }
 };
@@ -138,10 +129,9 @@ const webSearchEndpointOptions = ["", "https://api.tavily.com/search", "https://
 const researchMetadataMaxResultOptions = [3, 5, 8, 12, 20];
 const researchMetadataTimeoutOptions = [5_000, 10_000, 15_000, 30_000, 60_000];
 const xfoilCommandOptions = ["", "xfoil", "xfoil.exe"];
-const openFoamCommandOptions = ["", "simpleFoam", "icoFoam", "pimpleFoam", "rhoSimpleFoam"];
 const su2CommandOptions = ["", "SU2_CFD", "SU2_CFD.exe", "SU2_SOL", "SU2_SOL.exe"];
-const freeCadCommandOptions = ["", "FreeCADCmd", "FreeCADCmd.exe", "freecadcmd"];
-const openVspCommandOptions = ["", "vsp", "vsp.exe", "vsp_aero", "vsp_aero.exe"];
+const openVspCommandOptions = ["", "vspscript", "vspscript.exe", "vsp", "vsp.exe", "vsp_aero", "vsp_aero.exe"];
+const xflr5CommandOptions = ["", "xflr5", "xflr5.exe", "XFLR5", "XFLR5.exe"];
 const engineeringTimeoutOptions = [10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000];
 const meshByteLimitOptions = [5 * 1024 * 1024, 20 * 1024 * 1024, 50 * 1024 * 1024, 100 * 1024 * 1024];
 const homeModelProviderRows: Array<{ id: OpenCodeApiLlmSettings["provider"] | "codex-oauth"; label: string; source: string }> = [
@@ -184,15 +174,6 @@ const embeddingModelOptions: Record<AppSettings["embedding"]["provider"], string
   custom: ["text-embedding-3-small", "text-embedding-3-large", "gemini-embedding-001", "custom-embedding-model"]
 };
 const embeddingDimensionOptions = [64, 96, 128, 256, 512, 1024, 1536, 3072];
-const defaultEngineeringWorkbench: EngineeringWorkbenchState = {
-  sourceUrl: "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat",
-  reynolds: 1_000_000,
-  mach: 0,
-  alphaStart: -2,
-  alphaEnd: 6,
-  alphaStep: 2
-};
-
 const stepLabels: Record<ResearchLoopStep, { index: string; label: string; flow: StepFlowClass; icon: IconComponent }> = {
   [ResearchLoopStep.CreateResearchDb]: { index: "1", label: "연구 DB 생성", flow: "storage", icon: Database },
   [ResearchLoopStep.InputResearchQuestionHypothesis]: { index: "2", label: "질문/가설 입력", flow: "main", icon: MessageSquare },
@@ -247,10 +228,6 @@ export function App(): ReactElement {
   const [toolDiagnostics, setToolDiagnostics] = useState<RuntimeToolDiagnostics>();
   const [engineeringPreflightResult, setEngineeringPreflightResult] = useState<EngineeringProgramPreflightResult>();
   const [engineeringPreflightBusy, setEngineeringPreflightBusy] = useState(false);
-  const [engineeringWorkbench, setEngineeringWorkbench] = useState<EngineeringWorkbenchState>(defaultEngineeringWorkbench);
-  const [engineeringRunResult, setEngineeringRunResult] = useState<EngineeringProgramDirectRunResult>();
-  const [engineeringRunBusy, setEngineeringRunBusy] = useState(false);
-  const [engineeringRunMessage, setEngineeringRunMessage] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [webKeyInput, setWebKeyInput] = useState("");
   const [embeddingKeyInput, setEmbeddingKeyInput] = useState("");
@@ -403,10 +380,6 @@ export function App(): ReactElement {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function createExactWorkflow(): Promise<void> {
-    await createWorkflow(input);
   }
 
   async function createProjectFromPrompt(): Promise<void> {
@@ -771,50 +744,6 @@ export function App(): ReactElement {
     }
   }
 
-  async function runEngineeringWorkbench(): Promise<void> {
-    setEngineeringRunBusy(true);
-    setEngineeringRunMessage("");
-    setEngineeringRunResult(undefined);
-    const projectId = snapshot?.project.id;
-    try {
-      const result = await api.engineering.runProgram({
-        projectId,
-        title: "Clark Y XFOIL-WASM polar analysis",
-        question: "Run a real Clark Y airfoil aerodynamic polar analysis and report the computed CL/CD values.",
-        programRequests: [
-          {
-            kind: "xfoil-wasm-polar",
-            target: "xfoil-wasm",
-            sourceUrl: engineeringWorkbench.sourceUrl.trim(),
-            reynolds: engineeringWorkbench.reynolds,
-            mach: engineeringWorkbench.mach,
-            alphaStart: engineeringWorkbench.alphaStart,
-            alphaEnd: engineeringWorkbench.alphaEnd,
-            alphaStep: engineeringWorkbench.alphaStep,
-            reason: "Direct UI operation requested by the user."
-          }
-        ]
-      });
-      setEngineeringRunResult(result);
-      if (projectId) {
-        const latest = await api.snapshots.get(projectId);
-        setSnapshot(latest);
-        setEvents(latest.iterations.slice(-16));
-      }
-      const savedPath = result.savedReportArtifact?.relativePath;
-      setEngineeringRunMessage(
-        result.status === "completed"
-          ? `Engineering program run completed${savedPath ? `; report saved to ${savedPath}` : "."}`
-          : result.error ?? "Engineering program run failed."
-      );
-      void refreshToolDiagnostics();
-    } catch (error) {
-      setEngineeringRunMessage(formatError(error));
-    } finally {
-      setEngineeringRunBusy(false);
-    }
-  }
-
   async function selectHomeModel(selection: HomeModelSelection): Promise<void> {
     const current = settingsDraft ?? appSettings;
     if (!current) {
@@ -960,13 +889,6 @@ export function App(): ReactElement {
           events={events}
           metrics={metrics}
           busy={busy}
-          engineeringWorkbench={engineeringWorkbench}
-          engineeringRunResult={engineeringRunResult}
-          engineeringRunBusy={engineeringRunBusy}
-          engineeringRunMessage={engineeringRunMessage}
-          onEngineeringWorkbenchChange={setEngineeringWorkbench}
-          onRunEngineeringWorkbench={runEngineeringWorkbench}
-          onCreate={createExactWorkflow}
           onStart={startLoop}
           onPause={pauseLoop}
           onResume={resumeLoop}
@@ -1461,13 +1383,6 @@ function AetherOpsTab({
   events,
   metrics,
   busy,
-  engineeringWorkbench,
-  engineeringRunResult,
-  engineeringRunBusy,
-  engineeringRunMessage,
-  onEngineeringWorkbenchChange,
-  onRunEngineeringWorkbench,
-  onCreate,
   onStart
 }: {
   input: ResearchProjectInput;
@@ -1479,13 +1394,6 @@ function AetherOpsTab({
   events: LoopIteration[];
   metrics: Array<{ label: string; value: number }>;
   busy: boolean;
-  engineeringWorkbench: EngineeringWorkbenchState;
-  engineeringRunResult?: EngineeringProgramDirectRunResult;
-  engineeringRunBusy: boolean;
-  engineeringRunMessage: string;
-  onEngineeringWorkbenchChange: (state: EngineeringWorkbenchState) => void;
-  onRunEngineeringWorkbench: () => Promise<void>;
-  onCreate: () => Promise<void>;
   onStart: () => Promise<void>;
   onPause: () => Promise<void>;
   onResume: () => Promise<void>;
@@ -1493,6 +1401,7 @@ function AetherOpsTab({
 }): ReactElement {
   const currentStep = snapshot.project.currentStep;
   const latestResult = snapshot.results.at(-1);
+  const latestFinalOutput = snapshot.finalOutputs.at(-1);
   const activeRun = snapshot.openCodeRuns.at(-1);
   const latestRag = snapshot.ragContexts.at(-1);
   const latestHybrid = snapshot.hybridContexts.at(-1);
@@ -1507,6 +1416,11 @@ function AetherOpsTab({
   const researchToolReadiness = useMemo(() => buildRuntimeResearchToolReadiness(settings, snapshot, toolDiagnostics), [settings, snapshot, toolDiagnostics]);
   const runStatusMessages = useMemo(() => prioritizedRunStatusMessages(settings, input, snapshot, toolDiagnostics), [settings, input, snapshot, toolDiagnostics]);
   const recentResearchProgramRuns = useMemo(() => recentIntegratedToolRuns(snapshot.toolRuns), [snapshot.toolRuns]);
+  const resultSummary =
+    latestFinalOutput?.finalAnswer ??
+    snapshot.report?.answer ??
+    latestResult?.answer ??
+    "루프를 실행하면 Hybrid Retrieval과 citation 기반 결과가 표시됩니다.";
   const appExternalAccess = Boolean(settings?.allowExternalSearch);
   const appCodeExecution = Boolean(settings?.allowCodeExecution);
   const projectExternalRequested = input.autonomyPolicy.allowExternalSearch;
@@ -1701,18 +1615,13 @@ function AetherOpsTab({
       </section>
 
       <div className="contentGrid">
-        <EngineeringProgramWorkbench
-          state={engineeringWorkbench}
-          result={engineeringRunResult}
-          busy={engineeringRunBusy}
-          message={engineeringRunMessage}
+        <AutonomousToolOrchestrationPanel
+          plan={latestPlan}
+          diagnostics={toolDiagnostics}
+          recentToolRuns={recentResearchProgramRuns}
           codeReady={appCodeExecution}
-          xfoilWasmReady={Boolean(
-            appCodeExecution &&
-              toolDiagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-wasm-polar:xfoil-wasm")?.ready
-          )}
-          onChange={onEngineeringWorkbenchChange}
-          onRun={onRunEngineeringWorkbench}
+          externalReady={appExternalAccess}
+          automationMode={input.autonomyPolicy.toolApproval}
         />
 
         <section className="panel wide agentPanel">
@@ -1721,7 +1630,7 @@ function AetherOpsTab({
             <h2>연구 요약</h2>
           </div>
           <div className="summaryStack">
-            <SummaryRow title="근거 기반 결과" value={latestResult?.answer ?? "루프를 실행하면 Hybrid Retrieval과 citation 기반 결과가 표시됩니다."} />
+            <SummaryRow title="근거 기반 결과" value={resultSummary} />
             <SummaryRow title="현재 연구 명세" value={researchQuestionPreview || "아직 연구 명세가 없습니다."} />
             <SummaryRow title="현재 연구 계획" value={latestPlan ? latestPlan.objective : "아직 연구 계획이 없습니다."} />
           </div>
@@ -1866,151 +1775,105 @@ function AetherOpsTab({
   );
 }
 
-function EngineeringProgramWorkbench({
-  state,
-  result,
-  busy,
-  message,
+function AutonomousToolOrchestrationPanel({
+  plan,
+  diagnostics,
+  recentToolRuns,
   codeReady,
-  xfoilWasmReady,
-  onChange,
-  onRun
+  externalReady,
+  automationMode
 }: {
-  state: EngineeringWorkbenchState;
-  result?: EngineeringProgramDirectRunResult;
-  busy: boolean;
-  message: string;
+  plan?: ResearchSnapshot["researchPlans"][number];
+  diagnostics?: RuntimeToolDiagnostics;
+  recentToolRuns: ResearchSnapshot["toolRuns"];
   codeReady: boolean;
-  xfoilWasmReady: boolean;
-  onChange: (state: EngineeringWorkbenchState) => void;
-  onRun: () => Promise<void>;
+  externalReady: boolean;
+  automationMode: ResearchProjectInput["autonomyPolicy"]["toolApproval"];
 }): ReactElement {
-  const summary = useMemo(() => engineeringRunSummary(result), [result]);
-  const rows = summary.rows;
-  const canRun = codeReady && xfoilWasmReady && Boolean(state.sourceUrl.trim()) && !busy;
+  const requests = plan?.programRequests ?? [];
+  const engineeringReady = Boolean(diagnostics?.engineeringProgramRequestTemplates.some((template) => template.ready));
+  const metadataReady = Boolean(diagnostics?.researchMetadata.ready);
   return (
-    <section className="panel wide engineeringWorkbenchPanel">
+    <section className="panel wide automationPanel">
       <div className="panelTitle">
-        <Wrench size={17} />
-        <h2>Engineering Program Workbench</h2>
+        <Bot size={17} />
+        <h2>Autonomous Tool Orchestration</h2>
       </div>
-      <div className="engineeringWorkbenchGrid">
-        <div className="engineeringWorkbenchControls">
-          <label>
-            Airfoil coordinate source URL
-            <input value={state.sourceUrl} onChange={(event) => onChange({ ...state, sourceUrl: event.target.value })} />
-          </label>
-          <div className="fieldGrid three">
-            <label>
-              Reynolds
-              <input
-                type="number"
-                min={1_000}
-                max={100_000_000}
-                step={10_000}
-                value={state.reynolds}
-                onChange={(event) => onChange({ ...state, reynolds: parseNumericInput(event.target.value, state.reynolds) })}
-              />
-            </label>
-            <label>
-              Mach
-              <input
-                type="number"
-                min={0}
-                max={0.8}
-                step={0.01}
-                value={state.mach}
-                onChange={(event) => onChange({ ...state, mach: parseNumericInput(event.target.value, state.mach) })}
-              />
-            </label>
-            <label>
-              Alpha step
-              <input
-                type="number"
-                min={0.1}
-                max={10}
-                step={0.1}
-                value={state.alphaStep}
-                onChange={(event) => onChange({ ...state, alphaStep: parseNumericInput(event.target.value, state.alphaStep) })}
-              />
-            </label>
-          </div>
-          <div className="fieldGrid three">
-            <label>
-              Alpha start
-              <input
-                type="number"
-                min={-30}
-                max={30}
-                step={0.5}
-                value={state.alphaStart}
-                onChange={(event) => onChange({ ...state, alphaStart: parseNumericInput(event.target.value, state.alphaStart) })}
-              />
-            </label>
-            <label>
-              Alpha end
-              <input
-                type="number"
-                min={-30}
-                max={30}
-                step={0.5}
-                value={state.alphaEnd}
-                onChange={(event) => onChange({ ...state, alphaEnd: parseNumericInput(event.target.value, state.alphaEnd) })}
-              />
-            </label>
-            <button className="primaryButton engineeringRunButton" type="button" onClick={() => void onRun()} disabled={!canRun}>
-              {busy ? <Loader2 className="spin" size={17} /> : <FlaskConical size={17} />}
-              Run XFOIL-WASM
-            </button>
-          </div>
-          <div className="engineeringStatusGrid">
-            <span className={codeReady ? "ready" : "blocked"}>Code execution {codeReady ? "ready" : "blocked"}</span>
-            <span className={xfoilWasmReady ? "ready" : "blocked"}>XFOIL-WASM {xfoilWasmReady ? "ready" : "blocked"}</span>
-            {message ? <span className={result?.status === "completed" ? "ready" : "blocked"}>{message}</span> : null}
-          </div>
+      <div className="automationStatusGrid">
+        <span className={automationMode === "automatic" ? "ready" : "idle"}>mode {automationMode}</span>
+        <span className={externalReady ? "ready" : "blocked"}>external {externalReady ? "ready" : "blocked"}</span>
+        <span className={codeReady ? "ready" : "blocked"}>programs {codeReady ? "ready" : "blocked"}</span>
+        <span className={metadataReady ? "ready" : "idle"}>metadata {metadataReady ? "ready" : "idle"}</span>
+        <span className={engineeringReady ? "ready" : "idle"}>engineering {engineeringReady ? "ready" : "idle"}</span>
+      </div>
+      <div className="automationPlanGrid">
+        <div className="automationBlock">
+          <h3>Latest LLM Tool Plan</h3>
+          <p>{plan?.requiredTools.length ? plan.requiredTools.join(" / ") : "No plan yet"}</p>
         </div>
-        <div className="engineeringWorkbenchResult">
-          <div className="engineeringResultHeader">
-            <strong>{summary.airfoil || "No run yet"}</strong>
-            <span>{result ? `${result.status} / artifacts ${result.artifacts.length} / evidence ${result.evidence.length}` : "ready for direct operation"}</span>
-          </div>
-          {result?.savedReportArtifact ? <p className="engineeringSavedReport">Saved report: {result.savedReportArtifact.relativePath}</p> : null}
-          {summary.runtime ? (
-            <p className="engineeringResultMeta">
-              {summary.runtime} {summary.runtimeVersion} / {summary.runtimeLicense} / rows {summary.rowCount ?? rows.length}
-            </p>
-          ) : null}
-          {rows.length ? (
-            <div className="engineeringTableWrap">
-              <table className="engineeringResultTable">
-                <thead>
-                  <tr>
-                    <th>alpha</th>
-                    <th>CL</th>
-                    <th>CD</th>
-                    <th>Cm</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={`${row.alpha}-${row.cl}-${row.cd}`}>
-                      <td>{formatEngineeringNumber(row.alpha)}</td>
-                      <td>{formatEngineeringNumber(row.cl)}</td>
-                      <td>{formatEngineeringNumber(row.cd)}</td>
-                      <td>{formatEngineeringNumber(row.cm)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        <div className="automationBlock">
+          <h3>Automatic Program Requests</h3>
+          {requests.length ? (
+            <div className="automationRequestList">
+              {requests.map((request, index) => (
+                <article key={`${request.kind}-${request.target ?? "target"}-${index}`} className="automationRequestItem">
+                  <strong>{request.kind}</strong>
+                  <span>{programRequestTargetLabel(request)}</span>
+                  <p>{programRequestInputLabel(request)}</p>
+                  {request.reason ? <small>{request.reason}</small> : null}
+                </article>
+              ))}
             </div>
           ) : (
-            <p className="engineeringEmpty">Run the bundled XFOIL-WASM solver to generate a real polar table.</p>
+            <p>No program request in the latest plan.</p>
           )}
         </div>
       </div>
-      {result?.reportMarkdown ? <pre className="engineeringReport">{result.reportMarkdown}</pre> : null}
+      <div className="automationRunList">
+        {recentToolRuns.length ? (
+          recentToolRuns.map((toolRun) => (
+            <article key={toolRun.id} className={`automationRunItem ${toolRun.status}`}>
+              <strong>{toolRun.toolName}</strong>
+              <span>{toolRun.status}</span>
+              <p>{toolRun.error ?? toolRunOutputSummary(toolRun.output)}</p>
+            </article>
+          ))
+        ) : (
+          <p className="empty">No autonomous metadata or engineering tool run yet.</p>
+        )}
+      </div>
     </section>
   );
+}
+
+function programRequestTargetLabel(request: EngineeringProgramRequest): string {
+  const parts = [request.target ?? "auto-target"];
+  if (request.reynolds !== undefined) parts.push(`Re ${formatEngineeringNumber(request.reynolds)}`);
+  if (request.mach !== undefined) parts.push(`Mach ${formatEngineeringNumber(request.mach)}`);
+  if (request.alphaStart !== undefined || request.alphaEnd !== undefined || request.alphaStep !== undefined) {
+    parts.push(`alpha ${formatEngineeringNumber(request.alphaStart)}..${formatEngineeringNumber(request.alphaEnd)} step ${formatEngineeringNumber(request.alphaStep)}`);
+  }
+  return parts.join(" / ");
+}
+
+function programRequestInputLabel(request: EngineeringProgramRequest): string {
+  if (request.artifactPath) return request.artifactPath;
+  if (request.sourceUrl) return request.sourceUrl;
+  if (request.naca) return `NACA ${request.naca}`;
+  return request.outputFileName ?? "structured request";
+}
+
+function toolRunOutputSummary(output: unknown): string {
+  if (!output || typeof output !== "object") return String(output ?? "");
+  const record = output as Record<string, unknown>;
+  const artifactCount = typeof record.artifactCount === "number" ? record.artifactCount : undefined;
+  const outputs = Array.isArray(record.outputs) ? record.outputs : undefined;
+  const parts: string[] = [];
+  if (artifactCount !== undefined) parts.push(`artifacts ${artifactCount}`);
+  if (outputs?.length) parts.push(`program outputs ${outputs.length}`);
+  if (typeof record.resultCount === "number") parts.push(`results ${record.resultCount}`);
+  if (typeof record.fetchedPages === "number") parts.push(`fetched pages ${record.fetchedPages}`);
+  return parts.length ? parts.join(" / ") : JSON.stringify(record).slice(0, 220);
 }
 
 function SettingsTab({
@@ -2383,7 +2246,7 @@ function SettingsTab({
               <Wrench size={17} />
               <h3>Engineering programs</h3>
             </div>
-            <span>XFOIL / SU2 / OpenVSP / CFD adapters</span>
+            <span>XFOIL / SU2 / OpenVSP / XFLR5</span>
             <ChevronDown size={15} />
           </summary>
           <div className="preflightPanel">
@@ -2502,7 +2365,19 @@ function SettingsTab({
             </label>
           </div>
           <label>
-            XFOIL command
+            Embedded toolchain root
+            <input
+              value={settingsDraft.engineeringTools.toolchainRoot ?? "vendor/engineering-tools"}
+              onChange={(event) =>
+                onSettingsDraftChange({
+                  ...settingsDraft,
+                  engineeringTools: { ...settingsDraft.engineeringTools, toolchainRoot: event.target.value }
+                })
+              }
+            />
+          </label>
+          <label>
+            XFOIL embedded executable
             <input
               value={settingsDraft.engineeringTools.xfoil.command ?? ""}
               list="xfoil-command-options"
@@ -2575,127 +2450,6 @@ function SettingsTab({
           </label>
           <div className="fieldGrid">
             <label>
-              OpenFOAM
-              <select
-                value={settingsDraft.engineeringTools.openFoam.enabled ? "true" : "false"}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      openFoam: { ...settingsDraft.engineeringTools.openFoam, enabled: event.target.value === "true" }
-                    }
-                  })
-                }
-              >
-                <option value="false">disabled</option>
-                <option value="true">enabled</option>
-              </select>
-            </label>
-            <label>
-              OpenFOAM timeout(ms)
-              <NumberSelect
-                value={settingsDraft.engineeringTools.openFoam.timeoutMs}
-                options={engineeringTimeoutOptions}
-                onChange={(timeoutMs) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      openFoam: { ...settingsDraft.engineeringTools.openFoam, timeoutMs }
-                    }
-                  })
-                }
-              />
-            </label>
-          </div>
-          <div className="fieldGrid">
-            <label>
-              OpenFOAM command
-              <input
-                value={settingsDraft.engineeringTools.openFoam.command ?? ""}
-                list="openfoam-command-options"
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      openFoam: { ...settingsDraft.engineeringTools.openFoam, command: event.target.value }
-                    }
-                  })
-                }
-              />
-              <datalist id="openfoam-command-options">
-                {openFoamCommandOptions.map((option) => (
-                  <option key={option || "empty"} value={option} />
-                ))}
-              </datalist>
-            </label>
-            <label>
-              OpenFOAM case root
-              <input
-                value={settingsDraft.engineeringTools.openFoam.caseRoot ?? ""}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      openFoam: { ...settingsDraft.engineeringTools.openFoam, caseRoot: event.target.value }
-                    }
-                  })
-                }
-              />
-            </label>
-          </div>
-          <label>
-            OpenFOAM workdir
-            <input
-              value={settingsDraft.engineeringTools.openFoam.workingDirectory ?? ""}
-              onChange={(event) =>
-                onSettingsDraftChange({
-                  ...settingsDraft,
-                  engineeringTools: {
-                    ...settingsDraft.engineeringTools,
-                    openFoam: { ...settingsDraft.engineeringTools.openFoam, workingDirectory: event.target.value }
-                  }
-                })
-              }
-            />
-          </label>
-          <div className="fieldGrid">
-            <label>
-              OpenFOAM args template
-              <textarea
-                value={joinArgTemplate(settingsDraft.engineeringTools.openFoam.runArgsTemplate)}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      openFoam: { ...settingsDraft.engineeringTools.openFoam, runArgsTemplate: splitArgTemplate(event.target.value) }
-                    }
-                  })
-                }
-              />
-            </label>
-            <label>
-              OpenFOAM probe args
-              <textarea
-                value={joinArgTemplate(settingsDraft.engineeringTools.openFoam.probeArgs)}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      openFoam: { ...settingsDraft.engineeringTools.openFoam, probeArgs: splitArgTemplate(event.target.value) }
-                    }
-                  })
-                }
-              />
-            </label>
-          </div>
-          <div className="fieldGrid">
-            <label>
               SU2
               <select
                 value={settingsDraft.engineeringTools.su2.enabled ? "true" : "false"}
@@ -2732,7 +2486,7 @@ function SettingsTab({
           </div>
           <div className="fieldGrid">
             <label>
-              SU2 command
+              SU2 embedded executable
               <input
                 value={settingsDraft.engineeringTools.su2.command ?? ""}
                 list="su2-command-options"
@@ -2835,127 +2589,6 @@ function SettingsTab({
           </div>
           <div className="fieldGrid">
             <label>
-              FreeCAD
-              <select
-                value={settingsDraft.engineeringTools.freeCad.enabled ? "true" : "false"}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      freeCad: { ...settingsDraft.engineeringTools.freeCad, enabled: event.target.value === "true" }
-                    }
-                  })
-                }
-              >
-                <option value="false">disabled</option>
-                <option value="true">enabled</option>
-              </select>
-            </label>
-            <label>
-              FreeCAD timeout(ms)
-              <NumberSelect
-                value={settingsDraft.engineeringTools.freeCad.timeoutMs}
-                options={engineeringTimeoutOptions}
-                onChange={(timeoutMs) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      freeCad: { ...settingsDraft.engineeringTools.freeCad, timeoutMs }
-                    }
-                  })
-                }
-              />
-            </label>
-          </div>
-          <div className="fieldGrid">
-            <label>
-              FreeCAD command
-              <input
-                value={settingsDraft.engineeringTools.freeCad.command ?? ""}
-                list="freecad-command-options"
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      freeCad: { ...settingsDraft.engineeringTools.freeCad, command: event.target.value }
-                    }
-                  })
-                }
-              />
-              <datalist id="freecad-command-options">
-                {freeCadCommandOptions.map((option) => (
-                  <option key={option || "empty"} value={option} />
-                ))}
-              </datalist>
-            </label>
-            <label>
-              FreeCAD script path
-              <input
-                value={settingsDraft.engineeringTools.freeCad.scriptPath ?? ""}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      freeCad: { ...settingsDraft.engineeringTools.freeCad, scriptPath: event.target.value }
-                    }
-                  })
-                }
-              />
-            </label>
-          </div>
-          <label>
-            FreeCAD workdir
-            <input
-              value={settingsDraft.engineeringTools.freeCad.workingDirectory ?? ""}
-              onChange={(event) =>
-                onSettingsDraftChange({
-                  ...settingsDraft,
-                  engineeringTools: {
-                    ...settingsDraft.engineeringTools,
-                    freeCad: { ...settingsDraft.engineeringTools.freeCad, workingDirectory: event.target.value }
-                  }
-                })
-              }
-            />
-          </label>
-          <div className="fieldGrid">
-            <label>
-              FreeCAD args template
-              <textarea
-                value={joinArgTemplate(settingsDraft.engineeringTools.freeCad.runArgsTemplate)}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      freeCad: { ...settingsDraft.engineeringTools.freeCad, runArgsTemplate: splitArgTemplate(event.target.value) }
-                    }
-                  })
-                }
-              />
-            </label>
-            <label>
-              FreeCAD probe args
-              <textarea
-                value={joinArgTemplate(settingsDraft.engineeringTools.freeCad.probeArgs)}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      freeCad: { ...settingsDraft.engineeringTools.freeCad, probeArgs: splitArgTemplate(event.target.value) }
-                    }
-                  })
-                }
-              />
-            </label>
-          </div>
-          <div className="fieldGrid">
-            <label>
               OpenVSP
               <select
                 value={settingsDraft.engineeringTools.openVsp.enabled ? "true" : "false"}
@@ -2992,7 +2625,7 @@ function SettingsTab({
           </div>
           <div className="fieldGrid">
             <label>
-              OpenVSP command
+              OpenVSP embedded executable
               <input
                 value={settingsDraft.engineeringTools.openVsp.command ?? ""}
                 list="openvsp-command-options"
@@ -3013,7 +2646,7 @@ function SettingsTab({
               </datalist>
             </label>
             <label>
-              OpenVSP script path
+              OpenVSP custom script path
               <input
                 value={settingsDraft.engineeringTools.openVsp.scriptPath ?? ""}
                 onChange={(event) =>
@@ -3045,7 +2678,7 @@ function SettingsTab({
           </label>
           <div className="fieldGrid">
             <label>
-              OpenVSP args template
+              OpenVSP custom args template
               <textarea
                 value={joinArgTemplate(settingsDraft.engineeringTools.openVsp.runArgsTemplate)}
                 onChange={(event) =>
@@ -3077,140 +2710,34 @@ function SettingsTab({
           </div>
           <div className="fieldGrid">
             <label>
-              FlightStream
+              XFLR5
               <select
-                value={settingsDraft.engineeringTools.commercialCfd.flightStreamConfigured ? "true" : "false"}
+                value={settingsDraft.engineeringTools.xflr5.enabled ? "true" : "false"}
                 onChange={(event) =>
                   onSettingsDraftChange({
                     ...settingsDraft,
                     engineeringTools: {
                       ...settingsDraft.engineeringTools,
-                      commercialCfd: {
-                        ...settingsDraft.engineeringTools.commercialCfd,
-                        flightStreamConfigured: event.target.value === "true"
-                      }
+                      xflr5: { ...settingsDraft.engineeringTools.xflr5, enabled: event.target.value === "true" }
                     }
                   })
                 }
               >
-                <option value="false">not configured</option>
-                <option value="true">licensed externally</option>
+                <option value="false">disabled</option>
+                <option value="true">enabled</option>
               </select>
             </label>
             <label>
-              STAR-CCM+
-              <select
-                value={settingsDraft.engineeringTools.commercialCfd.starCcmConfigured ? "true" : "false"}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      commercialCfd: {
-                        ...settingsDraft.engineeringTools.commercialCfd,
-                        starCcmConfigured: event.target.value === "true"
-                      }
-                    }
-                  })
-                }
-              >
-                <option value="false">not configured</option>
-                <option value="true">licensed externally</option>
-              </select>
-            </label>
-          </div>
-          <div className="fieldGrid">
-            <label>
-              FlightStream command
-              <input
-                value={settingsDraft.engineeringTools.commercialCfd.flightStreamCommand ?? ""}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamCommand: event.target.value }
-                    }
-                  })
-                }
-              />
-            </label>
-            <label>
-              STAR-CCM+ command
-              <input
-                value={settingsDraft.engineeringTools.commercialCfd.starCcmCommand ?? ""}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmCommand: event.target.value }
-                    }
-                  })
-                }
-              />
-            </label>
-          </div>
-          <div className="fieldGrid">
-            <label>
-              FlightStream workdir
-              <input
-                value={settingsDraft.engineeringTools.commercialCfd.flightStreamWorkingDirectory ?? ""}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamWorkingDirectory: event.target.value }
-                    }
-                  })
-                }
-              />
-            </label>
-            <label>
-              STAR-CCM+ workdir
-              <input
-                value={settingsDraft.engineeringTools.commercialCfd.starCcmWorkingDirectory ?? ""}
-                onChange={(event) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmWorkingDirectory: event.target.value }
-                    }
-                  })
-                }
-              />
-            </label>
-          </div>
-          <div className="fieldGrid">
-            <label>
-              FlightStream timeout(ms)
+              XFLR5 timeout(ms)
               <NumberSelect
-                value={settingsDraft.engineeringTools.commercialCfd.flightStreamTimeoutMs}
+                value={settingsDraft.engineeringTools.xflr5.timeoutMs}
                 options={engineeringTimeoutOptions}
-                onChange={(flightStreamTimeoutMs) =>
+                onChange={(timeoutMs) =>
                   onSettingsDraftChange({
                     ...settingsDraft,
                     engineeringTools: {
                       ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamTimeoutMs }
-                    }
-                  })
-                }
-              />
-            </label>
-            <label>
-              STAR-CCM+ timeout(ms)
-              <NumberSelect
-                value={settingsDraft.engineeringTools.commercialCfd.starCcmTimeoutMs}
-                options={engineeringTimeoutOptions}
-                onChange={(starCcmTimeoutMs) =>
-                  onSettingsDraftChange({
-                    ...settingsDraft,
-                    engineeringTools: {
-                      ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmTimeoutMs }
+                      xflr5: { ...settingsDraft.engineeringTools.xflr5, timeoutMs }
                     }
                   })
                 }
@@ -3219,62 +2746,83 @@ function SettingsTab({
           </div>
           <div className="fieldGrid">
             <label>
-              FlightStream args template
-              <textarea
-                value={joinArgTemplate(settingsDraft.engineeringTools.commercialCfd.flightStreamRunArgsTemplate)}
+              XFLR5 embedded executable
+              <input
+                value={settingsDraft.engineeringTools.xflr5.command ?? ""}
+                list="xflr5-command-options"
                 onChange={(event) =>
                   onSettingsDraftChange({
                     ...settingsDraft,
                     engineeringTools: {
                       ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamRunArgsTemplate: splitArgTemplate(event.target.value) }
+                      xflr5: { ...settingsDraft.engineeringTools.xflr5, command: event.target.value }
                     }
                   })
                 }
               />
+              <datalist id="xflr5-command-options">
+                {xflr5CommandOptions.map((option) => (
+                  <option key={option || "empty"} value={option} />
+                ))}
+              </datalist>
             </label>
             <label>
-              STAR-CCM+ args template
-              <textarea
-                value={joinArgTemplate(settingsDraft.engineeringTools.commercialCfd.starCcmRunArgsTemplate)}
+              XFLR5 custom script path
+              <input
+                value={settingsDraft.engineeringTools.xflr5.scriptPath ?? ""}
                 onChange={(event) =>
                   onSettingsDraftChange({
                     ...settingsDraft,
                     engineeringTools: {
                       ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmRunArgsTemplate: splitArgTemplate(event.target.value) }
+                      xflr5: { ...settingsDraft.engineeringTools.xflr5, scriptPath: event.target.value }
                     }
                   })
                 }
               />
             </label>
           </div>
+          <label>
+            XFLR5 workdir
+            <input
+              value={settingsDraft.engineeringTools.xflr5.workingDirectory ?? ""}
+              onChange={(event) =>
+                onSettingsDraftChange({
+                  ...settingsDraft,
+                  engineeringTools: {
+                    ...settingsDraft.engineeringTools,
+                    xflr5: { ...settingsDraft.engineeringTools.xflr5, workingDirectory: event.target.value }
+                  }
+                })
+              }
+            />
+          </label>
           <div className="fieldGrid">
             <label>
-              FlightStream probe args
+              XFLR5 custom args template
               <textarea
-                value={joinArgTemplate(settingsDraft.engineeringTools.commercialCfd.flightStreamProbeArgs)}
+                value={joinArgTemplate(settingsDraft.engineeringTools.xflr5.runArgsTemplate)}
                 onChange={(event) =>
                   onSettingsDraftChange({
                     ...settingsDraft,
                     engineeringTools: {
                       ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, flightStreamProbeArgs: splitArgTemplate(event.target.value) }
+                      xflr5: { ...settingsDraft.engineeringTools.xflr5, runArgsTemplate: splitArgTemplate(event.target.value) }
                     }
                   })
                 }
               />
             </label>
             <label>
-              STAR-CCM+ probe args
+              XFLR5 probe args
               <textarea
-                value={joinArgTemplate(settingsDraft.engineeringTools.commercialCfd.starCcmProbeArgs)}
+                value={joinArgTemplate(settingsDraft.engineeringTools.xflr5.probeArgs)}
                 onChange={(event) =>
                   onSettingsDraftChange({
                     ...settingsDraft,
                     engineeringTools: {
                       ...settingsDraft.engineeringTools,
-                      commercialCfd: { ...settingsDraft.engineeringTools.commercialCfd, starCcmProbeArgs: splitArgTemplate(event.target.value) }
+                      xflr5: { ...settingsDraft.engineeringTools.xflr5, probeArgs: splitArgTemplate(event.target.value) }
                     }
                   })
                 }
@@ -3352,62 +2900,6 @@ function SettingsTab({
       </footer>
     </section>
   );
-}
-
-interface EngineeringRunSummaryView {
-  airfoil?: string;
-  runtime?: string;
-  runtimeVersion?: string;
-  runtimeLicense?: string;
-  rowCount?: number;
-  rows: Array<{ alpha?: number; cl?: number; cd?: number; cm?: number }>;
-}
-
-function engineeringRunSummary(result: EngineeringProgramDirectRunResult | undefined): EngineeringRunSummaryView {
-  if (!result) return { rows: [] };
-  for (const run of result.programRuns) {
-    const summary = asPlainRecord(asPlainRecord(run)?.summary);
-    const rows = Array.isArray(summary?.rows) ? summary.rows.map(engineeringPolarRow).filter((row) => row.alpha !== undefined) : [];
-    if (summary) {
-      return {
-        airfoil: optionalText(summary.airfoil),
-        runtime: optionalText(summary.runtime),
-        runtimeVersion: optionalText(summary.runtimeVersion),
-        runtimeLicense: optionalText(summary.runtimeLicense),
-        rowCount: optionalNumber(summary.rowCount),
-        rows
-      };
-    }
-  }
-  return { rows: [] };
-}
-
-function engineeringPolarRow(value: unknown): { alpha?: number; cl?: number; cd?: number; cm?: number } {
-  const row = asPlainRecord(value);
-  return {
-    alpha: optionalNumber(row?.alpha),
-    cl: optionalNumber(row?.cl),
-    cd: optionalNumber(row?.cd),
-    cm: optionalNumber(row?.cm)
-  };
-}
-
-function asPlainRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
-}
-
-function optionalText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function optionalNumber(value: unknown): number | undefined {
-  const next = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(next) ? next : undefined;
-}
-
-function parseNumericInput(value: string, previous: number): number {
-  const next = Number(value);
-  return Number.isFinite(next) ? next : previous;
 }
 
 function formatEngineeringNumber(value: number | undefined): string {
@@ -3538,52 +3030,31 @@ function buildResearchToolReadiness(
   const xfoilCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "xfoil-polar");
   const xfoilWasmCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "xfoil-wasm-polar");
   const modelingCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "mesh-inspect");
-  const openFoamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "openfoam-case-run");
   const su2Capability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "su2-case-run");
-  const freeCadCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "cad-script-run");
-  const openVspCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "vsp-script-run");
-  const flightStreamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "flightstream");
-  const starCcmCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "starccm");
-  const xfoilConfigured = diagnostics ? Boolean(codeAllowed && xfoilCapability?.ready) : Boolean(settings?.engineeringTools.xfoil.enabled && settings.engineeringTools.xfoil.command?.trim());
-  const xfoilWasmConfigured = diagnostics ? Boolean(codeAllowed && xfoilWasmCapability?.ready) : Boolean(codeAllowed && settings?.engineeringTools.enabled);
+  const openVspCapability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "openvsp-analysis-run");
+  const xflr5Capability = diagnostics?.engineeringPrograms.find((capability) => capability.kind === "xflr5-analysis-run");
+  const xfoilConfigured = Boolean(diagnostics && codeAllowed && xfoilCapability?.ready);
+  const xfoilWasmConfigured = Boolean(diagnostics && codeAllowed && xfoilWasmCapability?.ready);
   const modelingConfigured = diagnostics
     ? Boolean(codeAllowed && modelingCapability?.ready)
-    : Boolean(settings?.engineeringTools.modeling.enabled && settings.engineeringTools.modeling.artifactRoot?.trim());
-  const openFoamConfigured = diagnostics
-    ? Boolean(codeAllowed && openFoamCapability?.ready)
-    : Boolean(settings?.engineeringTools.openFoam.enabled && settings.engineeringTools.openFoam.command?.trim() && settings.engineeringTools.openFoam.caseRoot?.trim());
+    : false;
   const su2Configured = diagnostics
     ? Boolean(codeAllowed && su2Capability?.ready)
-    : Boolean(settings?.engineeringTools.su2.enabled && settings.engineeringTools.su2.command?.trim() && settings.engineeringTools.su2.caseRoot?.trim() && settings.engineeringTools.su2.configFile?.trim());
-  const freeCadConfigured = diagnostics
-    ? Boolean(codeAllowed && freeCadCapability?.ready)
-    : Boolean(settings?.engineeringTools.freeCad.enabled && settings.engineeringTools.freeCad.command?.trim() && settings.engineeringTools.freeCad.scriptPath?.trim());
+    : false;
   const openVspConfigured = diagnostics
     ? Boolean(codeAllowed && openVspCapability?.ready)
-    : Boolean(settings?.engineeringTools.openVsp.enabled && settings.engineeringTools.openVsp.command?.trim() && settings.engineeringTools.openVsp.scriptPath?.trim());
-  const flightStreamConfigured = Boolean(codeAllowed && flightStreamCapability?.ready);
-  const starCcmConfigured = Boolean(codeAllowed && starCcmCapability?.ready);
-  const engineeringReady = Boolean(codeAllowed && (xfoilConfigured || xfoilWasmConfigured || modelingConfigured || openFoamConfigured || su2Configured || freeCadConfigured || openVspConfigured));
-  const commercialConfigured = diagnostics
-    ? Boolean(flightStreamConfigured || starCcmConfigured)
-    : Boolean(
-        (settings?.engineeringTools.commercialCfd.flightStreamConfigured && settings.engineeringTools.commercialCfd.flightStreamCommand?.trim()) ||
-          (settings?.engineeringTools.commercialCfd.starCcmConfigured && settings.engineeringTools.commercialCfd.starCcmCommand?.trim())
-      );
+    : false;
+  const xflr5Configured = diagnostics
+    ? Boolean(codeAllowed && xflr5Capability?.ready)
+    : false;
+  const engineeringReady = Boolean(codeAllowed && (xfoilConfigured || xfoilWasmConfigured || modelingConfigured || su2Configured || openVspConfigured || xflr5Configured));
   const metadataBlockedReason = !snapshot.project.autonomyPolicy.allowExternalSearch
     ? "Project autonomy blocks external search."
     : (diagnostics?.researchMetadata.blockedReason ?? "외부 접근 또는 metadata 설정 필요");
   const engineeringBlockedReason = !snapshot.project.autonomyPolicy.allowCodeExecution
     ? "Project autonomy blocks code execution."
     : (diagnostics?.engineeringPrograms.find((capability) => capability.target === "all")?.blockedReason ??
-      "코드 실행 허용과 XFOIL command 또는 modeling artifact root 필요");
-  const commercialBlockedReason = !snapshot.project.autonomyPolicy.allowCodeExecution
-    ? "Project autonomy blocks code execution."
-    : joinPresent(
-        " / ",
-        flightStreamCapability?.ready ? "FlightStream adapter ready" : flightStreamCapability?.blockedReason,
-        starCcmCapability?.ready ? "STAR-CCM+ adapter ready" : starCcmCapability?.blockedReason
-      ) || "FlightStream / STAR-CCM+ command adapter 설정 전까지 차단";
+      "Code execution plus an embedded engineering toolchain, bundled XFOIL-WASM, or modeling artifact root is required.");
 
   return [
     {
@@ -3599,18 +3070,10 @@ function buildResearchToolReadiness(
       label: "Headless program tools",
       badge: engineeringReady ? "실행 가능" : "설정 필요",
       detail: engineeringReady
-        ? `XFOIL ${xfoilConfigured ? "on" : "off"} / XFOIL-WASM ${xfoilWasmConfigured ? "on" : "off"} / mesh ${modelingConfigured ? "on" : "off"} / OpenFOAM ${openFoamConfigured ? "on" : "off"} / SU2 ${su2Configured ? "on" : "off"} / FreeCAD ${freeCadConfigured ? "on" : "off"} / OpenVSP ${openVspConfigured ? "on" : "off"}`
-        : "코드 실행 허용과 XFOIL, XFOIL-WASM, parser-valid mesh, OpenFOAM/SU2 case, FreeCAD script, 또는 OpenVSP script 설정 필요",
+        ? `XFOIL ${xfoilConfigured ? "on" : "off"} / XFOIL-WASM ${xfoilWasmConfigured ? "on" : "off"} / mesh ${modelingConfigured ? "on" : "off"} / SU2 ${su2Configured ? "on" : "off"} / OpenVSP ${openVspConfigured ? "on" : "off"} / XFLR5 ${xflr5Configured ? "on" : "off"}`
+        : "Code execution plus XFOIL, XFOIL-WASM, SU2, OpenVSP, XFLR5, or modeling artifact settings are required.",
       status: engineeringReady ? "ready" : "blocked",
       icon: Wrench
-    },
-    {
-      id: "commercial-cfd",
-      label: "Commercial CFD",
-      badge: commercialConfigured ? "라이선스 확인 필요" : "미설정",
-      detail: commercialConfigured ? "설정된 adapter command만 LLM 계획에서 실행 가능" : "FlightStream / STAR-CCM+는 command adapter 설정 전까지 차단",
-      status: commercialConfigured ? "ready" : "blocked",
-      icon: HardDrive
     }
   ];
 }
@@ -3627,60 +3090,37 @@ function buildRuntimeResearchToolReadiness(
   const externalAllowed = appExternalAllowed && projectExternalAllowed;
   const codeAllowed = appCodeAllowed && projectCodeAllowed;
   const metadataReady = Boolean(externalAllowed && (diagnostics ? diagnostics.researchMetadata.ready : settings?.researchMetadata.enabled));
-  const flightStreamCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "flightstream");
-  const starCcmCapability = diagnostics?.engineeringPrograms.find((capability) => capability.target === "starccm");
   const xfoilTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-polar:xfoil");
   const xfoilWasmTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xfoil-wasm-polar:xfoil-wasm");
   const modelingTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "mesh-inspect:modeling");
-  const openFoamTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "openfoam-case-run:openfoam");
   const su2Template = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "su2-case-run:su2");
-  const freeCadTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "cad-script-run:freecad");
-  const openVspTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "vsp-script-run:openvsp");
-  const flightStreamTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "commercial-cfd-run:flightstream");
-  const starCcmTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "commercial-cfd-run:starccm");
-  const xfoilReady = diagnostics ? Boolean(codeAllowed && xfoilTemplate?.ready) : Boolean(codeAllowed && settings?.engineeringTools.xfoil.enabled && settings.engineeringTools.xfoil.command?.trim());
-  const xfoilWasmReady = diagnostics ? Boolean(codeAllowed && xfoilWasmTemplate?.ready) : Boolean(codeAllowed && settings?.engineeringTools.enabled);
+  const openVspTemplate = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp");
+  const xflr5Template = diagnostics?.engineeringProgramRequestTemplates.find((template) => template.id === "xflr5-analysis-run:xflr5");
+  const xfoilReady = Boolean(diagnostics && codeAllowed && xfoilTemplate?.ready);
+  const xfoilWasmReady = Boolean(diagnostics && codeAllowed && xfoilWasmTemplate?.ready);
   const modelingReady = diagnostics
     ? Boolean(codeAllowed && modelingTemplate?.ready)
-    : Boolean(codeAllowed && settings?.engineeringTools.modeling.enabled && settings.engineeringTools.modeling.artifactRoot?.trim());
-  const openFoamReady = diagnostics
-    ? Boolean(codeAllowed && openFoamTemplate?.ready)
-    : Boolean(codeAllowed && settings?.engineeringTools.openFoam.enabled && settings.engineeringTools.openFoam.command?.trim() && settings.engineeringTools.openFoam.caseRoot?.trim());
+    : false;
   const su2Ready = diagnostics
     ? Boolean(codeAllowed && su2Template?.ready)
-    : Boolean(codeAllowed && settings?.engineeringTools.su2.enabled && settings.engineeringTools.su2.command?.trim() && settings.engineeringTools.su2.caseRoot?.trim() && settings.engineeringTools.su2.configFile?.trim());
-  const freeCadReady = diagnostics
-    ? Boolean(codeAllowed && freeCadTemplate?.ready)
-    : Boolean(codeAllowed && settings?.engineeringTools.freeCad.enabled && settings.engineeringTools.freeCad.command?.trim() && settings.engineeringTools.freeCad.scriptPath?.trim());
+    : false;
   const openVspReady = diagnostics
     ? Boolean(codeAllowed && openVspTemplate?.ready)
-    : Boolean(codeAllowed && settings?.engineeringTools.openVsp.enabled && settings.engineeringTools.openVsp.command?.trim() && settings.engineeringTools.openVsp.scriptPath?.trim());
-  const flightStreamReady = diagnostics
-    ? Boolean(codeAllowed && flightStreamTemplate?.ready)
-    : Boolean(codeAllowed && settings?.engineeringTools.commercialCfd.flightStreamConfigured && settings.engineeringTools.commercialCfd.flightStreamCommand?.trim());
-  const starCcmReady = diagnostics
-    ? Boolean(codeAllowed && starCcmTemplate?.ready)
-    : Boolean(codeAllowed && settings?.engineeringTools.commercialCfd.starCcmConfigured && settings.engineeringTools.commercialCfd.starCcmCommand?.trim());
-  const engineeringReady = xfoilReady || xfoilWasmReady || modelingReady || openFoamReady || su2Ready || freeCadReady || openVspReady;
-  const commercialReady = flightStreamReady || starCcmReady;
+    : false;
+  const xflr5Ready = diagnostics
+    ? Boolean(codeAllowed && xflr5Template?.ready)
+    : false;
+  const engineeringReady = xfoilReady || xfoilWasmReady || modelingReady || su2Ready || openVspReady || xflr5Ready;
   const engineeringArtifactBlockedReason = diagnostics?.blockers.find((blocker) => blocker.key === "engineeringArtifacts")?.message;
   const metadataBlockedReason = projectExternalAllowed
     ? (diagnostics?.researchMetadata.blockedReason ?? "외부 접근 또는 OpenAlex metadata 설정이 필요합니다.")
     : "Project autonomy blocks external search.";
   const engineeringBlockedReason = projectCodeAllowed
     ? (engineeringArtifactBlockedReason ?? diagnostics?.engineeringPrograms.find((capability) => capability.target === "all")?.blockedReason ??
-      "XFOIL command 또는 modeling artifact root가 필요합니다.")
-    : "Project autonomy blocks code execution.";
-  const commercialBlockedReason = projectCodeAllowed
-    ? joinPresent(
-        " / ",
-        flightStreamCapability?.ready ? "FlightStream adapter ready" : flightStreamCapability?.blockedReason,
-        starCcmCapability?.ready ? "STAR-CCM+ adapter ready" : starCcmCapability?.blockedReason
-      ) || "FlightStream / STAR-CCM+ command adapter 설정이 필요합니다."
+      "An embedded engineering toolchain, bundled XFOIL-WASM, or modeling artifact root is required.")
     : "Project autonomy blocks code execution.";
   const metadataStatus: ToolReadinessStatus = metadataReady ? "ready" : projectExternalAllowed ? "blocked" : "idle";
   const engineeringStatus: ToolReadinessStatus = engineeringReady ? "ready" : projectCodeAllowed ? "blocked" : "idle";
-  const commercialStatus: ToolReadinessStatus = commercialReady ? "ready" : projectCodeAllowed ? "blocked" : "idle";
 
   return [
     {
@@ -3700,34 +3140,34 @@ function buildRuntimeResearchToolReadiness(
       label: "Headless program tools",
       badge: engineeringReady ? "Ready" : projectCodeAllowed ? "Blocked" : "Off",
       detail: engineeringReady
-        ? `XFOIL ${xfoilReady ? "ready" : "blocked"} / XFOIL-WASM ${xfoilWasmReady ? "ready" : "blocked"} / mesh ${modelingReady ? "ready" : "blocked"} / OpenFOAM ${openFoamReady ? "ready" : "blocked"} / SU2 ${su2Ready ? "ready" : "blocked"} / FreeCAD ${freeCadReady ? "ready" : "blocked"} / OpenVSP ${openVspReady ? "ready" : "blocked"}`
+        ? `XFOIL ${xfoilReady ? "ready" : "blocked"} / XFOIL-WASM ${xfoilWasmReady ? "ready" : "blocked"} / mesh ${modelingReady ? "ready" : "blocked"} / SU2 ${su2Ready ? "ready" : "blocked"} / OpenVSP ${openVspReady ? "ready" : "blocked"} / XFLR5 ${xflr5Ready ? "ready" : "blocked"}`
         : projectCodeAllowed
           ? engineeringBlockedReason
           : "Project policy keeps program execution off.",
       status: engineeringStatus,
       icon: Wrench
-    },
-    {
-      id: "commercial-cfd",
-      label: "Commercial CFD",
-      badge: commercialReady ? "Adapter ready" : projectCodeAllowed ? "Blocked" : "Off",
-      detail: commercialReady
-        ? `FlightStream ${flightStreamReady ? "ready" : "blocked"} / STAR-CCM+ ${starCcmReady ? "ready" : "blocked"}`
-        : projectCodeAllowed
-          ? commercialBlockedReason
-          : "Project policy keeps commercial CFD off.",
-      status: commercialStatus,
-      icon: HardDrive
     }
   ];
 }
 
 function recentIntegratedToolRuns(toolRuns: ResearchSnapshot["toolRuns"]): ResearchSnapshot["toolRuns"] {
   const integrated: ResearchSnapshot["toolRuns"] = [];
+  const visibleTools = new Set([
+    "WebSearchTool",
+    "BackgroundBrowserTool",
+    "WebFetchTool",
+    "ResearchMetadataTool",
+    "PdfIngestionTool",
+    "CodeExecutionTool",
+    "EngineeringProgramTool",
+    "OpenCodeStructuredOutput",
+    "ArtifactWriterTool",
+    "DataAnalysisTool"
+  ]);
   for (const toolRun of toolRuns) {
-    if (toolRun.toolName === "ResearchMetadataTool" || toolRun.toolName === "EngineeringProgramTool") integrated.push(toolRun);
+    if (visibleTools.has(toolRun.toolName)) integrated.push(toolRun);
   }
-  return lastItems(integrated, 4);
+  return lastItems(integrated, 8);
 }
 
 function SummaryRow({ title, value }: { title: string; value: string }): ReactElement {
@@ -3968,6 +3408,7 @@ function normalizeResearchMetadata(metadata: AppSettings["researchMetadata"] | u
 function normalizeEngineeringTools(engineeringTools: AppSettings["engineeringTools"] | undefined): AppSettings["engineeringTools"] {
   return {
     enabled: engineeringTools?.enabled ?? false,
+    toolchainRoot: engineeringTools?.toolchainRoot ?? "vendor/engineering-tools",
     xfoil: {
       enabled: engineeringTools?.xfoil?.enabled ?? false,
       command: engineeringTools?.xfoil?.command ?? "",
@@ -3977,15 +3418,6 @@ function normalizeEngineeringTools(engineeringTools: AppSettings["engineeringToo
       enabled: engineeringTools?.modeling?.enabled ?? false,
       artifactRoot: engineeringTools?.modeling?.artifactRoot ?? "",
       maxMeshBytes: engineeringTools?.modeling?.maxMeshBytes ?? 20 * 1024 * 1024
-    },
-    openFoam: {
-      enabled: engineeringTools?.openFoam?.enabled ?? false,
-      command: engineeringTools?.openFoam?.command ?? "",
-      caseRoot: engineeringTools?.openFoam?.caseRoot ?? "",
-      workingDirectory: engineeringTools?.openFoam?.workingDirectory ?? "",
-      probeArgs: engineeringTools?.openFoam?.probeArgs ?? ["-help"],
-      runArgsTemplate: engineeringTools?.openFoam?.runArgsTemplate ?? ["-case", "{case}"],
-      timeoutMs: engineeringTools?.openFoam?.timeoutMs ?? 30 * 60_000
     },
     su2: {
       enabled: engineeringTools?.su2?.enabled ?? false,
@@ -3997,38 +3429,23 @@ function normalizeEngineeringTools(engineeringTools: AppSettings["engineeringToo
       runArgsTemplate: engineeringTools?.su2?.runArgsTemplate ?? ["{config}"],
       timeoutMs: engineeringTools?.su2?.timeoutMs ?? 30 * 60_000
     },
-    freeCad: {
-      enabled: engineeringTools?.freeCad?.enabled ?? false,
-      command: engineeringTools?.freeCad?.command ?? "",
-      scriptPath: engineeringTools?.freeCad?.scriptPath ?? "",
-      workingDirectory: engineeringTools?.freeCad?.workingDirectory ?? "",
-      probeArgs: engineeringTools?.freeCad?.probeArgs ?? ["--version"],
-      runArgsTemplate: engineeringTools?.freeCad?.runArgsTemplate ?? ["{script}", "--output", "{output}"],
-      timeoutMs: engineeringTools?.freeCad?.timeoutMs ?? 30 * 60_000
-    },
     openVsp: {
       enabled: engineeringTools?.openVsp?.enabled ?? false,
-      command: engineeringTools?.openVsp?.command ?? "",
+      command: engineeringTools?.openVsp?.command ?? "vspscript",
       scriptPath: engineeringTools?.openVsp?.scriptPath ?? "",
       workingDirectory: engineeringTools?.openVsp?.workingDirectory ?? "",
       probeArgs: engineeringTools?.openVsp?.probeArgs ?? ["-help"],
-      runArgsTemplate: engineeringTools?.openVsp?.runArgsTemplate ?? ["-script", "{script}", "-output", "{output}"],
+      runArgsTemplate: engineeringTools?.openVsp?.runArgsTemplate ?? ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"],
       timeoutMs: engineeringTools?.openVsp?.timeoutMs ?? 30 * 60_000
     },
-    commercialCfd: {
-      flightStreamConfigured: engineeringTools?.commercialCfd?.flightStreamConfigured ?? false,
-      starCcmConfigured: engineeringTools?.commercialCfd?.starCcmConfigured ?? false,
-      flightStreamCommand: engineeringTools?.commercialCfd?.flightStreamCommand ?? "",
-      flightStreamWorkingDirectory: engineeringTools?.commercialCfd?.flightStreamWorkingDirectory ?? "",
-      flightStreamProbeArgs: engineeringTools?.commercialCfd?.flightStreamProbeArgs ?? ["--version"],
-      flightStreamRunArgsTemplate: engineeringTools?.commercialCfd?.flightStreamRunArgsTemplate ?? [],
-      flightStreamTimeoutMs: engineeringTools?.commercialCfd?.flightStreamTimeoutMs ?? 120_000,
-      starCcmCommand: engineeringTools?.commercialCfd?.starCcmCommand ?? "",
-      starCcmWorkingDirectory: engineeringTools?.commercialCfd?.starCcmWorkingDirectory ?? "",
-      starCcmProbeArgs: engineeringTools?.commercialCfd?.starCcmProbeArgs ?? ["-version"],
-      starCcmRunArgsTemplate: engineeringTools?.commercialCfd?.starCcmRunArgsTemplate ?? [],
-      starCcmTimeoutMs: engineeringTools?.commercialCfd?.starCcmTimeoutMs ?? 120_000,
-      notes: engineeringTools?.commercialCfd?.notes ?? ""
+    xflr5: {
+      enabled: engineeringTools?.xflr5?.enabled ?? false,
+      command: engineeringTools?.xflr5?.command ?? "xflr5",
+      scriptPath: engineeringTools?.xflr5?.scriptPath ?? "",
+      workingDirectory: engineeringTools?.xflr5?.workingDirectory ?? "",
+      probeArgs: engineeringTools?.xflr5?.probeArgs ?? ["--help"],
+      runArgsTemplate: engineeringTools?.xflr5?.runArgsTemplate ?? ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"],
+      timeoutMs: engineeringTools?.xflr5?.timeoutMs ?? 30 * 60_000
     }
   };
 }

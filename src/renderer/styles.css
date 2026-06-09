@@ -1634,8 +1634,8 @@ label {
   display: grid;
   grid-template-columns: minmax(620px, 1fr) minmax(310px, 360px);
   grid-template-areas:
-    "workbench status"
-    "workbench final"
+    "automation status"
+    "automation final"
     "agent final"
     "evidence more";
   gap: 10px;
@@ -1646,8 +1646,8 @@ label {
   grid-column: auto;
 }
 
-.contentGrid > .panel.engineeringWorkbenchPanel {
-  grid-area: workbench;
+.contentGrid > .panel.automationPanel {
+  grid-area: automation;
 }
 
 .contentGrid > .panel.finalPanel {
@@ -1870,126 +1870,125 @@ label {
   gap: 8px;
 }
 
-.engineeringWorkbenchPanel {
+.automationPanel {
   gap: 10px;
 }
 
-.engineeringWorkbenchGrid {
+.automationStatusGrid {
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(300px, 0.86fr) minmax(0, 1.14fr);
-  gap: 12px;
-  align-items: start;
-}
-
-.engineeringWorkbenchControls,
-.engineeringWorkbenchResult {
-  min-width: 0;
-  display: grid;
-  gap: 12px;
-}
-
-.engineeringRunButton {
-  align-self: end;
-  width: 100%;
-}
-
-.engineeringStatusGrid {
   display: flex;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.engineeringStatusGrid span {
+.automationStatusGrid span,
+.automationRunItem span {
   border-radius: 999px;
   padding: 5px 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 26px;
   background: #eef2f7;
   color: #475467;
   font-size: 11px;
   font-weight: 850;
 }
 
-.engineeringStatusGrid span.ready {
+.automationStatusGrid span.ready,
+.automationRunItem.completed span {
   background: #dcfce7;
   color: #166534;
 }
 
-.engineeringStatusGrid span.blocked {
+.automationStatusGrid span.blocked,
+.automationRunItem.failed span {
   background: #fee2e2;
   color: #b42318;
 }
 
-.engineeringResultHeader {
+.automationPlanGrid {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(260px, 0.7fr) minmax(0, 1.3fr);
   gap: 10px;
-  align-items: center;
 }
 
-.engineeringResultHeader strong,
-.engineeringResultHeader span,
-.engineeringSavedReport,
-.engineeringResultMeta {
+.automationBlock,
+.automationRunItem {
+  min-width: 0;
+  border: 1px solid #e1e1df;
+  border-radius: 7px;
+  background: #fafaf9;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.automationBlock h3,
+.automationBlock p,
+.automationRequestItem p,
+.automationRequestItem small,
+.automationRunItem p {
+  margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.engineeringResultHeader strong {
-  font-size: 14px;
-}
-
-.engineeringResultHeader span,
-.engineeringSavedReport,
-.engineeringResultMeta,
-.engineeringEmpty {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 760;
-}
-
-.engineeringSavedReport {
-  margin: 0;
-  color: #166534;
-}
-
-.engineeringTableWrap {
-  max-width: 100%;
-  overflow: auto;
-}
-
-.engineeringResultTable {
-  width: 100%;
-  min-width: 460px;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.engineeringResultTable th,
-.engineeringResultTable td {
-  border-bottom: 1px solid #e2e8f0;
-  padding: 7px 8px;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.engineeringResultTable th {
+.automationBlock h3 {
   color: #475467;
-  background: #f8fafc;
+  font-size: 12px;
   font-weight: 850;
 }
 
-.engineeringReport {
-  max-height: 260px;
-  overflow: auto;
-  border: 1px solid #d9e0eb;
-  border-radius: 8px;
-  background: #f8fafc;
-  color: #172033;
-  padding: 12px;
+.automationBlock p,
+.automationRequestItem p,
+.automationRequestItem small,
+.automationRunItem p {
+  color: #475467;
   font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.automationRequestList,
+.automationRunList {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.automationRequestItem {
+  min-width: 0;
+  border-left: 3px solid #2563eb;
+  padding-left: 10px;
+  display: grid;
+  gap: 5px;
+}
+
+.automationRequestItem strong,
+.automationRunItem strong {
+  min-width: 0;
+  color: #172033;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.automationRequestItem span {
+  min-width: 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 760;
+  overflow-wrap: anywhere;
+}
+
+.automationRunItem {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.automationRunItem p {
+  grid-column: 1 / -1;
 }
 
 .runBox,
@@ -2335,7 +2334,7 @@ label {
 
   .projectBriefBar,
   .contentGrid,
-  .engineeringWorkbenchGrid,
+  .automationPlanGrid,
   .panel.wide {
     grid-template-columns: minmax(0, 1fr);
     grid-column: span 1;
@@ -2345,7 +2344,7 @@ label {
     grid-template-areas: none;
   }
 
-  .contentGrid > .panel.engineeringWorkbenchPanel,
+  .contentGrid > .panel.automationPanel,
   .contentGrid > .panel.finalPanel,
   .contentGrid > .panel.agentPanel,
   .contentGrid > .panel.evidencePanel,
@@ -2502,7 +2501,7 @@ label {
 
   .runOverview,
   .toolReadinessGrid,
-  .engineeringWorkbenchGrid,
+  .automationPlanGrid,
   .finalGrid,
   .summaryRow,
   .projectBriefBar,

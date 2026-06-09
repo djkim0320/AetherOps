@@ -66,7 +66,7 @@ export const strictResearchInput = {
     "계속 연구가 필요하면 11번 판단 후 4번 연구 계획으로 복귀해야 한다."
   ],
   constraints: ["테스트 더블은 테스트 파일에서만 사용한다."],
-  expectedOutputs: ["final-report.md", "reusable-knowledge.md"]
+  expectedOutputs: ["final-report.pdf", "reusable-knowledge.md"]
 };
 
 export function createStrictTestOrchestrator(options: {

@@ -248,7 +248,7 @@ describe("AetherOps strict execution loop", () => {
       finalStatus: "failed",
       failedStep: ResearchLoopStep.FinalizeOutputs
     });
-    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.pdf"))).toBe(false);
   });
 
   it("blocks clearly when the OpenCode execution engine is not configured", async () => {
@@ -282,7 +282,7 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.runAuditOutputs[0]?.unmetRequirements?.length).toBeGreaterThan(0);
     expect(existsSync(join(snapshot.project.projectRoot, "reports", "run-audit.md"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "exports", "run-audit.json"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.pdf"))).toBe(false);
   });
 
   it("blocks at BuildVectorIndex when the embedding API key is missing while preserving partial outputs", async () => {
@@ -325,7 +325,7 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.evidence.some((item) => !item.sourceUri && !item.citation && !item.quote)).toBe(false);
     expect(existsSync(join(snapshot.project.projectRoot, "reports", "run-audit.md"))).toBe(true);
     expect(existsSync(join(snapshot.project.projectRoot, "exports", "run-audit.json"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.md"))).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.pdf"))).toBe(false);
   });
 
   it("blocks at PlanResearch when the LLM requests an unregistered tool", async () => {

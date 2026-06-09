@@ -95,7 +95,7 @@ describe("web server engineering program RPC", () => {
     expect(savedMarkdown).toContain("# Clark Y WebXFOIL polar analysis");
     expect(savedMarkdown).toContain("Artifacts: 1");
     expect(savedMarkdown).toContain("Evidence items: 1");
-  });
+  }, 30_000);
 
   it("rejects direct XFOIL-WASM requests that do not name an airfoil input", async () => {
     const settings = {

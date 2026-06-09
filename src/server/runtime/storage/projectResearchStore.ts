@@ -5,6 +5,7 @@ import { createId, nowIso } from "../../../core/shared/ids.js";
 import type { ProjectStorage } from "../../../core/storage/projectStorage.js";
 import { dedupeSourcesByIdUrlDoi } from "../../../core/evidence/sourceDedupe.js";
 import { ResearchLoopStep } from "../../../core/shared/types.js";
+import { writePdfReport } from "../output/pdfReportRenderer.js";
 import type {
   FinalResearchOutput,
   OntologyConstraint,
@@ -198,7 +199,13 @@ export class NodeProjectStorage implements ProjectStorage {
     const ontologyNtPath = safeJoin(project.projectRoot, "ontology/project-graph.nt");
     const artifactPackagePath = safeJoin(project.projectRoot, "exports/artifact-package.json");
 
-    writeMarkdownFileSync(reportPath, output.markdownReport);
+    await writePdfReport({
+      title: project.topic,
+      projectId: project.id,
+      markdown: output.markdownReport,
+      outputPath: reportPath,
+      createdAt: output.createdAt
+    });
     writeMarkdownFileSync(knowledgePath, output.reusableKnowledgeAsset);
     writeJsonFileSync(citationsPath, evidenceCitations);
     writeJsonFileSync(verificationPath, hypothesisVerification);
@@ -247,7 +254,7 @@ export class NodeProjectStorage implements ProjectStorage {
 
 function reportKnowledgePaths(project: ResearchProject): { reportPath: string; knowledgePath: string } {
   return {
-    reportPath: safeJoin(project.projectRoot, "reports/final-report.md"),
+    reportPath: safeJoin(project.projectRoot, "reports/final-report.pdf"),
     knowledgePath: safeJoin(project.projectRoot, "knowledge/reusable-knowledge.md")
   };
 }

@@ -64,9 +64,10 @@ Verdict 기준:
 - `AETHEROPS_DATA_DIR`: 앱 데이터 루트. 기본값은 `.aetherops`.
 - `AETHEROPS_PORT`: API 서버 포트. 기본값은 `5179`; `0`을 주면 OS가 빈 포트를 할당합니다.
 - `AETHEROPS_ENABLE_LEGACY_RPC`: `true`일 때만 old RPC alias를 허용합니다. 기본값은 비활성입니다.
-- `AETHEROPS_MARKDOWN_BOM`: markdown 보고서 앞에 UTF-8 BOM을 붙일지 제어합니다. `true`/`false`로 강제할 수 있으며, 지정하지 않으면 Windows에서는 PowerShell 호환을 위해 자동으로 켜지고 다른 OS에서는 꺼집니다.
+- `AETHEROPS_MARKDOWN_BOM`: Markdown 텍스트 산출물 앞에 UTF-8 BOM을 붙일지 제어합니다. `true`/`false`로 강제할 수 있으며, 지정하지 않으면 Windows에서는 PowerShell 호환을 위해 자동으로 켜지고 다른 OS에서는 꺼집니다.
+- 최종 연구 보고서는 `reports/final-report.pdf`로 생성됩니다. `AETHEROPS_MARKDOWN_BOM`은 run audit, project manifest, reusable knowledge asset 같은 Markdown 텍스트 산출물에만 적용됩니다.
 
-Windows PowerShell에서 markdown, JSON, JSONL, NT 또는 source 파일의 한글이 깨져 보이면 다음처럼 UTF-8을 명시해 읽으세요. AetherOps의 source 파일과 생성 산출물은 UTF-8을 사용하며, markdown 보고서만 `AETHEROPS_MARKDOWN_BOM` 정책에 따라 BOM을 붙일 수 있습니다.
+Windows PowerShell에서 markdown, JSON, JSONL, NT 또는 source 파일의 한글이 깨져 보이면 다음처럼 UTF-8을 명시해 읽으세요. AetherOps의 source 파일과 생성 산출물은 UTF-8을 사용하며, Markdown 텍스트 산출물만 `AETHEROPS_MARKDOWN_BOM` 정책에 따라 BOM을 붙일 수 있습니다.
 
 ```powershell
 Get-Content -Encoding UTF8 docs/aetherops-self-test-report.md

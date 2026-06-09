@@ -82,7 +82,8 @@ describe("NodeProjectStorage", () => {
     });
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
-    const reportPath = join(snapshot.project.projectRoot, "reports", "final-report.md");
+    const reportPath = join(snapshot.project.projectRoot, "reports", "final-report.pdf");
+    const legacyMarkdownReportPath = join(snapshot.project.projectRoot, "reports", "final-report.md");
     const knowledgePath = join(snapshot.project.projectRoot, "knowledge", "reusable-knowledge.md");
     const artifactPackagePath = join(snapshot.project.projectRoot, "exports", "artifact-package.json");
     const evidenceCitationsPath = join(snapshot.project.projectRoot, "exports", "evidence-citations.json");
@@ -95,17 +96,21 @@ describe("NodeProjectStorage", () => {
     expect(snapshot.finalOutputs[0]?.reportPath).toBe(reportPath);
     expect(snapshot.report?.reportPath).toBe(reportPath);
     expect(existsSync(reportPath)).toBe(true);
+    expect(existsSync(legacyMarkdownReportPath)).toBe(false);
     expect(existsSync(knowledgePath)).toBe(true);
     expect(existsSync(artifactPackagePath)).toBe(true);
     expect(existsSync(evidenceCitationsPath)).toBe(true);
     expect(existsSync(hypothesisVerificationPath)).toBe(true);
     expect(existsSync(ontologyJsonPath)).toBe(true);
     expect(existsSync(ontologyNtPath)).toBe(true);
-    expect(readFileSync(reportPath, "utf8")).toContain("AetherOps loop completed with traceable test evidence.");
+    const reportBytes = readFileSync(reportPath);
+    expect(reportBytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    expect(reportBytes.length).toBeGreaterThan(1000);
+    expect(snapshot.finalOutputs[0]?.markdownReport).toContain("AetherOps loop completed with traceable test evidence.");
     expect(JSON.parse(readFileSync(artifactPackagePath, "utf8"))).toMatchObject({
       projectId: snapshot.project.id
     });
-  });
+  }, 30_000);
 
   it("persists ontology graph files and ontology.sqlite records", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-storage-"));

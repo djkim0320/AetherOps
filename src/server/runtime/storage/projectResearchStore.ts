@@ -200,13 +200,13 @@ export class NodeProjectStorage implements ProjectStorage {
     const artifactPackagePath = safeJoin(project.projectRoot, "exports/artifact-package.json");
     const stagingRoot = finalOutputStagingRoot(project, output);
     const targets = {
-      report: finalOutputTarget(project, stagingRoot, reportPath),
-      knowledge: finalOutputTarget(project, stagingRoot, knowledgePath),
-      citations: finalOutputTarget(project, stagingRoot, citationsPath),
-      verification: finalOutputTarget(project, stagingRoot, verificationPath),
-      ontologyJson: finalOutputTarget(project, stagingRoot, ontologyExportPath),
-      ontologyNt: finalOutputTarget(project, stagingRoot, ontologyNtPath),
-      artifactPackage: finalOutputTarget(project, stagingRoot, artifactPackagePath)
+      report: projectFileTarget(project, stagingRoot, reportPath),
+      knowledge: projectFileTarget(project, stagingRoot, knowledgePath),
+      citations: projectFileTarget(project, stagingRoot, citationsPath),
+      verification: projectFileTarget(project, stagingRoot, verificationPath),
+      ontologyJson: projectFileTarget(project, stagingRoot, ontologyExportPath),
+      ontologyNt: projectFileTarget(project, stagingRoot, ontologyNtPath),
+      artifactPackage: projectFileTarget(project, stagingRoot, artifactPackagePath)
     };
 
     try {
@@ -240,10 +240,20 @@ export class NodeProjectStorage implements ProjectStorage {
     const reportPath = safeJoin(project.projectRoot, "reports/run-audit.md");
     const jsonPath = safeJoin(project.projectRoot, "exports/run-audit.json");
     const saved = { ...output, reportPath, jsonPath };
-    writeMarkdownFileSync(reportPath, output.markdownReport);
-    writeJsonFileSync(jsonPath, saved);
-    upsertJson(database.sqlitePath, "run_audit_outputs", output.id, project.id, output.createdAt, saved);
-    return { reportPath, jsonPath };
+    const stagingRoot = projectStagingRoot(project, "run-audit", output.id);
+    const targets = {
+      report: projectFileTarget(project, stagingRoot, reportPath),
+      json: projectFileTarget(project, stagingRoot, jsonPath)
+    };
+
+    try {
+      writeMarkdownFileSync(targets.report.stagedPath, output.markdownReport);
+      writeJsonFileSync(targets.json.stagedPath, saved);
+      commitProjectFiles(Object.values(targets), () => upsertJson(database.sqlitePath, "run_audit_outputs", output.id, project.id, output.createdAt, saved));
+      return { reportPath, jsonPath };
+    } finally {
+      safeRemove(stagingRoot);
+    }
   }
 
   async writeRuntimeBlocker(project: ResearchProject, blocker: RuntimeBlocker): Promise<void> {
@@ -273,23 +283,27 @@ function reportKnowledgePaths(project: ResearchProject): { reportPath: string; k
   };
 }
 
-interface FinalOutputFileTarget {
+interface ProjectFileTarget {
   finalPath: string;
   stagedPath: string;
   backupPath: string;
 }
 
 function finalOutputStagingRoot(project: ResearchProject, output: FinalResearchOutput): string {
-  const root = safeJoin(project.projectRoot, `.aetherops-final-staging-${sanitizeFilename(output.id)}-${Date.now().toString(36)}`);
+  return projectStagingRoot(project, "final", output.id);
+}
+
+function projectStagingRoot(project: ResearchProject, prefix: string, id: string): string {
+  const root = safeJoin(project.projectRoot, `.aetherops-${prefix}-staging-${sanitizeFilename(id)}-${Date.now().toString(36)}`);
   mkdirSync(root, { recursive: true });
   return root;
 }
 
-function finalOutputTarget(project: ResearchProject, stagingRoot: string, finalPath: string): FinalOutputFileTarget {
+function projectFileTarget(project: ResearchProject, stagingRoot: string, finalPath: string): ProjectFileTarget {
   const projectRoot = normalize(project.projectRoot);
   const relativeFinalPath = relative(projectRoot, finalPath);
   if (relativeFinalPath.startsWith("..") || isAbsolute(relativeFinalPath)) {
-    throw new Error(`Final output path escapes project root: ${finalPath}`);
+    throw new Error(`Project output path escapes project root: ${finalPath}`);
   }
   const stagedPath = join(stagingRoot, "files", relativeFinalPath);
   const backupPath = join(stagingRoot, "backup", relativeFinalPath);
@@ -302,12 +316,16 @@ function commitFinalOutputFiles(
   database: ResearchDatabase,
   project: ResearchProject,
   output: FinalResearchOutput,
-  targets: FinalOutputFileTarget[],
+  targets: ProjectFileTarget[],
   saved: FinalResearchOutput
 ): void {
-  const installed: FinalOutputFileTarget[] = [];
-  const backups: FinalOutputFileTarget[] = [];
-  let databaseUpdated = false;
+  commitProjectFiles(targets, () => upsertJson(database.sqlitePath, "final_outputs", output.id, project.id, output.createdAt, saved));
+}
+
+function commitProjectFiles(targets: ProjectFileTarget[], commitMetadata: () => void): void {
+  const installed: ProjectFileTarget[] = [];
+  const backups: ProjectFileTarget[] = [];
+  let metadataCommitted = false;
   try {
     for (const target of targets) {
       if (existsSync(target.finalPath)) {
@@ -319,11 +337,11 @@ function commitFinalOutputFiles(
       renameSync(target.stagedPath, target.finalPath);
       installed.push(target);
     }
-    upsertJson(database.sqlitePath, "final_outputs", output.id, project.id, output.createdAt, saved);
-    databaseUpdated = true;
+    commitMetadata();
+    metadataCommitted = true;
     for (const target of backups) safeRemove(target.backupPath);
   } catch (error) {
-    if (!databaseUpdated) {
+    if (!metadataCommitted) {
       for (const target of [...installed].reverse()) safeRemove(target.finalPath);
       for (const target of [...backups].reverse()) {
         if (existsSync(target.backupPath)) {

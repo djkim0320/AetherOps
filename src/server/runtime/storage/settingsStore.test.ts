@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { JsonAppSettingsStore } from "./settingsStore.js";
+import { defaultSettings, JsonAppSettingsStore } from "./settingsStore.js";
 
 let tempRoot: string | undefined;
 
@@ -43,6 +43,16 @@ describe("JsonAppSettingsStore", () => {
     expect(runtimeSettings.embedding.apiKey).toBeUndefined();
   });
 
+  it("fails closed when an existing settings file is invalid", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    writeFileSync(settingsPath, "{ invalid json", "utf8");
+    const store = new JsonAppSettingsStore(settingsPath);
+
+    await expect(store.getSettings()).rejects.toThrow(/Invalid AetherOps settings file/);
+    await expect(store.getRuntimeSettings()).rejects.toThrow(/Invalid AetherOps settings file/);
+    await expect(store.saveSettings(defaultSettings)).rejects.toThrow(/Invalid AetherOps settings file/);
+  });
   it("stores and reuses newly entered embedding keys", async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
     const settingsPath = join(tempRoot, "settings.json");

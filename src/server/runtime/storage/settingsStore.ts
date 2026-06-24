@@ -218,8 +218,8 @@ export class JsonAppSettingsStore implements AppSettingsStore {
     try {
       const parsed = JSON.parse(readFileSync(this.settingsPath, "utf8")) as PersistedSettings;
       return normalizePersisted(parsed);
-    } catch {
-      return this.toPersisted(defaultSettings);
+    } catch (error) {
+      throw new Error(`Invalid AetherOps settings file at ${this.settingsPath}: ${formatSettingsReadError(error)}`);
     }
   }
 
@@ -505,6 +505,10 @@ function normalizeEmbeddingProvider(provider: unknown): EmbeddingSettings["provi
     return provider;
   }
   return provider === "openrouter" ? "google" : "openai";
+}
+
+function formatSettingsReadError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function updateEncryptedKey(

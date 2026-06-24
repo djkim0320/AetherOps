@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createInputProject, createStrictTestOrchestrator } from "../../../core/testing/orchestratorTestHarness.js";
-import type { ResearchProjectInput, OntologyEntity, OntologyRelation } from "../../../core/shared/types.js";
+import type { FinalResearchOutput, ResearchProjectInput, OntologyEntity, OntologyRelation } from "../../../core/shared/types.js";
 import { NodeProjectStorage } from "./projectResearchStore.js";
 import { SqliteResearchStore } from "./sqliteStore.js";
 
@@ -112,6 +112,51 @@ describe("NodeProjectStorage", () => {
     });
   }, 30_000);
 
+  it("does not expose final output files when the final DB commit fails", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-storage-"));
+    store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
+    const projectStorage = new NodeProjectStorage();
+    const orchestrator = createStrictTestOrchestrator({ store, storage: projectStorage, projectRootBase: join(tempDir, "projects") });
+
+    let snapshot = await orchestrator.createProject(input);
+    snapshot = await orchestrator.createResearchDb(snapshot.project.id);
+    const database = snapshot.database!;
+    const createdAt = "2026-05-20T00:00:00.000Z";
+    const output: FinalResearchOutput = {
+      id: "final-output-db-failure",
+      projectId: snapshot.project.id,
+      finalAnswer: "DB commit should fail after staged files are rendered.",
+      markdownReport: "# 최종 보고서\n\nDB 실패 시 최종 파일이 남으면 안 됩니다.",
+      hypothesisSummary: "검증 실패 경로",
+      evidenceCitationList: [],
+      reusableKnowledgeAsset: "재사용 가능한 지식",
+      createdAt
+    };
+    const brokenDatabase = { ...database, sqlitePath: join(snapshot.project.projectRoot, "missing-db-dir", "project.sqlite") };
+    const existingReportPath = join(snapshot.project.projectRoot, "reports", "final-report.pdf");
+    writeFileSync(existingReportPath, "existing report", "utf8");
+
+    await expect(
+      projectStorage.writeFinalOutputFiles(
+        snapshot.project,
+        brokenDatabase,
+        output,
+        { entities: [], relations: [], constraints: [], exportedAt: createdAt },
+        { projectId: snapshot.project.id, createdAt },
+        [],
+        { hypotheses: [] }
+      )
+    ).rejects.toThrow();
+
+    expect(readFileSync(existingReportPath, "utf8")).toBe("existing report");
+    expect(existsSync(join(snapshot.project.projectRoot, "knowledge", "reusable-knowledge.md"))).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "exports", "artifact-package.json"))).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "exports", "evidence-citations.json"))).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "exports", "hypothesis-verification.json"))).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "ontology", "project-graph.json"))).toBe(false);
+    expect(existsSync(join(snapshot.project.projectRoot, "ontology", "project-graph.nt"))).toBe(false);
+    expect(readdirSync(snapshot.project.projectRoot).some((name) => name.startsWith(".aetherops-final-staging-"))).toBe(false);
+  }, 30_000);
   it("persists ontology graph files and ontology.sqlite records", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-storage-"));
     store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));

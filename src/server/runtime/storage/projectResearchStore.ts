@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { createId, nowIso } from "../../../core/shared/ids.js";
@@ -198,24 +198,38 @@ export class NodeProjectStorage implements ProjectStorage {
     const ontologyExportPath = safeJoin(project.projectRoot, "ontology/project-graph.json");
     const ontologyNtPath = safeJoin(project.projectRoot, "ontology/project-graph.nt");
     const artifactPackagePath = safeJoin(project.projectRoot, "exports/artifact-package.json");
+    const stagingRoot = finalOutputStagingRoot(project, output);
+    const targets = {
+      report: finalOutputTarget(project, stagingRoot, reportPath),
+      knowledge: finalOutputTarget(project, stagingRoot, knowledgePath),
+      citations: finalOutputTarget(project, stagingRoot, citationsPath),
+      verification: finalOutputTarget(project, stagingRoot, verificationPath),
+      ontologyJson: finalOutputTarget(project, stagingRoot, ontologyExportPath),
+      ontologyNt: finalOutputTarget(project, stagingRoot, ontologyNtPath),
+      artifactPackage: finalOutputTarget(project, stagingRoot, artifactPackagePath)
+    };
 
-    await writePdfReport({
-      title: project.topic,
-      projectId: project.id,
-      markdown: output.markdownReport,
-      outputPath: reportPath,
-      createdAt: output.createdAt
-    });
-    writeMarkdownFileSync(knowledgePath, output.reusableKnowledgeAsset);
-    writeJsonFileSync(citationsPath, evidenceCitations);
-    writeJsonFileSync(verificationPath, hypothesisVerification);
-    writeJsonFileSync(ontologyExportPath, graphExport);
-    writeFileSync(ontologyNtPath, toNTriples(graphExport), "utf8");
-    writeJsonFileSync(artifactPackagePath, artifactPackage);
+    try {
+      await writePdfReport({
+        title: project.topic,
+        projectId: project.id,
+        markdown: output.markdownReport,
+        outputPath: targets.report.stagedPath,
+        createdAt: output.createdAt
+      });
+      writeMarkdownFileSync(targets.knowledge.stagedPath, output.reusableKnowledgeAsset);
+      writeJsonFileSync(targets.citations.stagedPath, evidenceCitations);
+      writeJsonFileSync(targets.verification.stagedPath, hypothesisVerification);
+      writeJsonFileSync(targets.ontologyJson.stagedPath, graphExport);
+      writeFileSync(targets.ontologyNt.stagedPath, toNTriples(graphExport), "utf8");
+      writeJsonFileSync(targets.artifactPackage.stagedPath, artifactPackage);
 
-    const saved = { ...output, reportPath, ontologyExportPath, artifactPackagePath };
-    upsertJson(database.sqlitePath, "final_outputs", output.id, project.id, output.createdAt, saved);
-    return { reportPath, knowledgePath, ontologyExportPath, artifactPackagePath };
+      const saved = { ...output, reportPath, ontologyExportPath, artifactPackagePath };
+      commitFinalOutputFiles(database, project, output, Object.values(targets), saved);
+      return { reportPath, knowledgePath, ontologyExportPath, artifactPackagePath };
+    } finally {
+      safeRemove(stagingRoot);
+    }
   }
 
   async writeRunAuditFiles(
@@ -259,6 +273,76 @@ function reportKnowledgePaths(project: ResearchProject): { reportPath: string; k
   };
 }
 
+interface FinalOutputFileTarget {
+  finalPath: string;
+  stagedPath: string;
+  backupPath: string;
+}
+
+function finalOutputStagingRoot(project: ResearchProject, output: FinalResearchOutput): string {
+  const root = safeJoin(project.projectRoot, `.aetherops-final-staging-${sanitizeFilename(output.id)}-${Date.now().toString(36)}`);
+  mkdirSync(root, { recursive: true });
+  return root;
+}
+
+function finalOutputTarget(project: ResearchProject, stagingRoot: string, finalPath: string): FinalOutputFileTarget {
+  const projectRoot = normalize(project.projectRoot);
+  const relativeFinalPath = relative(projectRoot, finalPath);
+  if (relativeFinalPath.startsWith("..") || isAbsolute(relativeFinalPath)) {
+    throw new Error(`Final output path escapes project root: ${finalPath}`);
+  }
+  const stagedPath = join(stagingRoot, "files", relativeFinalPath);
+  const backupPath = join(stagingRoot, "backup", relativeFinalPath);
+  mkdirSync(dirname(stagedPath), { recursive: true });
+  mkdirSync(dirname(backupPath), { recursive: true });
+  return { finalPath, stagedPath, backupPath };
+}
+
+function commitFinalOutputFiles(
+  database: ResearchDatabase,
+  project: ResearchProject,
+  output: FinalResearchOutput,
+  targets: FinalOutputFileTarget[],
+  saved: FinalResearchOutput
+): void {
+  const installed: FinalOutputFileTarget[] = [];
+  const backups: FinalOutputFileTarget[] = [];
+  let databaseUpdated = false;
+  try {
+    for (const target of targets) {
+      if (existsSync(target.finalPath)) {
+        renameSync(target.finalPath, target.backupPath);
+        backups.push(target);
+      }
+    }
+    for (const target of targets) {
+      renameSync(target.stagedPath, target.finalPath);
+      installed.push(target);
+    }
+    upsertJson(database.sqlitePath, "final_outputs", output.id, project.id, output.createdAt, saved);
+    databaseUpdated = true;
+    for (const target of backups) safeRemove(target.backupPath);
+  } catch (error) {
+    if (!databaseUpdated) {
+      for (const target of [...installed].reverse()) safeRemove(target.finalPath);
+      for (const target of [...backups].reverse()) {
+        if (existsSync(target.backupPath)) {
+          safeRemove(target.finalPath);
+          renameSync(target.backupPath, target.finalPath);
+        }
+      }
+    }
+    throw error;
+  }
+}
+
+function safeRemove(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    return;
+  }
+}
 function writeProjectManifest(root: string, project: ResearchProject): void {
   writeJsonFileSync(join(root, "project.json"), project);
   writeMarkdownFileSync(

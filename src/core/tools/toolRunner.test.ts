@@ -238,6 +238,27 @@ describe("ToolRunner registry", () => {
 });
 
 describe("ToolRunner web tool pipeline", () => {
+  it("times out web search response body parsing instead of waiting indefinitely", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => new Promise(() => undefined)
+      }))
+    );
+
+    const running = new WebSearchTool().run(runInput(["WebSearchTool"]), {
+      ...settings,
+      webSearch: { ...settings.webSearch, timeoutMs: 1_000 }
+    });
+    const rejection = expect(running).rejects.toThrow("custom search timeout after 1000ms");
+    await vi.advanceTimersByTimeAsync(1_001);
+
+    await rejection;
+  });
   it("chains WebSearch sources into WebFetch and only creates evidence after fetch without mutating the original input", async () => {
     const input = runInput(["WebSearchTool", "WebFetchTool"]);
     const search = new WebSearchTool();
@@ -427,6 +448,22 @@ describe("ToolRunner web tool pipeline", () => {
     expect(executable).toEqual(expect.arrayContaining(["WebSearchTool", "WebFetchTool", "ResearchMetadataTool", "ArtifactWriterTool", "DataAnalysisTool"]));
   });
 
+  it("does not expose PdfIngestionTool for PDF URLs when external access is disabled", () => {
+    const runner = new ToolRunner(createDefaultResearchTools());
+    const input = runInput();
+    const snapshot = {
+      project: input.project,
+      sources: [webSource("paper", "https://example.edu/paper.pdf")],
+      evidence: [],
+      artifacts: [],
+      researchPlans: [{ ...input.researchPlan!, fetchCandidateUrls: ["https://arxiv.org/abs/2401.00001"] }],
+      toolRuns: [],
+      continuationDecisions: []
+    } as unknown as Parameters<ToolRunner["listExecutableToolNames"]>[0]["snapshot"];
+
+    expect(runner.listExecutableToolNames({ snapshot, settings })).toContain("PdfIngestionTool");
+    expect(runner.listExecutableToolNames({ snapshot, settings: { ...settings, allowExternalSearch: false } })).not.toContain("PdfIngestionTool");
+  });
   it("exposes EngineeringProgramTool when code execution and bundled or configured engineering solvers are present", () => {
     const runner = new ToolRunner(createDefaultResearchTools());
     const input = runInput();
@@ -1497,6 +1534,26 @@ describe("ToolRunner web tool pipeline", () => {
     });
   });
 
+  it("links WebFetch evidence to the primary web source even when an arXiv PDF candidate is inserted", async () => {
+    const input = {
+      ...runInput(["WebFetchTool"]),
+      sources: [
+        webSource("arxiv", "https://arxiv.org/abs/2401.00001"),
+        webSource("second", "https://example.edu/second")
+      ]
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => successResponse(url)));
+
+    const result = await new WebFetchTool().run(input, settings);
+    const secondSource = result.sources.find((source) => source.url === "https://example.edu/second");
+    const pdfCandidate = result.sources.find((source) => source.url === "https://arxiv.org/pdf/2401.00001");
+    const secondEvidence = result.evidence.find((evidence) => evidence.sourceUri === "https://example.edu/second");
+
+    expect(result.sources).toHaveLength(3);
+    expect(pdfCandidate).toMatchObject({ kind: "paper" });
+    expect(secondEvidence?.sourceId).toBe(secondSource?.id);
+    expect(secondEvidence?.sourceId).not.toBe(pdfCandidate?.id);
+  });
   it("fetches from ResearchPlan.fetchCandidateUrls before source and citation candidates", async () => {
     const input = {
       ...runInput(["WebFetchTool"]),

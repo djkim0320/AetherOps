@@ -74,31 +74,60 @@ export class WebSearchTool implements ResearchTool {
   }
 
   private async search(settings: AppSettings, query: string): Promise<Array<{ title: string; url: string; snippet: string }>> {
+    const timeoutMs = searchTimeoutMs(settings.webSearch.timeoutMs);
     if (settings.webSearch.provider === "custom" && settings.webSearch.endpoint) {
-      const response = await fetch(`${settings.webSearch.endpoint}${settings.webSearch.endpoint.includes("?") ? "&" : "?"}q=${encodeURIComponent(query)}`);
-      if (!response.ok) throw new Error(`custom search failed: ${response.status} ${response.statusText}`);
-      const parsed = (await response.json()) as { results?: Array<{ title?: string; url?: string; snippet?: string }> };
+      const parsed = await fetchSearchJson<{ results?: Array<{ title?: string; url?: string; snippet?: string }> }>(
+        "custom search",
+        `${settings.webSearch.endpoint}${settings.webSearch.endpoint.includes("?") ? "&" : "?"}q=${encodeURIComponent(query)}`,
+        undefined,
+        timeoutMs
+      );
       return normalizeSearchResults(parsed.results);
     }
 
     if (settings.webSearch.provider === "brave") {
-      const response = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`, {
-        headers: { accept: "application/json", "x-subscription-token": settings.webSearch.apiKey ?? "" }
-      });
-      if (!response.ok) throw new Error(`brave search failed: ${response.status} ${response.statusText}`);
-      const parsed = (await response.json()) as { web?: { results?: Array<{ title?: string; url?: string; description?: string }> } };
+      const parsed = await fetchSearchJson<{ web?: { results?: Array<{ title?: string; url?: string; description?: string }> } }>(
+        "brave search",
+        `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`,
+        { headers: { accept: "application/json", "x-subscription-token": settings.webSearch.apiKey ?? "" } },
+        timeoutMs
+      );
       return normalizeSearchResults(parsed.web?.results, "description");
     }
 
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ api_key: settings.webSearch.apiKey, query, max_results: 5 })
-    });
-    if (!response.ok) throw new Error(`tavily search failed: ${response.status} ${response.statusText}`);
-    const parsed = (await response.json()) as { results?: Array<{ title?: string; url?: string; content?: string }> };
+    const parsed = await fetchSearchJson<{ results?: Array<{ title?: string; url?: string; content?: string }> }>(
+      "tavily search",
+      "https://api.tavily.com/search",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ api_key: settings.webSearch.apiKey, query, max_results: 5 })
+      },
+      timeoutMs
+    );
     return normalizeSearchResults(parsed.results, "content");
   }
+}
+
+async function fetchSearchJson<T>(label: string, url: string, init: RequestInit | undefined, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
+  const deadline = Date.now() + timeoutMs;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...(init ?? {}), signal: controller.signal });
+    if (!response.ok) throw new Error(`${label} failed: ${response.status} ${response.statusText}`);
+    return await withDeadline(response.json() as Promise<T>, deadline, `${label} response body timeout`);
+  } catch (error) {
+    if (isAbortOrTimeout(error, deadline)) throw new Error(`${label} timeout after ${timeoutMs}ms`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+  }
+}
+
+function searchTimeoutMs(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(1_000, Math.min(60_000, value)) : FETCH_TIMEOUT_MS;
 }
 
 export class WebFetchTool implements ResearchTool {
@@ -146,6 +175,7 @@ export class WebFetchTool implements ResearchTool {
       };
     }
     const sources: ResearchSource[] = [];
+    const primarySources: ResearchSource[] = [];
     for (const page of pages) {
       const pdfUrl = arxivPdfUrl(page.url);
       const source: ResearchSource = {
@@ -169,6 +199,7 @@ export class WebFetchTool implements ResearchTool {
         createdAt: completedAt
       };
       sources.push(source);
+      primarySources.push(source);
       if (pdfUrl) {
         sources.push({
           id: createId("source"),
@@ -202,7 +233,7 @@ export class WebFetchTool implements ResearchTool {
         category: "web_source",
         title: page.title,
         summary: page.text.slice(0, 800) || `Fetched ${page.url}`,
-        sourceId: sources[index]?.id,
+        sourceId: primarySources[index]?.id,
         sourceUri: page.url,
         citation: `${page.title} - ${page.url}`,
         quote: page.text.slice(0, 500),
@@ -313,7 +344,7 @@ export class PdfIngestionTool implements ResearchTool {
     const completedAt = nowIso();
     if (!targets.length) {
       return {
-        toolRun: failedToolRun(input, this.name, startedAt, completedAt, { targets }, { failedUrls: [], failureReasons: { input: "No PDF URL or PDF source candidate was available." } }, "PdfIngestionTool requires a PDF URL or local PDF path with extractable text."),
+        toolRun: failedToolRun(input, this.name, startedAt, completedAt, { targets }, { failedUrls: [], failureReasons: { input: "No PDF URL or PDF source candidate was available." } }, "PdfIngestionTool requires a PDF URL with extractable text."),
         evidence: [],
         artifacts: [],
         sources: []

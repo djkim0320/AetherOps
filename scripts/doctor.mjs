@@ -191,7 +191,7 @@ function readSettings(root) {
     openCodeLlm: persisted.openCodeLlm ?? defaults.openCodeLlm,
     browserUse: { ...defaults.browserUse, ...(persisted.browserUse ?? {}) },
     researchMetadata: { ...defaults.researchMetadata, ...(persisted.researchMetadata ?? {}) },
-    engineeringTools: {
+    engineeringTools: hydrateEmbeddedEngineeringTools({
       enabled: persisted.engineeringTools?.enabled ?? defaults.engineeringTools.enabled,
       toolchainRoot: persisted.engineeringTools?.toolchainRoot ?? defaults.engineeringTools.toolchainRoot,
       xfoil: { ...defaults.engineeringTools.xfoil, ...(persisted.engineeringTools?.xfoil ?? {}) },
@@ -207,10 +207,33 @@ function readSettings(root) {
         ...(persisted.engineeringTools?.xflr5 ?? {}),
         command: normalizeCommand(persisted.engineeringTools?.xflr5?.command, defaults.engineeringTools.xflr5.command)
       }
-    }
+    })
   };
 }
 
+function hydrateEmbeddedEngineeringTools(tools) {
+  if (!tools.enabled) return tools;
+  return {
+    ...tools,
+    su2: hydrateEmbeddedExecutable(tools, "su2", tools.su2),
+    openVsp: hydrateEmbeddedExecutable(tools, "openvsp", tools.openVsp),
+    xflr5: hydrateEmbeddedExecutable(tools, "xflr5", tools.xflr5)
+  };
+}
+
+function hydrateEmbeddedExecutable(tools, toolName, tool) {
+  const command = embeddedToolCommand(tools, toolName, tool?.command);
+  if (!command) return tool;
+  return { ...tool, enabled: true, command };
+}
+
+function embeddedToolCommand(tools = {}, toolName, command) {
+  const explicit = normalizeExplicitCommand(command);
+  if (explicit) return fileExists(explicit) ? explicit : undefined;
+  const root = resolve(tools.toolchainRoot || process.env.AETHEROPS_ENGINEERING_TOOLCHAIN_ROOT || "vendor/engineering-tools");
+  if (!directoryExists(root)) return undefined;
+  return findExecutableInRoot(root, preferredExecutableNames(toolName, command));
+}
 function normalizeCommand(value, defaultValue) {
   if (typeof value !== "string") return defaultValue;
   return value.trim() || defaultValue;
@@ -290,11 +313,7 @@ function scriptedCfdToolReady(tools = {}, toolName, tool = {}) {
 }
 
 function embeddedToolReady(tools = {}, toolName, command) {
-  const explicit = normalizeExplicitCommand(command);
-  if (explicit) return fileExists(explicit);
-  const root = resolve(tools.toolchainRoot || process.env.AETHEROPS_ENGINEERING_TOOLCHAIN_ROOT || "vendor/engineering-tools");
-  if (!directoryExists(root)) return false;
-  return Boolean(findExecutableInRoot(root, preferredExecutableNames(toolName, command)));
+  return Boolean(embeddedToolCommand(tools, toolName, command));
 }
 
 function preferredExecutableNames(toolName, command) {
@@ -308,6 +327,8 @@ function preferredExecutableNames(toolName, command) {
   if (!bare || /[\\/]/.test(bare)) return defaults;
   const names = [basename(bare)];
   if (process.platform === "win32" && !extname(bare)) names.push(`${bare}.exe`);
+  const matchesDefaultName = names.some((name) => defaults.some((item) => item.toLowerCase() === name.toLowerCase()));
+  if (!matchesDefaultName) return names;
   for (const item of defaults) {
     if (!names.some((name) => name.toLowerCase() === item.toLowerCase())) names.push(item);
   }

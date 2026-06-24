@@ -906,6 +906,7 @@ export interface WebSearchSettings {
   apiKey?: string;
   apiKeyConfigured?: boolean;
   endpoint?: string;
+  timeoutMs?: number;
 }
 
 export interface EmbeddingSettings {

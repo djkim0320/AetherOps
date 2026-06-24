@@ -80,7 +80,7 @@ export class ToolRunner {
     pushRegisteredTool(candidates, registered, "BackgroundBrowserTool", externalAllowed && context.settings.browserUse.enabled);
     pushRegisteredTool(candidates, registered, "WebFetchTool", externalAllowed && (hasFetchCandidates || webSearchConfigured || context.settings.browserUse.enabled));
     pushRegisteredTool(candidates, registered, "ResearchMetadataTool", researchMetadataReady);
-    pushRegisteredTool(candidates, registered, "PdfIngestionTool", hasPdfInputs);
+    pushRegisteredTool(candidates, registered, "PdfIngestionTool", externalAllowed && hasPdfInputs);
     pushRegisteredTool(candidates, registered, "CodeExecutionTool", codeAllowed);
     pushRegisteredTool(candidates, registered, "EngineeringProgramTool", engineeringProgramReady);
     pushRegisteredTool(candidates, registered, "ArtifactWriterTool", true);
@@ -381,15 +381,10 @@ function hasContinuationFetchHint(snapshot: ResearchSnapshot): boolean {
 
 function hasPdfInput(snapshot: ResearchSnapshot): boolean {
   for (const source of snapshot.sources ?? []) {
-    if (pdfUrlPattern.test(source.url ?? source.rawPath ?? String(source.metadata.pdfUrl ?? "")) || source.metadata.mimeType === "application/pdf") {
-      return true;
-    }
+    if (pdfUrlPattern.test(source.url ?? String(source.metadata.pdfUrl ?? ""))) return true;
   }
   for (const url of (snapshot.researchPlans ?? []).at(-1)?.fetchCandidateUrls ?? []) {
     if (pdfUrlPattern.test(url) || arxivAbsUrlPattern.test(url)) return true;
-  }
-  for (const artifact of snapshot.artifacts ?? []) {
-    if (artifact.mimeType === "application/pdf" || pdfUrlPattern.test(artifact.relativePath)) return true;
   }
   return false;
 }

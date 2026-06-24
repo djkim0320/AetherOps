@@ -82,11 +82,14 @@ function toolStatus(settings: EngineeringProgramSettings, tool: EngineeringToolN
 
 function preferredExecutableNames(tool: EngineeringToolName, configuredCommand: string | undefined): string[] {
   const bare = configuredCommand?.trim();
-  if (!bare || hasPathSeparator(bare)) return executableNames[tool];
+  const defaults = executableNames[tool];
+  if (!bare || hasPathSeparator(bare)) return defaults;
   const name = basename(stripQuotes(bare));
   const names = [name];
   if (process.platform === "win32" && !extname(name)) names.push(`${name}.exe`);
-  for (const candidate of executableNames[tool]) {
+  const matchesDefaultName = names.some((item) => defaults.some((candidate) => candidate.toLowerCase() === item.toLowerCase()));
+  if (!matchesDefaultName) return names;
+  for (const candidate of defaults) {
     if (!names.some((item) => item.toLowerCase() === candidate.toLowerCase())) names.push(candidate);
   }
   return names;

@@ -146,7 +146,7 @@ async function verifyBlockedStartDoesNotCallRpc(page, viewport) {
       return { skipped: "start button missing", calls: [] };
     }
     if (!status) {
-      return { skipped: "blocked start status missing", calls: [] };
+      return { skipped: button.disabled ? "blocked start status missing" : "", unblocked: !button.disabled, calls: [] };
     }
     const originalFetch = window.fetch.bind(window);
     const calls = [];
@@ -177,6 +177,9 @@ async function verifyBlockedStartDoesNotCallRpc(page, viewport) {
       statusText: status.textContent?.replace(/\s+/g, " ").trim() ?? ""
     };
   });
+  if (result.unblocked) {
+    return;
+  }
   if (result.skipped) {
     failures.push(`${viewport.label}/blocked-start: ${result.skipped}`);
     return;

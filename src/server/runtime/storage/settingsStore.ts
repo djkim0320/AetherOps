@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { nowIso } from "../../../core/shared/ids.js";
+import { embeddedEngineeringToolchainStatus } from "../../../core/tools/engineeringToolchain.js";
 import type {
   AppSettings,
   EmbeddingSettings,
@@ -50,7 +51,8 @@ export const defaultSettings: AppSettings = {
     timeoutMs: 180_000
   },
   webSearch: {
-    provider: "disabled"
+    provider: "disabled",
+    timeoutMs: 10_000
   },
   embedding: {
     provider: "openai",
@@ -176,7 +178,8 @@ export class JsonAppSettingsStore implements AppSettingsStore {
       openCode: settings.openCode,
       webSearch: {
         provider: settings.webSearch.provider,
-        endpoint: settings.webSearch.endpoint
+        endpoint: settings.webSearch.endpoint,
+        timeoutMs: settings.webSearch.timeoutMs
       },
       embedding: {
         provider: settings.embedding.provider,
@@ -239,7 +242,8 @@ export class JsonAppSettingsStore implements AppSettingsStore {
       openCode: settings.openCode,
       webSearch: {
         provider: settings.webSearch.provider,
-        endpoint: settings.webSearch.endpoint
+        endpoint: settings.webSearch.endpoint,
+        timeoutMs: settings.webSearch.timeoutMs
       },
       embedding: {
         provider: settings.embedding.provider,
@@ -336,10 +340,7 @@ function normalizePersisted(settings: PersistedSettings): PersistedSettings {
     ...settings,
     openCodeLlm: openCodeLlm ?? defaultSettings.openCodeLlm,
     openCode,
-    webSearch: {
-      ...defaultSettings.webSearch,
-      ...(settings.webSearch ?? {})
-    },
+    webSearch: normalizeWebSearch(settings.webSearch),
     embedding,
     browserUse: normalizeBrowserUse(settings.browserUse),
     researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
@@ -360,6 +361,14 @@ function normalizePersisted(settings: PersistedSettings): PersistedSettings {
   };
 }
 
+function normalizeWebSearch(settings: unknown): WebSearchSettings {
+  const input = settings && typeof settings === "object" ? (settings as Partial<WebSearchSettings>) : {};
+  return {
+    ...defaultSettings.webSearch,
+    ...input,
+    timeoutMs: clampNumber(input.timeoutMs, 1_000, 60_000, defaultSettings.webSearch.timeoutMs ?? 10_000)
+  };
+}
 function normalizeBrowserUse(settings: unknown): AppSettings["browserUse"] {
   const input = settings && typeof settings === "object" ? (settings as Partial<AppSettings["browserUse"]>) : {};
   return {
@@ -389,7 +398,7 @@ function normalizeEngineeringTools(settings: unknown): EngineeringProgramSetting
   const su2 = (input.su2 ?? {}) as Partial<EngineeringProgramSettings["su2"]>;
   const openVsp = (input.openVsp ?? {}) as Partial<EngineeringProgramSettings["openVsp"]>;
   const xflr5 = (input.xflr5 ?? {}) as Partial<EngineeringProgramSettings["xflr5"]>;
-  return {
+  return hydrateEmbeddedEngineeringTools({
     enabled: input.enabled ?? defaultSettings.engineeringTools.enabled,
     toolchainRoot: typeof input.toolchainRoot === "string" && input.toolchainRoot.trim()
       ? input.toolchainRoot.trim()
@@ -435,9 +444,31 @@ function normalizeEngineeringTools(settings: unknown): EngineeringProgramSetting
       runArgsTemplate: normalizeArgList(xflr5.runArgsTemplate, defaultSettings.engineeringTools.xflr5.runArgsTemplate),
       timeoutMs: clampNumber(xflr5.timeoutMs, 5_000, 6 * 60 * 60_000, defaultSettings.engineeringTools.xflr5.timeoutMs)
     }
+  });
+}
+
+function hydrateEmbeddedEngineeringTools(settings: EngineeringProgramSettings): EngineeringProgramSettings {
+  if (!settings.enabled) return settings;
+  const status = embeddedEngineeringToolchainStatus(settings);
+  return {
+    ...settings,
+    su2: hydrateEmbeddedExecutable(settings.su2, status.su2),
+    openVsp: hydrateEmbeddedExecutable(settings.openVsp, status.openvsp),
+    xflr5: hydrateEmbeddedExecutable(settings.xflr5, status.xflr5)
   };
 }
 
+function hydrateEmbeddedExecutable<T extends { enabled: boolean; command?: string }>(
+  tool: T,
+  status: { ready: boolean; command?: string }
+): T {
+  if (!status.ready || !status.command) return tool;
+  return {
+    ...tool,
+    enabled: true,
+    command: status.command
+  };
+}
 function normalizeCommand(value: unknown, defaultValue: string | undefined): string {
   const normalizedDefault = defaultValue ?? "";
   if (typeof value !== "string") return normalizedDefault;

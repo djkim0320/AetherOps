@@ -89,6 +89,48 @@ describe("JsonAppSettingsStore", () => {
     expect(saved.maxLoopIterations).toBeUndefined();
   });
 
+  it("hydrates installed embedded engineering tools into runtime settings", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-toolchain-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    const toolchainRoot = join(tempRoot, "vendor", "engineering-tools");
+    const su2Path = join(toolchainRoot, "su2", "bin", "SU2_CFD.exe");
+    const openVspPath = join(toolchainRoot, "openvsp", "OpenVSP", "vspscript.exe");
+    const xflr5Path = join(toolchainRoot, "xflr5", "bin", "xflr5.exe");
+    mkdirSync(join(toolchainRoot, "su2", "bin"), { recursive: true });
+    mkdirSync(join(toolchainRoot, "openvsp", "OpenVSP"), { recursive: true });
+    mkdirSync(join(toolchainRoot, "xflr5", "bin"), { recursive: true });
+    writeFileSync(su2Path, "", "utf8");
+    writeFileSync(openVspPath, "", "utf8");
+    writeFileSync(xflr5Path, "", "utf8");
+    writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        {
+          allowCodeExecution: true,
+          engineeringTools: {
+            enabled: true,
+            toolchainRoot,
+            su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 60_000 },
+            openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"], timeoutMs: 60_000 },
+            xflr5: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"], timeoutMs: 60_000 }
+          },
+          updatedAt: "2026-06-24T00:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const store = new JsonAppSettingsStore(settingsPath);
+    const publicSettings = await store.getSettings();
+    const runtimeSettings = await store.getRuntimeSettings();
+
+    expect(publicSettings.engineeringTools.su2).toMatchObject({ enabled: true, command: su2Path });
+    expect(publicSettings.engineeringTools.openVsp).toMatchObject({ enabled: true, command: openVspPath });
+    expect(publicSettings.engineeringTools.xflr5).toMatchObject({ enabled: true, command: xflr5Path });
+    expect(runtimeSettings.engineeringTools).toEqual(publicSettings.engineeringTools);
+  });
   it("round-trips OpenVSP engineering tool settings", async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
     const settingsPath = join(tempRoot, "settings.json");
@@ -103,6 +145,7 @@ describe("JsonAppSettingsStore", () => {
       engineeringTools: {
         ...current.engineeringTools,
         enabled: true,
+        toolchainRoot: join(tempRoot, "empty-openvsp-toolchain"),
         openVsp: {
           enabled: true,
           command: "node.exe",
@@ -145,6 +188,7 @@ describe("JsonAppSettingsStore", () => {
       engineeringTools: {
         ...current.engineeringTools,
         enabled: true,
+        toolchainRoot: join(tempRoot, "empty-su2-toolchain"),
         su2: {
           enabled: true,
           command: "SU2_CFD.exe",

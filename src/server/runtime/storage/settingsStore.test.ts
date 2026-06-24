@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -53,6 +53,7 @@ describe("JsonAppSettingsStore", () => {
     await expect(store.getRuntimeSettings()).rejects.toThrow(/Invalid AetherOps settings file/);
     await expect(store.saveSettings(defaultSettings)).rejects.toThrow(/Invalid AetherOps settings file/);
   });
+
   it("stores and reuses newly entered embedding keys", async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
     const settingsPath = join(tempRoot, "settings.json");
@@ -73,6 +74,23 @@ describe("JsonAppSettingsStore", () => {
 
     expect(publicSettings.embedding.apiKeyConfigured).toBe(true);
     expect(runtimeSettings.embedding.apiKey).toBe("sk-test");
+  });
+
+  it("writes settings through a cleaned-up temporary file", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    const store = new JsonAppSettingsStore(settingsPath);
+
+    await store.saveSettings({
+      ...(await store.getSettings()),
+      allowExternalSearch: false,
+      allowCodeExecution: false
+    });
+
+    const entries = readdirSync(tempRoot);
+    expect(entries).toContain("settings.json");
+    expect(entries.some((name) => name.startsWith("settings.json.") && name.endsWith(".tmp"))).toBe(false);
+    expect(await store.getRuntimeSettings()).toMatchObject({ allowExternalSearch: false, allowCodeExecution: false });
   });
 
   it("ignores legacy maxLoopIterations because loop continuation is agent-controlled", async () => {

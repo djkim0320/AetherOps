@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { nowIso } from "../../../core/shared/ids.js";
 import { embeddedEngineeringToolchainStatus } from "../../../core/tools/engineeringToolchain.js";
@@ -224,8 +224,16 @@ export class JsonAppSettingsStore implements AppSettingsStore {
   }
 
   private writePersisted(settings: PersistedSettings): void {
-    mkdirSync(dirname(this.settingsPath), { recursive: true });
-    writeFileSync(this.settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+    const directory = dirname(this.settingsPath);
+    mkdirSync(directory, { recursive: true });
+    const tempPath = `${this.settingsPath}.${process.pid}.${Date.now().toString(36)}.tmp`;
+    try {
+      writeFileSync(tempPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+      renameSync(tempPath, this.settingsPath);
+    } catch (error) {
+      safeRemoveFile(tempPath);
+      throw error;
+    }
   }
 
   private toPersisted(settings: AppSettings): PersistedSettings {
@@ -509,6 +517,14 @@ function normalizeEmbeddingProvider(provider: unknown): EmbeddingSettings["provi
 
 function formatSettingsReadError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function safeRemoveFile(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    return;
+  }
 }
 
 function updateEncryptedKey(

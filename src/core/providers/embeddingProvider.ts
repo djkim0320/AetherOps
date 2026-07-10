@@ -16,7 +16,9 @@ export class ApiEmbeddingProvider implements EmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     if (this.settings.provider === "local") {
-      throw new EmbeddingProviderError("local embedding provider is not allowed in production indexing. Configure OpenAI, Google, or a custom embedding provider.");
+      throw new EmbeddingProviderError(
+        "local embedding provider is not allowed in production indexing. Configure OpenAI, Google, or a custom embedding provider."
+      );
     }
 
     if (!this.settings.apiKey) {
@@ -70,9 +72,7 @@ export class ApiEmbeddingProvider implements EmbeddingProvider {
 
   private async embedWithGoogle(text: string): Promise<number[]> {
     const model = this.settings.model || "gemini-embedding-001";
-    const endpoint =
-      this.settings.baseUrl?.replace(/\/$/, "") ||
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`;
+    const endpoint = this.settings.baseUrl?.replace(/\/$/, "") || `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`;
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
 const toolCommand = requiredArg(args, "tool-command");
@@ -20,7 +20,9 @@ const geometryExtension = geometryPath ? extname(geometryPath).toLowerCase() : "
 const hasAirfoilArtifact = Boolean(geometryPath && (geometryExtension === ".dat" || geometryExtension === ".txt"));
 const hasNaca = geometry.source === "naca" && typeof geometry.naca === "string" && /^\d{4,5}$/.test(geometry.naca);
 if (!hasAirfoilArtifact && !hasNaca) {
-  fail("Built-in XFLR5 execution requires an airfoil coordinate artifact (.dat/.txt) or NACA geometry. Use a custom XFLR5 script for wing/plane project files.");
+  fail(
+    "Built-in XFLR5 execution requires an airfoil coordinate artifact (.dat/.txt) or NACA geometry. Use a custom XFLR5 script for wing/plane project files."
+  );
 }
 
 const scriptPath = join(workdir, "aetherops-xflr5-analysis.xml");
@@ -33,7 +35,9 @@ if (result.exitCode !== 0 || result.timedOut) {
   fail(`XFLR5 command failed: exitCode=${result.exitCode}, timedOut=${result.timedOut}, stderr=${excerpt(result.stderr)}`);
 }
 if (!existsSync(polarOutputPath)) {
-  fail(`XFLR5 completed without producing the requested polar output file: ${polarOutputPath}. stdout=${excerpt(result.stdout)} stderr=${excerpt(result.stderr)}`);
+  fail(
+    `XFLR5 completed without producing the requested polar output file: ${polarOutputPath}. stdout=${excerpt(result.stdout)} stderr=${excerpt(result.stderr)}`
+  );
 }
 
 const polarText = readFileSync(polarOutputPath, "utf8");
@@ -61,16 +65,14 @@ function buildXflr5Script(spec, geometryPathValue, polarOutputPathValue) {
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<xflr5_script version="1">',
     '  <analysis type="foil_polar">',
-    geometryPathValue
-      ? `    <airfoil file="${escapeXml(resolve(geometryPathValue))}" />`
-      : `    <airfoil naca="${escapeXml(geometry.naca)}" />`,
+    geometryPathValue ? `    <airfoil file="${escapeXml(resolve(geometryPathValue))}" />` : `    <airfoil naca="${escapeXml(geometry.naca)}" />`,
     `    <reynolds value="${numberOrDefault(flight.reynolds, 1_000_000)}" />`,
     `    <mach value="${numberOrDefault(flight.mach, 0)}" />`,
     `    <alpha start="${numberOrDefault(flight.alphaStart, -4)}" end="${numberOrDefault(flight.alphaEnd, 12)}" step="${numberOrDefault(flight.alphaStep, 2)}" />`,
     `    <output polar="${escapeXml(resolve(polarOutputPathValue))}" />`,
-    '  </analysis>',
-    '</xflr5_script>',
-    ''
+    "  </analysis>",
+    "</xflr5_script>",
+    ""
   ].join("\n");
 }
 
@@ -144,11 +146,16 @@ function escapeXml(value) {
 }
 
 function excerpt(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 1200);
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1200);
 }
 
 function unquote(value) {
-  return String(value).replace(/^["']|["']$/g, "").trim();
+  return String(value)
+    .replace(/^["']|["']$/g, "")
+    .trim();
 }
 
 function fail(message) {

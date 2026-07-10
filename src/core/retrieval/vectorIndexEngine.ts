@@ -16,22 +16,14 @@ import type {
 export class VectorIndexEngine {
   constructor(private readonly embeddingProvider: EmbeddingProvider) {}
 
-  async buildIndex(input: {
-    snapshot: ResearchSnapshot;
-    records: NormalizedResearchRecord[];
-    settings?: AppSettings;
-  }): Promise<ResearchChunk[]> {
+  async buildIndex(input: { snapshot: ResearchSnapshot; records: NormalizedResearchRecord[]; settings?: AppSettings }): Promise<ResearchChunk[]> {
     const existing = new Set<string>();
     for (const chunk of input.snapshot.chunks) existing.add(chunk.id);
     const chunks: ResearchChunk[] = [];
     const embeddingProviderName = providerName(input.settings);
     const embeddingModel = input.settings?.embedding.model ?? "configured-embedding-model";
     for (const record of input.records) {
-      if (
-        record.kind === "error" ||
-        record.metadata.traceabilityKind === "error" ||
-        normalizeMemoryScope(record.memoryScope) === "ephemeral"
-      ) {
+      if (record.kind === "error" || record.metadata.traceabilityKind === "error" || normalizeMemoryScope(record.memoryScope) === "ephemeral") {
         continue;
       }
       const traceabilityKind = getTraceabilityKind(record);
@@ -44,26 +36,34 @@ export class VectorIndexEngine {
           continue;
         }
         const embedding = await this.embeddingProvider.embed(chunk.text);
-        chunks.push(tagMemoryScope({
-          ...chunk,
-          id,
-          recordId: record.id,
-          evidenceId: record.evidenceId,
-          citation: record.citation ?? record.sourceUri,
-          recordKind: record.kind,
-          traceabilityKind,
-          canSupportHypothesis,
-          sourceProjectId: record.sourceProjectId ?? record.originProjectId ?? record.projectId,
-          validationStatus: record.validationStatus === "normalized" ? "indexed" : record.validationStatus,
-          sourceQualityTier: typeof record.metadata.sourceQualityTier === "string" ? record.metadata.sourceQualityTier : undefined,
-          sourceQualityLabel: typeof record.metadata.sourceQualityLabel === "string" ? record.metadata.sourceQualityLabel : undefined,
-          sourceCanSupportHypothesis: typeof record.metadata.sourceCanSupportHypothesis === "boolean" ? record.metadata.sourceCanSupportHypothesis : undefined,
-          embedding,
-          embeddingProvider: embeddingProviderName,
-          embeddingModel,
-          embeddingDimensions: embedding.length,
-          createdAt: nowIso()
-        }, memoryScope, record.originProjectId ?? record.projectId, record.workspaceProjectId ?? record.projectId));
+        chunks.push(
+          tagMemoryScope(
+            {
+              ...chunk,
+              id,
+              recordId: record.id,
+              evidenceId: record.evidenceId,
+              citation: record.citation ?? record.sourceUri,
+              recordKind: record.kind,
+              traceabilityKind,
+              canSupportHypothesis,
+              sourceProjectId: record.sourceProjectId ?? record.originProjectId ?? record.projectId,
+              validationStatus: record.validationStatus === "normalized" ? "indexed" : record.validationStatus,
+              sourceQualityTier: typeof record.metadata.sourceQualityTier === "string" ? record.metadata.sourceQualityTier : undefined,
+              sourceQualityLabel: typeof record.metadata.sourceQualityLabel === "string" ? record.metadata.sourceQualityLabel : undefined,
+              sourceCanSupportHypothesis:
+                typeof record.metadata.sourceCanSupportHypothesis === "boolean" ? record.metadata.sourceCanSupportHypothesis : undefined,
+              embedding,
+              embeddingProvider: embeddingProviderName,
+              embeddingModel,
+              embeddingDimensions: embedding.length,
+              createdAt: nowIso()
+            },
+            memoryScope,
+            record.originProjectId ?? record.projectId,
+            record.workspaceProjectId ?? record.projectId
+          )
+        );
       }
     }
     return chunks;
@@ -97,7 +97,14 @@ function sourceFromRecord(record: NormalizedResearchRecord, traceabilityKind = g
 
 function sourceKindFromRecord(record: NormalizedResearchRecord, traceabilityKind = getTraceabilityKind(record)): ResearchSourceKind {
   const sourceKind = typeof record.metadata.sourceKind === "string" ? record.metadata.sourceKind : undefined;
-  if (sourceKind === "web" || sourceKind === "paper" || sourceKind === "file" || sourceKind === "artifact" || sourceKind === "log" || sourceKind === "conversation") {
+  if (
+    sourceKind === "web" ||
+    sourceKind === "paper" ||
+    sourceKind === "file" ||
+    sourceKind === "artifact" ||
+    sourceKind === "log" ||
+    sourceKind === "conversation"
+  ) {
     return sourceKind;
   }
   const mapping: Record<NormalizedRecordKind, ResearchSourceKind> = {

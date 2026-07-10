@@ -25,13 +25,7 @@ export function buildSourceText(source: ResearchSource, snapshot: ResearchSnapsh
 
   const toolRun = snapshot.toolRuns.find((item) => `source_${item.id}` === source.id);
   if (toolRun) {
-    return joinPresent(
-      "\n",
-      toolRun.toolName,
-      JSON.stringify(toolRun.input),
-      JSON.stringify(toolRun.output),
-      toolRun.error
-    );
+    return joinPresent("\n", toolRun.toolName, JSON.stringify(toolRun.input), JSON.stringify(toolRun.output), toolRun.error);
   }
 
   return joinPresent("\n", source.title, source.url, source.doi, JSON.stringify(source.metadata));
@@ -90,12 +84,7 @@ export function extractKeywords(text: string, limit = 12): string[] {
 }
 
 export function tokenize(text: string): string[] {
-  return (
-    text
-      .toLowerCase()
-      .replace(nonKeywordTokenPattern, " ")
-      .match(tokenPattern) ?? []
-  );
+  return text.toLowerCase().replace(nonKeywordTokenPattern, " ").match(tokenPattern) ?? [];
 }
 
 function insertTopKeyword(ranked: Array<[string, number]>, entry: [string, number], limit: number): void {

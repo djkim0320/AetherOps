@@ -63,9 +63,16 @@ export function isSupportEligibleEvidenceRecord(
   const traceabilityKind = String(record.metadata.traceabilityKind ?? "");
   const sourceQualityTier = String(record.metadata.sourceQualityTier ?? "");
   const hasCitation = Boolean(record.citation || record.sourceUri || record.metadata.doi || record.metadata.pdfUrl);
-  const hasSpan = Boolean(record.metadata.page || record.metadata.spanStart !== undefined || record.metadata.spanEnd !== undefined || record.metadata.quote || record.metadata.extractionMethod === "pdf_text_span");
+  const hasSpan = Boolean(
+    record.metadata.page ||
+    record.metadata.spanStart !== undefined ||
+    record.metadata.spanEnd !== undefined ||
+    record.metadata.quote ||
+    record.metadata.extractionMethod === "pdf_text_span"
+  );
   const graphOk = !options.requireGraphPath || Boolean(graphPath?.hasSourcePath || graphPath?.hasCitationPath);
-  return record.kind === "evidence" &&
+  return (
+    record.kind === "evidence" &&
     record.metadata.canSupportHypothesis === true &&
     record.metadata.sourceCanSupportHypothesis !== false &&
     (traceabilityKind === "external_source" || traceabilityKind === "tool_observation") &&
@@ -74,7 +81,8 @@ export function isSupportEligibleEvidenceRecord(
     record.validationStatus !== "rejected" &&
     hasCitation &&
     (!options.preferSpan || hasSpan || traceabilityKind === "tool_observation") &&
-    graphOk;
+    graphOk
+  );
 }
 
 const SUPPORT_EXCLUDED_TIERS = new Set(["weak", "excluded", "general_web"]);

@@ -30,7 +30,9 @@ export class RuntimeRequirementChecker {
     const settings = context.settings;
 
     if (step === ResearchLoopStep.InputResearchQuestionHypothesis) {
-      requirements.push(requirement("research_input", "연구 질문/가설 입력", step, hasResearchInput(context.snapshot), "명시적인 연구 질문과 초기 가설을 입력해야 합니다."));
+      requirements.push(
+        requirement("research_input", "연구 질문/가설 입력", step, hasResearchInput(context.snapshot), "명시적인 연구 질문과 초기 가설을 입력해야 합니다.")
+      );
     }
 
     if (requiresLlm(step)) {
@@ -42,7 +44,9 @@ export class RuntimeRequirementChecker {
       const openCodeRequired = normalizedToolSet(requiredTools).has("opencodetool");
       if (openCodeRequired) {
         requirements.push(requirement("opencode.enabled", "OpenCode 사용 설정", step, settings.openCode.enabled, "OpenCode 도구 엔진을 활성화해야 합니다."));
-        requirements.push(requirement("opencode.command", "OpenCode command/path", step, Boolean(settings.openCode.command?.trim()), "OpenCode command/path가 필요합니다."));
+        requirements.push(
+          requirement("opencode.command", "OpenCode command/path", step, Boolean(settings.openCode.command?.trim()), "OpenCode command/path가 필요합니다.")
+        );
         if (context.openCodeReady !== undefined) {
           requirements.push(requirement("opencode.preflight", "OpenCode CLI 준비 상태", step, context.openCodeReady, "OpenCode CLI를 실행할 수 없습니다."));
         }
@@ -71,12 +75,16 @@ export class RuntimeRequirementChecker {
       const modeConfigured = mode === "rule_based" || mode === "llm" || mode === "hybrid";
       requirements.push(requirement("ontology.mode", "Ontology extraction mode", step, modeConfigured, "Ontology extraction mode를 설정해야 합니다."));
       if (mode === "llm" || mode === "hybrid") {
-        requirements.push(requirement("ontology.llm", "Ontology LLM extraction", step, context.llmAvailable, "선택한 ontology extraction mode에는 LLM이 필요합니다."));
+        requirements.push(
+          requirement("ontology.llm", "Ontology LLM extraction", step, context.llmAvailable, "선택한 ontology extraction mode에는 LLM이 필요합니다.")
+        );
       }
     }
 
     if (step === ResearchLoopStep.FinalizeOutputs) {
-      requirements.push(requirement("storage.writable", "프로젝트 저장소 쓰기 권한", step, context.storageWritable ?? true, "최종 산출물을 저장할 수 없습니다."));
+      requirements.push(
+        requirement("storage.writable", "프로젝트 저장소 쓰기 권한", step, context.storageWritable ?? true, "최종 산출물을 저장할 수 없습니다.")
+      );
     }
 
     return requirements;
@@ -132,26 +140,60 @@ function requiredToolRequirements(
     normalizedTools.has("researchmetadatatool") ||
     normalizedTools.has("pdfingestiontool")
   ) {
-    requirements.push(requirement("webSearch.allowed", "외부 검색 허용", step, project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch, "연구 계획이 WebSearchTool/BackgroundBrowserTool/WebFetchTool/PdfIngestionTool 외부 네트워크 접근을 요구하지만 외부 검색이 비활성화되어 있습니다."));
+    requirements.push(
+      requirement(
+        "webSearch.allowed",
+        "외부 검색 허용",
+        step,
+        project.autonomyPolicy.allowExternalSearch && settings.allowExternalSearch,
+        "연구 계획이 WebSearchTool/BackgroundBrowserTool/WebFetchTool/PdfIngestionTool 외부 네트워크 접근을 요구하지만 외부 검색이 비활성화되어 있습니다."
+      )
+    );
     if (normalizedTools.has("websearchtool")) {
       const configured = settings.webSearch.provider !== "disabled" && Boolean(settings.webSearch.apiKey || settings.webSearch.apiKeyConfigured);
       requirements.push(requirement("webSearch.provider", "Web search provider/API key", step, configured, "Web search provider와 API key가 필요합니다."));
     }
     if (normalizedTools.has("backgroundbrowsertool")) {
-      requirements.push(requirement("browserUse.enabled", "내장 Chromium 브라우저", step, settings.browserUse.enabled, "내장 Chromium 브라우저 도구가 비활성화되어 있습니다."));
+      requirements.push(
+        requirement("browserUse.enabled", "내장 Chromium 브라우저", step, settings.browserUse.enabled, "내장 Chromium 브라우저 도구가 비활성화되어 있습니다.")
+      );
     }
   }
 
   if (normalizedTools.has("researchmetadatatool")) {
-    requirements.push(requirement("researchMetadata.enabled", "Research metadata provider", step, settings.researchMetadata.enabled, "ResearchMetadataTool requires the OpenAlex metadata provider to be enabled."));
-  }
-
-  if (normalizedTools.has("codeexecutiontool") || normalizedTools.has("engineeringprogramtool")) {
-    requirements.push(requirement("codeExecution.allowed", "코드 실행 허용", step, project.autonomyPolicy.allowCodeExecution && settings.allowCodeExecution, "연구 계획이 코드 실행을 요구하지만 코드 실행이 비활성화되어 있습니다."));
+    requirements.push(
+      requirement(
+        "researchMetadata.enabled",
+        "Research metadata provider",
+        step,
+        settings.researchMetadata.enabled,
+        "ResearchMetadataTool requires the OpenAlex metadata provider to be enabled."
+      )
+    );
   }
 
   if (normalizedTools.has("engineeringprogramtool")) {
-      requirements.push(requirement("engineeringTools.configured", "Engineering program toolchain", step, hasExecutableEngineeringTool(settings), "EngineeringProgramTool requires an embedded XFOIL/SU2/OpenVSP/XFLR5 executable, bundled XFOIL-WASM path, or configured modeling artifact root."));
+    requirements.push(
+      requirement(
+        "codeExecution.allowed",
+        "코드 실행 허용",
+        step,
+        project.autonomyPolicy.allowCodeExecution && settings.allowCodeExecution,
+        "연구 계획이 코드 실행을 요구하지만 코드 실행이 비활성화되어 있습니다."
+      )
+    );
+  }
+
+  if (normalizedTools.has("engineeringprogramtool")) {
+    requirements.push(
+      requirement(
+        "engineeringTools.configured",
+        "Engineering program toolchain",
+        step,
+        hasExecutableEngineeringTool(settings),
+        "EngineeringProgramTool requires an embedded XFOIL/SU2/OpenVSP/XFLR5 executable, bundled XFOIL-WASM path, or configured modeling artifact root."
+      )
+    );
   }
 
   return requirements;

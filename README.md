@@ -1,239 +1,99 @@
 # AetherOps
 
-AetherOps는 TypeScript / React / Node.js 기반의 자율 연구 에이전트 웹앱입니다. 연구 질문과 가설을 입력하면 12단계 연구 검증 루프를 통해 도구 실행, 데이터 정규화, Vector Index, Ontology Graph, 검증, 합성, 최종 산출을 수행합니다.
-
-현재 런타임은 웹앱 구조입니다. Electron legacy runtime은 production 경로로 사용하지 않습니다.
+AetherOps는 React, Node.js, SQLite로 구성된 로컬 단일 사용자 연구 에이전트입니다. 프로젝트별 채팅을 시작점으로 연구 계획, 도구 실행, 근거 정규화, 검색 인덱스와 온톨로지 구축, 검증, 최종 산출물 생성을 수행합니다.
 
 ## 요구 환경
 
-- Node.js `>=22.16.0`
-- npm
-- 실제 연구 실행에 필요한 설정
-  - LLM: Codex OAuth 또는 API provider
-  - OpenCode command/path
-  - Embedding provider/model/API key
-  - 외부 검색을 사용할 경우 Web Search provider/API key 또는 승인된 Browser runtime
+- Node.js `>=22.16.0 <23`
+- npm과 추적된 `package-lock.json`
+- Orchestrator LLM용 Codex OAuth
+- 선택 기능에 필요한 실제 provider 또는 engineering 실행 파일
 
-`node:sqlite`의 `DatabaseSync`를 사용하므로 Node 22 최신 LTS/Current 계열을 권장합니다.
+Embedding과 Web Search provider는 Codex 설정과 독립적입니다. 준비되지 않은 기능은 synthetic 결과로 대체하지 않고 `blocked` 또는 `failed`로 기록합니다.
 
-## 실행
+## 설치와 실행
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-기본 주소:
-
-- API 서버: `http://127.0.0.1:5179`
-- Vite 프론트엔드: `http://127.0.0.1:5180`
-
-프로덕션 빌드 실행:
+기본 서버 주소는 `http://127.0.0.1:5179`입니다. Production 빌드는 다음과 같이 실행합니다.
 
 ```bash
 npm run build
 npm run start
 ```
 
-## 공식 검증 명령
+## 데이터와 마이그레이션
+
+기본 데이터 루트는 `.aetherops`이며 `AETHEROPS_DATA_DIR`로 변경할 수 있습니다. 서버는 HTTP listen 전에 필수 migration을 확인합니다.
 
 ```bash
-npm run doctor
-npm run ui:verify
-npm run metadata:verify
-npm run selftest
-npm run selftest:blocked
-npm run selftest:live
+npm run migrate:check
+npm run migrate:apply
+npm run migrate:verify
+npm run migrate:rollback
 ```
 
-- `doctor`: Node 버전, scripts, data root, 포트, provider 설정, legacy RPC gate, production synthetic-substitute adapter 부재를 점검합니다.
-- `ui:verify`: 실행 중인 실제 AetherOps UI(`AETHEROPS_UI_URL` 또는 기본 `http://127.0.0.1:5180`)에 Playwright로 접속해 `1920x1080`, `1440x900`, `1366x768`, `761px`, `760px`, `390x844`에서 sidebar 배치, settings 탭, Engineering request template 7개, SU2/OpenVSP/XFLR5/XFOIL-WASM template, 수평 overflow 부재를 검증합니다.
-- `metadata:verify`: server build 후 실제 OpenAlex API를 호출해 `ResearchMetadataTool`이 DOI/URL이 있는 paper source와 citation/quote가 있는 evidence를 생성하는지 검증합니다. synthetic-substitute 없이 외부 네트워크를 사용합니다.
-- `selftest`: 정적 검사, 빌드, 서버 verify, RPC, blocked-path E2E, DB/artifact/rawText, WebFetch 보안 verify, UTF-8 검증을 수행하고 `docs/aetherops-self-test-report.md`를 갱신합니다.
-- `selftest:blocked`: live provider credential 없이도 deterministic blocked-path를 검증합니다.
-- `selftest:live`: 실제 LLM/OpenCode/Embedding/Search 설정이 준비된 경우에만 live E2E를 수행합니다. credential이 부족하면 `SKIPPED`로 기록합니다. `node scripts/selftest.mjs --mode=live --strict-live`를 사용하면 prerequisites 누락을 exit 1로 처리합니다.
+`check`와 `verify`는 read-only입니다. 기존 데이터는 backup manifest와 SHA-256 검증을 거쳐 v2로 이동하며, 검증되지 않은 downgrade는 수행하지 않습니다.
 
-Verdict 기준:
+## 공개 인터페이스
 
-- `FAIL`: typecheck/test/build/server/RPC 실패, legacy RPC gate 실패, production synthetic-substitute 발견, blocked-path에서 FinalOutput 생성, snippet/LLM claim의 support evidence 승격.
-- `PASS_WITH_WARNINGS`: 핵심 검증은 통과했지만 live-path가 credential 부족으로 skipped되었거나 non-critical operational warning이 있는 경우.
-- `PASS`: static, blocked-path, live-path, security, UTF-8 검증이 모두 통과한 경우.
+- RPC: `POST /api/v2/rpc`
+- SSE: `GET /api/v2/events?projectId=<id>`
+- Health: `GET /api/health`
+
+RPC는 named `params`만 사용합니다. Renderer의 서버 상태는 TanStack Query가 소유하고 SSE는 cache patch 또는 invalidate만 수행합니다. Polling fallback은 없습니다.
+
+## Codex 설정
+
+기본 설정은 `gpt-5.6 / xhigh / 180000ms`입니다. 모델, reasoning effort, timeout은 호출마다 영속 설정에서 다시 읽습니다. 계정 entitlement 오류가 발생해도 다른 모델로 fallback하지 않습니다.
+
+OpenCode는 engineering 실행 경로이며 Codex Orchestrator 설정과 별도로 유지됩니다.
+
+## 검증 명령
+
+```bash
+npm run lint
+npm run format:check
+npm run typecheck
+npm run architecture:check
+npm run size:check
+npm run stylelint
+npm run css:tokens
+npm test
+npm run build
+npm run doctor
+npm run selftest:blocked
+```
+
+- `ui:verify`: 실제 실행 중인 서버를 Playwright로 검사합니다. 지원 viewport, dark/light theme, inspector deep-link, console 오류와 axe serious/critical 위반을 확인합니다.
+- `metadata:verify`: 실제 OpenAlex를 사용하는 manual/nightly 검증입니다.
+- `selftest:blocked`: 외부 credential 없이 fail-closed 경로를 검증합니다.
+- `selftest:live`: 실제 Codex, Embedding, Search/Browser 및 engineering prerequisite가 준비된 환경에서만 실행합니다.
+
+Live 검증은 일반 offline CI에 포함하지 않습니다. 필수 prerequisite가 없으면 `SKIPPED`이며, 누락을 실패로 처리하려면 `--strict-live`를 사용합니다.
+
+## UI 지원 범위
+
+공식 지원 범위는 `1280×720` 이상 데스크톱입니다. 기본 화면은 프로젝트별 chat이며 Run, Evidence, Artifacts는 inspector에서 확인합니다. 원격 폰트와 bitmap 로고는 사용하지 않습니다.
+
+## 실행 정책
+
+- 동일 프로젝트의 chat, research, engineering job은 하나의 FIFO lane을 공유합니다.
+- 다른 프로젝트는 설정된 전역 concurrency 안에서 병렬 실행됩니다.
+- 성공한 단계만 checkpoint로 commit됩니다.
+- 실패한 부분 산출물은 quarantined 상태로 남아 evidence와 final output에서 제외됩니다.
+- Browser, WebFetch, remote coordinate fetch는 동일한 public URL 정책과 redirect 검증을 사용합니다.
+- API key와 OAuth token은 event, report, log에 기록하지 않습니다.
 
 ## 주요 환경 변수
 
-- `AETHEROPS_DATA_DIR`: 앱 데이터 루트. 기본값은 `.aetherops`.
-- `AETHEROPS_PORT`: API 서버 포트. 기본값은 `5179`; `0`을 주면 OS가 빈 포트를 할당합니다.
-- `AETHEROPS_ENABLE_LEGACY_RPC`: `true`일 때만 old RPC alias를 허용합니다. 기본값은 비활성입니다.
-- `AETHEROPS_MARKDOWN_BOM`: Markdown 텍스트 산출물 앞에 UTF-8 BOM을 붙일지 제어합니다. `true`/`false`로 강제할 수 있으며, 지정하지 않으면 Windows에서는 PowerShell 호환을 위해 자동으로 켜지고 다른 OS에서는 꺼집니다.
-- 최종 연구 보고서는 `reports/final-report.pdf`로 생성됩니다. `AETHEROPS_MARKDOWN_BOM`은 run audit, project manifest, reusable knowledge asset 같은 Markdown 텍스트 산출물에만 적용됩니다.
+- `AETHEROPS_DATA_DIR`: 데이터 루트
+- `AETHEROPS_PORT`: HTTP 포트, 기본 `5179`
+- `AETHEROPS_HOST`: loopback host, 기본 `127.0.0.1`
+- `AETHEROPS_RPC_TOKEN`: 로컬 RPC/SSE 인증 token 재정의
+- `AETHEROPS_MARKDOWN_BOM`: Windows용 Markdown BOM 정책 재정의
 
-Windows PowerShell에서 markdown, JSON, JSONL, NT 또는 source 파일의 한글이 깨져 보이면 다음처럼 UTF-8을 명시해 읽으세요. AetherOps의 source 파일과 생성 산출물은 UTF-8을 사용하며, Markdown 텍스트 산출물만 `AETHEROPS_MARKDOWN_BOM` 정책에 따라 BOM을 붙일 수 있습니다.
-
-```powershell
-Get-Content -Encoding UTF8 docs/aetherops-self-test-report.md
-Get-Content -Encoding UTF8 .tmp/aetherops-selftest/blocked-path-result.json
-Get-Content -Encoding UTF8 src/core/integration/koreanCopy.test.ts
-$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
-npm run doctor | Out-File -Encoding utf8 doctor-output.txt
-```
-
-PowerShell 5.1의 기본 `Get-Content`와 `>` 리다이렉션은 파일 bytes가 정상 UTF-8이어도 화면이나 출력 파일에서 한글을 깨뜨려 보일 수 있습니다. self-test는 generated text files를 byte-level strict UTF-8로 다시 읽어 이 차이를 보고서에 기록합니다.
-
-## 연구 도구 통합 계약
-
-AetherOps는 설정된 실제 도구만 `ResearchPlan.programRequests`로 실행합니다. synthetic-substitute 금지 정책에 따라 설정이 없거나 실행 인자가 불완전하면 seed/synthetic-substitute 결과를 만들지 않고 blocked 또는 failed로 남깁니다.
-
-- `ResearchMetadataTool`: 실제 OpenAlex API에서 논문 metadata, DOI, 저자, abstract, citation count를 가져와 traceable source/evidence로 저장합니다.
-- `EngineeringProgramTool`: `runtimeToolDiagnostics.engineeringProgramRequestTemplates`에서 `ready=true`인 template만 LLM 계획에 사용할 수 있습니다.
-- 지원 template: `toolchain-check`, `mesh-inspect`, `xfoil-polar`, `xfoil-wasm-polar`, `su2-case-run`(SU2), `openvsp-analysis-run`(OpenVSP), `xflr5-analysis-run`(XFLR5).
-- `xfoil-wasm-polar`는 bundled `webxfoil-wasm@0.1.1`(GPL-2.0-or-later)을 사용해 로컬 `xfoil` 실행 파일 없이 실제 XFOIL polar를 생성합니다. 명명 airfoil(예: Clark Y)은 `artifactPath` 또는 public `sourceUrl` 좌표 파일을 사용해야 하며, AetherOps는 NACA 기본값으로 대체하지 않습니다.
-- SU2는 command, case root, case root 안의 `.cfg` config file, `{config}`가 포함된 args template가 필요합니다. LLM이 생성한 `cfdRunSpec`은 검증 후 임시 SU2 config로 렌더링되어 실행됩니다.
-- OpenVSP/XFLR5는 command가 필요합니다. custom script path가 비어 있으면 AetherOps의 내장 실행 어댑터가 실제 OpenVSP/XFLR5 command를 호출하고, custom script path가 있으면 `{script}`와 `{spec}`이 포함된 args template를 요구합니다. AetherOps는 누락된 case, mesh, solver 인자를 추측하지 않습니다.
-- OBJ/STL mesh inspection과 adapter input은 configured modeling artifact root 내부의 parser-valid mesh artifact만 사용합니다. XFOIL 계열 좌표 입력은 `.dat`/`.txt` airfoil coordinate artifact 또는 traceable public coordinate source를 사용합니다.
-
-## 12단계 연구 검증 루프
-
-1. 연구 DB 생성
-2. 연구 질문 및 가설 입력
-3. 연구 명세 수립 / 가설 및 검증 전략
-4. 연구 계획 수립
-5. 도구 실행 및 연구 수행
-6. 데이터 수집 및 정규화
-7. 임베딩 및 벡터 구조화 / Vector Index
-8. 온톨로지 기반 구조화 / Knowledge Graph
-9. 추론 및 검증
-10. 결과 합성 및 가설 평가
-11. 계속 연구 여부 판단
-12. 최종 결과 도출
-
-11단계에서 `shouldContinue=true`이면 5단계로 직접 돌아가지 않습니다. 반드시 4단계 연구 계획 수립으로 복귀해 `ResearchPlan`을 갱신한 뒤 다음 iteration의 도구 실행으로 진행합니다.
-
-## Main Research Memory + Project Workspace
-
-AetherOps는 장기 기억과 프로젝트 작업공간을 분리합니다.
-
-```text
-.aetherops/main/
-  main.sqlite
-  vector.sqlite
-  ontology.sqlite
-  files/
-    sources/
-    artifacts/
-    logs/
-
-.aetherops/projects/{project-id}/
-  project.sqlite
-  context/
-  reports/
-  knowledge/
-  exports/
-  logs/
-  artifacts/
-```
-
-외부 raw source는 Main Research Memory의 `main/files/sources`에 canonical file로 저장합니다. Project Workspace에는 source/record/context id 링크와 연구별 산출물만 저장합니다. 내부 생성 artifact는 프로젝트 workspace에 남을 수 있지만, 가설 지지 evidence로 사용하지 않습니다.
-
-## Evidence 정책
-
-- 검색 snippet은 evidence가 아닙니다. `WebSearchTool`은 source candidate만 생성합니다.
-- `WebFetchTool` 또는 PDF ingestion이 실제 본문을 확인하고 `sourceUri`, `citation`, `quote/span`을 가진 경우에만 evidence로 승격할 수 있습니다.
-- citation/sourceUri/quote/span 없는 claim은 evidence가 아니라 claim 또는 observation입니다.
-- internal artifact와 `project://...` provenance는 context에는 들어갈 수 있지만 hypothesis support evidence가 될 수 없습니다.
-- 9단계 추론/검증과 10단계 합성은 `ProjectContextSnapshot` 없이 실행되지 않습니다.
-
-## 실패 정책
-
-production runtime에서는 다음을 사용하지 않습니다.
-
-- synthetic OpenCode adapter
-- local research substitute adapter
-- composite substitute chain
-- Noop LLM 기반 자동 진행
-- local/local-hash embedding substitute
-- 설정 부족을 seed 또는 synthetic 결과로 조용히 대체하는 경로
-
-필수 설정이 부족하면 프로젝트는 `blocked`로 기록됩니다. 실제 도구 실행이 실패하면 `failed`로 기록됩니다. 실패 전까지 생성된 partial output은 보존되며, blocked/failed 상태에서는 `RunAuditOutput`과 `reports/run-audit.md` / `exports/run-audit.json`이 생성될 수 있습니다. FinalOutput은 성공적인 최종화 조건에서만 생성됩니다.
-
-## Live-test 준비 체크리스트
-
-`npm run selftest:live`가 실제 live E2E를 수행하려면 다음이 필요합니다.
-
-- Codex OAuth 또는 LLM API provider 사용 가능
-- OpenCode command/path 사용 가능
-- Embedding API key 설정
-- Web Search provider/API key 또는 승인된 Browser runtime 설정
-- `allowExternalSearch=true`
-- production synthetic-substitute/local hash embedding 없음
-
-credential이 없으면 live-path는 실패가 아니라 `SKIPPED`로 기록됩니다. 엄격한 CI에서 credential 누락을 실패로 보고 싶으면 `node scripts/selftest.mjs --mode=live --strict-live`를 사용하세요.
-
-## CI and self-test operation
-
-GitHub Actions runs `.github/workflows/ci.yml` on every `push` and `pull_request`.
-The default QA job uses Node.js 22 and runs the required gate in this order:
-
-```bash
-npm install
-npm run typecheck
-npm test
-npm run build
-npm run selftest:blocked
-```
-
-The CI job uploads the generated `docs/aetherops-self-test-report.md` report plus
-key `.tmp/aetherops-selftest` JSON, JSONL, Markdown, SQLite, and blocked-path
-artifacts. These artifacts are the evidence bundle to inspect when a CI run fails
-or when a blocked-path run needs auditing.
-
-Manual live testing is available from `workflow_dispatch`. Set `run_live=true` to
-start the live job. The live job is never started by normal push or pull request
-events. It runs:
-
-```bash
-npm run selftest:live -- --full-static
-```
-
-Set `strict_live=true` as well when missing live prerequisites should fail the
-manual job. The workflow then appends `--strict-live`:
-
-```bash
-npm run selftest:live -- --full-static --strict-live
-```
-
-`selftest:live` normally exercises the live path only when real LLM/OpenCode,
-embedding, and search/browser prerequisites are configured. If credentials or
-provider settings are missing, the live path is recorded as `SKIPPED`; this is
-not a hard failure unless `--strict-live` is used.
-
-Useful self-test flags:
-
-- `--full-static`: in live mode, run typecheck, tests, and build before live E2E.
-- `--skip-static`: skip static checks when you only need the runtime path.
-- `--strict-live`: make missing live prerequisites fail live mode instead of
-  reporting a skipped live path.
-
-`PASS_WITH_WARNINGS` means mandatory static, blocked-path, artifact, security,
-and UTF-8 checks passed, but the report contains a non-critical operational
-warning. The common case is live E2E being skipped because credentials are not
-available in the current environment.
-
-The generated report includes an `Evidence Policy Table`. That table explains
-which records are allowed to support a hypothesis: source-backed evidence needs
-traceability such as `sourceUri`, citation, quote/span, and quality metadata.
-Search snippets, unsupported claims, and internal artifacts without source-backed
-provenance can be useful context, but they do not count as hypothesis-supporting
-evidence.
-
-On Windows PowerShell, use explicit UTF-8 when reading generated Markdown, JSON,
-JSONL, NT, or source files if the console shows mojibake:
-
-```powershell
-Get-Content -Encoding UTF8 docs/aetherops-self-test-report.md
-Get-Content -Encoding UTF8 .tmp/aetherops-selftest/blocked-path-result.json
-Get-Content -Encoding UTF8 src/core/integration/koreanCopy.test.ts
-$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
-npm run doctor | Out-File -Encoding utf8 doctor-output.txt
-```
-
-PowerShell 5.1 can display or redirect mojibake even when the file bytes are valid UTF-8. The self-test report records strict byte-level UTF-8 decode results for generated text artifacts so this can be distinguished from real data corruption.
+생성되는 Markdown, JSON, JSONL, NT 파일은 UTF-8입니다. PowerShell 5.1에서 한글이 깨져 보이면 `Get-Content -Encoding UTF8`을 사용하십시오.

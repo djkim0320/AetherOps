@@ -6,7 +6,7 @@ import type { BrowserCollectInput, BrowserPageCollector } from "./backgroundBrow
 const createdAt = "2026-05-21T00:00:00.000Z";
 
 const settings: AppSettings = {
-  openCodeLlm: { source: "codex-oauth", model: "gpt-5.5" },
+  openCodeLlm: { source: "codex-oauth", model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000 },
   openCode: { enabled: false, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled" },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKey: "test-key", apiKeyConfigured: true },

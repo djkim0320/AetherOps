@@ -204,15 +204,20 @@ function formatNumber(value) {
 }
 
 function escapeAngelScriptString(value) {
-  return value.replace(/\\/g, "/").replace(/"/g, "\\\"");
+  return value.replace(/\\/g, "/").replace(/"/g, '\\"');
 }
 
 function excerpt(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 1200);
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1200);
 }
 
 function unquote(value) {
-  return String(value).replace(/^["']|["']$/g, "").trim();
+  return String(value)
+    .replace(/^["']|["']$/g, "")
+    .trim();
 }
 
 function fail(message) {

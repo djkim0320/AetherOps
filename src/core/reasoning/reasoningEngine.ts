@@ -3,6 +3,7 @@ import type { HybridContext, ResearchSnapshot } from "../shared/types.js";
 
 export interface ReasoningSummary {
   hypothesisId?: string;
+  claim?: string;
   supportingEvidenceIds: string[];
   contradictingEvidenceIds: string[];
   evidenceGaps: string[];
@@ -52,6 +53,7 @@ export class ReasoningEngine {
 
       summaries.push({
         hypothesisId: hypothesis.id,
+        claim: hypothesis.statement,
         supportingEvidenceIds: supporting,
         contradictingEvidenceIds: contradicting,
         evidenceGaps: gaps,

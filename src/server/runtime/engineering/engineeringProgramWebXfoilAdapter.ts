@@ -1,0 +1,103 @@
+import { excerpt, boundedNumber, boundedPositiveNumber, requestWithCfdSpecDefaults, safeOutputFileName } from "./engineeringProgramRequestValidator.js";
+import { parseXfoilPolarRows } from "./engineeringProgramXfoilAdapter.js";
+import { resolveWasmAirfoilInput } from "./engineeringProgramCoordinateResolver.js";
+import type { AirfoilCoordinateResolutionPorts } from "../../../core/tools/engineeringProgramTypes.js";
+import type { AppSettings, EngineeringProgramRequest, OpenCodeRunInput } from "../../../core/shared/types.js";
+import type { XfoilWasmPolarSummary } from "../../../core/tools/engineeringProgramTypes.js";
+
+export function hasConfiguredXfoilWasm(settings: AppSettings): boolean {
+  return settings.engineeringTools.enabled;
+}
+
+export async function runXfoilWasmPolar(
+  request: EngineeringProgramRequest,
+  settings: AppSettings,
+  input: OpenCodeRunInput,
+  ports: Partial<AirfoilCoordinateResolutionPorts> = {}
+): Promise<XfoilWasmPolarSummary> {
+  if (!hasConfiguredXfoilWasm(settings)) {
+    throw new Error("XFOIL WebAssembly polar execution requires engineering program tools to be enabled.");
+  }
+  const executionRequest = requestWithCfdSpecDefaults(request, "xfoil-wasm", settings);
+  const coordinateInput = await resolveWasmAirfoilInput(executionRequest, settings, input, ports);
+  const reynolds = boundedPositiveNumber(executionRequest.reynolds, 1_000, 100_000_000, 1_000_000, "reynolds");
+  const mach = boundedPositiveNumber(executionRequest.mach, 0, 0.8, 0, "mach");
+  const alphaStart = boundedNumber(executionRequest.alphaStart, -30, 30, -4, "alphaStart");
+  const alphaEnd = boundedNumber(executionRequest.alphaEnd, -30, 30, 12, "alphaEnd");
+  const alphaStep = boundedPositiveNumber(executionRequest.alphaStep, 0.1, 10, 2, "alphaStep");
+  if (alphaEnd < alphaStart) {
+    throw new Error("XFOIL WebAssembly polar request requires alphaEnd >= alphaStart.");
+  }
+
+  const { WebXFOIL } = await import("webxfoil-wasm");
+  const xfoil = await WebXFOIL.load();
+  try {
+    const session = WebXFOIL.input();
+    let airfoil = coordinateInput.label;
+    let coordinateFormat: string | undefined;
+    if (coordinateInput.text) {
+      const loaded = session.loadAirfoilText(coordinateInput.text, {
+        path: `${safeOutputFileName(coordinateInput.label, "airfoil")}.dat`,
+        name: coordinateInput.label
+      });
+      airfoil = loaded.name || coordinateInput.label;
+      coordinateFormat = loaded.format;
+    } else {
+      const naca = request.naca?.trim();
+      if (!naca || !/^\d{4,5}$/.test(naca)) {
+        throw new Error("XFOIL WebAssembly NACA request must be a 4 or 5 digit series code.");
+      }
+      session.naca(naca);
+      airfoil = `NACA ${naca}`;
+    }
+
+    const polarPath = "xfoil-wasm-polar.txt";
+    session
+      .add("PANE")
+      .oper()
+      .add("ITER 160")
+      .add(`VISC ${reynolds}`)
+      .add(`MACH ${mach}`)
+      .add("PACC")
+      .add(polarPath)
+      .blank()
+      .add(`ASEQ ${alphaStart} ${alphaEnd} ${alphaStep}`)
+      .add("PACC")
+      .blank()
+      .quit();
+
+    const result = xfoil.run(session.toString(), { workDir: "/work", files: session.files, scalarKeys: ["CL", "CD", "Cm", "a"] });
+    const polarText = String(xfoil.readFile(`/work/${polarPath}`, "utf8"));
+    const rows = parseXfoilPolarRows(polarText);
+    if (!rows.length) {
+      throw new Error(`XFOIL WebAssembly produced no polar rows. stdout=${excerpt(result.raw.stdout)} stderr=${excerpt(result.raw.stderr)}`);
+    }
+    return {
+      airfoil,
+      runtime: "webxfoil-wasm",
+      runtimeVersion: "0.1.1",
+      runtimeLicense: "GPL-2.0-or-later",
+      sourceKind: coordinateInput.sourceKind,
+      sourceLabel: coordinateInput.label,
+      sourceUrl: coordinateInput.sourceUrl,
+      sourceArtifactPath: coordinateInput.sourceArtifactPath,
+      coordinateFormat,
+      reynolds,
+      mach,
+      alphaStart,
+      alphaEnd,
+      alphaStep,
+      rowCount: rows.length,
+      rows,
+      stdoutExcerpt: excerpt(result.raw.stdout),
+      stderrExcerpt: excerpt(result.raw.stderr),
+      convergence: {
+        hasNaN: Boolean(result.output.hasNaN),
+        hasFortranError: Boolean(result.output.hasFortranError),
+        hasConvergenceFail: Boolean(result.output.hasConvergenceFail)
+      }
+    };
+  } finally {
+    xfoil.destroy();
+  }
+}

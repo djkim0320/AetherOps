@@ -1,0 +1,9 @@
+dist/**
+dist-server/**
+node_modules/**
+.tmp/**
+.aetherops/**
+coverage/**
+playwright-report/**
+vendor/**
+tmp/**

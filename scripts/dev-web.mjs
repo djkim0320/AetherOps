@@ -37,10 +37,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-await Promise.race([
-  waitForExit(backend),
-  waitForExit(vite)
-]).finally(() => {
+await Promise.race([waitForExit(backend), waitForExit(vite)]).finally(() => {
   for (const child of children) {
     child.kill();
   }

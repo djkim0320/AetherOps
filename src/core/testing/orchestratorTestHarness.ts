@@ -22,7 +22,7 @@ import type {
 } from "../shared/types.js";
 
 export const strictTestSettings: AppSettings = {
-  openCodeLlm: { source: "codex-oauth", model: "gpt-5.5" },
+  openCodeLlm: { source: "codex-oauth", model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000 },
   openCode: { enabled: true, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled" },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 64, apiKey: "test-key", apiKeyConfigured: true },
@@ -32,9 +32,34 @@ export const strictTestSettings: AppSettings = {
     enabled: false,
     xfoil: { enabled: false, command: "", timeoutMs: 30_000 },
     modeling: { enabled: false, artifactRoot: "", maxMeshBytes: 20 * 1024 * 1024 },
-    su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 30 * 60_000 },
-    openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"], timeoutMs: 30 * 60_000 },
-    xflr5: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"], timeoutMs: 30 * 60_000 }
+    su2: {
+      enabled: false,
+      command: "",
+      caseRoot: "",
+      configFile: "",
+      workingDirectory: "",
+      probeArgs: ["--help"],
+      runArgsTemplate: ["{config}"],
+      timeoutMs: 30 * 60_000
+    },
+    openVsp: {
+      enabled: false,
+      command: "",
+      scriptPath: "",
+      workingDirectory: "",
+      probeArgs: ["-help"],
+      runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"],
+      timeoutMs: 30 * 60_000
+    },
+    xflr5: {
+      enabled: false,
+      command: "",
+      scriptPath: "",
+      workingDirectory: "",
+      probeArgs: ["--help"],
+      runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"],
+      timeoutMs: 30 * 60_000
+    }
   },
   allowExternalSearch: false,
   allowCodeExecution: false,
@@ -45,25 +70,24 @@ export const strictTestSettings: AppSettings = {
 
 export const strictResearchInput = {
   researchQuestion: "AetherOps가 12단계 연구 검증 루프를 올바른 순서로 수행하는가?",
-  initialHypotheses: [
-    "명시적 연구 입력과 설정이 있으면 12단계 루프가 완료되어야 한다.",
-    "계속 연구가 필요하면 11번 판단 후 4번 연구 계획으로 복귀해야 한다."
-  ],
+  initialHypotheses: ["명시적 연구 입력과 설정이 있으면 12단계 루프가 완료되어야 한다.", "계속 연구가 필요하면 11번 판단 후 4번 연구 계획으로 복귀해야 한다."],
   constraints: ["테스트 더블은 테스트 파일에서만 사용한다."],
   expectedOutputs: ["final-report.pdf", "reusable-knowledge.md"]
 };
 
-export function createStrictTestOrchestrator(options: {
-  store?: ResearchStore;
-  openCode?: OpenCodeAdapter;
-  ragEngine?: RagEngine;
-  llm?: LlmProvider;
-  embeddingProvider?: EmbeddingProvider;
-  settings?: AppSettings;
-  storage?: ProjectStorage;
-  projectRootBase?: string;
-  toolRunner?: ToolRunner;
-} = {}): AetherOpsOrchestrator {
+export function createStrictTestOrchestrator(
+  options: {
+    store?: ResearchStore;
+    openCode?: OpenCodeAdapter;
+    ragEngine?: RagEngine;
+    llm?: LlmProvider;
+    embeddingProvider?: EmbeddingProvider;
+    settings?: AppSettings;
+    storage?: ProjectStorage;
+    projectRootBase?: string;
+    toolRunner?: ToolRunner;
+  } = {}
+): AetherOpsOrchestrator {
   const embeddingProvider = options.embeddingProvider ?? new DeterministicEmbeddingProvider(strictTestSettings.embedding.dimensions ?? 64);
   return new AetherOpsOrchestrator(
     options.store ?? new InMemoryResearchStore(),
@@ -89,7 +113,10 @@ export class DeterministicEmbeddingProvider implements EmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     const vector = new Array(this.dimensions).fill(0);
-    for (const token of text.toLowerCase().split(/[^a-z0-9가-힣]+/).filter(Boolean)) {
+    for (const token of text
+      .toLowerCase()
+      .split(/[^a-z0-9가-힣]+/)
+      .filter(Boolean)) {
       const index = Math.abs(hash(token)) % this.dimensions;
       vector[index] += 1;
     }
@@ -113,10 +140,7 @@ export class DeterministicLlmProvider implements LlmProvider {
           "Vector Index와 Ontology Graph가 정규화 데이터에서 생성되는가?",
           "계속 연구 판단은 연구 계획 단계로 복귀하는가?"
         ],
-        refinedHypotheses: [
-          "strict 설정이 충족되면 루프는 최종 산출까지 진행한다.",
-          "근거가 부족한 첫 iteration은 PlanResearch 복귀를 유도한다."
-        ],
+        refinedHypotheses: ["strict 설정이 충족되면 루프는 최종 산출까지 진행한다.", "근거가 부족한 첫 iteration은 PlanResearch 복귀를 유도한다."],
         assumptions: ["테스트 입력은 실제 외부 연구 근거가 아니라 빠른 검증 입력이다."],
         constraints: ["실제 URL/DOI를 만들지 않는다."],
         successCriteria: ["12단계 기록", "최종 산출 저장"],
@@ -126,7 +150,7 @@ export class DeterministicLlmProvider implements LlmProvider {
       } as T;
     }
     if (request.schemaName === "AetherOpsResearchPlan") {
-      const secondIteration = request.user.includes("iteration\":2") || request.user.includes("Iteration 2");
+      const secondIteration = request.user.includes('iteration":2') || request.user.includes("Iteration 2");
       return {
         objective: secondIteration ? "Iteration 2: resolve remaining validation gaps." : "Iteration 1: gather traceable execution evidence.",
         targetQuestions: ["q1"],
@@ -140,7 +164,7 @@ export class DeterministicLlmProvider implements LlmProvider {
     }
     if (request.schemaName === "AetherOpsEvidenceBasedResult") {
       const forceStop = request.user.includes("internal runaway-prevention safety cap");
-      const secondIteration = request.user.includes("iteration\":2") || request.user.includes("Iteration 2");
+      const secondIteration = request.user.includes('iteration":2') || request.user.includes("Iteration 2");
       const shouldFinish = forceStop || secondIteration;
       return {
         answer: shouldFinish ? "AetherOps loop completed with traceable test evidence." : "AetherOps loop needs one more planned iteration.",
@@ -245,21 +269,11 @@ export class TestProjectStorage implements ProjectStorage {
     };
   }
 
-  async writeArtifacts(
-    _project: ResearchProject,
-    _database: ResearchDatabase,
-    _iteration: number,
-    artifacts: ResearchArtifact[]
-  ): Promise<ResearchArtifact[]> {
+  async writeArtifacts(_project: ResearchProject, _database: ResearchDatabase, _iteration: number, artifacts: ResearchArtifact[]): Promise<ResearchArtifact[]> {
     return artifacts;
   }
 
-  async writeRunLog(
-    project: ResearchProject,
-    _database: ResearchDatabase,
-    iteration: number,
-    run: { id: string }
-  ): Promise<ResearchSource> {
+  async writeRunLog(project: ResearchProject, _database: ResearchDatabase, iteration: number, run: { id: string }): Promise<ResearchSource> {
     const createdAt = nowIso();
     return {
       id: `source_${run.id}`,
@@ -272,11 +286,7 @@ export class TestProjectStorage implements ProjectStorage {
     };
   }
 
-  async writeSources(
-    _project: ResearchProject,
-    _database: ResearchDatabase,
-    sources: ResearchSource[]
-  ): Promise<ResearchSource[]> {
+  async writeSources(_project: ResearchProject, _database: ResearchDatabase, sources: ResearchSource[]): Promise<ResearchSource[]> {
     return sources;
   }
 

@@ -1,0 +1,19 @@
+{
+  "airfoil": "Clark Y",
+  "sourceUrl": "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat",
+  "source": "UIUC Airfoil Coordinates Database",
+  "license": {
+    "spdx": "NOASSERTION",
+    "status": "not-specified-by-source",
+    "note": "The cited UIUC source page does not publish a license for individual coordinate files; retain source attribution."
+  },
+  "immutable": true,
+  "checksum": {
+    "algorithm": "sha256",
+    "value": "8C02FE31F3927FC4971BDFA427CF8E9BB58AE7F39927C12DCAFA8D665820277A"
+  },
+  "surfacePoints": {
+    "upper": 61,
+    "lower": 61
+  }
+}

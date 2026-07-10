@@ -1,12 +1,6 @@
 import { createId, nowIso } from "../shared/ids.js";
 import type { ProjectStorage } from "../storage/projectStorage.js";
-import type {
-  BenchmarkPlan,
-  ResearchDatabase,
-  ResearchLoopStep,
-  ResearchSnapshot,
-  RunAuditOutput
-} from "../shared/types.js";
+import type { BenchmarkPlan, ResearchDatabase, ResearchLoopStep, ResearchSnapshot, RunAuditOutput } from "../shared/types.js";
 
 export class RunAuditWriter {
   constructor(private readonly storage: ProjectStorage) {}
@@ -205,10 +199,7 @@ function collectFirstStrings(items: string[], limit: number): string[] {
   return output;
 }
 
-function collectLastRuntimeRequirements(
-  blockers: ResearchSnapshot["runtimeBlockers"],
-  limit: number
-): NonNullable<RunAuditOutput["unmetRequirements"]> {
+function collectLastRuntimeRequirements(blockers: ResearchSnapshot["runtimeBlockers"], limit: number): NonNullable<RunAuditOutput["unmetRequirements"]> {
   const requirements: NonNullable<RunAuditOutput["unmetRequirements"]> = [];
   const start = Math.max(0, blockers.length - limit);
   for (let index = start; index < blockers.length; index += 1) {
@@ -227,11 +218,7 @@ function addUniqueString(output: string[], seen: Set<string>, value: string | un
   output.push(value);
 }
 
-function appendLatestValidationLines(
-  lines: string[],
-  validations: ResearchSnapshot["validationResults"],
-  limit: number
-): void {
+function appendLatestValidationLines(lines: string[], validations: ResearchSnapshot["validationResults"], limit: number): void {
   const start = Math.max(0, validations.length - limit);
   for (let index = start; index < validations.length; index += 1) {
     const result = validations[index];
@@ -239,11 +226,7 @@ function appendLatestValidationLines(
   }
 }
 
-function appendLatestDecisionLines(
-  lines: string[],
-  decisions: ResearchSnapshot["continuationDecisions"],
-  limit: number
-): void {
+function appendLatestDecisionLines(lines: string[], decisions: ResearchSnapshot["continuationDecisions"], limit: number): void {
   const start = Math.max(0, decisions.length - limit);
   for (let index = start; index < decisions.length; index += 1) {
     const decision = decisions[index];

@@ -1,6 +1,7 @@
 import { createId, nowIso } from "../shared/ids.js";
 import { EMPTY_EVIDENCE_GRAPH_PATH, graphPathByEvidenceId, isSupportEligibleEvidenceRecord } from "../evidence/evidenceEligibility.js";
 import type { HybridContext, ResearchSnapshot, ValidationResult } from "../shared/types.js";
+import { buildEvidenceClaimScore, evidenceScorecardFromClaims } from "./evidenceScorecard.js";
 import type { ReasoningSummary } from "./reasoningEngine.js";
 
 export class ValidationEngine {
@@ -45,32 +46,48 @@ export class ValidationEngine {
       const citationCoverage = evidenceCount ? citedEvidenceCount / evidenceCount : 0;
       const gaps = [...item.evidenceGaps];
       if (!evidenceCount) {
-        gaps.push("No evidence is linked to this hypothesis.");
+        gaps.push("No support-eligible evidence is linked to this hypothesis.");
       }
       if (evidenceCount && citationCoverage < 0.5) {
         gaps.push("Most linked evidence lacks citation/sourceUri/sourceId traceability.");
       }
+      const confidence = confidenceFor(confidenceTotal, evidenceCount, citationCoverage, gaps.length);
+      const claimScore = buildEvidenceClaimScore({
+        snapshot,
+        reasoning: item,
+        contextEvidence: orderedContextEvidence,
+        supportEligibleEvidenceIds,
+        supportingEvidenceIds,
+        contradictingEvidenceIds,
+        confidence,
+        evidenceGaps: gaps
+      });
+      const evidenceGaps = uniqueStrings([...gaps, ...claimScore.evidenceGaps]);
 
       const result: ValidationResult = {
         id: createId("validation"),
         projectId: snapshot.project.id,
         iteration: hybridContext.iteration,
         hypothesisId: item.hypothesisId,
-        status: statusFor({
-          supporting: supportingEvidenceIds.length,
-          contradicting: contradictingEvidenceIds.length,
-          strong: strongEvidenceCount,
-          gaps: gaps.length,
-          citationCoverage
-        }),
-        confidence: confidenceFor(confidenceTotal, evidenceCount, citationCoverage, gaps.length),
+        status:
+          claimScore.status === "attribution_unfaithful"
+            ? "inconclusive"
+            : statusFor({
+                supporting: supportingEvidenceIds.length,
+                contradicting: contradictingEvidenceIds.length,
+                strong: strongEvidenceCount,
+                gaps: evidenceGaps.length,
+                citationCoverage
+              }),
+        confidence,
         supportingEvidenceIds,
         contradictingEvidenceIds,
         relatedEntityIds: hybridContext.ontologyEntityIds,
         relatedRelationIds: hybridContext.ontologyRelationIds,
         reasoningSummary: item.summary,
         limitations: validationLimitations(limitations, citationCoverage),
-        evidenceGaps: uniqueStrings(gaps),
+        evidenceGaps,
+        claimScorecard: evidenceScorecardFromClaims([claimScore]),
         createdAt: nowIso()
       };
       validationResults.push(result);
@@ -79,13 +96,7 @@ export class ValidationEngine {
   }
 }
 
-function statusFor(input: {
-  supporting: number;
-  contradicting: number;
-  strong: number;
-  gaps: number;
-  citationCoverage: number;
-}): ValidationResult["status"] {
+function statusFor(input: { supporting: number; contradicting: number; strong: number; gaps: number; citationCoverage: number }): ValidationResult["status"] {
   if (!input.supporting && !input.contradicting) return "not_tested";
   if (input.contradicting > input.supporting && input.citationCoverage >= 0.4) return "contradicted";
   if (input.supporting > 0 && input.gaps === 0 && input.citationCoverage >= 0.6 && input.strong > 0) return "supported";

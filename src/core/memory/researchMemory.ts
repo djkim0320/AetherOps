@@ -8,12 +8,7 @@ import type {
   TraceabilityKind
 } from "../shared/types.js";
 
-export type ScopedResearchMemoryItem =
-  | NormalizedResearchRecord
-  | ResearchChunk
-  | OntologyEntity
-  | OntologyRelation
-  | OntologyConstraint;
+export type ScopedResearchMemoryItem = NormalizedResearchRecord | ResearchChunk | OntologyEntity | OntologyRelation | OntologyConstraint;
 
 export function memoryScopeForTraceability(traceabilityKind: TraceabilityKind): MemoryScope {
   if (traceabilityKind === "external_source") return "global";
@@ -21,7 +16,9 @@ export function memoryScopeForTraceability(traceabilityKind: TraceabilityKind): 
   return "project_only";
 }
 
-export function tagMemoryScope<T extends { projectId: string; memoryScope?: MemoryScope; originProjectId?: string; workspaceProjectId?: string; sourceProjectId?: string }>(
+export function tagMemoryScope<
+  T extends { projectId: string; memoryScope?: MemoryScope; originProjectId?: string; workspaceProjectId?: string; sourceProjectId?: string }
+>(
   item: T,
   memoryScope: MemoryScope,
   originProjectId = item.originProjectId ?? item.projectId,
@@ -36,10 +33,7 @@ export function tagMemoryScope<T extends { projectId: string; memoryScope?: Memo
   };
 }
 
-export function isVisibleInProjectMemory<T extends { projectId: string; memoryScope?: MemoryScope }>(
-  item: T,
-  projectId: string
-): boolean {
+export function isVisibleInProjectMemory<T extends { projectId: string; memoryScope?: MemoryScope }>(item: T, projectId: string): boolean {
   return item.projectId === projectId || item.memoryScope === "global";
 }
 

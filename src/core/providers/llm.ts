@@ -30,6 +30,20 @@ export class LlmTimeoutError extends Error {
   }
 }
 
+export class LlmAccessUnavailableError extends Error {
+  readonly code = "LLM_ACCESS_UNAVAILABLE";
+
+  constructor(
+    message: string,
+    readonly provider: string,
+    readonly model: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = "LlmAccessUnavailableError";
+  }
+}
+
 export function extractJsonObject(text: string): unknown {
   const trimmed = text.trim();
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {

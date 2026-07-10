@@ -148,10 +148,13 @@ function buildCompressionContent(
     append(`Required tools: ${latestPlan.requiredTools.join(", ") || "none recorded"}.`);
     append(`Execution steps: ${latestPlan.executionSteps.slice(0, 6).join(" / ")}`);
     if (latestPlan.fetchCandidateUrls?.length) append(`Fetch candidates: ${latestPlan.fetchCandidateUrls.slice(0, 6).join(" / ")}`);
-    if (latestPlan.programRequests?.length) append(`Program requests: ${latestPlan.programRequests.map((request) => `${request.kind}:${request.target ?? "unspecified"}`).join(" / ")}`);
+    if (latestPlan.programRequests?.length)
+      append(`Program requests: ${latestPlan.programRequests.map((request) => `${request.kind}:${request.target ?? "unspecified"}`).join(" / ")}`);
   }
   if (latestContext) {
-    append(`Latest selected context: records=${latestContext.selectedRecordIds.length}, evidence=${latestContext.selectedEvidenceIds.length}, chunks=${latestContext.selectedChunkIds.length}, citations=${latestContext.citations.length}.`);
+    append(
+      `Latest selected context: records=${latestContext.selectedRecordIds.length}, evidence=${latestContext.selectedEvidenceIds.length}, chunks=${latestContext.selectedChunkIds.length}, citations=${latestContext.citations.length}.`
+    );
   }
   if (latestResult) {
     append(`Latest result: ${latestResult.answer}`);
@@ -167,12 +170,16 @@ function buildCompressionContent(
 
   append(`## Recent Tool Outcomes`);
   for (const toolRun of sourceToolRuns) {
-    append(`- ${toolRun.toolName} ${toolRun.status} iteration=${toolRun.iteration}${toolRun.error ? ` error=${toolRun.error}` : ""}${toolRun.output ? ` output=${compactJson(toolRun.output, 260)}` : ""}`);
+    append(
+      `- ${toolRun.toolName} ${toolRun.status} iteration=${toolRun.iteration}${toolRun.error ? ` error=${toolRun.error}` : ""}${toolRun.output ? ` output=${compactJson(toolRun.output, 260)}` : ""}`
+    );
   }
 
   append(`## Evidence And Artifacts`);
   for (const evidence of lastItems(snapshot.evidence, 12)) {
-    append(`- Evidence ${evidence.id}: ${evidence.title}; ${evidence.summary}; citation=${evidence.citation ?? evidence.sourceUri ?? evidence.sourceId ?? "none"}; limitations=${(evidence.limitations ?? []).slice(0, 3).join(" / ")}`);
+    append(
+      `- Evidence ${evidence.id}: ${evidence.title}; ${evidence.summary}; citation=${evidence.citation ?? evidence.sourceUri ?? evidence.sourceId ?? "none"}; limitations=${(evidence.limitations ?? []).slice(0, 3).join(" / ")}`
+    );
   }
   for (const artifact of lastItems(snapshot.artifacts, 8)) {
     append(`- Artifact ${artifact.id}: ${artifact.title}; ${artifact.summary}; path=${artifact.relativePath}`);

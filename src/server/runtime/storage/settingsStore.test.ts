@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +14,41 @@ afterEach(() => {
 });
 
 describe("JsonAppSettingsStore", () => {
+  it("uses the current Codex defaults without changing the engineering model", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const store = new JsonAppSettingsStore(join(tempRoot, "settings.json"));
+
+    expect(await store.getSettings()).toMatchObject({
+      openCodeLlm: { source: "codex-oauth", model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000 },
+      openCode: { model: "gpt-5.5" }
+    });
+  });
+
+  it("fails closed for unsupported persisted Codex models after migration", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ openCodeLlm: { source: "codex-oauth", model: "gpt-5.5-codex" }, updatedAt: "2026-07-10T00:00:00.000Z" }),
+      "utf8"
+    );
+
+    await expect(new JsonAppSettingsStore(settingsPath).getSettings()).rejects.toThrow("Unsupported Codex model");
+  });
+
+  it("round-trips model, reasoning effort, and timeout independently from OpenCode", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const store = new JsonAppSettingsStore(join(tempRoot, "settings.json"));
+    const initial = await store.getSettings();
+    const saved = await store.saveSettings({
+      ...initial,
+      openCodeLlm: { source: "codex-oauth", model: "gpt-5.6-terra", reasoningEffort: "max", timeoutMs: 240_000 }
+    });
+
+    expect(saved.openCodeLlm).toEqual({ source: "codex-oauth", model: "gpt-5.6-terra", reasoningEffort: "max", timeoutMs: 240_000 });
+    expect(saved.openCode).toEqual(initial.openCode);
+  });
+
   it("does not report unsupported safe encrypted keys as configured", async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
     const settingsPath = join(tempRoot, "settings.json");
@@ -74,6 +109,43 @@ describe("JsonAppSettingsStore", () => {
 
     expect(publicSettings.embedding.apiKeyConfigured).toBe(true);
     expect(runtimeSettings.embedding.apiKey).toBe("sk-test");
+
+    const persisted = JSON.parse(readFileSync(settingsPath, "utf8")) as { encryptedEmbeddingKey?: string };
+    expect(persisted.encryptedEmbeddingKey).toMatch(/^enc:v1:/);
+    expect(persisted.encryptedEmbeddingKey).not.toContain(Buffer.from("sk-test", "utf8").toString("base64"));
+  });
+
+  it("reads legacy plain keys and migrates them to protected storage on save", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        {
+          embedding: {
+            provider: "openai",
+            model: "text-embedding-3-large",
+            dimensions: 1024
+          },
+          encryptedEmbeddingKey: `plain:${Buffer.from("legacy-key", "utf8").toString("base64")}`,
+          updatedAt: "2026-05-20T00:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const store = new JsonAppSettingsStore(settingsPath);
+    expect((await store.getSettings()).embedding.apiKeyConfigured).toBe(true);
+    expect((await store.getRuntimeSettings()).embedding.apiKey).toBe("legacy-key");
+
+    await store.saveSettings(await store.getSettings());
+
+    const persisted = JSON.parse(readFileSync(settingsPath, "utf8")) as { encryptedEmbeddingKey?: string };
+    expect(persisted.encryptedEmbeddingKey).toMatch(/^enc:v1:/);
+    expect(persisted.encryptedEmbeddingKey).not.toContain("plain:");
+    expect((await store.getRuntimeSettings()).embedding.apiKey).toBe("legacy-key");
   });
 
   it("writes settings through a cleaned-up temporary file", async () => {
@@ -91,6 +163,35 @@ describe("JsonAppSettingsStore", () => {
     expect(entries).toContain("settings.json");
     expect(entries.some((name) => name.startsWith("settings.json.") && name.endsWith(".tmp"))).toBe(false);
     expect(await store.getRuntimeSettings()).toMatchObject({ allowExternalSearch: false, allowCodeExecution: false });
+  });
+
+  it("rejects non-boolean execution safety settings instead of coercing them", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        {
+          allowExternalSearch: "true",
+          allowCodeExecution: false,
+          updatedAt: "2026-05-20T00:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const store = new JsonAppSettingsStore(settingsPath);
+    await expect(store.getSettings()).rejects.toThrow("allowExternalSearch must be a boolean");
+
+    const validStore = new JsonAppSettingsStore(join(tempRoot, "valid-settings.json"));
+    await expect(
+      validStore.saveSettings({
+        ...(await validStore.getSettings()),
+        allowCodeExecution: "false" as never
+      })
+    ).rejects.toThrow("allowCodeExecution must be a boolean");
   });
 
   it("ignores legacy maxLoopIterations because loop continuation is agent-controlled", async () => {
@@ -138,9 +239,34 @@ describe("JsonAppSettingsStore", () => {
           engineeringTools: {
             enabled: true,
             toolchainRoot,
-            su2: { enabled: false, command: "", caseRoot: "", configFile: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["{config}"], timeoutMs: 60_000 },
-            openVsp: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["-help"], runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"], timeoutMs: 60_000 },
-            xflr5: { enabled: false, command: "", scriptPath: "", workingDirectory: "", probeArgs: ["--help"], runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"], timeoutMs: 60_000 }
+            su2: {
+              enabled: false,
+              command: "",
+              caseRoot: "",
+              configFile: "",
+              workingDirectory: "",
+              probeArgs: ["--help"],
+              runArgsTemplate: ["{config}"],
+              timeoutMs: 60_000
+            },
+            openVsp: {
+              enabled: false,
+              command: "",
+              scriptPath: "",
+              workingDirectory: "",
+              probeArgs: ["-help"],
+              runArgsTemplate: ["-script", "{script}", "-spec", "{spec}", "-output", "{output}"],
+              timeoutMs: 60_000
+            },
+            xflr5: {
+              enabled: false,
+              command: "",
+              scriptPath: "",
+              workingDirectory: "",
+              probeArgs: ["--help"],
+              runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"],
+              timeoutMs: 60_000
+            }
           },
           updatedAt: "2026-06-24T00:00:00.000Z"
         },

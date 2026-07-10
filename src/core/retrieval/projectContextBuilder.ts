@@ -27,17 +27,25 @@ export class ProjectContextBuilder {
       input.store.searchGlobalChunks(query, { projectId: input.snapshot.project.id, limit: 32 }),
       input.store.searchGlobalGraph(query, { projectId: input.snapshot.project.id, limit: 32 })
     ]);
-    return this.build({
-      ...input.snapshot,
-      normalizedRecords: records,
-      chunks,
-      ontologyEntities: graph.entities,
-      ontologyRelations: graph.relations,
-      ontologyConstraints: graph.constraints
-    }, input.iteration, "Selected from Main Research Memory search API using the active ResearchPlan objective, target questions, target hypotheses, topic, scope, and evidence gaps.");
+    return this.build(
+      {
+        ...input.snapshot,
+        normalizedRecords: records,
+        chunks,
+        ontologyEntities: graph.entities,
+        ontologyRelations: graph.relations,
+        ontologyConstraints: graph.constraints
+      },
+      input.iteration,
+      "Selected from Main Research Memory search API using the active ResearchPlan objective, target questions, target hypotheses, topic, scope, and evidence gaps."
+    );
   }
 
-  build(snapshot: ResearchSnapshot, iteration: number, selectionPrefix = "Selected from Main Research Memory using the active ResearchPlan objective, target questions, and target hypotheses."): ProjectContextSnapshot {
+  build(
+    snapshot: ResearchSnapshot,
+    iteration: number,
+    selectionPrefix = "Selected from Main Research Memory using the active ResearchPlan objective, target questions, and target hypotheses."
+  ): ProjectContextSnapshot {
     const query = buildProjectQuery(snapshot);
     const queryTokens = new Set(tokens(query));
     const eligibleRecordById = new Map<string, ResearchSnapshot["normalizedRecords"][number]>();
@@ -58,11 +66,9 @@ export class ProjectContextBuilder {
         !isContextCompressionRecord(record) &&
         (record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") &&
         record.metadata.canSupportHypothesis !== true
-      ) excludedUnsupportedInternal += 1;
-      if (
-        record.kind === "evidence" &&
-        SUPPORT_EXCLUDED_TIERS.has(String(record.metadata.sourceQualityTier ?? ""))
-      ) excludedWeakSupport += 1;
+      )
+        excludedUnsupportedInternal += 1;
+      if (record.kind === "evidence" && SUPPORT_EXCLUDED_TIERS.has(String(record.metadata.sourceQualityTier ?? ""))) excludedWeakSupport += 1;
       if (scope === "global") {
         candidateGlobalRecords += 1;
         const relevance = lexicalScore(queryTokens, recordSearchText(record));
@@ -74,11 +80,20 @@ export class ProjectContextBuilder {
     const rankedRecords: Array<{ record: ResearchSnapshot["normalizedRecords"][number]; relevance: number; score: number }> = [];
     for (const record of eligibleRecordById.values()) {
       const scope = normalizeMemoryScope(record.memoryScope);
-      const relevance = scope === "global"
-        ? globalRecordRelevanceById.get(record.id) ?? lexicalScore(queryTokens, recordSearchText(record))
-        : lexicalScore(queryTokens, recordSearchText(record));
+      const relevance =
+        scope === "global"
+          ? (globalRecordRelevanceById.get(record.id) ?? lexicalScore(queryTokens, recordSearchText(record)))
+          : lexicalScore(queryTokens, recordSearchText(record));
       if (scope === "global" && relevance <= 0) continue;
-      insertTopRanked(rankedRecords, { record, relevance, score: relevance + statusBoost(record.validationStatus) + qualityBoost(record.metadata.sourceQualityTier) + contextCompressionBoost(record) }, 24);
+      insertTopRanked(
+        rankedRecords,
+        {
+          record,
+          relevance,
+          score: relevance + statusBoost(record.validationStatus) + qualityBoost(record.metadata.sourceQualityTier) + contextCompressionBoost(record)
+        },
+        24
+      );
     }
 
     const selectedRecordIds = new Set<string>();
@@ -151,7 +166,8 @@ export class ProjectContextBuilder {
       if (chunk.sourceId) selectedSourceIds.add(chunk.sourceId);
     }
     const evidenceGraphPathById = graphPathByEvidenceId(snapshot);
-    const evidenceGraphPathFor = (evidenceId: string | undefined): EvidenceGraphPath => evidenceGraphPathById.get(evidenceId ?? "") ?? EMPTY_EVIDENCE_GRAPH_PATH;
+    const evidenceGraphPathFor = (evidenceId: string | undefined): EvidenceGraphPath =>
+      evidenceGraphPathById.get(evidenceId ?? "") ?? EMPTY_EVIDENCE_GRAPH_PATH;
     const eligibleEvidenceIds = new Set<string>();
     for (const record of eligibleRecordById.values()) {
       if (isSupportEligibleEvidenceRecord(record, evidenceGraphPathFor(record.evidenceId), { requireGraphPath: false }) && record.evidenceId) {
@@ -252,11 +268,16 @@ const SUPPORT_EXCLUDED_TIERS = new Set(["weak", "excluded", "general_web"]);
 const INTERNAL_CITATION_PATTERN = /^(project:\/\/|artifacts\/|logs\/|reports\/|knowledge\/|ontology\/|exports\/)/i;
 
 function isEligibleRecord(record: ResearchSnapshot["normalizedRecords"][number]): boolean {
-  return record.kind !== "error" &&
+  return (
+    record.kind !== "error" &&
     record.validationStatus !== "rejected" &&
     !(record.kind === "evidence" && SUPPORT_EXCLUDED_TIERS.has(String(record.metadata.sourceQualityTier ?? ""))) &&
     (isContextCompressionRecord(record) ||
-      !((record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") && record.metadata.canSupportHypothesis !== true));
+      !(
+        (record.metadata.traceabilityKind === "internal_artifact" || record.metadata.traceabilityKind === "project_provenance") &&
+        record.metadata.canSupportHypothesis !== true
+      ))
+  );
 }
 
 function buildProjectQuery(snapshot: ResearchSnapshot): string {
@@ -308,7 +329,12 @@ function insertTopRanked<T extends { score: number }>(ranked: T[], entry: T, lim
 }
 
 function tokens(text: string): string[] {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").match(/\S+/g) ?? [];
+  return (
+    text
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+      .match(/\S+/g) ?? []
+  );
 }
 
 function statusBoost(status: string | undefined): number {

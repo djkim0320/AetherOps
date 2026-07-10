@@ -41,7 +41,7 @@ mkdirSync(cacheRoot, { recursive: true });
 const installed = [];
 for (const pkg of packages) {
   const targetRoot = join(toolchainRoot, pkg.id);
-  const url = pkg.url ?? await resolvePackageUrl(pkg);
+  const url = pkg.url ?? (await resolvePackageUrl(pkg));
   const archivePath = join(cacheRoot, `${pkg.id}.zip`);
   process.stdout.write(`Downloading ${pkg.id} from ${url}\n`);
   await download(url, archivePath);
@@ -109,10 +109,14 @@ async function download(url, outputPath) {
 
 function expandArchive(archivePath, outputRoot) {
   if (process.platform === "win32") {
-    const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", "Expand-Archive", "-LiteralPath", archivePath, "-DestinationPath", outputRoot, "-Force"], {
-      stdio: "pipe",
-      encoding: "utf8"
-    });
+    const result = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", "Expand-Archive", "-LiteralPath", archivePath, "-DestinationPath", outputRoot, "-Force"],
+      {
+        stdio: "pipe",
+        encoding: "utf8"
+      }
+    );
     if (result.status !== 0) throw new Error(`Expand-Archive failed: ${result.stderr || result.stdout}`);
     return;
   }

@@ -15,10 +15,6 @@
     "tsBuildInfoFile": "dist-server/tsconfig.server.tsbuildinfo",
     "types": ["node", "vitest/globals"]
   },
-  "include": [
-    "src/core",
-    "src/server",
-    "src/vite-env.d.ts"
-  ],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+  "include": ["src/contracts", "src/core", "src/server", "src/shared", "src/vite-env.d.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/core/testing/**", "src/core/memory/memoryStore.ts"]
 }

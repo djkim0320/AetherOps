@@ -147,7 +147,6 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.iterations.some((iteration) => iteration.message.includes("Autonomous registered research tools completed"))).toBe(true);
   });
 
-
   it("does not synthesize without a ProjectContextSnapshot", async () => {
     const orchestrator = createStrictTestOrchestrator();
     let snapshot = await createInputProject(orchestrator, input);
@@ -163,10 +162,7 @@ describe("AetherOpsOrchestrator", () => {
     let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
-    const categories = new Set([
-      ...snapshot.evidence.map((item) => item.category),
-      ...snapshot.artifacts.map((item) => item.category)
-    ]);
+    const categories = new Set([...snapshot.evidence.map((item) => item.category), ...snapshot.artifacts.map((item) => item.category)]);
 
     expect(categories.has("generated_artifact")).toBe(true);
     expect(categories.has("experiment_log")).toBe(true);

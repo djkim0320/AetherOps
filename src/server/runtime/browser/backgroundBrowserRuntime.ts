@@ -1,8 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { chromium } from "playwright";
+import type { BrowserContext } from "playwright";
 import { rankResearchUrls } from "../../../core/evidence/sourceQuality.js";
 import type { BrowserUseSettings, ResearchProject } from "../../../core/shared/types.js";
+import { PublicUrlPolicy } from "../tools/publicUrlPolicy.js";
+import { assertPublicNavigationUrl, installBrowserNetworkPolicy } from "./browserNetworkPolicy.js";
 
 export interface BrowserCollectInput {
   project: ResearchProject;
@@ -24,7 +26,10 @@ export interface BrowserPageCollector {
 }
 
 export class BackgroundBrowserRuntime implements BrowserPageCollector {
-  constructor(private readonly dataRoot: string) {}
+  constructor(
+    private readonly dataRoot: string,
+    private readonly publicUrlPolicy = new PublicUrlPolicy()
+  ) {}
 
   async collect(input: BrowserCollectInput): Promise<BrowserCollectedPage[]> {
     if (!input.settings.enabled) {
@@ -36,6 +41,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
     mkdirSync(userDataDir, { recursive: true });
     mkdirSync(downloadsPath, { recursive: true });
 
+    const { chromium } = await import("playwright");
     const context = await chromium.launchPersistentContext(userDataDir, {
       acceptDownloads: true,
       downloadsPath,
@@ -45,6 +51,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
     });
 
     try {
+      await installBrowserNetworkPolicy(context, this.publicUrlPolicy);
       const urls = await this.resolveUrls(input, context);
       const pages: BrowserCollectedPage[] = [];
       const failures: string[] = [];
@@ -55,9 +62,11 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
         if (!url) continue;
         const page = await context.newPage();
         try {
-          await page.goto(url, { waitUntil: "domcontentloaded", timeout: input.settings.timeoutMs });
+          const publicUrl = await assertPublicNavigationUrl(this.publicUrlPolicy, url);
+          await page.goto(publicUrl, { waitUntil: "domcontentloaded", timeout: input.settings.timeoutMs });
           await page.waitForLoadState("networkidle", { timeout: Math.min(input.settings.timeoutMs, 10_000) }).catch(() => undefined);
-          const title = (await page.title()).trim() || url;
+          const finalUrl = await assertPublicNavigationUrl(this.publicUrlPolicy, page.url());
+          const title = (await page.title()).trim() || finalUrl;
           const text = normalizePageText(
             await page
               .locator("body")
@@ -67,7 +76,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
           const screenshot = input.settings.captureScreenshots ? await page.screenshot({ fullPage: false, type: "png" }) : undefined;
           if (text) {
             pages.push({
-              url: page.url(),
+              url: finalUrl,
               title,
               text,
               screenshotBase64: screenshot?.toString("base64"),
@@ -91,7 +100,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
     }
   }
 
-  private async resolveUrls(input: BrowserCollectInput, context: Awaited<ReturnType<typeof chromium.launchPersistentContext>>): Promise<string[]> {
+  private async resolveUrls(input: BrowserCollectInput, context: BrowserContext): Promise<string[]> {
     const directUrls = rankResearchUrls(uniqueHttpUrls(input.urls ?? []));
     if (directUrls.length) {
       return directUrls;
@@ -116,7 +125,8 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
         `https://search.brave.com/search?q=${encodeURIComponent(query)}`
       ];
       for (const searchUrl of searchUrls) {
-        await searchPage.goto(searchUrl, {
+        const publicSearchUrl = await assertPublicNavigationUrl(this.publicUrlPolicy, searchUrl);
+        await searchPage.goto(publicSearchUrl, {
           waitUntil: "domcontentloaded",
           timeout: input.settings.timeoutMs
         });
@@ -182,15 +192,7 @@ function isSearchEngineUrl(rawUrl: string): boolean {
   }
 }
 
-const searchEngineDomains = [
-  "duckduckgo.com",
-  "bing.com",
-  "microsoft.com",
-  "search.brave.com",
-  "brave.com",
-  "google.com",
-  "google.co.kr"
-];
+const searchEngineDomains = ["duckduckgo.com", "bing.com", "microsoft.com", "search.brave.com", "brave.com", "google.com", "google.co.kr"];
 
 function publicResearchQuery(query: string): string {
   return [
@@ -245,7 +247,7 @@ function decodeXmlEntities(value: string): string {
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
+    .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
 }
 

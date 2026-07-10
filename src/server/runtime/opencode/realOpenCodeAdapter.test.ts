@@ -42,8 +42,8 @@ describe("RealOpenCodeAdapter", () => {
     expect(run.prompt).toContain("Optimization Code");
     expect(run.prompt).toContain("Optimization Result");
     expect(run.prompt).toContain("CLARK Y AIRFOIL");
-    expect(run.prompt).toContain("\"alpha\":6");
-    expect(run.prompt).toContain("\"cl\":1.0328");
+    expect(run.prompt).toContain('"alpha":6');
+    expect(run.prompt).toContain('"cl":1.0328');
   });
 
   it("accepts validated OpenCode optimization files when stdout JSON is missing", async () => {
@@ -109,17 +109,19 @@ function createFakeOpenCodeCommand(root: string, payload?: Record<string, unknow
   const event = JSON.stringify({
     type: "text",
     part: {
-      text: JSON.stringify(payload ?? {
-        summary: "parsed from OpenCode text event",
-        toolPlan: ["self-check"],
-        artifacts: [],
-        claims: [],
-        observations: [],
-        sourceCandidates: [],
-        nextActions: [],
-        needsMoreEvidence: false,
-        needsMoreAnalysis: false
-      })
+      text: JSON.stringify(
+        payload ?? {
+          summary: "parsed from OpenCode text event",
+          toolPlan: ["self-check"],
+          artifacts: [],
+          claims: [],
+          observations: [],
+          sourceCandidates: [],
+          nextActions: [],
+          needsMoreEvidence: false,
+          needsMoreAnalysis: false
+        }
+      )
     }
   });
 
@@ -141,6 +143,10 @@ function createOptimizationFilesInvalidJsonCommand(root: string): string {
   const result = {
     title: "Optimization Result",
     objective: "maximize liftToDrag = cl / cd",
+    variables: {
+      alpha: { type: "scalar", unit: "deg" }
+    },
+    constraints: [{ name: "stall margin", type: "minimum" }],
     inputDataProvenance: {
       toolContext: "EngineeringProgramTool output in AetherOps ToolContext",
       sourceArtifactRelativePath: "artifacts/iteration-1/engineering-program/xfoil-wasm-polar-CLARK-Y-AIRFOIL.json",
@@ -149,6 +155,7 @@ function createOptimizationFilesInvalidJsonCommand(root: string): string {
       sourceUrl: "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat",
       rowCount: 2
     },
+    validationNotes: ["Validated against recorded polar rows from EngineeringProgramTool."],
     comparedCandidates: [
       { alpha: 4, cl: 0.8325, cd: 0.00758, ld: 109.82849604221636 },
       { alpha: 6, cl: 1.0328, cd: 0.00909, ld: 113.6193619361936 }
@@ -159,16 +166,20 @@ function createOptimizationFilesInvalidJsonCommand(root: string): string {
       objectiveValue: 113.6193619361936
     }
   };
-  writeFileSync(script, [
-    "const fs = require('fs');",
-    "const path = require('path');",
-    `const root = ${JSON.stringify(root)};`,
-    "const dir = path.join(root, 'artifacts', 'iteration-1', 'opencode-optimization');",
-    "fs.mkdirSync(dir, { recursive: true });",
-    "fs.writeFileSync(path.join(dir, 'optimize_clarky_ld.py'), '# Optimization Code\\nprint(\"ok\")\\n', 'utf8');",
-    `fs.writeFileSync(path.join(dir, 'optimization_result.json'), ${JSON.stringify(JSON.stringify(result, null, 2))}, 'utf8');`,
-    "console.log('not json');"
-  ].join("\n"), "utf8");
+  writeFileSync(
+    script,
+    [
+      "const fs = require('fs');",
+      "const path = require('path');",
+      `const root = ${JSON.stringify(root)};`,
+      "const dir = path.join(root, 'artifacts', 'iteration-1', 'opencode-optimization');",
+      "fs.mkdirSync(dir, { recursive: true });",
+      "fs.writeFileSync(path.join(dir, 'optimize_clarky_ld.py'), '# Optimization Code\\nprint(\"ok\")\\n', 'utf8');",
+      `fs.writeFileSync(path.join(dir, 'optimization_result.json'), ${JSON.stringify(JSON.stringify(result, null, 2))}, 'utf8');`,
+      "console.log('not json');"
+    ].join("\n"),
+    "utf8"
+  );
 
   if (process.platform === "win32") {
     const command = join(root, "fake-opencode-files.cmd");
@@ -177,7 +188,7 @@ function createOptimizationFilesInvalidJsonCommand(root: string): string {
   }
 
   const command = join(root, "fake-opencode-files");
-  writeFileSync(command, "#!/bin/sh\nnode \"$(dirname \"$0\")/write-optimization-files.js\"\n", "utf8");
+  writeFileSync(command, '#!/bin/sh\nnode "$(dirname "$0")/write-optimization-files.js"\n', "utf8");
   chmodSync(command, 0o755);
   return command;
 }
@@ -200,7 +211,9 @@ function settings(command: string): AppSettings {
   return {
     openCodeLlm: {
       source: "codex-oauth",
-      model: "gpt-5.5"
+      model: "gpt-5.6",
+      reasoningEffort: "xhigh",
+      timeoutMs: 180_000
     },
     openCode: {
       enabled: true,

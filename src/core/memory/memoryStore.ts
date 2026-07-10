@@ -34,9 +34,7 @@ import type {
   ToolRun,
   MainMemorySearchOptions
 } from "../shared/types.js";
-import { normalizeMemoryScope } from "./researchMemory.js";
-
-type ScopedProjectItem = { projectId: string; workspaceProjectId?: string; memoryScope?: import("../shared/types.js").MemoryScope };
+import { byProject, searchItems, visibleInProject } from "./memoryStoreSearch.js";
 
 export class InMemoryResearchStore implements ResearchStore {
   private projects = new Map<string, ResearchProject>();
@@ -74,17 +72,17 @@ export class InMemoryResearchStore implements ResearchStore {
   private reports = new Map<string, ResearchReport>();
 
   async saveProject(project: ResearchProject): Promise<void> {
-    this.projects.set(project.id, sanitizeProject(project));
+    this.projects.set(project.id, project);
   }
 
   async updateProject(project: ResearchProject): Promise<void> {
-    this.projects.set(project.id, sanitizeProject(project));
+    this.projects.set(project.id, project);
   }
 
   async listProjects(): Promise<ResearchProject[]> {
     const projects: ResearchProject[] = [];
     for (const project of this.projects.values()) {
-      projects.push(sanitizeProject(project));
+      projects.push(project);
     }
     projects.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return projects;
@@ -92,7 +90,7 @@ export class InMemoryResearchStore implements ResearchStore {
 
   async getProject(projectId: string): Promise<ResearchProject | undefined> {
     const project = this.projects.get(projectId);
-    return project ? sanitizeProject(project) : undefined;
+    return project;
   }
 
   async saveSessions(sessions: ResearchSession[]): Promise<void> {
@@ -285,7 +283,10 @@ export class InMemoryResearchStore implements ResearchStore {
     return searchItems(this.chunks, query, options, (chunk) => `${chunk.text}\n${chunk.keywords.join(" ")}\n${chunk.citation ?? ""}`);
   }
 
-  async searchGlobalGraph(query: string, options: MainMemorySearchOptions = {}): Promise<{
+  async searchGlobalGraph(
+    query: string,
+    options: MainMemorySearchOptions = {}
+  ): Promise<{
     entities: OntologyEntity[];
     relations: OntologyRelation[];
     constraints: OntologyConstraint[];
@@ -296,8 +297,11 @@ export class InMemoryResearchStore implements ResearchStore {
       entityIds.add(entity.id);
     }
     const relationLimit = options.limit ?? 24;
-    const relationCandidates = searchItems(this.ontologyRelations, query, { ...options, limit: Math.max(relationLimit, 24) }, (relation) =>
-      `${relation.subjectId} ${relation.predicate} ${relation.objectId}`
+    const relationCandidates = searchItems(
+      this.ontologyRelations,
+      query,
+      { ...options, limit: Math.max(relationLimit, 24) },
+      (relation) => `${relation.subjectId} ${relation.predicate} ${relation.objectId}`
     );
     const relations: OntologyRelation[] = [];
     for (const relation of relationCandidates) {
@@ -319,78 +323,4 @@ export class InMemoryResearchStore implements ResearchStore {
     }
     return [...merged.values()];
   }
-}
-
-function sanitizeProject(project: ResearchProject): ResearchProject {
-  return project;
-}
-
-function byProject<T extends { projectId: string }>(items: T[], projectId: string): T[] {
-  const selected: T[] = [];
-  for (const item of items) {
-    if (item.projectId === projectId) {
-      selected.push(item);
-    }
-  }
-  return selected;
-}
-
-function visibleInProject<T extends ScopedProjectItem>(items: T[], projectId: string): T[] {
-  const visible: T[] = [];
-  for (const item of items) {
-    if (item.projectId === projectId || item.workspaceProjectId === projectId || normalizeMemoryScope(item.memoryScope) === "global") {
-      visible.push(item);
-    }
-  }
-  return visible;
-}
-
-function searchItems<T extends ScopedProjectItem>(
-  items: T[],
-  query: string,
-  options: MainMemorySearchOptions,
-  textOf: (item: T) => string = (item) => {
-    const record = item as T & { title?: string; content?: string; metadata?: unknown };
-    return `${record.title ?? ""}\n${record.content ?? ""}\n${JSON.stringify(record.metadata ?? {})}`;
-  }
-): T[] {
-  const limit = options.limit ?? 24;
-  const queryTokens = new Set(tokens(query));
-  const scored: Array<{ item: T; score: number }> = [];
-  for (const item of items) {
-    const scope = normalizeMemoryScope(item.memoryScope);
-    if (
-      options.projectId &&
-      item.projectId !== options.projectId &&
-      item.workspaceProjectId !== options.projectId &&
-      scope !== "global"
-    ) {
-      continue;
-    }
-    if (!options.includeEphemeral && scope === "ephemeral") continue;
-    if ((item as T & { validationStatus?: string }).validationStatus === "rejected") continue;
-    const score = lexicalScore(queryTokens, textOf(item));
-    if (scope === "global" && score <= 0) continue;
-    scored.push({ item, score });
-  }
-  scored.sort((left, right) => right.score - left.score);
-  const output: T[] = [];
-  for (let index = 0; index < scored.length && index < limit; index += 1) {
-    output.push(scored[index].item);
-  }
-  return output;
-}
-
-function lexicalScore(queryTokens: Set<string>, text: string): number {
-  if (!queryTokens.size) return 0;
-  let score = 0;
-  const weight = 1 / queryTokens.size;
-  for (const token of tokens(text)) {
-    if (queryTokens.has(token)) score += weight;
-  }
-  return score;
-}
-
-function tokens(text: string): string[] {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").match(/\S+/g) ?? [];
 }

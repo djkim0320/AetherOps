@@ -5,36 +5,24 @@ import type { HybridContext, ProjectContextSnapshot, ResearchSnapshot } from "..
 export class HybridRetrievalEngine {
   constructor(private readonly embeddingProvider: EmbeddingProvider) {}
 
-  async buildContextFromProjectContext(
-    snapshot: ResearchSnapshot,
-    contextSnapshot: ProjectContextSnapshot,
-    iteration?: number
-  ): Promise<HybridContext> {
+  async buildContextFromProjectContext(snapshot: ResearchSnapshot, contextSnapshot: ProjectContextSnapshot, iteration?: number): Promise<HybridContext> {
     return this.buildContextInternal(snapshot, contextSnapshot, iteration);
   }
 
-  /**
-   * @deprecated Test/compatibility helper only. Production reasoning must use buildContextFromProjectContext().
-   */
-  async buildLegacyContextForTest(snapshot: ResearchSnapshot, query?: string, iteration?: number): Promise<HybridContext> {
-    return this.buildContextInternal(snapshot, query, iteration);
-  }
-
-  private async buildContextInternal(snapshot: ResearchSnapshot, contextOrQuery?: ProjectContextSnapshot | string, iteration?: number): Promise<HybridContext> {
-    const contextSnapshot = typeof contextOrQuery === "object" ? contextOrQuery : undefined;
-    const activeQuery = contextSnapshot?.query || (typeof contextOrQuery === "string" ? contextOrQuery : buildQuery(snapshot));
+  private async buildContextInternal(snapshot: ResearchSnapshot, contextSnapshot: ProjectContextSnapshot, iteration?: number): Promise<HybridContext> {
+    const activeQuery = contextSnapshot.query;
     const queryEmbedding = await this.embeddingProvider.embed(activeQuery);
     const queryTokens = new Set(tokens(activeQuery));
-    const allowedChunkIds = contextSnapshot ? new Set(contextSnapshot.selectedChunkIds) : undefined;
-    const allowedEntityIds = contextSnapshot ? new Set(contextSnapshot.selectedEntityIds) : undefined;
-    const allowedRelationIds = contextSnapshot ? new Set(contextSnapshot.selectedRelationIds) : undefined;
-    const allowedEvidenceIds = contextSnapshot ? new Set(contextSnapshot.selectedEvidenceIds) : undefined;
-    const allowedSourceIds = contextSnapshot ? new Set(contextSnapshot.selectedSourceIds) : undefined;
-    const selectedRecordIds = contextSnapshot ? new Set(contextSnapshot.selectedRecordIds) : undefined;
+    const allowedChunkIds = new Set(contextSnapshot.selectedChunkIds);
+    const allowedEntityIds = new Set(contextSnapshot.selectedEntityIds);
+    const allowedRelationIds = new Set(contextSnapshot.selectedRelationIds);
+    const allowedEvidenceIds = new Set(contextSnapshot.selectedEvidenceIds);
+    const allowedSourceIds = new Set(contextSnapshot.selectedSourceIds);
+    const selectedRecordIds = new Set(contextSnapshot.selectedRecordIds);
     let sourceById: Map<string, ResearchSnapshot["sources"][number]> | undefined;
     const vectorHits: Array<{ chunk: ResearchSnapshot["chunks"][number]; score: number }> = [];
     for (const chunk of snapshot.chunks) {
-      if (allowedChunkIds && !allowedChunkIds.has(chunk.id)) continue;
+      if (!allowedChunkIds.has(chunk.id)) continue;
       vectorHits.push({
         chunk,
         score: chunk.embedding?.length ? cosineSimilarity(queryEmbedding, chunk.embedding) : lexicalScore(queryTokens, chunk.text)
@@ -45,17 +33,14 @@ export class HybridRetrievalEngine {
 
     const entityHits: Array<{ entity: ResearchSnapshot["ontologyEntities"][number]; score: number }> = [];
     for (const entity of snapshot.ontologyEntities) {
-      if (allowedEntityIds && !allowedEntityIds.has(entity.id)) continue;
+      if (!allowedEntityIds.has(entity.id)) continue;
       entityHits.push({ entity, score: lexicalScore(queryTokens, `${entity.label} ${entity.description ?? ""}`) + entity.confidence });
     }
     entityHits.sort((a, b) => b.score - a.score);
     entityHits.length = Math.min(entityHits.length, 8);
-    const entityIds = new Set<string>();
-    for (const { entity } of entityHits) entityIds.add(entity.id);
     const relationHits: ResearchSnapshot["ontologyRelations"] = [];
     for (const relation of snapshot.ontologyRelations) {
-      if (allowedRelationIds && !allowedRelationIds.has(relation.id)) continue;
-      if (!allowedRelationIds && !entityIds.has(relation.subjectId) && !entityIds.has(relation.objectId)) continue;
+      if (!allowedRelationIds.has(relation.id)) continue;
       relationHits.push(relation);
       if (relationHits.length >= 12) break;
     }
@@ -64,20 +49,18 @@ export class HybridRetrievalEngine {
     const citations = new Set<string>();
 
     for (const { chunk } of vectorHits) {
-      if (chunk.evidenceId && (!allowedEvidenceIds || allowedEvidenceIds.has(chunk.evidenceId))) evidenceIds.add(chunk.evidenceId);
+      if (chunk.evidenceId && allowedEvidenceIds.has(chunk.evidenceId)) evidenceIds.add(chunk.evidenceId);
       if (chunk.citation) citations.add(chunk.citation);
-      if (!allowedSourceIds || allowedSourceIds.has(chunk.sourceId)) {
+      if (allowedSourceIds.has(chunk.sourceId)) {
         sourceById ??= indexById(snapshot.sources);
         const source = sourceById.get(chunk.sourceId);
         if (source?.url || source?.doi || source?.rawPath) citations.add(source.url ?? source.doi ?? source.rawPath ?? source.title);
       }
     }
     for (const relation of relationHits) {
-      if (relation.sourceEvidenceId && (!allowedEvidenceIds || allowedEvidenceIds.has(relation.sourceEvidenceId))) evidenceIds.add(relation.sourceEvidenceId);
+      if (relation.sourceEvidenceId && allowedEvidenceIds.has(relation.sourceEvidenceId)) evidenceIds.add(relation.sourceEvidenceId);
     }
-    if (allowedEvidenceIds) {
-      for (const id of allowedEvidenceIds) evidenceIds.add(id);
-    }
+    for (const id of allowedEvidenceIds) evidenceIds.add(id);
     if (evidenceIds.size) {
       const evidenceById = indexById(snapshot.evidence, evidenceIds);
       for (const evidenceId of evidenceIds) {
@@ -88,10 +71,10 @@ export class HybridRetrievalEngine {
       }
     }
     for (const record of snapshot.normalizedRecords) {
-      if (!selectedRecordIds?.has(record.id) || !record.artifactId) continue;
+      if (!selectedRecordIds.has(record.id) || !record.artifactId) continue;
       artifactIds.add(record.artifactId as string);
     }
-    for (const citation of contextSnapshot?.citations ?? []) citations.add(citation);
+    for (const citation of contextSnapshot.citations) citations.add(citation);
 
     const vectorSummary = vectorHits.length ? buildVectorSummary(vectorHits) : "No vector chunks were available.";
     const graphSummary = entityHits.length ? buildGraphSummary(entityHits, relationHits) : "No ontology graph entities were available.";
@@ -118,7 +101,7 @@ export class HybridRetrievalEngine {
     return {
       id: createId("hybrid"),
       projectId: snapshot.project.id,
-      iteration: contextSnapshot?.iteration ?? iteration ?? Math.max(snapshot.openCodeRuns.length, snapshot.researchPlans.at(-1)?.iteration ?? 1),
+      iteration: contextSnapshot.iteration ?? iteration ?? Math.max(snapshot.openCodeRuns.length, snapshot.researchPlans.at(-1)?.iteration ?? 1),
       query: activeQuery,
       vectorChunkIds,
       ontologyEntityIds,
@@ -158,24 +141,6 @@ function buildGraphSummary(
   return lines.join("\n");
 }
 
-function buildQuery(snapshot: ResearchSnapshot): string {
-  const plan = snapshot.researchPlans.at(-1);
-  const lines: string[] = [];
-  addLine(lines, snapshot.project.topic);
-  addLine(lines, snapshot.project.goal);
-  addLine(lines, plan?.objective);
-  for (const question of snapshot.questions) {
-    addLine(lines, question.text);
-  }
-  for (const hypothesis of snapshot.hypotheses) {
-    addLine(lines, hypothesis.statement);
-  }
-  for (const gap of snapshot.continuationDecisions.at(-1)?.evidenceGaps ?? []) {
-    addLine(lines, gap);
-  }
-  return lines.join("\n");
-}
-
 function lexicalScore(queryTokens: Set<string>, text: string): number {
   if (!queryTokens.size) return 0;
   let score = 0;
@@ -184,10 +149,6 @@ function lexicalScore(queryTokens: Set<string>, text: string): number {
     if (queryTokens.has(token)) score += weight;
   }
   return score;
-}
-
-function addLine(lines: string[], value: string | undefined): void {
-  if (value) lines.push(value);
 }
 
 function indexById<T extends { id: string }>(items: T[], allowedIds?: Set<string>): Map<string, T> {
@@ -200,5 +161,10 @@ function indexById<T extends { id: string }>(items: T[], allowedIds?: Set<string
 }
 
 function tokens(text: string): string[] {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").match(/\S+/g) ?? [];
+  return (
+    text
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+      .match(/\S+/g) ?? []
+  );
 }

@@ -19,11 +19,11 @@ export class VectorRagEngine implements RagEngine {
     for (const chunk of snapshot.chunks) {
       scoringTasks.push(
         (async () => {
-        const embedding = chunk.embedding?.length ? chunk.embedding : await this.embeddingProvider.embed(chunk.text);
-        return {
-          chunk,
-          score: cosineSimilarity(queryEmbedding, embedding)
-        };
+          const embedding = chunk.embedding?.length ? chunk.embedding : await this.embeddingProvider.embed(chunk.text);
+          return {
+            chunk,
+            score: cosineSimilarity(queryEmbedding, embedding)
+          };
         })()
       );
     }

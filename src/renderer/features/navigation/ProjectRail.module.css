@@ -1,0 +1,88 @@
+.rail {
+  height: 100vh;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 64px auto auto minmax(0, 1fr) auto;
+  padding: var(--space-3);
+  gap: var(--space-3);
+  background: var(--color-rail);
+  overflow: hidden;
+}
+
+.brand,
+.newChat,
+.project {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.brand {
+  padding: var(--space-2);
+  color: var(--color-text);
+  font-weight: 700;
+  font-size: var(--text-lg);
+}
+
+.brand svg,
+.newChat svg,
+.project svg {
+  width: 20px;
+  min-width: 20px;
+}
+
+.newChat {
+  padding: var(--space-3);
+  border: 1px solid var(--color-accent-border);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.search > svg {
+  width: 16px;
+}
+
+.list {
+  min-height: 0;
+}
+
+.project {
+  padding: var(--space-3);
+  margin-bottom: var(--space-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project:hover,
+.active {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.footer {
+  display: grid;
+  gap: var(--space-1);
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--space-3);
+}
+
+.status {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}

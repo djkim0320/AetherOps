@@ -11,10 +11,7 @@ export interface OpenCodeCommandOptions {
   searchRoots?: string[];
 }
 
-export function resolveOpenCodeCommand(
-  configuredCommand?: string,
-  options: OpenCodeCommandOptions = {}
-): OpenCodeCommandResolution {
+export function resolveOpenCodeCommand(configuredCommand?: string, options: OpenCodeCommandOptions = {}): OpenCodeCommandResolution {
   const command = (configuredCommand ?? "").trim();
   const checkedPaths: string[] = [];
   const roots = uniquePaths([...(options.searchRoots ?? []), ...defaultOpenCodeSearchRoots()]);
@@ -98,36 +95,24 @@ function resolveConfiguredCommand(command: string, roots: string[], checkedPaths
 }
 
 function isDefaultOpenCodeCommand(command: string): boolean {
-  const normalized = command.trim().replace(/^["']|["']$/g, "").replace(/\\/g, "/").toLowerCase();
+  const normalized = command
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/\\/g, "/")
+    .toLowerCase();
   return normalized === "opencode" || normalized === "opencode.cmd" || normalized === "opencode.exe";
 }
 
 function bundledOpenCodeCandidates(): string[] {
   if (process.platform === "win32") {
-    return [
-      "node_modules/opencode-ai/bin/opencode.exe",
-      "node_modules/.bin/opencode.cmd",
-      "node_modules/.bin/opencode"
-    ];
+    return ["node_modules/opencode-ai/bin/opencode.exe", "node_modules/.bin/opencode.cmd", "node_modules/.bin/opencode"];
   }
 
-  return [
-    "node_modules/.bin/opencode",
-    "node_modules/opencode-ai/bin/opencode",
-    "node_modules/opencode-ai/bin/opencode.exe"
-  ];
+  return ["node_modules/.bin/opencode", "node_modules/opencode-ai/bin/opencode", "node_modules/opencode-ai/bin/opencode.exe"];
 }
 
 function defaultOpenCodeSearchRoots(): string[] {
-  const processWithPackagedResources = process as NodeJS.Process & { resourcesPath?: string };
-  const packagedResourcesPath = processWithPackagedResources.resourcesPath;
-  const roots = [process.cwd()];
-  appendPath(roots, process.env.AETHEROPS_APP_ROOT);
-  appendPath(roots, packagedResourcesPath);
-  if (packagedResourcesPath) {
-    roots.push(join(packagedResourcesPath, "app"), join(packagedResourcesPath, "app.asar.unpacked"));
-  }
-  return roots;
+  return [process.cwd()];
 }
 
 function uniquePaths(paths: string[]): string[] {
@@ -142,8 +127,4 @@ function uniquePaths(paths: string[]): string[] {
     }
   }
   return result;
-}
-
-function appendPath(paths: string[], value: string | undefined): void {
-  if (value) paths.push(value);
 }

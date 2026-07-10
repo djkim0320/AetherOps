@@ -26,9 +26,7 @@ export class LoopDecisionEngine {
     const analysisSignal = latestDataAnalysisSignal(after);
     const analysisHasInputs = (analysisSignal?.normalizedRecordCount ?? 0) > 0 || (analysisSignal?.validationResultCount ?? 0) > 0;
     const sourceCandidatesNeedFetch = Boolean(
-      latestContext &&
-      latestContext.selectedEvidenceIds.length === 0 &&
-      continuationContext.fetchCandidateUrls.length > 0
+      latestContext && latestContext.selectedEvidenceIds.length === 0 && continuationContext.fetchCandidateUrls.length > 0
     );
     const fetchEvidenceGap = "Source candidates found but not fetched into citation-backed evidence";
     const evidenceGaps: string[] = [];
@@ -58,12 +56,7 @@ export class LoopDecisionEngine {
       evidenceGaps.push(fetchEvidenceGap);
     }
     const repeatedLowGrowth =
-      input.iteration > 1 &&
-      growth.evidence <= 0 &&
-      growth.artifacts <= 0 &&
-      growth.chunks <= 0 &&
-      growth.entities <= 0 &&
-      growth.relations <= 0;
+      input.iteration > 1 && growth.evidence <= 0 && growth.artifacts <= 0 && growth.chunks <= 0 && growth.entities <= 0 && growth.relations <= 0;
     const hitSafetyCap = input.iteration >= input.safetyCapIterations;
     const statusBlocked = after.project.status === "aborted" || after.project.status === "paused";
     const shouldContinue =
@@ -96,7 +89,9 @@ export class LoopDecisionEngine {
             "Return to Step 4 and revise the research plan before executing tools again.",
             "Prioritize traceable sources over additional seed or untraceable artifacts.",
             ...(sourceCandidatesNeedFetch ? ["Use WebFetchTool to fetch selected source URLs from previous ProjectContextSnapshot."] : []),
-            growth.evidence <= 0 ? "Previous iteration produced little or no new evidence; change tool/source strategy." : "Use new evidence to narrow validation targets."
+            growth.evidence <= 0
+              ? "Previous iteration produced little or no new evidence; change tool/source strategy."
+              : "Use new evidence to narrow validation targets."
           ]
         : [],
       createdAt: nowIso()
@@ -218,7 +213,7 @@ function findLatestCompletedDataAnalysisOutput(snapshot: ResearchSnapshot): unkn
 }
 
 function readObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 function readNumber(value: unknown): number | undefined {
@@ -302,7 +297,14 @@ function isPrivateIpv4(hostname: string): boolean {
     parts.push(part);
   }
   const [first, second] = parts;
-  return first === 0 || first === 10 || first === 127 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || (first === 169 && second === 254);
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 169 && second === 254)
+  );
 }
 
 function reason(input: {

@@ -1,14 +1,6 @@
 import type { EvidenceItem, EvidenceStrength, ResearchSource } from "../shared/types.js";
 
-export type SourceQualityTier =
-  | "scholarly"
-  | "public_authority"
-  | "standard"
-  | "education"
-  | "credible_web"
-  | "general_web"
-  | "weak"
-  | "excluded";
+export type SourceQualityTier = "scholarly" | "public_authority" | "standard" | "education" | "credible_web" | "general_web" | "weak" | "excluded";
 
 export interface SourceQualityAssessment {
   tier: SourceQualityTier;
@@ -20,16 +12,7 @@ export interface SourceQualityAssessment {
   limitations: string[];
 }
 
-const SEARCH_HOSTS = [
-  "google.com",
-  "google.co.kr",
-  "scholar.google.com",
-  "duckduckgo.com",
-  "bing.com",
-  "search.brave.com",
-  "brave.com",
-  "microsoft.com"
-];
+const SEARCH_HOSTS = ["google.com", "google.co.kr", "scholar.google.com", "duckduckgo.com", "bing.com", "search.brave.com", "brave.com", "microsoft.com"];
 
 const SCHOLARLY_HOSTS = [
   "semanticscholar.org",
@@ -87,9 +70,7 @@ const TIER_RANK: Record<SourceQualityTier, number> = {
 export function assessSourceQuality(rawUrl?: string, title?: string): SourceQualityAssessment {
   const hostname = hostnameOf(rawUrl);
   if (!hostname) {
-    return quality("general_web", "Unclassified source", 0.45, "weak", false, false, [
-      "No URL or DOI-like source identifier was available."
-    ]);
+    return quality("general_web", "Unclassified source", 0.45, "weak", false, false, ["No URL or DOI-like source identifier was available."]);
   }
 
   if (isDiscoverySurface(rawUrl, hostname)) {
@@ -99,9 +80,7 @@ export function assessSourceQuality(rawUrl?: string, title?: string): SourceQual
   }
 
   if (matchesHost(hostname, SEARCH_HOSTS)) {
-    return quality("excluded", "Search result page", 0.2, "weak", false, false, [
-      "Search result pages are discovery surfaces, not citable evidence."
-    ]);
+    return quality("excluded", "Search result page", 0.2, "weak", false, false, ["Search result pages are discovery surfaces, not citable evidence."]);
   }
 
   if (matchesHost(hostname, WEAK_HOSTS)) {

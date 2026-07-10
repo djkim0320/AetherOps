@@ -161,18 +161,26 @@ describe("SqliteResearchStore", () => {
     ]);
     await store.saveOntologyEntities([
       testEntity("global-entity-a", projectA.id, "global", createdAt),
-      { ...testEntity("global-entity-linked-to-b", projectA.id, "global", createdAt), workspaceProjectId: projectB.id, sourceRecordId: "global-record-linked-to-b" },
+      {
+        ...testEntity("global-entity-linked-to-b", projectA.id, "global", createdAt),
+        workspaceProjectId: projectB.id,
+        sourceRecordId: "global-record-linked-to-b"
+      },
       testEntity("local-entity-a", projectA.id, "project_only", createdAt),
       testEntity("local-entity-b", projectB.id, "project_only", createdAt)
     ]);
 
     const snapshot = await store.getSnapshot(projectB.id);
-    expect(snapshot.normalizedRecords.map((record) => record.id)).toEqual(expect.arrayContaining(["global-record-a", "global-record-linked-to-b", "local-record-b"]));
+    expect(snapshot.normalizedRecords.map((record) => record.id)).toEqual(
+      expect.arrayContaining(["global-record-a", "global-record-linked-to-b", "local-record-b"])
+    );
     expect(snapshot.normalizedRecords.map((record) => record.id)).not.toContain("local-record-a");
     expect(snapshot.normalizedRecords.map((record) => record.id)).not.toContain("ephemeral-record-a");
     expect(snapshot.chunks.map((chunk) => chunk.id)).toEqual(expect.arrayContaining(["global-chunk-a", "global-chunk-linked-to-b", "local-chunk-b"]));
     expect(snapshot.chunks.map((chunk) => chunk.id)).not.toContain("local-chunk-a");
-    expect(snapshot.ontologyEntities.map((entity) => entity.id)).toEqual(expect.arrayContaining(["global-entity-a", "global-entity-linked-to-b", "local-entity-b"]));
+    expect(snapshot.ontologyEntities.map((entity) => entity.id)).toEqual(
+      expect.arrayContaining(["global-entity-a", "global-entity-linked-to-b", "local-entity-b"])
+    );
     expect(snapshot.ontologyEntities.map((entity) => entity.id)).not.toContain("local-entity-a");
   });
 
@@ -216,10 +224,7 @@ describe("SqliteResearchStore", () => {
       validationStatus: "validated",
       createdAt
     };
-    await store.saveGlobalMemoryItems([
-      globalItem,
-      { ...globalItem, id: "project-local-memory-item", memoryScope: undefined }
-    ]);
+    await store.saveGlobalMemoryItems([globalItem, { ...globalItem, id: "project-local-memory-item", memoryScope: undefined }]);
 
     expect(existsSync(join(tempDir, "main", "main.sqlite"))).toBe(true);
     expect(existsSync(join(project.projectRoot, "project.sqlite"))).toBe(true);
@@ -260,8 +265,18 @@ describe("SqliteResearchStore", () => {
       { ...testRecord("global-off-topic", projectA.id, "global", createdAt), title: "Wind turbine", content: "gearbox lubrication blade maintenance" },
       { ...testRecord("other-project-only", projectA.id, "project_only", createdAt), title: "Pomodoro private", content: "pomodoro private note" },
       { ...testRecord("project-b-local", projectB.id, "project_only", createdAt), title: "Pomodoro local", content: "pomodoro local workspace" },
-      { ...testRecord("ephemeral-pomodoro", projectA.id, "project_only", createdAt), memoryScope: "ephemeral", title: "Pomodoro raw snippet", content: "pomodoro raw snippet" },
-      { ...testRecord("rejected-pomodoro", projectA.id, "global", createdAt), validationStatus: "rejected", title: "Pomodoro rejected", content: "pomodoro rejected" }
+      {
+        ...testRecord("ephemeral-pomodoro", projectA.id, "project_only", createdAt),
+        memoryScope: "ephemeral",
+        title: "Pomodoro raw snippet",
+        content: "pomodoro raw snippet"
+      },
+      {
+        ...testRecord("rejected-pomodoro", projectA.id, "global", createdAt),
+        validationStatus: "rejected",
+        title: "Pomodoro rejected",
+        content: "pomodoro rejected"
+      }
     ]);
     await store.saveChunks([
       { ...testChunk("global-chunk-pomodoro", projectA.id, "global", createdAt), text: "pomodoro focus chunk", recordId: "global-pomodoro" },
@@ -293,7 +308,9 @@ describe("SqliteResearchStore", () => {
 
     const records = await store.searchGlobalRecords("pomodoro focus", { projectId: projectB.id, limit: 10 });
     expect(records.map((record) => record.id)).toEqual(expect.arrayContaining(["global-pomodoro", "project-b-local"]));
-    expect(records.map((record) => record.id)).not.toEqual(expect.arrayContaining(["global-off-topic", "other-project-only", "ephemeral-pomodoro", "rejected-pomodoro"]));
+    expect(records.map((record) => record.id)).not.toEqual(
+      expect.arrayContaining(["global-off-topic", "other-project-only", "ephemeral-pomodoro", "rejected-pomodoro"])
+    );
 
     const chunks = await store.searchGlobalChunks("pomodoro focus", { projectId: projectB.id, limit: 10 });
     expect(chunks.map((chunk) => chunk.id)).toEqual(expect.arrayContaining(["global-chunk-pomodoro", "project-b-chunk"]));

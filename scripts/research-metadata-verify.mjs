@@ -14,7 +14,10 @@ try {
   process.exit(1);
 }
 
-const { ResearchMetadataTool } = await import("../dist-server/core/tools/researchMetadataTool.js");
+const [{ ResearchMetadataTool }, { defaultSettings }] = await Promise.all([
+  import("../dist-server/server/runtime/tools/researchMetadataTool.js"),
+  import("../dist-server/server/runtime/storage/settingsStore.js")
+]);
 
 const timestamp = new Date().toISOString();
 const projectId = "metadata-verify-project";
@@ -33,7 +36,7 @@ const input = {
     },
     createdAt: timestamp,
     updatedAt: timestamp,
-    currentStep: "RunTools",
+    currentStep: "EXECUTE_TOOLS",
     status: "running",
     projectRoot: "."
   },
@@ -52,7 +55,7 @@ const input = {
       projectId,
       questionId: "metadata-verify-question",
       statement: `${query} has traceable scholarly metadata in OpenAlex.`,
-      status: "proposed",
+      status: "untested",
       confidence: 0.5,
       createdAt: timestamp
     }
@@ -75,9 +78,10 @@ const input = {
 };
 
 const settings = {
+  ...defaultSettings,
   allowExternalSearch: true,
-  allowCodeExecution: false,
   researchMetadata: {
+    ...defaultSettings.researchMetadata,
     enabled: true,
     provider: "openalex",
     maxResults,

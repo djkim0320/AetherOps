@@ -1,0 +1,80 @@
+.inspector {
+  min-width: 0;
+  height: 100vh;
+  background: var(--color-inspector);
+  overflow: hidden;
+}
+
+.tabs {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.body {
+  min-height: 0;
+  padding: var(--space-4);
+}
+
+.body h2 {
+  font-size: var(--text-lg);
+}
+
+.card {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.card > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.card p,
+.empty {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.itemButton {
+  width: 100%;
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.itemButton:hover,
+.itemButton[data-selected="true"] {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+}
+
+.itemButton span,
+.detail p {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.detail {
+  margin: var(--space-3) 0 var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+}
+
+.detail h3,
+.detail p {
+  margin: var(--space-1) 0 0;
+}

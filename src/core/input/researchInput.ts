@@ -10,10 +10,7 @@ export interface ResearchInputPayload {
 
 export type ResearchBriefInput = Pick<ResearchProject, "goal" | "topic" | "scope" | "budget">;
 
-export function buildResearchInputPayloadFromBrief(
-  brief: ResearchBriefInput,
-  payload: ResearchInputPayload = {}
-): Required<ResearchInputPayload> {
+export function buildResearchInputPayloadFromBrief(brief: ResearchBriefInput, payload: ResearchInputPayload = {}): Required<ResearchInputPayload> {
   const combined = joinPresent("\n", brief.goal, brief.scope, brief.budget);
   const explicitConstraints = cleanArray(payload.constraints);
   const explicitOutputs = cleanArray(payload.expectedOutputs);
@@ -22,19 +19,18 @@ export function buildResearchInputPayloadFromBrief(
 
   return {
     researchQuestion,
-    initialHypotheses: explicitHypotheses.length
-      ? explicitHypotheses
-      : deriveInitialHypotheses({ ...brief, combined, researchQuestion }),
+    initialHypotheses: explicitHypotheses.length ? explicitHypotheses : deriveInitialHypotheses({ ...brief, combined, researchQuestion }),
     constraints: explicitConstraints.length
       ? explicitConstraints
       : extractInlineList(combined, /제약\s*[:：]\s*([\s\S]*?)(?=(?:최종\s*산출물|예상\s*산출물)\s*[:：]|$)/),
-    expectedOutputs: explicitOutputs.length
-      ? explicitOutputs
-      : extractInlineList(combined, /(?:최종\s*산출물|예상\s*산출물)\s*[:：]\s*([\s\S]*?)$/)
+    expectedOutputs: explicitOutputs.length ? explicitOutputs : extractInlineList(combined, /(?:최종\s*산출물|예상\s*산출물)\s*[:：]\s*([\s\S]*?)$/)
   };
 }
 
-export function createResearchInput(project: ResearchProject, payload: ResearchInputPayload): {
+export function createResearchInput(
+  project: ResearchProject,
+  payload: ResearchInputPayload
+): {
   input: ResearchInput;
   questions: ResearchQuestion[];
   hypotheses: Hypothesis[];
@@ -99,11 +95,7 @@ function cleanArray(value: unknown): string[] {
 }
 
 function deriveInitialHypotheses(input: ResearchBriefInput & { combined: string; researchQuestion: string }): string[] {
-  const explicit = extractExplicitSections(
-    input.combined,
-    /가설\s*[A-Za-z0-9가-힣-]*\s*[:：]\s*/g,
-    /(?:제약|범위|최종\s*산출물|예상\s*산출물|조건)\s*[:：]/
-  );
+  const explicit = extractExplicitSections(input.combined, /가설\s*[A-Za-z0-9가-힣-]*\s*[:：]\s*/g, /(?:제약|범위|최종\s*산출물|예상\s*산출물|조건)\s*[:：]/);
   if (explicit.length) return explicit;
 
   const whetherClause = extractWhetherClause(input.researchQuestion);

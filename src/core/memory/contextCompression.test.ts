@@ -27,7 +27,7 @@ describe("ContextCompressionEngine", () => {
     expect(record.content).toContain("Clark-Y long-memory analysis");
     expect(record.content.length).toBeLessThanOrEqual(6_100);
     expect((record.metadata.sourceRecordIds as string[]).length).toBeGreaterThan(0);
-    expect((record.metadata.originalCharEstimate as number)).toBeGreaterThan(record.content.length);
+    expect(record.metadata.originalCharEstimate as number).toBeGreaterThan(record.content.length);
   });
 
   it("lets project context selection and vector memory use compressed project context without treating it as evidence", async () => {
@@ -94,48 +94,74 @@ function snapshotWithRecords(recordCount: number): ResearchSnapshot {
       projectRoot: ".aetherops/test-project"
     },
     sessions: [],
-    researchInputs: [{
-      id: "input-1",
-      projectId: "project-1",
-      researchQuestion: "Can compressed context preserve Clark-Y tool decisions?",
-      initialHypotheses: ["Compression preserves source-backed state."],
-      constraints: ["No substitute geometry."],
-      expectedOutputs: ["context compression memory"],
-      createdAt
-    }],
-    questions: [{ id: "q1", projectId: "project-1", researchInputId: "input-1", text: "Can compressed context preserve Clark-Y tool decisions?", status: "open", createdAt }],
-    hypotheses: [{ id: "h1", projectId: "project-1", researchInputId: "input-1", questionId: "q1", statement: "Compression preserves source-backed state.", status: "untested", confidence: 0.3, createdAt }],
+    researchInputs: [
+      {
+        id: "input-1",
+        projectId: "project-1",
+        researchQuestion: "Can compressed context preserve Clark-Y tool decisions?",
+        initialHypotheses: ["Compression preserves source-backed state."],
+        constraints: ["No substitute geometry."],
+        expectedOutputs: ["context compression memory"],
+        createdAt
+      }
+    ],
+    questions: [
+      {
+        id: "q1",
+        projectId: "project-1",
+        researchInputId: "input-1",
+        text: "Can compressed context preserve Clark-Y tool decisions?",
+        status: "open",
+        createdAt
+      }
+    ],
+    hypotheses: [
+      {
+        id: "h1",
+        projectId: "project-1",
+        researchInputId: "input-1",
+        questionId: "q1",
+        statement: "Compression preserves source-backed state.",
+        status: "untested",
+        confidence: 0.3,
+        createdAt
+      }
+    ],
     evidence: [],
     artifacts: [],
     sources: [],
     chunks: [],
-    toolRuns: [{
-      id: "tool-1",
-      projectId: "project-1",
-      iteration: 1,
-      toolName: "EngineeringProgramTool",
-      input: { kind: "xfoil-wasm-polar", sourceUrl: "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat" },
-      output: { rowCount: 9, airfoil: "CLARK Y AIRFOIL" },
-      status: "completed",
-      startedAt: createdAt,
-      completedAt: createdAt
-    }],
+    toolRuns: [
+      {
+        id: "tool-1",
+        projectId: "project-1",
+        iteration: 1,
+        toolName: "EngineeringProgramTool",
+        input: { kind: "xfoil-wasm-polar", sourceUrl: "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat" },
+        output: { rowCount: 9, airfoil: "CLARK Y AIRFOIL" },
+        status: "completed",
+        startedAt: createdAt,
+        completedAt: createdAt
+      }
+    ],
     agentPlans: [],
-    researchPlans: [{
-      id: "plan-1",
-      projectId: "project-1",
-      iteration: 1,
-      objective: "Run Clark-Y WebXFOIL and preserve long-memory context.",
-      targetQuestions: ["q1"],
-      targetHypotheses: ["h1"],
-      requiredTools: ["WebFetchTool", "EngineeringProgramTool"],
-      expectedSources: ["UIUC Clark-Y coordinate file"],
-      expectedArtifacts: ["polar report"],
-      executionSteps: ["Fetch source", "Run solver", "Compress context"],
-      stopCriteria: ["Context is reusable"],
-      programRequests: [{ kind: "xfoil-wasm-polar", target: "xfoil-wasm", sourceUrl: "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat" }],
-      createdAt
-    }],
+    researchPlans: [
+      {
+        id: "plan-1",
+        projectId: "project-1",
+        iteration: 1,
+        objective: "Run Clark-Y WebXFOIL and preserve long-memory context.",
+        targetQuestions: ["q1"],
+        targetHypotheses: ["h1"],
+        requiredTools: ["WebFetchTool", "EngineeringProgramTool"],
+        expectedSources: ["UIUC Clark-Y coordinate file"],
+        expectedArtifacts: ["polar report"],
+        executionSteps: ["Fetch source", "Run solver", "Compress context"],
+        stopCriteria: ["Context is reusable"],
+        programRequests: [{ kind: "xfoil-wasm-polar", target: "xfoil-wasm", sourceUrl: "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat" }],
+        createdAt
+      }
+    ],
     specifications: [],
     normalizedRecords: records,
     ontologyEntities: [],

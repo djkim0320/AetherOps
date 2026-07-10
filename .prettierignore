@@ -1,0 +1,8 @@
+node_modules
+dist
+dist-server
+coverage
+playwright-report
+.tmp
+.aetherops
+package-lock.json

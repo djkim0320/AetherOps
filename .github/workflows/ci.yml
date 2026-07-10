@@ -17,8 +17,8 @@ on:
         default: false
 
 jobs:
-  qa:
-    name: QA self-test
+  offline:
+    name: Offline PR gates
     runs-on: ubuntu-latest
 
     steps:
@@ -28,21 +28,48 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Install Chromium for UI verification
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Architecture check
+        run: npm run architecture:check
+
+      - name: Size check
+        run: npm run size:check
+
+      - name: Stylelint
+        run: npm run stylelint
+
+      - name: CSS tokens
+        run: npm run css:tokens
 
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
+      - name: Offline unit and integration tests
         run: npm test
+
+      - name: Migration read-only check
+        run: |
+          mkdir -p .tmp/ci-migration
+          npm run migrate:check -- --data-root .tmp/ci-migration --json
 
       - name: Build
         run: npm run build
 
-      - name: Blocked-path self-test
+      - name: Real server UI and blocked-path E2E
         run: npm run selftest:blocked
 
       - name: Upload self-test evidence
@@ -50,17 +77,77 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aetherops-selftest-evidence
-          if-no-files-found: warn
+          if-no-files-found: error
+          include-hidden-files: true
           path: |
-            docs/aetherops-self-test-report.md
             .tmp/aetherops-selftest/blocked-path-result.json
-            .tmp/aetherops-selftest/**/*.json
-            .tmp/aetherops-selftest/**/*.jsonl
-            .tmp/aetherops-selftest/**/*.md
-            .tmp/aetherops-selftest/**/*.sqlite
+            .tmp/aetherops-selftest/self-test-report.md
+
+  windows-launcher-smoke:
+    name: Windows launcher smoke
+    runs-on: windows-latest
+    needs: offline
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run launcher and verify health
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c run-aetherops.bat --silent --no-browser" -WorkingDirectory $PWD.Path -PassThru -WindowStyle Hidden
+          $lastError = $null
+          $healthy = $false
+
+          try {
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline) {
+              if ($process.HasExited) {
+                throw "Launcher exited before /api/health became healthy. Exit code: $($process.ExitCode)"
+              }
+
+              try {
+                $health = Invoke-RestMethod -Uri "http://127.0.0.1:5179/api/health" -TimeoutSec 5
+                if ($health.ok -eq $true) {
+                  Write-Host "AetherOps health check passed on port $($health.port)."
+                  $healthy = $true
+                  break
+                }
+              } catch {
+                $lastError = $_.Exception.Message
+              }
+
+              Start-Sleep -Seconds 2
+            }
+
+            if (-not $healthy) {
+              throw "Timed out waiting for /api/health. Last error: $lastError"
+            }
+          } finally {
+            if (-not $process.HasExited) {
+              taskkill /PID $process.Id /T /F
+            }
+
+            if (Test-Path ".aetherops\launcher.log") {
+              Get-Content ".aetherops\launcher.log" -Tail 100
+            }
+          }
 
   live:
-    name: Live self-test
+    name: Live network self-test
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live }}
     runs-on: ubuntu-latest
 
@@ -71,10 +158,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Install Chromium for UI verification
+        run: npx playwright install --with-deps --only-shell chromium
 
       - name: Live self-test
         shell: bash
@@ -90,10 +181,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aetherops-live-selftest-evidence
-          if-no-files-found: warn
+          if-no-files-found: error
+          include-hidden-files: true
           path: |
-            docs/aetherops-self-test-report.md
-            .tmp/aetherops-selftest/**/*.json
-            .tmp/aetherops-selftest/**/*.jsonl
-            .tmp/aetherops-selftest/**/*.md
-            .tmp/aetherops-selftest/**/*.sqlite
+            .tmp/aetherops-selftest/self-test-report.md

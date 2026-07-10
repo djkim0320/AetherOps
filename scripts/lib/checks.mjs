@@ -15,7 +15,6 @@ export const REQUIRED_SCRIPTS = Object.freeze([
   "metadata:verify"
 ]);
 const DISALLOWED_PRODUCTION_ADAPTER_NAMES = Object.freeze([["M", "ockOpenCodeAdapter"].join(""), "LocalResearchAdapter", "CompositeOpenCodeAdapter"]);
-export const PRODUCTION_ADAPTER_GREP_ARGS = Object.freeze(["-n", DISALLOWED_PRODUCTION_ADAPTER_NAMES.join("|"), "src", "README.md"]);
 export const PRODUCTION_ADAPTER_PATTERN = new RegExp(DISALLOWED_PRODUCTION_ADAPTER_NAMES.join("|"));
 export const PRODUCTION_ADAPTER_PATHS = Object.freeze(["src", "README.md"]);
 const DEFAULT_TEXT_EXTENSIONS = Object.freeze([".css", ".html", ".js", ".json", ".md", ".mjs", ".ts", ".tsx", ".yml", ".yaml"]);
@@ -30,15 +29,27 @@ export async function canListen(port) {
 }
 
 export function satisfiesNodeEngine(version, range) {
-  const match = range.match(/>=\s*(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return true;
   const actual = parseVersionParts(version);
-  const required = [Number(match[1] ?? 0), Number(match[2] ?? 0), Number(match[3] ?? 0)];
+  const comparators = [...range.matchAll(/(>=|<=|>|<|=)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/g)];
+  if (!comparators.length) return true;
+  return comparators.every((match) => {
+    const operator = match[1] || "=";
+    const required = [Number(match[2] ?? 0), Number(match[3] ?? 0), Number(match[4] ?? 0)];
+    const comparison = compareVersionParts(actual, required);
+    if (operator === ">=") return comparison >= 0;
+    if (operator === ">") return comparison > 0;
+    if (operator === "<=") return comparison <= 0;
+    if (operator === "<") return comparison < 0;
+    return comparison === 0;
+  });
+}
+
+function compareVersionParts(actual, required) {
   for (let index = 0; index < 3; index += 1) {
-    if ((actual[index] ?? 0) > required[index]) return true;
-    if ((actual[index] ?? 0) < required[index]) return false;
+    const difference = (actual[index] ?? 0) - (required[index] ?? 0);
+    if (difference !== 0) return Math.sign(difference);
   }
-  return true;
+  return 0;
 }
 
 export function collectMissingScripts(requiredScripts, scripts) {
@@ -69,7 +80,7 @@ export function scanTextForPattern(pattern, paths, options = {}) {
   const extensions = new Set(options.extensions ?? DEFAULT_TEXT_EXTENSIONS);
   const matches = [];
   for (const file of textFiles(paths, extensions)) {
-    let text = "";
+    let text;
     try {
       text = readFileSync(file, "utf8");
     } catch {

@@ -1,6 +1,6 @@
 import { createId, nowIso } from "../../../core/shared/ids.js";
 import { assessSourceQuality, rankResearchUrls, sourceQualityMetadata } from "../../../core/evidence/sourceQuality.js";
-import type { ResearchTool, ResearchToolResult } from "../../../core/tools/toolRegistry.js";
+import type { ResearchTool, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
 import type { AppSettings, EvidenceItem, OpenCodeRunInput, ResearchArtifact, ResearchSource } from "../../../core/shared/types.js";
 import type { BrowserCollectedPage, BrowserPageCollector } from "./backgroundBrowserRuntime.js";
 
@@ -30,7 +30,7 @@ export class BrowserResearchTool implements ResearchTool {
       });
       return completed(input, startedAt, this.name, query, pages, settings);
     } catch (error) {
-      throw new Error(`Background browser failed for query "${query}": ${formatError(error)}`);
+      throw new Error(`Background browser failed for query "${query}": ${formatError(error)}`, { cause: error });
     }
   }
 }
@@ -110,10 +110,7 @@ function completed(
       reliabilityScore: quality.reliabilityScore,
       relevanceScore: quality.preferredForSearch ? 0.78 : 0.58,
       evidenceStrength: quality.evidenceStrength,
-      limitations: [
-        "Automatically collected web page text; claims still require citation-level review.",
-        ...quality.limitations
-      ],
+      limitations: ["Automatically collected web page text; claims still require citation-level review.", ...quality.limitations],
       createdAt: completedAt
     });
   }

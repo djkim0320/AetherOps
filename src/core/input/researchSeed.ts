@@ -1,11 +1,5 @@
 import { createId, nowIso } from "../shared/ids.js";
-import type {
-  EvidenceItem,
-  Hypothesis,
-  ResearchProject,
-  ResearchQuestion,
-  ResearchSession
-} from "../shared/types.js";
+import type { EvidenceItem, Hypothesis, ResearchProject, ResearchQuestion, ResearchSession } from "../shared/types.js";
 
 export function createDefaultSessions(project: ResearchProject): ResearchSession[] {
   const createdAt = nowIso();

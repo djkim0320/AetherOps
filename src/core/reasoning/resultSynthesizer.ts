@@ -1,11 +1,6 @@
 import { createId, nowIso } from "../shared/ids.js";
-import type {
-  EvidenceBasedResult,
-  HybridContext,
-  HypothesisStatus,
-  ResearchSnapshot,
-  ValidationResult
-} from "../shared/types.js";
+import { mergeEvidenceScorecards, scoreFinalResultClaims } from "./evidenceScorecard.js";
+import type { EvidenceBasedResult, HybridContext, HypothesisStatus, ResearchSnapshot, ValidationResult } from "../shared/types.js";
 
 export class ResultSynthesizer {
   synthesize(input: {
@@ -18,14 +13,17 @@ export class ResultSynthesizer {
     const needsMoreEvidence = !input.forceStop && validationSummary.hasEvidenceGaps;
     const needsMoreAnalysis = !input.forceStop && validationSummary.partially_supported > 0;
     const nextQuestions = needsMoreEvidence ? validationSummary.nextQuestions : [];
-    const validationSynthesisMismatch = validationSummary.supported > 0 && needsMoreEvidence
-      ? "At least one validation result is supported, but synthesis still needs more evidence because another hypothesis remains inconclusive/not_tested or has evidence gaps."
-      : undefined;
-    const answer = `${input.snapshot.project.topic} 연구의 현재 결론은 근거 추적 상태에 따라 제한적으로 판단해야 합니다. 검증 결과 ${input.validationResults.length}건 중 supported=${validationSummary.supported}, partially_supported=${validationSummary.partially_supported}, contradicted=${validationSummary.contradicted}, inconclusive=${validationSummary.inconclusive}, not_tested=${validationSummary.not_tested}입니다. ${input.hybridContext.citations.length
-      ? `사용 가능한 citation/source는 ${input.hybridContext.citations.length}개입니다.`
-      : "추적 가능한 citation/source가 부족합니다."}`;
+    const validationSynthesisMismatch =
+      validationSummary.supported > 0 && needsMoreEvidence
+        ? "At least one validation result is supported, but synthesis still needs more evidence because another hypothesis remains inconclusive/not_tested or has evidence gaps."
+        : undefined;
+    const answer = `${input.snapshot.project.topic} 연구의 현재 결론은 근거 추적 상태에 따라 제한적으로 판단해야 합니다. 검증 결과 ${input.validationResults.length}건 중 supported=${validationSummary.supported}, partially_supported=${validationSummary.partially_supported}, contradicted=${validationSummary.contradicted}, inconclusive=${validationSummary.inconclusive}, not_tested=${validationSummary.not_tested}입니다. ${
+      input.hybridContext.citations.length
+        ? `사용 가능한 citation/source는 ${input.hybridContext.citations.length}개입니다.`
+        : "추적 가능한 citation/source가 부족합니다."
+    }`;
 
-    return {
+    const result: EvidenceBasedResult = {
       id: createId("result"),
       projectId: input.snapshot.project.id,
       iteration: input.hybridContext.iteration,
@@ -45,8 +43,19 @@ export class ResultSynthesizer {
       needsMoreAnalysis,
       validationResultIds: validationSummary.validationResultIds,
       hybridContextId: input.hybridContext.id,
+      evidenceScorecard: undefined,
       metadata: validationSynthesisMismatch ? { validationSynthesisMismatch } : {},
       createdAt: nowIso()
+    };
+    const finalResultScorecard = scoreFinalResultClaims({
+      snapshot: input.snapshot,
+      hybridContext: input.hybridContext,
+      validationResults: input.validationResults,
+      result
+    });
+    return {
+      ...result,
+      evidenceScorecard: mergeEvidenceScorecards([...input.validationResults.map((validation) => validation.claimScorecard), finalResultScorecard])
     };
   }
 }
@@ -61,7 +70,7 @@ function hypothesisUpdates(
     const validation = firstByHypothesisId.get(hypothesis.id);
     const rationale = validationSynthesisMismatch
       ? `${validation?.reasoningSummary ?? "No validation result was produced for this hypothesis."} Synthesis downgrade note: ${validationSynthesisMismatch}`
-      : validation?.reasoningSummary ?? "No validation result was produced for this hypothesis.";
+      : (validation?.reasoningSummary ?? "No validation result was produced for this hypothesis.");
     updates.push({
       hypothesisId: hypothesis.id,
       status: mapHypothesisStatus(validation?.status),

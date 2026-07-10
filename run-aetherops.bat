@@ -3,7 +3,16 @@ setlocal
 
 cd /d "%~dp0"
 set SILENT=0
+set NO_BROWSER=0
+
+:parse_args
+if "%~1"=="" goto args_done
 if /i "%~1"=="--silent" set SILENT=1
+if /i "%~1"=="--no-browser" set NO_BROWSER=1
+shift
+goto parse_args
+
+:args_done
 
 if not exist ".aetherops" mkdir ".aetherops"
 set LOG_FILE=%CD%\.aetherops\launcher.log
@@ -36,16 +45,20 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "node_modules" (
+for /f %%H in ('powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 package-lock.json).Hash"') do set LOCK_HASH=%%H
+set DEPENDENCY_STAMP=node_modules\.aetherops-lock-%LOCK_HASH%
+
+if not exist "%DEPENDENCY_STAMP%" (
   echo [1/3] Installing dependencies...
-  call npm install >> "%LOG_FILE%" 2>&1
+  call npm ci >> "%LOG_FILE%" 2>&1
   if errorlevel 1 (
-    echo [ERROR] npm install failed. See %LOG_FILE%
+    echo [ERROR] npm ci failed. See %LOG_FILE%
     call :maybe_pause
     exit /b 1
   )
+  type nul > "%DEPENDENCY_STAMP%"
 ) else (
-  echo [1/3] Dependencies already installed.
+  echo [1/3] Dependencies match package-lock.json.
 )
 
 echo [2/3] Building AetherOps web app...
@@ -58,7 +71,7 @@ if errorlevel 1 (
 
 echo [3/3] Starting AetherOps web app...
 echo [INFO] Open http://127.0.0.1:5179 in your browser. >> "%LOG_FILE%"
-start "" "http://127.0.0.1:5179"
+if "%NO_BROWSER%"=="0" start "" "http://127.0.0.1:5179"
 call npm run start >> "%LOG_FILE%" 2>&1
 set EXIT_CODE=%ERRORLEVEL%
 

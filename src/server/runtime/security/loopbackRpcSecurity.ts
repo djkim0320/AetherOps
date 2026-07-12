@@ -53,9 +53,9 @@ export function resolveLoopbackRpcSecurity(options: TokenOptions): LoopbackRpcSe
 }
 
 export function assertLoopbackHostAllowed(host: string, env: NodeJS.ProcessEnv = process.env): void {
+  void env;
   if (isLoopbackHost(host)) return;
-  if (env.AETHEROPS_ALLOW_NON_LOOPBACK_HOST === "true") return;
-  throw new Error(`AETHEROPS_HOST must be loopback-only unless AETHEROPS_ALLOW_NON_LOOPBACK_HOST=true is set. Refusing host: ${host}`);
+  throw new Error(`AetherOps supports loopback hosts only. Refusing host: ${host}`);
 }
 
 export function authenticateRpcRequest(request: IncomingMessage, expectedToken: string): RpcAuthFailure | undefined {
@@ -112,8 +112,8 @@ export function buildAllowedCorsOrigins(options: CorsOptions): Set<string> {
   for (const explicit of (env.AETHEROPS_UI_ORIGIN ?? "").split(",")) {
     const normalized = normalizeOrigin(explicit.trim());
     if (!normalized) continue;
-    if (!isLoopbackOrigin(normalized) && env.AETHEROPS_ALLOW_NON_LOOPBACK_HOST !== "true") {
-      throw new Error(`AETHEROPS_UI_ORIGIN must be loopback unless non-loopback hosting is explicitly enabled: ${normalized}`);
+    if (!isLoopbackOrigin(normalized)) {
+      throw new Error(`AETHEROPS_UI_ORIGIN must be loopback-only: ${normalized}`);
     }
     origins.add(normalized);
   }

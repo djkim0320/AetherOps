@@ -84,16 +84,12 @@ describe("WebFetch acquisition pipeline", () => {
       vi.fn(async (url: string) => {
         fetched.push(url);
         if (url.includes("/fail")) {
-          return { ok: false, status: 500, statusText: "Nope", url, headers: new Headers(), text: async () => "" };
+          return new Response("", { status: 500, statusText: "Nope" });
         }
-        return {
-          ok: true,
+        return new Response(`<html><title>${url}</title><body>Readable text for ${url}</body></html>`, {
           status: 200,
-          statusText: "OK",
-          url,
-          headers: new Headers({ "content-type": "text/html" }),
-          text: async () => `<html><title>${url}</title><body>Readable text for ${url}</body></html>`
-        };
+          headers: { "content-type": "text/html" }
+        });
       })
     );
 
@@ -164,14 +160,10 @@ describe("WebFetch acquisition pipeline", () => {
       "fetch",
       vi.fn(async (url: string) => {
         fetched.push(url);
-        return {
-          ok: true,
+        return new Response(`<html><title>${url}</title><body>Readable text for ${url}</body></html>`, {
           status: 200,
-          statusText: "OK",
-          url,
-          headers: new Headers({ "content-type": "text/html" }),
-          text: async () => `<html><title>${url}</title><body>Readable text for ${url}</body></html>`
-        };
+          headers: { "content-type": "text/html" }
+        });
       })
     );
 
@@ -203,15 +195,7 @@ describe("WebFetch acquisition pipeline", () => {
       "fetch",
       vi.fn(async (url: string) => {
         fetched.push(url);
-        return {
-          ok: true,
-          status: 200,
-          statusText: "OK",
-          url,
-          headers: new Headers(),
-          body: undefined,
-          arrayBuffer: async () => new TextEncoder().encode(CLARK_Y_COORDINATES).buffer
-        };
+        return new Response(CLARK_Y_COORDINATES, { status: 200 });
       })
     );
 
@@ -275,16 +259,7 @@ describe("WebFetch acquisition pipeline", () => {
     await vi.waitFor(() => expect(started).toHaveLength(3));
     expect(started).toEqual(["https://93.184.216.34/one", "https://93.184.216.34/two", "https://93.184.216.34/three"]);
     pending.find((item) => item.url.endsWith("/three"))?.resolve(successResponse("https://93.184.216.34/three"));
-    pending
-      .find((item) => item.url.endsWith("/two"))
-      ?.resolve({
-        ok: false,
-        status: 503,
-        statusText: "Slow Fail",
-        url: "https://93.184.216.34/two",
-        headers: new Headers(),
-        text: async () => ""
-      });
+    pending.find((item) => item.url.endsWith("/two"))?.resolve(new Response("", { status: 503, statusText: "Slow Fail" }));
 
     const result = await running;
 

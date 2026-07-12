@@ -31,13 +31,15 @@ describe("ToolRunner scheduling and availability", () => {
     vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        headers: new Headers({ "content-type": "application/json" }),
-        json: () => new Promise(() => undefined)
-      }))
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              pull: () => new Promise(() => undefined)
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          )
+      )
     );
 
     const running = new WebSearchTool().run(runInput(["WebSearchTool"]), {
@@ -57,14 +59,13 @@ describe("ToolRunner scheduling and availability", () => {
     ];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => ({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        url,
-        headers: new Headers({ "content-type": "text/html" }),
-        text: async () => "<html><title>Fetched study</title><body>Fetched page text that can become evidence.</body></html>"
-      }))
+      vi.fn(
+        async () =>
+          new Response("<html><title>Fetched study</title><body>Fetched page text that can become evidence.</body></html>", {
+            status: 200,
+            headers: { "content-type": "text/html" }
+          })
+      )
     );
 
     const results = await new ToolRunner([search, new WebFetchTool()]).execute(input, settings);

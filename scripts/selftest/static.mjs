@@ -99,8 +99,8 @@ export function runGrepChecks(context) {
         { pattern: /class PublicUrlPolicy/, paths: ["src/server/runtime/tools/publicUrlPolicy.ts"] },
         { pattern: /assertPublicHttpUrl/, paths: ["src/server/runtime/tools/boundedHttpClient.ts"] },
         { pattern: /AbortController/, paths: ["src/server/runtime/tools/boundedHttpClient.ts"] },
-        { pattern: /content-length/, paths: ["src/server/runtime/tools/boundedHttpClient.ts"] },
-        { pattern: /body read timeout/, paths: ["src/server/runtime/tools/boundedHttpClient.ts"] },
+        { pattern: /content-length/, paths: ["src/server/runtime/tools/boundedHttpBody.ts"] },
+        { pattern: /body read timeout/, paths: ["src/server/runtime/tools/boundedHttpBody.ts"] },
         { pattern: /::ffff/, paths: ["src/server/runtime/tools/publicUrlPolicy.ts"] },
         { pattern: /0xfc00|0xfe80|0xff00/, paths: ["src/server/runtime/tools/publicUrlPolicy.ts"] }
       ]

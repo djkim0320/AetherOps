@@ -12,15 +12,7 @@ describe("WebFetch security and content handling", () => {
     const input = { ...runInput(["WebFetchTool"]), sources: [webSource("Clark Y coordinates", "https://93.184.216.34/clarky.dat")] };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => ({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        url,
-        headers: new Headers(),
-        body: undefined,
-        arrayBuffer: async () => new TextEncoder().encode(CLARK_Y_COORDINATES).buffer
-      }))
+      vi.fn(async () => new Response(CLARK_Y_COORDINATES, { status: 200 }))
     );
 
     const result = await new WebFetchTool().run(input, settings);
@@ -40,7 +32,7 @@ describe("WebFetch security and content handling", () => {
     const input = { ...runInput(["WebFetchTool"]), sources: [webSource("s1", "https://example.edu/fail")] };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => ({ ok: false, status: 503, statusText: "Unavailable", url, headers: new Headers(), text: async () => "" }))
+      vi.fn(async () => new Response("", { status: 503, statusText: "Unavailable" }))
     );
 
     const result = await new WebFetchTool().run(input, settings);

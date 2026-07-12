@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { API_V2_METHODS, ApiV2RpcRequestSchema, type ApiV2RpcRequest } from "../../../contracts/api-v2/rpc.js";
-import { RpcRequestV2Schema, type RpcErrorCode } from "../../../contracts/api-v2/common.js";
+import { RequestIdSchema, RpcRequestV2Schema, type RpcErrorCode } from "../../../contracts/api-v2/common.js";
 import type { JobKind } from "../../../contracts/api-v2/jobs.js";
 import { authorizeJobCapabilities, defaultJobCapabilityPolicy, type CapabilityPolicy } from "../../../core/application/capabilities/index.js";
 import type { StorageCapabilityAudit } from "../../runtime/storage/v2/types.js";
@@ -23,6 +23,7 @@ import {
   toToolDiagnosticsResponse
 } from "./common.js";
 import { emitProjectSnapshotChanged, emitRunStatusChanged } from "./eventEmitters.js";
+import { createServerRequestId, internalErrorMessage } from "../errorBoundary.js";
 
 export async function handleRpcV2(body: unknown, context: RpcHandlerContext): Promise<{ requestId: string; result: unknown }> {
   const envelope = RpcRequestV2Schema.safeParse(body);
@@ -54,8 +55,7 @@ export async function handleRpcV2(body: unknown, context: RpcHandlerContext): Pr
       throw new RpcV2Error(400, parsed.data.requestId, "VALIDATION_ERROR", error.message, error.details, error);
     }
     if (error instanceof RpcV2Error) throw error;
-    const message = error instanceof Error ? error.message : "The RPC method could not be completed.";
-    throw new RpcV2Error(500, parsed.data.requestId, "INTERNAL_ERROR", message, undefined, error);
+    throw new RpcV2Error(500, parsed.data.requestId, "INTERNAL_ERROR", internalErrorMessage, undefined, error);
   }
 }
 
@@ -353,9 +353,10 @@ export class RpcV2Error extends Error {
 function requestIdFromBody(body: unknown): string {
   if (body && typeof body === "object" && "requestId" in body) {
     const requestId = (body as { requestId?: unknown }).requestId;
-    if (typeof requestId === "string" && requestId.trim()) return requestId.trim().slice(0, 256);
+    const parsed = RequestIdSchema.safeParse(requestId);
+    if (parsed.success) return parsed.data;
   }
-  return "invalid-request";
+  return createServerRequestId();
 }
 
 function toStorageAudits(audits: ReturnType<typeof authorizeJobCapabilities>["audits"], jobId?: string): StorageCapabilityAudit[] {

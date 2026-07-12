@@ -40,4 +40,27 @@ describe("browser public URL boundary", () => {
     expect(abortRequest).toHaveBeenCalledWith("blockedbyclient");
     expect(continueRequest).not.toHaveBeenCalled();
   });
+
+  it("applies an allowlist source policy to third-party subresources", async () => {
+    let handler: ((route: Route) => Promise<void>) | undefined;
+    const policy = new PublicUrlPolicy({ resolveHostAddresses: async () => ["93.184.216.34"] });
+    await installBrowserNetworkPolicy(
+      {
+        async route(_pattern, next) {
+          handler = next;
+        }
+      },
+      policy,
+      { mode: "allowlist", urls: ["https://example.com/paper"] }
+    );
+    const continueRequest = vi.fn(async () => undefined);
+    const abortRequest = vi.fn(async () => undefined);
+    await handler?.({
+      request: () => ({ url: () => "https://tracker.example/pixel", isNavigationRequest: () => false }),
+      continue: continueRequest,
+      abort: abortRequest
+    } as unknown as Route);
+    expect(abortRequest).toHaveBeenCalledWith("blockedbyclient");
+    expect(continueRequest).not.toHaveBeenCalled();
+  });
 });

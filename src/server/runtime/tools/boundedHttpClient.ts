@@ -1,9 +1,22 @@
 import { PublicUrlPolicy } from "./publicUrlPolicy.js";
+import { BoundedHttpError, cancelResponseBody, parseJsonBytes, readLimitedBytes } from "./boundedHttpBody.js";
+export { BoundedHttpError, type BoundedHttpErrorCode } from "./boundedHttpBody.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 10;
 const DEFAULT_USER_AGENT = "AetherOps/0.2 research client";
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const SENSITIVE_REDIRECT_HEADERS = [
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "cookie2",
+  "x-api-key",
+  "api-key",
+  "x-subscription-token",
+  "x-goog-api-key"
+] as const;
 
 export interface BoundedHttpClientOptions {
   publicUrlPolicy?: PublicHttpUrlPolicy;
@@ -60,7 +73,14 @@ export class BoundedHttpClient {
   async request(url: string, init: RequestInit = {}, options: BoundedHttpRequestOptions = {}): Promise<BoundedHttpResponse> {
     const raw = await this.requestRaw(url, init, options);
     try {
-      const bytes = await readLimitedBytes(raw.response, raw.url, normalizeMaxBytes(options.maxBytes, this.maxBytes), raw.deadline);
+      const bytes = await readLimitedBytes(
+        raw.response,
+        redactAuditUrl(raw.url),
+        normalizeMaxBytes(options.maxBytes, this.maxBytes),
+        raw.deadline,
+        raw.signal,
+        raw.externalSignal
+      );
       return {
         url: raw.url,
         status: raw.response.status,
@@ -95,7 +115,15 @@ export class BoundedHttpClient {
   async json<T>(url: string, init: RequestInit = {}, options: BoundedHttpRequestOptions = {}): Promise<{ response: BoundedHttpResponse; body: T }> {
     const raw = await this.requestRaw(url, init, options);
     try {
-      const body = await withDeadline(raw.response.json() as Promise<T>, raw.deadline, `response body timeout for ${raw.url}`);
+      const bytes = await readLimitedBytes(
+        raw.response,
+        redactAuditUrl(raw.url),
+        normalizeMaxBytes(options.maxBytes, this.maxBytes),
+        raw.deadline,
+        raw.signal,
+        raw.externalSignal
+      );
+      const body = parseJsonBytes<T>(bytes);
       return {
         response: {
           url: raw.url,
@@ -103,15 +131,13 @@ export class BoundedHttpClient {
           statusText: raw.response.statusText,
           contentType: raw.response.headers.get("content-type") ?? "unknown",
           headers: raw.response.headers,
-          bytes: new TextEncoder().encode(JSON.stringify(body))
+          bytes
         },
         body
       };
     } catch (error) {
-      if (isAbortOrTimeout(error, raw.deadline)) {
-        throw new Error(`response body timeout for ${raw.url}`, { cause: error });
-      }
-      throw new Error(`failed to parse JSON response from ${raw.url}: ${formatError(error)}`, { cause: error });
+      if (error instanceof BoundedHttpError) throw error;
+      throw new BoundedHttpError("INVALID_JSON", "invalid JSON response", { cause: error });
     } finally {
       clearTimeout(raw.timeout);
       raw.controller.abort();
@@ -127,6 +153,8 @@ export class BoundedHttpClient {
     response: Response;
     deadline: number;
     controller: AbortController;
+    signal: AbortSignal;
+    externalSignal?: AbortSignal | null;
     timeout: ReturnType<typeof setTimeout>;
   }> {
     const deadline = Date.now() + this.timeoutMs;
@@ -136,25 +164,39 @@ export class BoundedHttpClient {
     const redirectChain: string[] = [];
     let currentUrl = await this.assertAuditedUrl(url, redirectChain);
     let requestInit = normalizeRequestInit(init, options.accept, requestSignal);
+    const visited = new Set([currentUrl]);
     let completed = false;
 
     try {
-      for (let redirectCount = 0; redirectCount <= this.maxRedirects; redirectCount += 1) {
+      for (let redirectCount = 0; ; redirectCount += 1) {
         const response = await this.fetchOnce(currentUrl, requestInit, controller, deadline);
         if (isRedirectStatus(response.status)) {
-          const location = response.headers.get("location");
-          if (!location) {
-            throw new Error(`redirect response from ${currentUrl} missing Location header`);
+          let nextUrl: string;
+          let nextRequestInit: RequestInit;
+          try {
+            const location = response.headers.get("location");
+            if (!location) {
+              throw new BoundedHttpError("REDIRECT_MISSING_LOCATION", `redirect response from ${redactAuditUrl(currentUrl)} is missing Location`);
+            }
+            if (redirectCount >= this.maxRedirects) {
+              throw new BoundedHttpError("TOO_MANY_REDIRECTS", `too many redirects for ${redactAuditUrl(url)}`);
+            }
+            nextUrl = await this.assertAuditedUrl(new URL(location, currentUrl).toString(), redirectChain);
+            if (visited.has(nextUrl)) {
+              throw new BoundedHttpError("REDIRECT_LOOP", `redirect loop detected for ${redactAuditUrl(nextUrl)}`);
+            }
+            nextRequestInit = followRedirectRequestInit(requestInit, response.status, requestSignal, currentUrl, nextUrl);
+          } finally {
+            await cancelResponseBody(response);
           }
-          const nextUrl = new URL(location, currentUrl);
-          currentUrl = await this.assertAuditedUrl(nextUrl.toString(), redirectChain);
-          requestInit = followRedirectRequestInit(requestInit, response.status, requestSignal);
+          currentUrl = nextUrl;
+          requestInit = nextRequestInit;
+          visited.add(currentUrl);
           continue;
         }
         completed = true;
-        return { url: currentUrl, response, deadline, controller, timeout };
+        return { url: currentUrl, response, deadline, controller, signal: requestSignal, externalSignal: init.signal, timeout };
       }
-      throw new Error(`too many redirects for ${url}`);
     } finally {
       if (!completed) {
         clearTimeout(timeout);
@@ -208,79 +250,30 @@ function normalizeRequestInit(init: RequestInit, accept: string | undefined, sig
   return { ...init, headers, signal };
 }
 
-function followRedirectRequestInit(init: RequestInit, status: number, signal: AbortSignal): RequestInit {
+function followRedirectRequestInit(init: RequestInit, status: number, signal: AbortSignal, previousUrl: string, nextUrl: string): RequestInit {
   const method = (init.method ?? "GET").toUpperCase();
-  if (status === 303 || ((status === 301 || status === 302) && method !== "GET" && method !== "HEAD")) {
-    const headers = new Headers(init.headers ?? undefined);
+  const rewriteToGet = (status === 303 && method !== "HEAD") || ((status === 301 || status === 302) && method === "POST");
+  const headers = new Headers(init.headers ?? undefined);
+  let next: RequestInit;
+  if (rewriteToGet) {
     headers.delete("content-length");
     headers.delete("content-type");
-    return { ...init, method: "GET", body: undefined, headers, signal };
+    headers.delete("transfer-encoding");
+    next = { ...init, method: "GET", body: undefined, headers, signal };
+  } else {
+    next = { ...init, headers, signal };
   }
-  return { ...init, signal };
+  if (new URL(previousUrl).origin !== new URL(nextUrl).origin) {
+    if (next.body !== undefined && next.body !== null) {
+      throw new BoundedHttpError("REDIRECT_BODY_BLOCKED", "cross-origin redirect with a request body is not allowed");
+    }
+    for (const name of SENSITIVE_REDIRECT_HEADERS) headers.delete(name);
+  }
+  return next;
 }
 
 function isRedirectStatus(status: number): boolean {
-  return status >= 300 && status < 400;
-}
-
-async function readLimitedBytes(response: Response, url: string, maxBytes: number, deadline: number): Promise<Uint8Array> {
-  const contentLength = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new Error(`content-length exceeds ${formatBytes(maxBytes)} for ${url}`);
-  }
-
-  if (!response.body) {
-    if (typeof response.arrayBuffer === "function") {
-      const buffer = await withDeadline(response.arrayBuffer(), deadline, `body read timeout for ${url}`);
-      const bytes = new Uint8Array(buffer);
-      if (bytes.byteLength > maxBytes) throw new Error(`body exceeds ${formatBytes(maxBytes)} for ${url}`);
-      return bytes;
-    }
-    if (typeof response.text === "function") {
-      const text = await withDeadline(response.text(), deadline, `body read timeout for ${url}`);
-      const bytes = new TextEncoder().encode(text);
-      if (bytes.byteLength > maxBytes) throw new Error(`body exceeds ${formatBytes(maxBytes)} for ${url}`);
-      return bytes;
-    }
-    if (typeof response.json === "function") {
-      const json = await withDeadline(response.json(), deadline, `body read timeout for ${url}`);
-      const bytes = new TextEncoder().encode(JSON.stringify(json));
-      if (bytes.byteLength > maxBytes) throw new Error(`body exceeds ${formatBytes(maxBytes)} for ${url}`);
-      return bytes;
-    }
-    const bytes = new Uint8Array();
-    if (bytes.byteLength > maxBytes) throw new Error(`body exceeds ${formatBytes(maxBytes)} for ${url}`);
-    return bytes;
-  }
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    let readResult: ReadableStreamReadResult<Uint8Array>;
-    try {
-      readResult = await withDeadline(reader.read(), deadline, `body read timeout for ${url}`);
-    } catch (error) {
-      await reader.cancel().catch(() => undefined);
-      throw error;
-    }
-    if (readResult.done) break;
-    const value = readResult.value;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => undefined);
-      throw new Error(`body exceeds ${formatBytes(maxBytes)} for ${url}`);
-    }
-    chunks.push(value);
-  }
-
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+  return REDIRECT_STATUSES.has(status);
 }
 
 function normalizeTimeout(value: number | undefined, fallback: number): number {
@@ -293,12 +286,6 @@ function normalizeMaxBytes(value: number | undefined, fallback: number): number 
 
 function normalizeMaxRedirects(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
-}
-
-function formatBytes(value: number): string {
-  if (value >= 1024 * 1024) return `${Math.round(value / (1024 * 1024))}MB`;
-  if (value >= 1024) return `${Math.round(value / 1024)}KB`;
-  return `${value} bytes`;
 }
 
 function withDeadline<T>(promise: Promise<T>, deadline: number, message: string): Promise<T> {

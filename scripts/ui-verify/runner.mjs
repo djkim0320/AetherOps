@@ -16,7 +16,9 @@ export async function runUiLayoutVerification(rawArgs) {
     for (const viewport of viewportCases) {
       for (const theme of themes) {
         const label = `${viewport.label}/${theme}`;
-        const context = await browser.newContext({ viewport });
+        // Axe is injected only into this isolated verification context. Production
+        // pages retain their strict CSP; the harness explicitly bypasses it here.
+        const context = await browser.newContext({ viewport, bypassCSP: true });
         const page = await context.newPage();
         const consoleErrors = [];
         page.on("console", (message) => {

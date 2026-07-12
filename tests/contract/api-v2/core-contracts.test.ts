@@ -60,6 +60,7 @@ describe("API v2 common envelope", () => {
     });
     expect(() => RpcRequestV2Schema.parse({ requestId: "request-1", method: "projects.list", params: {}, args: [] })).toThrow();
     expect(() => RpcRequestV2Schema.parse({ requestId: "request-1", method: "projects.list", args: [] })).toThrow();
+    expect(() => RpcRequestV2Schema.parse({ requestId: "../../untrusted request id", method: "projects.list", params: {} })).toThrow();
   });
 
   it("allows only the exact public error codes", () => {

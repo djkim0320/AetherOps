@@ -5,7 +5,9 @@ export function redactTraceText(value: string | undefined): string | undefined {
   return value
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
     .replace(/(?:sk|sess)-[A-Za-z0-9_-]{12,}/g, "[redacted]")
-    .replace(/((?:api[_-]?key|token|secret|password)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^&\s]+/gi, "$1[redacted]")
+    .replace(/\b[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]+/g, "[path]")
+    .replace(/(?:\/[A-Za-z0-9._-]+){2,}/g, "[path]")
     .slice(0, 4_000);
 }
 

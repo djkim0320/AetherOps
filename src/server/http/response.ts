@@ -10,14 +10,29 @@ export class HttpError extends Error {
   }
 }
 
-export function sendJson(response: ServerResponse, status: number, payload: unknown): void {
-  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
-  response.end(`${JSON.stringify(payload)}\n`);
+export interface SendResponseOptions {
+  head?: boolean;
+  headers?: Record<string, string>;
+}
+
+export function sendJson(response: ServerResponse, status: number, payload: unknown, options: SendResponseOptions = {}): void {
+  setCommonSecurityHeaders(response);
+  response.setHeader("Cache-Control", "no-store");
+  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...options.headers });
+  response.end(options.head ? undefined : `${JSON.stringify(payload)}\n`);
 }
 
 export function sendText(response: ServerResponse, status: number, payload: string, contentType = "text/plain; charset=utf-8"): void {
+  setCommonSecurityHeaders(response);
+  response.setHeader("Cache-Control", "no-store");
   response.writeHead(status, { "Content-Type": contentType });
   response.end(payload);
+}
+
+export function setCommonSecurityHeaders(response: ServerResponse): void {
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("X-Frame-Options", "DENY");
 }
 
 export function writeSseEvent(
@@ -34,6 +49,7 @@ export function writeSseHeartbeat(response: ServerResponse): void {
 }
 
 export function setSseHeaders(response: ServerResponse): void {
+  setCommonSecurityHeaders(response);
   response.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",

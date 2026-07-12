@@ -8,6 +8,7 @@ import { assertSourceAccess, sourceDiscoveryAllowed } from "../../../core/tools/
 import { PublicUrlPolicy } from "../tools/publicUrlPolicy.js";
 import { assertPublicNavigationUrl, installBrowserNetworkPolicy } from "./browserNetworkPolicy.js";
 import { redactAuditUrl, type BoundedNetworkAuditEvent } from "../tools/boundedHttpClient.js";
+import { BrowserResourceLimitError, collectBoundedPageText, DEFAULT_BROWSER_RESOURCE_BUDGET, enforceCaptureBudget } from "./browserResourceBudget.js";
 
 export interface BrowserCollectInput {
   project: ResearchProject;
@@ -42,14 +43,11 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
     }
 
     const userDataDir = join(this.dataRoot, "browser-profiles", input.project.id);
-    const downloadsPath = join(input.project.projectRoot, "sources", "browser-downloads");
     mkdirSync(userDataDir, { recursive: true });
-    mkdirSync(downloadsPath, { recursive: true });
 
     const { chromium } = await import("playwright");
     const context = await chromium.launchPersistentContext(userDataDir, {
-      acceptDownloads: true,
-      downloadsPath,
+      acceptDownloads: false,
       headless: input.settings.mode !== "visible",
       locale: "ko-KR",
       viewport: { width: 1366, height: 900 }
@@ -60,6 +58,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
       const urls = await this.resolveUrls(input, context);
       const pages: BrowserCollectedPage[] = [];
       const failures: string[] = [];
+      let capturedBytes = 0;
 
       const pageLimit = Math.min(urls.length, input.settings.maxPages);
       for (let index = 0; index < pageLimit; index += 1) {
@@ -78,13 +77,24 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
             auditedAt: new Date().toISOString()
           });
           const title = (await page.title()).trim() || finalUrl;
-          const text = normalizePageText(
-            await page
-              .locator("body")
-              .innerText({ timeout: Math.min(input.settings.timeoutMs, 10_000) })
-              .catch(() => "")
-          );
+          const boundedText = await page
+            .locator("body")
+            .evaluate(collectBoundedPageText, DEFAULT_BROWSER_RESOURCE_BUDGET.maxTextCharacters)
+            .catch(() => ({ text: "", truncated: false }));
+          if (boundedText.truncated) {
+            throw new BrowserResourceLimitError("Browser page text exceeded its character limit.");
+          }
+          const text = normalizePageText(boundedText.text);
           const screenshot = input.settings.captureScreenshots ? await page.screenshot({ fullPage: false, type: "png" }) : undefined;
+          if (screenshot) {
+            capturedBytes = enforceCaptureBudget(
+              "Browser screenshot",
+              screenshot.byteLength,
+              DEFAULT_BROWSER_RESOURCE_BUDGET.maxScreenshotBytes,
+              DEFAULT_BROWSER_RESOURCE_BUDGET.maxAggregateCaptureBytes,
+              capturedBytes
+            );
+          }
           if (text) {
             pages.push({
               url: finalUrl,

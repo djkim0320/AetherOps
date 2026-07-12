@@ -20,6 +20,8 @@ npm run dev
 
 기본 서버 주소는 `http://127.0.0.1:5179`입니다. Production 빌드는 다음과 같이 실행합니다.
 
+AetherOps 0.2는 로컬 단일 사용자 제품으로 loopback 호스트만 지원합니다. `AETHEROPS_ALLOW_NON_LOOPBACK_HOST`는 보안상 폐기되었으며 설정해도 원격 바인딩을 허용하지 않습니다. 원격 접근이 필요하면 인증·TLS·CSRF 계약을 갖춘 별도 remote mode 설계가 선행되어야 합니다.
+
 ```bash
 npm run build
 npm run start

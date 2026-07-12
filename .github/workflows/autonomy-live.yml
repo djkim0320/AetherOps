@@ -1,5 +1,12 @@
 name: Autonomy live verification
 
+permissions:
+  contents: read
+
+concurrency:
+  group: autonomy-live-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   schedule:
     - cron: "30 16 * * *"
@@ -21,9 +28,9 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
           cache: npm
@@ -38,9 +45,10 @@ jobs:
 
       - name: Upload sanitized autonomy evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: autonomy-${{ github.run_id }}
           if-no-files-found: error
           include-hidden-files: true
+          retention-days: 14
           path: .tmp/autonomy-verify/**

@@ -265,14 +265,10 @@ export function webSource(id: string, url: string): ResearchSource {
 }
 
 export function successResponse(url: string): unknown {
-  return {
-    ok: true,
+  return new Response(`<html><title>${url}</title><body>Readable text for ${url}</body></html>`, {
     status: 200,
-    statusText: "OK",
-    url,
-    headers: new Headers({ "content-type": "text/html" }),
-    text: async () => `<html><title>${url}</title><body>Readable text for ${url}</body></html>`
-  };
+    headers: { "content-type": "text/html" }
+  });
 }
 
 export function installToolRunnerTestCleanup(): void {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createStrictTestOrchestrator, strictTestSettings } from "../core/testing/orchestratorTestHarness.js";
 import type { ResearchProjectInput } from "../core/shared/types.js";
-import { rpcAuthConfigFileName, rpcTokenCookieName, rpcTokenHeader } from "./runtime/security/loopbackRpcSecurity.js";
+import { assertLoopbackHostAllowed, rpcAuthConfigFileName, rpcTokenCookieName, rpcTokenHeader } from "./runtime/security/loopbackRpcSecurity.js";
 import { NodeProjectStorage } from "./runtime/storage/projectResearchStore.js";
 import { SqliteResearchStore } from "./runtime/storage/sqliteStore.js";
 import { runEngineeringProgramDirect } from "./http/directEngineering.js";
@@ -44,11 +44,11 @@ describe("web server security boundary", () => {
 
     const missing = await postRpc(server, "settings.get", {});
     expect(missing.status).toBe(401);
-    expect(await missing.json()).toMatchObject({ ok: false, error: "RPC token is required." });
+    expect(await missing.json()).toMatchObject({ ok: false, error: { code: "CAPABILITY_DENIED", message: "RPC token is required." } });
 
     const invalid = await postRpc(server, "settings.get", {}, "wrong-rpc-token-123456");
     expect(invalid.status).toBe(403);
-    expect(await invalid.json()).toMatchObject({ ok: false, error: "RPC token is invalid." });
+    expect(await invalid.json()).toMatchObject({ ok: false, error: { code: "CAPABILITY_DENIED", message: "RPC token is invalid." } });
 
     const valid = await postRpc(server, "settings.get", {}, rpcToken);
     expect(valid.status).toBe(200);
@@ -137,19 +137,10 @@ describe("web server security boundary", () => {
     expect(payload.pid).toBe(process.pid);
   });
 
-  it("refuses non-loopback host binding without explicit opt-in", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "aetherops-web-security-"));
-    process.env.AETHEROPS_RPC_TOKEN = rpcToken;
+  it("refuses non-loopback host binding even when the retired opt-in is present", () => {
+    process.env.AETHEROPS_ALLOW_NON_LOOPBACK_HOST = "true";
 
-    await expect(
-      startWebServer({
-        port: 0,
-        host: "0.0.0.0",
-        dataRoot: tempDir,
-        appRoot: process.cwd(),
-        installSignalHandlers: false
-      })
-    ).rejects.toThrow("AETHEROPS_HOST must be loopback-only");
+    expect(() => assertLoopbackHostAllowed("0.0.0.0", process.env)).toThrow("AetherOps supports loopback hosts only");
   });
 
   it("rejects positional args and malformed named params before dispatch", async () => {
@@ -188,6 +179,47 @@ describe("web server security boundary", () => {
     });
 
     expect(response.status).toBe(404);
+  });
+
+  it("enforces the health, static, and RPC HTTP protocol matrix", async () => {
+    const server = await startTestServer();
+
+    const healthPost = await fetch(`${server.url}/api/health`, { method: "POST" });
+    expect(healthPost.status).toBe(405);
+    expect(healthPost.headers.get("allow")).toBe("GET, HEAD");
+
+    const healthHead = await fetch(`${server.url}/api/health`, { method: "HEAD" });
+    expect(healthHead.status).toBe(200);
+    expect(await healthHead.text()).toBe("");
+
+    const staticGet = await fetch(`${server.url}/`);
+    const staticHead = await fetch(`${server.url}/`, { method: "HEAD" });
+    expect(staticHead.status).toBe(200);
+    expect(staticHead.headers.get("content-type")).toBe(staticGet.headers.get("content-type"));
+    expect(staticHead.headers.get("content-length")).toBe(staticGet.headers.get("content-length"));
+    expect(await staticHead.text()).toBe("");
+    expect(staticHead.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(staticHead.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(staticHead.headers.get("referrer-policy")).toBe("no-referrer");
+
+    const staticPut = await fetch(`${server.url}/`, { method: "PUT", body: "ignored" });
+    expect(staticPut.status).toBe(405);
+    expect(staticPut.headers.get("allow")).toBe("GET, HEAD");
+
+    const wrongMediaType = await fetch(`${server.url}/api/v2/rpc`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain", [rpcTokenHeader]: rpcToken },
+      body: JSON.stringify({ requestId: "wrong-media", method: "projects.list", params: {} })
+    });
+    expect(wrongMediaType.status).toBe(415);
+    expect(await wrongMediaType.json()).toMatchObject({ ok: false, error: { code: "VALIDATION_ERROR" } });
+
+    const compressed = await fetch(`${server.url}/api/v2/rpc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Encoding": "gzip", [rpcTokenHeader]: rpcToken },
+      body: "not-compressed"
+    });
+    expect(compressed.status).toBe(415);
   });
 
   it("authenticates SSE with the HttpOnly cookie and replays committed events", async () => {
@@ -261,6 +293,32 @@ describe("web server security boundary", () => {
     });
     expect(replay.status).toBe(200);
     expect(await readSseChunk(replay, controller)).toContain("event: project.snapshot.changed");
+  });
+
+  it("closes idempotently with an open SSE connection and permits a same-port restart", async () => {
+    const server = await startTestServer();
+    const project = await createProject(server, rpcToken);
+    const stream = await fetch(`${server.url}/api/v2/events?projectId=${encodeURIComponent(project.id)}`, {
+      headers: { [rpcTokenHeader]: rpcToken }
+    });
+    expect(stream.status).toBe(200);
+
+    const firstClose = server.close();
+    const secondClose = server.close();
+    expect(firstClose).toBe(secondClose);
+    await firstClose;
+    expect(server.state).toBe("CLOSED");
+    serverHandle = undefined;
+
+    serverHandle = await startWebServer({
+      port: server.port,
+      host: "127.0.0.1",
+      dataRoot: tempDir,
+      appRoot: process.cwd(),
+      installSignalHandlers: false
+    });
+    expect(serverHandle.port).toBe(server.port);
+    expect((await fetch(`${serverHandle.url}/api/health`)).status).toBe(200);
   });
 });
 

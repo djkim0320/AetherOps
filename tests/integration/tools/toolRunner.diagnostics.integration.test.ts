@@ -355,12 +355,8 @@ describe("Runtime tool diagnostics and research metadata", () => {
       "fetch",
       vi.fn(async (url: string | URL) => {
         expect(String(url)).toContain("api.openalex.org/works");
-        return {
-          ok: true,
-          status: 200,
-          statusText: "OK",
-          headers: new Headers({ "content-type": "application/json" }),
-          json: async () => ({
+        return new Response(
+          JSON.stringify({
             results: [
               {
                 id: "https://openalex.org/W1",
@@ -380,8 +376,9 @@ describe("Runtime tool diagnostics and research metadata", () => {
                 open_access: { is_oa: true, oa_url: "https://doi.org/10.1234/example" }
               }
             ]
-          })
-        };
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
       })
     );
 
@@ -409,12 +406,8 @@ describe("Runtime tool diagnostics and research metadata", () => {
         const search = new URL(String(url)).searchParams.get("search") ?? "";
         requestedSearches.push(search);
         const hasConciseRagQuery = /retrieval|citation|literature|vector/i.test(search);
-        return {
-          ok: true,
-          status: 200,
-          statusText: "OK",
-          headers: new Headers({ "content-type": "application/json" }),
-          json: async () => ({
+        return new Response(
+          JSON.stringify({
             results: hasConciseRagQuery
               ? [
                   {
@@ -435,8 +428,9 @@ describe("Runtime tool diagnostics and research metadata", () => {
                   }
                 ]
               : []
-          })
-        };
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
       })
     );
 
@@ -463,20 +457,14 @@ describe("Runtime tool diagnostics and research metadata", () => {
         requestedSearches.push(search);
         expect(search).not.toMatch(/[?*]/);
         if (callCount === 1) {
-          return {
-            ok: false,
+          return new Response('{"error":"Invalid query parameters error.","message":"Leading wildcards are not supported."}', {
             status: 400,
             statusText: "Bad Request",
-            headers: new Headers({ "content-type": "application/json" }),
-            text: async () => '{"error":"Invalid query parameters error.","message":"Leading wildcards are not supported."}'
-          };
+            headers: { "content-type": "application/json" }
+          });
         }
-        return {
-          ok: true,
-          status: 200,
-          statusText: "OK",
-          headers: new Headers({ "content-type": "application/json" }),
-          json: async () => ({
+        return new Response(
+          JSON.stringify({
             results: [
               {
                 id: "https://openalex.org/W3",
@@ -494,8 +482,9 @@ describe("Runtime tool diagnostics and research metadata", () => {
                 authorships: [{ author: { display_name: "Theo Lee" } }]
               }
             ]
-          })
-        };
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
       })
     );
 

@@ -25,7 +25,7 @@ export async function installBrowserNetworkPolicy(
         return;
       }
       await policy.assertPublicHttpUrl(requestUrl);
-      if (sourceAccess && sourceAccess.mode !== "discovery" && route.request().isNavigationRequest()) assertSourceAccess(sourceAccess, requestUrl);
+      if (sourceAccess) assertSourceAccess(sourceAccess, requestUrl);
       await onNetworkAudit?.({
         url: redactAuditUrl(requestUrl),
         redirectChain: [redactAuditUrl(requestUrl)],

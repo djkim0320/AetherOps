@@ -14,7 +14,10 @@ export const API_V2_ERROR_CODES = [
 export const RpcErrorCodeSchema = z.enum(API_V2_ERROR_CODES);
 export type RpcErrorCode = z.infer<typeof RpcErrorCodeSchema>;
 
-export const RequestIdSchema = z.string().trim().min(1).max(256);
+export const RequestIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 export const EntityIdSchema = z.string().trim().min(1).max(256);
 export const IdempotencyKeySchema = z.string().trim().min(1).max(256);
 export const TimestampSchema = z.string().datetime({ offset: true });

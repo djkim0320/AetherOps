@@ -45,7 +45,7 @@ describe("WebFetch security and content handling", () => {
 
     const result = await new WebFetchTool().run(input, settings);
     expect(result.toolRun.status).toBe("failed");
-    await expect(new ToolRunner([new WebFetchTool()]).runAll(input, settings)).rejects.toBeInstanceOf(ToolRunnerError);
+    await expect(new ToolRunner([new WebFetchTool()]).execute(input, settings)).rejects.toBeInstanceOf(ToolRunnerError);
   });
 
   it("blocks WebFetchTool direct runs when external search is disabled", async () => {

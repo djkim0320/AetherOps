@@ -1,8 +1,13 @@
 .inspector {
+  position: relative;
+  z-index: 6;
   min-width: 0;
   height: 100vh;
-  background: var(--color-inspector);
+  border-left: 1px solid var(--glass-divider);
+  background: var(--glass-pane-sheen), var(--glass-pane);
+  box-shadow: var(--glass-highlight);
   overflow: hidden;
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
 }
 
 .tabs {
@@ -17,15 +22,42 @@
 }
 
 .body h2 {
+  margin: 0;
   font-size: var(--text-lg);
+}
+
+.tabCount {
+  min-width: 20px;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-surface);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.sectionHeading {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.sectionHeading p,
+.sectionHeading > span {
+  margin: 0 0 var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
 }
 
 .card {
   margin: var(--space-3) 0;
   padding: var(--space-3);
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: var(--glass-surface);
+  box-shadow: var(--glass-highlight);
 }
 
 .card > div {
@@ -46,9 +78,9 @@
   padding: var(--space-3);
   display: grid;
   gap: var(--space-1);
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: var(--glass-surface);
   color: var(--color-text);
   text-align: left;
   cursor: pointer;
@@ -57,7 +89,8 @@
 .itemButton:hover,
 .itemButton[data-selected="true"] {
   border-color: var(--color-accent-border);
-  background: var(--color-accent-soft);
+  background: var(--glass-accent-sheen), var(--color-accent-soft);
+  box-shadow: var(--glass-highlight);
 }
 
 .itemButton span,
@@ -66,15 +99,91 @@
   font-size: var(--text-sm);
 }
 
+.itemButton small {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.itemButton > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
 .detail {
   margin: var(--space-3) 0 var(--space-5);
   padding: var(--space-4);
   border: 1px solid var(--color-accent-border);
   border-radius: var(--radius-md);
-  background: var(--color-accent-soft);
+  background: var(--glass-accent-sheen), var(--color-accent-soft);
+  box-shadow: var(--glass-highlight);
 }
 
 .detail h3,
 .detail p {
   margin: var(--space-1) 0 0;
+}
+
+.traceItem {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.traceItem > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.traceInputs {
+  max-block-size: 12rem;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-surface-inset);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+}
+
+.inputDisclosure {
+  margin-top: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+}
+
+.inputDisclosure summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.attempt {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.codexTrace {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0;
+}
+
+.codexTrace div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, auto) 1fr;
+  gap: var(--space-2);
+}
+
+.codexTrace dt {
+  color: var(--color-text-secondary);
+}
+
+.codexTrace dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }

@@ -54,7 +54,7 @@ export function activeResearchSnapshot(snapshot: ResearchSnapshot): ResearchSnap
     benchmarkPlans: itemsAtOrAfter(snapshot.benchmarkPlans, baseline),
     runtimeBlockers: itemsAtOrAfter(snapshot.runtimeBlockers, baseline),
     stepErrors: itemsAtOrAfter(snapshot.stepErrors, baseline),
-    openCodeRuns: openCodeRunsAtOrAfter(snapshot.openCodeRuns, baseline),
+    legacyAgentRuns: legacyAgentRunsAtOrAfter(snapshot.legacyAgentRuns, baseline),
     ragContexts: itemsAtOrAfter(snapshot.ragContexts, baseline),
     results: itemsAtOrAfter(snapshot.results, baseline),
     iterations: itemsAtOrAfter(snapshot.iterations, baseline),
@@ -186,8 +186,8 @@ function toolRunsAtOrAfter(toolRuns: ToolRun[], baseline: string): ToolRun[] {
   return toolRuns.filter((toolRun) => isTimestampAtOrAfter(toolRun.completedAt || toolRun.startedAt, baseline));
 }
 
-function openCodeRunsAtOrAfter(openCodeRuns: ResearchSnapshot["openCodeRuns"], baseline: string): ResearchSnapshot["openCodeRuns"] {
-  return openCodeRuns.filter((run) => isTimestampAtOrAfter(run.completedAt ?? run.startedAt, baseline));
+function legacyAgentRunsAtOrAfter(legacyAgentRuns: ResearchSnapshot["legacyAgentRuns"], baseline: string): ResearchSnapshot["legacyAgentRuns"] {
+  return legacyAgentRuns.filter((run) => isTimestampAtOrAfter(run.completedAt ?? run.startedAt, baseline));
 }
 
 function timestampOf(item: { createdAt?: string; retrievedAt?: string }): string | undefined {

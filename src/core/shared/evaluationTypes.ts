@@ -29,7 +29,7 @@ import type {
   ResearchSource,
   ToolRun
 } from "./recordTypes.js";
-import type { OpenCodeRun, RuntimeBlocker, StepError } from "./recordTypes.js";
+import type { LegacyAgentRun, RuntimeBlocker, StepError } from "./recordTypes.js";
 
 export type EvidenceClaimStatus = "supported" | "missing_evidence" | "contradicted" | "attribution_unfaithful" | "unknown";
 export type EvidenceClaimCorrectnessStatus = "supported" | "contradicted" | "insufficient" | "unknown";
@@ -256,7 +256,7 @@ export interface ResearchSnapshot {
   globalMemoryItems?: GlobalMemoryItem[];
   runtimeBlockers: RuntimeBlocker[];
   stepErrors: StepError[];
-  openCodeRuns: OpenCodeRun[];
+  legacyAgentRuns: LegacyAgentRun[];
   ragContexts: RagContext[];
   results: EvidenceBasedResult[];
   iterations: LoopIteration[];

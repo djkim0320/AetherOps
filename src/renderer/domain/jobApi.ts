@@ -1,6 +1,7 @@
 import {
   ChatEnqueueParamsSchema,
   JobReceiptSchema,
+  JobDetailSchema,
   JobSchema,
   JobsListParamsSchema,
   JobsListResponseSchema,
@@ -13,7 +14,7 @@ import { callRpc } from "../platform/rpcTransport.js";
 
 export const jobApi = {
   list: (projectId: string) => callRpc("jobs.list", JobsListParamsSchema.parse({ projectId, limit: 50 }), JobsListResponseSchema),
-  get: (projectId: string, jobId: string) => callRpc("jobs.get", { projectId, jobId }, JobSchema),
+  get: (projectId: string, jobId: string) => callRpc("jobs.get", { projectId, jobId }, JobDetailSchema),
   enqueueChat: (params: unknown) => callRpc("chat.enqueue", ChatEnqueueParamsSchema.parse(params), JobReceiptSchema),
   start: (params: unknown) => callRpc("loop.start", LoopStartParamsSchema.parse(params), JobReceiptSchema),
   pause: (params: unknown) => callRpc("loop.pause", LoopPauseParamsSchema.parse(params), JobSchema),

@@ -8,6 +8,7 @@ import { EventRepository } from "./eventRepository.js";
 import { CheckpointRepository } from "./checkpointRepository.js";
 import { CapabilityAuditRepository } from "./capabilityRepository.js";
 import { OntologyRepository } from "./ontologyRepository.js";
+import { TraceRepository } from "./traceRepository.js";
 
 export {
   ProjectRepository,
@@ -18,7 +19,8 @@ export {
   EventRepository,
   CheckpointRepository,
   CapabilityAuditRepository,
-  OntologyRepository
+  OntologyRepository,
+  TraceRepository
 };
 export { runAtomically } from "./repositorySupport.js";
 
@@ -32,6 +34,7 @@ export interface StorageV2RepositorySet {
   events: EventRepository;
   capabilities: CapabilityAuditRepository;
   ontology: OntologyRepository;
+  trace: TraceRepository;
 }
 export interface StorageV2RepositoryDbs {
   appDb: DatabaseSync;
@@ -51,6 +54,7 @@ export function createStorageV2Repositories(dbs: StorageV2RepositoryDbs): Storag
     checkpoints: new CheckpointRepository(dbs.appDb),
     events: new EventRepository(dbs.appDb),
     capabilities: new CapabilityAuditRepository(dbs.appDb),
-    ontology: new OntologyRepository(ontologyDb)
+    ontology: new OntologyRepository(ontologyDb),
+    trace: new TraceRepository(dbs.appDb)
   };
 }

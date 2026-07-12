@@ -51,7 +51,7 @@ describe("SqliteResearchStore", () => {
     expect(researchStore).toBe(sqliteStore);
   });
 
-  it("persists project snapshots with DB, runs, RAG contexts, and final report", async () => {
+  it("persists project snapshots with DB, tool runs, RAG contexts, and final report", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-"));
     store = new SqliteResearchStore(join(tempDir, "aetherops.sqlite"));
     const orchestrator = createStrictTestOrchestrator({ store, projectRootBase: join(tempDir, "projects") });
@@ -61,7 +61,8 @@ describe("SqliteResearchStore", () => {
 
     const reloaded = await store.getSnapshot(snapshot.project.id);
     expect(reloaded.database?.sqlitePath).toContain("project.sqlite");
-    expect(reloaded.openCodeRuns.length).toBeGreaterThanOrEqual(1);
+    expect(reloaded.legacyAgentRuns).toHaveLength(0);
+    expect(reloaded.toolRuns.map((run) => run.toolName)).toEqual(expect.arrayContaining(["DataAnalysisTool", "ArtifactWriterTool"]));
     expect(reloaded.ragContexts.length).toBeGreaterThanOrEqual(1);
     expect(reloaded.report).toBeDefined();
     expect((await store.listProjects()).at(0)?.id).toBe(snapshot.project.id);

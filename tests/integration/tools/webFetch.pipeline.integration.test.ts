@@ -14,6 +14,36 @@ import {
 installToolRunnerTestCleanup();
 
 describe("WebFetch acquisition pipeline", () => {
+  it("verifies a direct PDF with bounded HEAD before PDF ingestion downloads the body", async () => {
+    const input = {
+      ...runInput(["WebFetchTool", "PdfIngestionTool"]),
+      researchPlan: {
+        ...runInput(["WebFetchTool", "PdfIngestionTool"]).researchPlan!,
+        fetchCandidateUrls: ["https://arxiv.org/pdf/1706.03762"]
+      }
+    };
+    const fetchSpy = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.method).toBe("HEAD");
+      expect(new Headers(init?.headers).get("user-agent")).toBe("AetherOps/0.2 research client");
+      return new Response(null, {
+        status: 200,
+        headers: { "content-type": "application/pdf", "content-length": String(3 * 1024 * 1024) }
+      });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await new WebFetchTool().run(input, settings);
+
+    expect(result.toolRun.status).toBe("completed");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ url: "https://arxiv.org/pdf/1706.03762" }),
+        expect.objectContaining({ kind: "paper", url: "https://arxiv.org/pdf/1706.03762" })
+      ])
+    );
+  });
+
   it("fetches web sources before evidence URLs, dedupes normalized URLs, caps at three, and reports partial failures as completed", async () => {
     const input = {
       ...runInput(),
@@ -194,6 +224,23 @@ describe("WebFetch acquisition pipeline", () => {
     expect(() => validateAirfoilCoordinateText(String(rawText))).not.toThrow();
   });
 
+  it("retries transient transport failures without changing the selected URL", async () => {
+    const url = "https://93.184.216.34/transient";
+    const input = { ...runInput(["WebFetchTool"]), sources: [webSource("transient", url)] };
+    const fetchSpy = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValue(successResponse(url));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await new WebFetchTool().run(input, settings);
+
+    expect(result.toolRun.status).toBe("completed");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect((result.toolRun.input as { urls: string[] }).urls).toEqual([url]);
+  });
+
   it("fetches up to two URLs concurrently while preserving failure mapping order", async () => {
     const input = {
       ...runInput(["WebFetchTool"]),
@@ -339,5 +386,27 @@ describe("WebFetch acquisition pipeline", () => {
     expect(output.failureReasons["https://example.edu/redirect"]).toContain("blocked internal IP address");
     expect(output.failureReasons["https://example.edu/image"]).toContain("unsupported content-type");
     expect(output.failureReasons["https://example.edu/large"]).toContain("content-length exceeds 2MB");
+  });
+
+  it("validates every planned URL before applying the fetch target limit", async () => {
+    const input = runInput(["WebFetchTool"]);
+    input.researchPlan = {
+      ...input.researchPlan!,
+      fetchCandidateUrls: ["https://example.edu/one", "https://example.edu/two", "https://example.edu/three", "https://outside.example/four"]
+    };
+    input.executionContext = {
+      toolPolicy: {
+        allowOpenCode: false,
+        sourceAccess: {
+          mode: "allowlist",
+          urls: ["https://example.edu/one", "https://example.edu/two", "https://example.edu/three"]
+        }
+      }
+    };
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(new WebFetchTool().run(input, settings)).rejects.toThrow(/outside the job allowlist/);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

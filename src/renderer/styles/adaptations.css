@@ -9,12 +9,72 @@
   }
 }
 
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  :root[data-theme="light"] {
+    --glass-app-backdrop: var(--color-app);
+    --glass-pane: var(--color-shell);
+    --glass-pane-strong: var(--color-surface-raised);
+    --glass-surface: var(--color-surface);
+    --glass-surface-strong: var(--color-surface-raised);
+    --glass-surface-hover: var(--color-surface-hover);
+    --glass-surface-active: var(--color-surface-active);
+    --glass-surface-inset: var(--color-surface-inset);
+    --glass-control: var(--color-surface-inset);
+    --glass-control-hover: var(--color-surface-hover);
+    --glass-accent-sheen: none;
+    --glass-pane-sheen: none;
+    --glass-blur: 0px;
+    --glass-blur-soft: 0px;
+    --glass-saturation: 100%;
+  }
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  :root,
+  :root[data-theme="light"] {
+    --glass-pane: var(--color-shell);
+    --glass-pane-strong: var(--color-surface-raised);
+    --glass-surface: var(--color-surface);
+    --glass-surface-strong: var(--color-surface-raised);
+    --glass-surface-hover: var(--color-surface-hover);
+    --glass-surface-active: var(--color-surface-active);
+    --glass-surface-inset: var(--color-surface-inset);
+    --glass-control: var(--color-surface-inset);
+    --glass-control-hover: var(--color-surface-hover);
+  }
+}
+
 @media (forced-colors: active) {
+  :root,
+  :root[data-theme="light"] {
+    --glass-app-backdrop: var(--forced-canvas);
+    --glass-pane: var(--forced-canvas);
+    --glass-pane-strong: var(--forced-canvas);
+    --glass-surface: var(--forced-canvas);
+    --glass-surface-strong: var(--forced-canvas);
+    --glass-surface-hover: var(--forced-canvas);
+    --glass-surface-active: var(--forced-highlight);
+    --glass-surface-inset: var(--forced-canvas);
+    --glass-control: var(--forced-canvas);
+    --glass-control-hover: var(--forced-canvas);
+    --glass-border: var(--forced-canvas-text);
+    --glass-border-strong: var(--forced-canvas-text);
+    --glass-divider: var(--forced-canvas-text);
+    --glass-accent-sheen: none;
+    --glass-pane-sheen: none;
+    --glass-shadow: none;
+    --glass-shadow-raised: none;
+  }
+
   * {
     border-color: CanvasText;
+    backdrop-filter: none !important;
   }
 
   :focus-visible {
     outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
   }
 }

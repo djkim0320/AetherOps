@@ -73,9 +73,11 @@ export const ToolRunChangedEventSchema = z
     data: z
       .object({
         jobId: EntityIdSchema,
-        toolRunId: EntityIdSchema,
+        decisionId: EntityIdSchema,
+        attemptId: EntityIdSchema,
+        ordinal: z.number().int().nonnegative(),
         toolName: z.string().trim().min(1),
-        status: z.enum(["queued", "running", "blocked", "failed", "completed"])
+        status: z.enum(["queued", "running", "blocked", "failed", "completed", "interrupted", "quarantined"])
       })
       .strict()
   })

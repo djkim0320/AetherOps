@@ -3,14 +3,19 @@ import { join } from "node:path";
 import type { BrowserContext } from "playwright";
 import { rankResearchUrls } from "../../../core/evidence/sourceQuality.js";
 import type { BrowserUseSettings, ResearchProject } from "../../../core/shared/types.js";
+import type { ResearchSourceAccessPolicy } from "../../../core/shared/adapterTypes.js";
+import { assertSourceAccess, sourceDiscoveryAllowed } from "../../../core/tools/sourceAccessPolicy.js";
 import { PublicUrlPolicy } from "../tools/publicUrlPolicy.js";
 import { assertPublicNavigationUrl, installBrowserNetworkPolicy } from "./browserNetworkPolicy.js";
+import { redactAuditUrl, type BoundedNetworkAuditEvent } from "../tools/boundedHttpClient.js";
 
 export interface BrowserCollectInput {
   project: ResearchProject;
   query: string;
   urls?: string[];
   settings: BrowserUseSettings;
+  sourceAccess: ResearchSourceAccessPolicy;
+  onNetworkAudit?: (audit: BoundedNetworkAuditEvent) => void | Promise<void>;
 }
 
 export interface BrowserCollectedPage {
@@ -51,7 +56,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
     });
 
     try {
-      await installBrowserNetworkPolicy(context, this.publicUrlPolicy);
+      await installBrowserNetworkPolicy(context, this.publicUrlPolicy, input.sourceAccess, input.onNetworkAudit);
       const urls = await this.resolveUrls(input, context);
       const pages: BrowserCollectedPage[] = [];
       const failures: string[] = [];
@@ -65,7 +70,13 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
           const publicUrl = await assertPublicNavigationUrl(this.publicUrlPolicy, url);
           await page.goto(publicUrl, { waitUntil: "domcontentloaded", timeout: input.settings.timeoutMs });
           await page.waitForLoadState("networkidle", { timeout: Math.min(input.settings.timeoutMs, 10_000) }).catch(() => undefined);
-          const finalUrl = await assertPublicNavigationUrl(this.publicUrlPolicy, page.url());
+          const finalUrl = assertSourceAccess(input.sourceAccess, await assertPublicNavigationUrl(this.publicUrlPolicy, page.url()));
+          await input.onNetworkAudit?.({
+            url: redactAuditUrl(finalUrl),
+            redirectChain: uniqueHttpUrls([url, finalUrl]).map(redactAuditUrl),
+            policyDecision: "allowed",
+            auditedAt: new Date().toISOString()
+          });
           const title = (await page.title()).trim() || finalUrl;
           const text = normalizePageText(
             await page
@@ -101,9 +112,13 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
   }
 
   private async resolveUrls(input: BrowserCollectInput, context: BrowserContext): Promise<string[]> {
-    const directUrls = rankResearchUrls(uniqueHttpUrls(input.urls ?? []));
+    const directUrls = rankResearchUrls(uniqueHttpUrls(input.urls ?? []).map((url) => assertSourceAccess(input.sourceAccess, url)));
     if (directUrls.length) {
       return directUrls;
+    }
+
+    if (!sourceDiscoveryAllowed(input.sourceAccess)) {
+      throw new Error(`${input.sourceAccess.mode} source policy requires explicit direct URLs; browser discovery is prohibited.`);
     }
 
     const query = input.query.trim();
@@ -137,15 +152,26 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
             .filter(Boolean)
             .slice(0, 80)
         );
-        const urls = rankResearchUrls(publicNonSearchUrls(links));
+        const urls = rankResearchUrls(publicNonSearchUrls(links).filter((url) => sourceUrlAllowed(input.sourceAccess, url)));
         if (urls.length) {
           return urls;
         }
       }
-      return rankResearchUrls(await resolveBingRssUrls(publicResearchQuery(query), input.settings.timeoutMs));
+      return rankResearchUrls(
+        (await resolveBingRssUrls(publicResearchQuery(query), input.settings.timeoutMs)).filter((url) => sourceUrlAllowed(input.sourceAccess, url))
+      );
     } finally {
       await searchPage.close().catch(() => undefined);
     }
+  }
+}
+
+function sourceUrlAllowed(policy: ResearchSourceAccessPolicy, url: string): boolean {
+  try {
+    assertSourceAccess(policy, url);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -9,7 +9,7 @@ import type {
   HybridContext,
   LoopIteration,
   NormalizedResearchRecord,
-  OpenCodeRun,
+  LegacyAgentRun,
   OntologyConstraint,
   OntologyEntity,
   OntologyRelation,
@@ -65,7 +65,7 @@ export class InMemoryResearchStore implements ResearchStore {
   private globalMemoryItems: GlobalMemoryItem[] = [];
   private runtimeBlockers: RuntimeBlocker[] = [];
   private stepErrors: StepError[] = [];
-  private openCodeRuns: OpenCodeRun[] = [];
+  private legacyAgentRuns: LegacyAgentRun[] = [];
   private ragContexts: RagContext[] = [];
   private results: EvidenceBasedResult[] = [];
   private iterations: LoopIteration[] = [];
@@ -212,8 +212,8 @@ export class InMemoryResearchStore implements ResearchStore {
     this.stepErrors = this.upsertMany(this.stepErrors, [error]);
   }
 
-  async saveOpenCodeRun(run: OpenCodeRun): Promise<void> {
-    this.openCodeRuns = this.upsertMany(this.openCodeRuns, [run]);
+  async saveLegacyAgentRun(run: LegacyAgentRun): Promise<void> {
+    this.legacyAgentRuns = this.upsertMany(this.legacyAgentRuns, [run]);
   }
 
   async saveRagContext(context: RagContext): Promise<void> {
@@ -267,7 +267,7 @@ export class InMemoryResearchStore implements ResearchStore {
       globalMemoryItems: visibleInProject(this.globalMemoryItems, projectId),
       runtimeBlockers: byProject(this.runtimeBlockers, projectId),
       stepErrors: byProject(this.stepErrors, projectId),
-      openCodeRuns: byProject(this.openCodeRuns, projectId),
+      legacyAgentRuns: byProject(this.legacyAgentRuns, projectId),
       ragContexts: byProject(this.ragContexts, projectId),
       results: byProject(this.results, projectId),
       iterations: byProject(this.iterations, projectId),

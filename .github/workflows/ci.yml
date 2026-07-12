@@ -61,6 +61,9 @@ jobs:
       - name: Offline unit and integration tests
         run: npm test
 
+      - name: Offline autonomy verification
+        run: npm run autonomy:verify -- --profile offline
+
       - name: Migration read-only check
         run: |
           mkdir -p .tmp/ci-migration
@@ -82,6 +85,9 @@ jobs:
           path: |
             .tmp/aetherops-selftest/blocked-path-result.json
             .tmp/aetherops-selftest/self-test-report.md
+            .tmp/autonomy-verify/**/autonomy-report.json
+            .tmp/autonomy-verify/**/autonomy-report.md
+            .tmp/autonomy-verify/**/manifest.json
 
   windows-launcher-smoke:
     name: Windows launcher smoke

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { EngineeringProgramTool, validateAirfoilCoordinateText } from "../../../src/core/tools/engineeringProgramTool.js";
 import { resolveWasmAirfoilInput } from "../../../src/server/runtime/engineering/engineeringProgramCoordinateResolver.js";
 import { runEngineeringProgram } from "../../../src/server/runtime/engineering/engineeringProgramRegistry.js";
-import type { AppSettings, OpenCodeRunInput } from "../../../src/core/shared/types.js";
+import type { AppSettings, ResearchToolInput } from "../../../src/core/shared/types.js";
 import { ResearchLoopStep } from "../../../src/core/shared/types.js";
 
 const createdAt = "2026-07-10T00:00:00.000Z";
@@ -59,7 +59,7 @@ function createSettings(artifactRoot = ""): AppSettings {
   };
 }
 
-function createInput(programRequests: NonNullable<OpenCodeRunInput["researchPlan"]>["programRequests"]): OpenCodeRunInput {
+function createInput(programRequests: NonNullable<ResearchToolInput["researchPlan"]>["programRequests"]): ResearchToolInput {
   return {
     project: {
       id: "project-1",

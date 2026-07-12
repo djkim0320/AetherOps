@@ -1,5 +1,5 @@
 import type {
-  OpenCodeRun,
+  LegacyAgentRun,
   OntologyConstraint,
   OntologyEntity,
   OntologyRelation,
@@ -23,7 +23,7 @@ export interface ProjectStorage {
     project: ResearchProject,
     database: ResearchDatabase,
     iteration: number,
-    run: OpenCodeRun,
+    run: LegacyAgentRun,
     toolRuns: ToolRun[]
   ): Promise<ResearchSource | undefined>;
   writeSources(project: ResearchProject, database: ResearchDatabase, sources: ResearchSource[]): Promise<ResearchSource[]>;

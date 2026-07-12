@@ -18,9 +18,9 @@ export function buildSourceText(source: ResearchSource, snapshot: ResearchSnapsh
     return joinPresent("\n", artifact.title, artifact.summary, artifact.content, artifact.relativePath);
   }
 
-  const openCodeRun = snapshot.openCodeRuns.find((item) => `source_${item.id}` === source.id);
-  if (openCodeRun) {
-    return [openCodeRun.prompt, ...openCodeRun.logs, openCodeRun.toolPlan.join(", ")].join("\n");
+  const legacyAgentRun = snapshot.legacyAgentRuns.find((item) => `source_${item.id}` === source.id);
+  if (legacyAgentRun) {
+    return [legacyAgentRun.prompt, ...legacyAgentRun.logs, legacyAgentRun.toolPlan.join(", ")].join("\n");
   }
 
   const toolRun = snapshot.toolRuns.find((item) => `source_${item.id}` === source.id);

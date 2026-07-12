@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { Button } from "./button.js";
 import { OrbitMark } from "./orbit-mark.js";
@@ -30,6 +31,7 @@ describe("UI primitives", () => {
   });
 
   it("uses native switch form and reset semantics", async () => {
+    const user = userEvent.setup();
     const onCheckedChange = vi.fn();
     render(
       <form data-testid="form">
@@ -42,7 +44,7 @@ describe("UI primitives", () => {
     expect(control.getAttribute("aria-checked")).toBe("true");
     expect(new FormData(form).get("telemetry")).toBe("enabled");
 
-    fireEvent.click(control);
+    await user.click(control);
     expect(control.getAttribute("aria-checked")).toBe("false");
     expect(onCheckedChange).toHaveBeenLastCalledWith(false);
     expect(new FormData(form).has("telemetry")).toBe(false);
@@ -52,6 +54,7 @@ describe("UI primitives", () => {
   });
 
   it("moves focus, skips disabled tabs, and activates with arrow keys", async () => {
+    const user = userEvent.setup();
     render(
       <Tabs defaultValue="overview">
         <TabsList aria-label="Workspace views">
@@ -68,8 +71,8 @@ describe("UI primitives", () => {
 
     const overview = screen.getByRole("tab", { name: "Overview" });
     const activity = screen.getByRole("tab", { name: "Activity" });
-    overview.focus();
-    fireEvent.keyDown(overview, { key: "ArrowRight" });
+    await user.click(overview);
+    await user.keyboard("{ArrowRight}");
 
     await waitFor(() => expect(document.activeElement).toBe(activity));
     expect(activity.getAttribute("aria-selected")).toBe("true");
@@ -77,6 +80,7 @@ describe("UI primitives", () => {
   });
 
   it("supports manual tab activation", async () => {
+    const user = userEvent.setup();
     render(
       <Tabs activationMode="manual" defaultValue="first">
         <TabsList aria-label="Manual views">
@@ -90,12 +94,12 @@ describe("UI primitives", () => {
 
     const first = screen.getByRole("tab", { name: "First" });
     const second = screen.getByRole("tab", { name: "Second" });
-    first.focus();
-    fireEvent.keyDown(first, { key: "End" });
+    await user.click(first);
+    await user.keyboard("{End}");
 
     await waitFor(() => expect(document.activeElement).toBe(second));
     expect(first.getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(second, { key: "Enter" });
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(second.getAttribute("aria-selected")).toBe("true"));
   });
 

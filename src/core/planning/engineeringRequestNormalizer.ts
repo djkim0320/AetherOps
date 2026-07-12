@@ -186,6 +186,9 @@ function mergeWithReadyProgramTemplate(
     const safeSpec = mergeCfdRunSpecWithReadyArtifacts(safeRequest, request.cfdRunSpec, readyArtifacts, readyArtifactsByFormat);
     if (!safeSpec) return undefined;
     safeRequest.cfdRunSpec = safeSpec;
+    if (!safeRequest.artifactPath && safeSpec.geometry.artifactPath) safeRequest.artifactPath = safeSpec.geometry.artifactPath;
+    if (!safeRequest.sourceUrl && safeSpec.geometry.sourceUrl) safeRequest.sourceUrl = safeSpec.geometry.sourceUrl;
+    if (!safeRequest.naca && safeSpec.geometry.naca) safeRequest.naca = safeSpec.geometry.naca;
   }
   if (request.artifactPath?.trim() && readyArtifacts.has(request.artifactPath.trim())) {
     const artifactPath = request.artifactPath.trim();

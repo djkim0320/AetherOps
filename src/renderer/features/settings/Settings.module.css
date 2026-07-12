@@ -17,18 +17,28 @@
   display: flex;
   gap: var(--space-1);
   margin-top: var(--space-6);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--glass-divider);
 }
 
 .nav a {
   padding: var(--space-3);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   color: var(--color-text-secondary);
   text-decoration: none;
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard);
+}
+
+.nav a:hover {
+  background: var(--glass-surface);
+  color: var(--color-text);
 }
 
 .nav .active {
   color: var(--color-accent);
   border-bottom: 2px solid var(--color-accent);
+  background: var(--glass-accent-sheen), var(--color-accent-soft);
 }
 
 .panel {
@@ -76,9 +86,10 @@
   display: grid;
   gap: var(--space-2);
   padding: var(--space-4);
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: var(--glass-accent-sheen), var(--glass-surface);
+  box-shadow: var(--glass-highlight);
 }
 
 .modelDescription {
@@ -98,8 +109,10 @@
   justify-content: space-between;
   gap: var(--space-6);
   padding: var(--space-4);
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
+  background: var(--glass-surface);
+  box-shadow: var(--glass-highlight);
 }
 
 .switchRow span {
@@ -133,9 +146,10 @@
 
 .stack section {
   padding: var(--space-5);
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: var(--glass-accent-sheen), var(--glass-surface-strong);
+  box-shadow: var(--glass-shadow);
 }
 
 .stack h2 {

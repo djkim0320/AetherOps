@@ -19,7 +19,7 @@ export function buildRuntimeToolDiagnostics(
     blockers.push({ key: "researchMetadata", message: researchMetadata.blockedReason ?? "Research metadata collection is not ready." });
   }
   if (!settings.allowCodeExecution) {
-    blockers.push({ key: "codeExecution", message: "Code execution is disabled in app settings." });
+    blockers.push({ key: "engineering", message: "Engineering capability is disabled in app settings." });
   }
   if (settings.allowCodeExecution && !hasExecutableEngineeringTool(settings)) {
     blockers.push({

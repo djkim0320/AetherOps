@@ -13,19 +13,19 @@ const now = "2026-07-10T00:00:00.000Z";
 describe("CapabilityResolver", () => {
   it("keeps the canonical job capability policy map", () => {
     expect(JOB_KIND_CAPABILITY_POLICY).toEqual({
-      research_loop: { agent: true, engineering: false, search: true },
+      research_loop: { agent: true, engineering: false, search: false },
       chat_reply: { agent: true, engineering: false, search: false },
       engineering_run: { agent: true, engineering: true, search: false }
     });
     expect(JOB_KIND_REQUIRED_CAPABILITIES).toEqual({
-      research_loop: ["agent", "search"],
+      research_loop: ["agent"],
       chat_reply: ["agent"],
       engineering_run: ["agent", "engineering"]
     });
   });
 
   it.each([
-    ["research_loop", true, false, true],
+    ["research_loop", true, false, false],
     ["chat_reply", true, false, false],
     ["engineering_run", true, true, false]
   ] as const)("authorizes %s with the required job capabilities only", (jobKind, expectAgent, expectEngineering, expectSearch) => {
@@ -65,6 +65,7 @@ describe("CapabilityResolver", () => {
         app: { agent: true, engineering: true, search: true },
         project: { agent: true, engineering: true, search: false },
         jobKind: "research_loop" as const,
+        job: { agent: true, engineering: false, search: true },
         projectId: "project-1",
         jobId: "job-3",
         recordedAt: now
@@ -123,7 +124,7 @@ describe("CapabilityResolver", () => {
       jobKind: "research_loop",
       appAllowed: false,
       projectAllowed: true,
-      jobAllowed: true,
+      jobAllowed: false,
       allowed: false,
       blockedBy: "app"
     });

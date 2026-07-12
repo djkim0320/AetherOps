@@ -11,7 +11,7 @@ import type {
 import type { JobKind } from "../../../shared/kernel/job.js";
 
 export const JOB_KIND_CAPABILITY_POLICY: Record<JobKind, CapabilityPolicy> = {
-  research_loop: { agent: true, engineering: false, search: true },
+  research_loop: { agent: true, engineering: false, search: false },
   chat_reply: { agent: true, engineering: false, search: false },
   engineering_run: { agent: true, engineering: true, search: false }
 };

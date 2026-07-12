@@ -53,8 +53,23 @@ describe("migration safety", () => {
     for (const model of ["gpt-5", "gpt-5.5-codex", "gpt-5.6-typo"]) {
       const migrated = migrateCodexSettingsObject({ openCodeLlm: { source: "codex-oauth", model } });
       expect(migrated).toMatchObject({ changed: true, originalModel: model, model: "gpt-5.6", reason: "unsupported_model" });
-      expect(migrated.settings.openCodeLlm).toMatchObject({ model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000 });
+      expect(migrated.settings.codex).toEqual({ model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 600_000 });
     }
+  });
+
+  it("prefers valid active Codex settings and bounds the migrated task timeout", () => {
+    const active = migrateCodexSettingsObject({
+      codex: { model: "gpt-5.6-sol", reasoningEffort: "high", timeoutMs: 120_000, taskTimeoutMs: 700_000 },
+      openCodeLlm: { model: "gpt-5.5", reasoningEffort: "xhigh", timeoutMs: 90_000 },
+      openCode: { timeoutMs: 900_000 }
+    });
+    expect(active.settings.codex).toEqual({ model: "gpt-5.6-sol", reasoningEffort: "high", timeoutMs: 120_000, taskTimeoutMs: 700_000 });
+
+    const legacy = migrateCodexSettingsObject({
+      openCodeLlm: { model: "gpt-5.5", reasoningEffort: "high", timeoutMs: 75_000 },
+      openCode: { timeoutMs: 850_000 }
+    });
+    expect(legacy.settings.codex).toEqual({ model: "gpt-5.5", reasoningEffort: "high", timeoutMs: 75_000, taskTimeoutMs: 850_000 });
   });
 
   it("uses an exclusive lock for mutating migration commands", () => {
@@ -101,7 +116,7 @@ describe("migration safety", () => {
     expect(verified.error).toMatch(/SHA-256 changed/);
   });
 
-  it("migrates deprecated Codex settings once while preserving secrets and OpenCode", () => {
+  it("migrates deprecated settings once while archiving and retiring OpenCode", () => {
     const context = createContext("codex-settings");
     const settingsPath = join(context.dataRoot, "settings.json");
     const original = {
@@ -116,13 +131,15 @@ describe("migration safety", () => {
     const applied = applyMigration(context);
     expect(applied).toMatchObject({ ok: true, settingsMigration: { changed: true, originalModel: "gpt-5.5-codex", model: "gpt-5.6" } });
     const migrated = JSON.parse(readFileSync(settingsPath, "utf8"));
-    expect(migrated.openCodeLlm).toEqual({ source: "codex-oauth", model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 90_000 });
-    expect(migrated.openCode).toEqual(original.openCode);
+    expect(migrated.codex).toEqual({ model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 600_000 });
+    expect(migrated.openCodeLlm).toBeUndefined();
+    expect(migrated.openCode).toBeUndefined();
     expect(migrated.encryptedEmbeddingKey).toBe(original.encryptedEmbeddingKey);
     expect(migrated.encryptedWebSearchKey).toBe(original.encryptedWebSearchKey);
 
     const archive = JSON.parse(readFileSync(join(context.migrationRoot, "v2", "settings.archive.json"), "utf8"));
     expect(archive.codexMigration).toMatchObject({ changed: true, originalModel: "gpt-5.5-codex", model: "gpt-5.6" });
+    expect(archive.codexMigration.retiredExecutors.openCode.value).toEqual(original.openCode);
     const journal = JSON.parse(readFileSync(join(context.migrationRoot, "codex-settings-journal.json"), "utf8"));
     expect(journal).toMatchObject({ changed: true, originalModel: "gpt-5.5-codex", model: "gpt-5.6" });
 
@@ -140,12 +157,12 @@ describe("migration safety", () => {
       "utf8"
     );
 
-    expect(applyMigration(context)).toMatchObject({ ok: true, settingsMigration: { changed: false } });
-    expect(JSON.parse(readFileSync(settingsPath, "utf8")).openCodeLlm).toEqual({
-      source: "codex-oauth",
+    expect(applyMigration(context)).toMatchObject({ ok: true, settingsMigration: { changed: true } });
+    expect(JSON.parse(readFileSync(settingsPath, "utf8")).codex).toEqual({
       model: "gpt-5.5",
       reasoningEffort: "high",
-      timeoutMs: 75_000
+      timeoutMs: 75_000,
+      taskTimeoutMs: 600_000
     });
   });
 

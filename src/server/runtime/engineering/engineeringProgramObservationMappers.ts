@@ -1,5 +1,5 @@
 import { createId } from "../../../core/shared/ids.js";
-import type { OpenCodeRunInput, ResearchArtifact, EvidenceItem } from "../../../core/shared/types.js";
+import type { ResearchToolInput, ResearchArtifact, EvidenceItem } from "../../../core/shared/types.js";
 import type {
   MeshSummary,
   ScriptedCfdRunSummary,
@@ -8,7 +8,7 @@ import type {
   XfoilWasmPolarSummary
 } from "../../../core/tools/engineeringProgramTypes.js";
 
-export function meshSummaryArtifact(input: OpenCodeRunInput, summary: MeshSummary, createdAt: string): ResearchArtifact {
+export function meshSummaryArtifact(input: ResearchToolInput, summary: MeshSummary, createdAt: string): ResearchArtifact {
   const safeName = summary.fileName.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
     id: createId("artifact"),
@@ -28,7 +28,7 @@ export function meshSummaryArtifact(input: OpenCodeRunInput, summary: MeshSummar
   };
 }
 
-export function xfoilPolarArtifact(input: OpenCodeRunInput, summary: XfoilPolarSummary, createdAt: string): ResearchArtifact {
+export function xfoilPolarArtifact(input: ResearchToolInput, summary: XfoilPolarSummary, createdAt: string): ResearchArtifact {
   const safeName = summary.airfoil.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
     id: createId("artifact"),
@@ -49,7 +49,7 @@ export function xfoilPolarArtifact(input: OpenCodeRunInput, summary: XfoilPolarS
   };
 }
 
-export function xfoilPolarEvidence(input: OpenCodeRunInput, summary: XfoilPolarSummary, createdAt: string): EvidenceItem {
+export function xfoilPolarEvidence(input: ResearchToolInput, summary: XfoilPolarSummary, createdAt: string): EvidenceItem {
   const previewRows = summary.rows.slice(0, 6).map((row) => `alpha=${row.alpha}, CL=${row.cl}, CD=${row.cd}`);
   return {
     id: createId("evidence"),
@@ -82,7 +82,7 @@ export function xfoilPolarEvidence(input: OpenCodeRunInput, summary: XfoilPolarS
   };
 }
 
-export function xfoilWasmPolarArtifact(input: OpenCodeRunInput, summary: XfoilWasmPolarSummary, createdAt: string): ResearchArtifact {
+export function xfoilWasmPolarArtifact(input: ResearchToolInput, summary: XfoilWasmPolarSummary, createdAt: string): ResearchArtifact {
   const safeName = summary.airfoil.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
     id: createId("artifact"),
@@ -104,7 +104,7 @@ export function xfoilWasmPolarArtifact(input: OpenCodeRunInput, summary: XfoilWa
   };
 }
 
-export function xfoilWasmPolarEvidence(input: OpenCodeRunInput, summary: XfoilWasmPolarSummary, createdAt: string): EvidenceItem {
+export function xfoilWasmPolarEvidence(input: ResearchToolInput, summary: XfoilWasmPolarSummary, createdAt: string): EvidenceItem {
   const previewRows = summary.rows.slice(0, 6).map((row) => `alpha=${row.alpha}, CL=${row.cl}, CD=${row.cd}`);
   return {
     id: createId("evidence"),
@@ -144,7 +144,7 @@ export function xfoilWasmPolarEvidence(input: OpenCodeRunInput, summary: XfoilWa
   };
 }
 
-export function su2CaseRunArtifact(input: OpenCodeRunInput, summary: Su2CaseRunSummary, createdAt: string): ResearchArtifact {
+export function su2CaseRunArtifact(input: ResearchToolInput, summary: Su2CaseRunSummary, createdAt: string): ResearchArtifact {
   const safeName = `su2-${summary.outputFileName}`.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
     id: createId("artifact"),
@@ -165,7 +165,7 @@ export function su2CaseRunArtifact(input: OpenCodeRunInput, summary: Su2CaseRunS
   };
 }
 
-export function scriptedCfdRunArtifact(input: OpenCodeRunInput, summary: ScriptedCfdRunSummary, createdAt: string): ResearchArtifact {
+export function scriptedCfdRunArtifact(input: ResearchToolInput, summary: ScriptedCfdRunSummary, createdAt: string): ResearchArtifact {
   const safeName = `${summary.target}-${summary.outputFileName}`.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
     id: createId("artifact"),
@@ -186,7 +186,7 @@ export function scriptedCfdRunArtifact(input: OpenCodeRunInput, summary: Scripte
   };
 }
 
-export function scriptedCfdRunEvidence(input: OpenCodeRunInput, summary: ScriptedCfdRunSummary, createdAt: string): EvidenceItem {
+export function scriptedCfdRunEvidence(input: ResearchToolInput, summary: ScriptedCfdRunSummary, createdAt: string): EvidenceItem {
   return {
     id: createId("evidence"),
     projectId: input.project.id,
@@ -218,7 +218,7 @@ export function scriptedCfdRunEvidence(input: OpenCodeRunInput, summary: Scripte
   };
 }
 
-export function su2CaseRunEvidence(input: OpenCodeRunInput, summary: Su2CaseRunSummary, createdAt: string): EvidenceItem {
+export function su2CaseRunEvidence(input: ResearchToolInput, summary: Su2CaseRunSummary, createdAt: string): EvidenceItem {
   return {
     id: createId("evidence"),
     projectId: input.project.id,

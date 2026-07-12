@@ -11,6 +11,8 @@ export interface CfdRunSpec {
     artifactPath?: string;
     sourceUrl?: string;
     naca?: string;
+    configuredCaseId?: string;
+    coordinateBindingId?: string;
     description?: string;
   };
   flightCondition: {
@@ -54,6 +56,7 @@ export interface EngineeringProgramRequest {
   cfdRunSpec?: CfdRunSpec;
   artifactPath?: string;
   sourceUrl?: string;
+  coordinateBindingId?: string;
   outputFileName?: string;
   naca?: string;
   reynolds?: number;

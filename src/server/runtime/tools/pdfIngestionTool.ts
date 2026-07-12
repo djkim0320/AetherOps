@@ -1,8 +1,9 @@
 import { createId, nowIso } from "../../../core/shared/ids.js";
 import { assessSourceQuality, sourceQualityMetadata } from "../../../core/evidence/sourceQuality.js";
-import type { AppSettings, EvidenceItem, OpenCodeRunInput, ResearchSource } from "../../../core/shared/types.js";
-import type { ResearchTool, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import type { AppSettings, EvidenceItem, ResearchToolInput, ResearchSource } from "../../../core/shared/types.js";
+import type { ResearchTool, ResearchToolExecutionContext, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
 import { BoundedHttpClient } from "./boundedHttpClient.js";
+import { JobSourceAccessPolicy } from "./jobSourceAccessPolicy.js";
 
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -11,7 +12,7 @@ const LATIN1_TEXT_DECODER = new TextDecoder("latin1");
 export class PdfIngestionTool implements ResearchTool {
   name = "PdfIngestionTool";
 
-  async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
+  async run(input: ResearchToolInput, settings: AppSettings, context?: ResearchToolExecutionContext): Promise<ResearchToolResult> {
     const startedAt = nowIso();
     if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
       throw new Error("PdfIngestionTool requires external network access for PDF URLs, but external search is disabled by project autonomy or app settings.");
@@ -46,7 +47,7 @@ export class PdfIngestionTool implements ResearchTool {
       const target = targets[targetIndex];
       if (!target) continue;
       try {
-        const pdf = await fetchPdfText(target);
+        const pdf = await fetchPdfText(target, input.executionContext?.toolPolicy.sourceAccess, context);
         const span = selectRelevantPdfSpan(pdf.pages, input);
         if (!span.quote) {
           failureReasons[target] = "PDF text was fetched but no relevant quote/span could be extracted.";
@@ -126,9 +127,18 @@ export class PdfIngestionTool implements ResearchTool {
   }
 }
 
-async function fetchPdfText(url: string): Promise<{ url: string; title: string; pages: Array<{ page: number; text: string }> }> {
-  const client = new BoundedHttpClient({ timeoutMs: FETCH_TIMEOUT_MS, maxBytes: MAX_PDF_BYTES });
-  const response = await client.request(url, undefined, { accept: "application/pdf", maxBytes: MAX_PDF_BYTES });
+async function fetchPdfText(
+  url: string,
+  sourceAccess: NonNullable<ResearchToolInput["executionContext"]>["toolPolicy"]["sourceAccess"] | undefined,
+  context?: ResearchToolExecutionContext
+): Promise<{ url: string; title: string; pages: Array<{ page: number; text: string }> }> {
+  const client = new BoundedHttpClient({
+    timeoutMs: FETCH_TIMEOUT_MS,
+    maxBytes: MAX_PDF_BYTES,
+    ...(sourceAccess ? { publicUrlPolicy: new JobSourceAccessPolicy(sourceAccess) } : {}),
+    ...(sourceAccess && context?.onNetworkAudit ? { onNetworkAudit: (audit) => context.onNetworkAudit?.({ ...audit, sourcePolicy: sourceAccess }) } : {})
+  });
+  const response = await client.request(url, { signal: context?.signal }, { accept: "application/pdf", maxBytes: MAX_PDF_BYTES });
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`PDF fetch failed for ${url}: ${response.status} ${response.statusText}`);
   }
@@ -147,7 +157,7 @@ async function fetchPdfText(url: string): Promise<{ url: string; title: string; 
   };
 }
 
-function selectPdfTargets(input: OpenCodeRunInput): string[] {
+function selectPdfTargets(input: ResearchToolInput): string[] {
   const urls = new Map<string, string>();
   const considerCandidate = (candidate: string | undefined) => {
     const pdf = normalizeHttpUrl(arxivPdfUrl(candidate) ?? candidate);
@@ -214,7 +224,7 @@ function splitPdfPages(text: string): Array<{ page: number; text: string }> {
 
 function selectRelevantPdfSpan(
   pages: Array<{ page: number; text: string }>,
-  input: OpenCodeRunInput
+  input: ResearchToolInput
 ): { page: number; quote: string; spanStart: number; spanEnd: number } {
   const queryParts: string[] = [];
   if (input.researchPlan?.objective) queryParts.push(input.researchPlan.objective);
@@ -297,7 +307,7 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function linkedHypothesisIds(input: OpenCodeRunInput): string[] {
+function linkedHypothesisIds(input: ResearchToolInput): string[] {
   const ids: string[] = [];
   for (const hypothesis of input.hypotheses) ids.push(hypothesis.id);
   return ids;
@@ -371,7 +381,7 @@ function decodeEntities(value: string): string {
     .replace(/&#39;/g, "'");
 }
 
-function failedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown, error: string) {
+function failedToolRun(input: ResearchToolInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown, error: string) {
   return {
     id: createId("tool"),
     projectId: input.project.id,

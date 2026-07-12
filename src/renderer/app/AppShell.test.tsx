@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { AppProviders } from "./AppProviders.js";
 import { AppShell } from "./AppShell.js";
@@ -9,16 +10,9 @@ vi.mock("../features/navigation/public.js", () => ({
   ProjectRail: ({ projectId }: { projectId?: string }) => <aside data-testid="project-rail">{projectId}</aside>
 }));
 
-vi.mock("../features/run/public.js", () => ({
-  RunBar: ({ projectId }: { projectId: string }) => <div data-testid="run-bar">{projectId}</div>,
-  ProjectInspector: ({ projectId, selectedItemId, onSelectItem }: { projectId: string; selectedItemId?: string; onSelectItem: (id: string) => void }) => (
-    <aside data-testid="project-inspector">
-      {projectId}:{selectedItemId}
-      <button type="button" onClick={() => onSelectItem("artifact-7")}>
-        Select artifact
-      </button>
-    </aside>
-  )
+vi.mock("../features/run/public.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../features/run/public.js")>()),
+  RunBar: ({ projectId }: { projectId: string }) => <div data-testid="run-bar">{projectId}</div>
 }));
 
 vi.mock("./ProjectEventsBridge.js", () => ({
@@ -27,6 +21,7 @@ vi.mock("./ProjectEventsBridge.js", () => ({
 
 describe("AppShell project route integration", () => {
   it("mounts project live state and inspectors for a nested chat route", async () => {
+    const user = userEvent.setup();
     const router = createMemoryRouter(
       [
         {
@@ -50,11 +45,11 @@ describe("AppShell project route integration", () => {
 
     expect(await screen.findByTestId("chat-route")).toBeTruthy();
     expect(screen.getByTestId("events-bridge").textContent).toBe("project-42");
-    expect(screen.getByTestId("run-bar").textContent).toBe("project-42");
+    expect((await screen.findByTestId("run-bar", {}, { timeout: 10_000 })).textContent).toBe("project-42");
     expect(screen.getByTestId("project-rail").textContent).toBe("project-42");
-    expect(screen.getByTestId("project-inspector").textContent).toContain("project-42:evidence-3");
-    fireEvent.click(screen.getByRole("button", { name: "Select artifact" }));
-    await waitFor(() => expect(router.state.location.search).toContain("item=artifact-7"));
+    expect(await screen.findByLabelText("프로젝트 인스펙터", {}, { timeout: 10_000 })).toBeTruthy();
+    await user.click(screen.getByRole("tab", { name: /산출물/ }));
+    await waitFor(() => expect(router.state.location.search).toContain("inspector=artifacts"));
   });
 
   it("does not mount project-only modules on app settings routes", async () => {

@@ -8,6 +8,7 @@ export function printDoctorResult(result) {
     `Server port: ${result.port} (${result.portAvailable ? "available" : "occupied"})`,
     `Settings: ${result.settings}`,
     `Codex orchestrator: ${result.codex}`,
+    `Codex CLI sandbox: ${result.codexSandboxStatus} (${result.codexSandboxMode})`,
     `Embedding: ${result.embedding}`,
     `Web Search: ${result.search}`,
     `Engineering programs: ${result.engineering} (${result.engineeringTargets.join(", ") || "none"})`,

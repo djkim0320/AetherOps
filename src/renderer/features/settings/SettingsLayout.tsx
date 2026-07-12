@@ -1,6 +1,7 @@
 import { type ReactElement, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import styles from "./Settings.module.css";
+import { ko } from "../../platform/i18n.js";
 
 export function SettingsLayout({
   title,
@@ -15,14 +16,14 @@ export function SettingsLayout({
 }): ReactElement {
   const links = projectId
     ? [
-        ["Brief", `/projects/${projectId}/settings/brief`],
-        ["Run policy", `/projects/${projectId}/settings/run-policy`]
+        [ko.researchBrief, `/projects/${projectId}/settings/brief`],
+        [ko.runPolicy, `/projects/${projectId}/settings/run-policy`]
       ]
     : [
-        ["Codex", "/settings/codex"],
-        ["Connections", "/settings/connections"],
-        ["Tools", "/settings/tools"],
-        ["Appearance", "/settings/appearance"]
+        [ko.codex, "/settings/codex"],
+        [ko.connections, "/settings/connections"],
+        [ko.tools, "/settings/tools"],
+        [ko.appearance, "/settings/appearance"]
       ];
   return (
     <section className={styles.page} data-ui="settings-page">

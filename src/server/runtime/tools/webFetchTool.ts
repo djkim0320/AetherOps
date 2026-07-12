@@ -1,8 +1,11 @@
 import { createId, nowIso } from "../../../core/shared/ids.js";
 import { assessSourceQuality, sourceQualityMetadata } from "../../../core/evidence/sourceQuality.js";
-import type { AppSettings, EvidenceItem, OpenCodeRunInput, ResearchSource } from "../../../core/shared/types.js";
-import type { ResearchTool, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import type { AppSettings, EvidenceItem, ResearchToolInput, ResearchSource } from "../../../core/shared/types.js";
+import type { ResearchTool, ResearchToolExecutionContext, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
 import { BoundedHttpClient } from "./boundedHttpClient.js";
+import { JobSourceAccessPolicy } from "./jobSourceAccessPolicy.js";
+import type { ResearchSourceAccessPolicy } from "../../../core/shared/adapterTypes.js";
+import { assertSourceAccess } from "../../../core/tools/sourceAccessPolicy.js";
 import {
   arxivPdfUrl,
   copyStrings,
@@ -27,16 +30,21 @@ const WEB_FETCH_CONCURRENCY = 2;
 export class WebFetchTool implements ResearchTool {
   name = "WebFetchTool";
 
-  async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
+  async run(input: ResearchToolInput, settings: AppSettings, context?: ResearchToolExecutionContext): Promise<ResearchToolResult> {
     const startedAt = nowIso();
     if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
       throw new Error("WebFetchTool requires external network access, but external search is disabled by project autonomy or app settings.");
     }
-    const { urls, skippedUrls, duplicateUrls } = selectFetchTargets(input);
+    const sourceAccess = input.executionContext?.toolPolicy.sourceAccess;
+    if (sourceAccess) {
+      for (const url of input.researchPlan?.fetchCandidateUrls ?? []) assertSourceAccess(sourceAccess, url);
+    }
+    const { urls: selectedUrls, skippedUrls, duplicateUrls } = selectFetchTargets(input);
+    const urls = sourceAccess ? selectedUrls.map((url) => assertSourceAccess(sourceAccess, url)) : selectedUrls;
     if (!urls.length) {
       throw new Error("WebFetchTool requires at least one external source URL from the research plan or existing sources.");
     }
-    const settledPages = await runWithConcurrency(urls, WEB_FETCH_CONCURRENCY, fetchPage);
+    const settledPages = await runWithConcurrency(urls, WEB_FETCH_CONCURRENCY, (url) => fetchPage(url, sourceAccess, context));
     const completedAt = nowIso();
     const pages: Awaited<ReturnType<typeof fetchPage>>[] = [];
     const failedUrls: string[] = [];
@@ -108,9 +116,34 @@ export class WebFetchTool implements ResearchTool {
   }
 }
 
-async function fetchPage(url: string): Promise<{ url: string; title: string; text: string; rawText: string; contentType: string; status: number }> {
-  const client = new BoundedHttpClient({ timeoutMs: FETCH_TIMEOUT_MS, maxBytes: MAX_FETCH_BYTES });
-  const response = await client.request(url, undefined, { accept: "text/html,text/plain,application/xhtml+xml", maxBytes: MAX_FETCH_BYTES });
+async function fetchPage(
+  url: string,
+  sourceAccess: ResearchSourceAccessPolicy | undefined,
+  context?: ResearchToolExecutionContext
+): Promise<{ url: string; title: string; text: string; rawText: string; contentType: string; status: number }> {
+  const client = new BoundedHttpClient({
+    timeoutMs: FETCH_TIMEOUT_MS,
+    maxBytes: MAX_FETCH_BYTES,
+    ...(sourceAccess ? { publicUrlPolicy: new JobSourceAccessPolicy(sourceAccess) } : {}),
+    ...(sourceAccess && context?.onNetworkAudit ? { onNetworkAudit: (audit) => context.onNetworkAudit?.({ ...audit, sourcePolicy: sourceAccess }) } : {})
+  });
+  if (isDirectPdfUrl(url)) {
+    const response = await withTransientNetworkRetry(() => client.head(url, { signal: context?.signal }, { accept: "application/pdf" }), context?.signal);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`PDF resource check failed for ${url}: ${response.status} ${response.statusText}`);
+    }
+    const mediaType = response.contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (mediaType && mediaType !== "application/pdf" && mediaType !== "application/octet-stream" && mediaType !== "unknown") {
+      throw new Error(`unsupported PDF content-type for ${url}: ${response.contentType}`);
+    }
+    const title = pdfTitle(response.url);
+    const text = `Verified PDF resource at ${response.url}.`;
+    return { url: response.url, title, text, rawText: text, contentType: response.contentType, status: response.status };
+  }
+  const response = await withTransientNetworkRetry(
+    () => client.request(url, { signal: context?.signal }, { accept: "text/html,text/plain,application/xhtml+xml", maxBytes: MAX_FETCH_BYTES }),
+    context?.signal
+  );
   if (response.status < 200 || response.status >= 300) throw new Error(`fetch failed for ${url}: ${response.status} ${response.statusText}`);
   const mediaType = response.contentType.split(";")[0]?.trim().toLowerCase() ?? "";
   if (!isAllowedTextFetchContentType(mediaType, response.url)) throw new Error(`unsupported content-type for ${url}: ${response.contentType}`);
@@ -120,6 +153,67 @@ async function fetchPage(url: string): Promise<{ url: string; title: string; tex
   const text = isHtml ? normalizePageText(raw) : normalizePlainFetchedText(raw);
   if (!text) throw new Error(`fetch produced no readable text for ${url}`);
   return { url: response.url, title, text, rawText: isHtml ? text : normalizeFetchedRawText(raw), contentType: response.contentType, status: response.status };
+}
+
+async function withTransientNetworkRetry<T>(task: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("WebFetchTool was aborted.");
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2 || !isTransientNetworkError(error)) throw error;
+      await abortableDelay(300 * (attempt + 1), signal);
+    }
+  }
+  throw lastError;
+}
+
+function isTransientNetworkError(error: unknown): boolean {
+  const messages: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (current instanceof Error) {
+      messages.push(current.message);
+      current = current.cause;
+    } else break;
+  }
+  return /fetch failed|request timeout|econnreset|etimedout|socket|temporar/i.test(messages.join(" "));
+}
+
+function abortableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal.reason instanceof Error ? signal.reason : new Error("WebFetchTool was aborted."));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function isDirectPdfUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return /\.pdf$/i.test(parsed.pathname) || /\/pdf\//i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function pdfTitle(value: string): string {
+  try {
+    const parsed = new URL(value);
+    const fileName = parsed.pathname.split("/").filter(Boolean).at(-1) ?? parsed.hostname;
+    return `${decodeURIComponent(fileName).replace(/\.pdf$/i, "")} PDF`;
+  } catch {
+    return "PDF document";
+  }
 }
 
 function pdfSource(projectId: string, title: string, pdfUrl: string, createdAt: string): ResearchSource {
@@ -143,7 +237,7 @@ function pdfSource(projectId: string, title: string, pdfUrl: string, createdAt: 
 }
 
 function buildEvidence(
-  input: OpenCodeRunInput,
+  input: ResearchToolInput,
   pages: Array<Awaited<ReturnType<typeof fetchPage>>>,
   sources: ResearchSource[],
   createdAt: string
@@ -174,7 +268,7 @@ function buildEvidence(
 }
 
 function toolRun(
-  input: OpenCodeRunInput,
+  input: ResearchToolInput,
   toolName: string,
   startedAt: string,
   completedAt: string,

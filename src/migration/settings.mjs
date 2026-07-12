@@ -7,6 +7,7 @@ export const protectedSecretPrefix = "enc:v1:";
 export const defaultCodexModel = "gpt-5.6";
 export const defaultCodexReasoningEffort = "xhigh";
 export const defaultCodexTimeoutMs = 180_000;
+export const defaultCodexTaskTimeoutMs = 600_000;
 
 const supportedCodexModels = new Set(["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]);
 const supportedEfforts = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -101,6 +102,11 @@ export function migrateCodexSettingsFile(settingsPath, journalPath) {
     originalModel: migration.originalModel,
     model: migration.model,
     reason: migration.reason,
+    retiredExecutorHashes: Object.fromEntries(
+      Object.entries(migration.retiredExecutors)
+        .filter(([, entry]) => entry)
+        .map(([name, entry]) => [name, entry.sha256])
+    ),
     beforeSha256: sha256Hex(Buffer.from(raw, "utf8")),
     afterSha256: sha256Hex(Buffer.from(next, "utf8")),
     migratedAt: new Date().toISOString()
@@ -111,21 +117,41 @@ export function migrateCodexSettingsFile(settingsPath, journalPath) {
 
 export function migrateCodexSettingsObject(settings) {
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) throw new Error("AetherOps settings file must contain a JSON object.");
-  const original = settings.openCodeLlm && typeof settings.openCodeLlm === "object" ? settings.openCodeLlm : {};
-  const originalModel = typeof original.model === "string" ? original.model : undefined;
+  const active = settings.codex && typeof settings.codex === "object" ? settings.codex : undefined;
+  const legacyLlm = settings.openCodeLlm && typeof settings.openCodeLlm === "object" ? settings.openCodeLlm : undefined;
+  const legacyOpenCode = settings.openCode && typeof settings.openCode === "object" ? settings.openCode : undefined;
+  const source = validCodexCandidate(active) ? active : (legacyLlm ?? {});
+  const originalModel = typeof source.model === "string" ? source.model : undefined;
   const model = supportedCodexModels.has(originalModel) ? originalModel : defaultCodexModel;
-  const reasoningEffort = supportedEfforts.has(original.reasoningEffort) ? original.reasoningEffort : defaultCodexReasoningEffort;
+  const reasoningEffort = supportedEfforts.has(source.reasoningEffort) ? source.reasoningEffort : defaultCodexReasoningEffort;
   const legacyTimeout = settings.openCode && typeof settings.openCode === "object" ? settings.openCode.timeoutMs : undefined;
-  const timeoutMs = validTimeout(original.timeoutMs) ?? validTimeout(legacyTimeout) ?? defaultCodexTimeoutMs;
+  const timeoutMs = validTimeout(source.timeoutMs) ?? defaultCodexTimeoutMs;
+  const taskTimeoutMs = validTimeout(source.taskTimeoutMs) ?? Math.min(900_000, Math.max(defaultCodexTaskTimeoutMs, validTimeout(legacyTimeout) ?? 0));
   const compatibleEffort = reasoningEffort === "max" && !model.startsWith("gpt-5.6") ? defaultCodexReasoningEffort : reasoningEffort;
-  const migrated = { source: "codex-oauth", model, reasoningEffort: compatibleEffort, timeoutMs };
-  const changed = stableJsonHash(original) !== stableJsonHash(migrated);
+  const migrated = { model, reasoningEffort: compatibleEffort, timeoutMs, taskTimeoutMs };
+  const retained = { ...settings };
+  delete retained.openCodeLlm;
+  delete retained.openCode;
+  const nextSettings = { ...retained, codex: migrated };
+  const changed = stableJsonHash(settings) !== stableJsonHash(nextSettings);
+  const retiredExecutors = {
+    openCodeLlm: legacyLlm ? { value: legacyLlm, sha256: stableJsonHash(legacyLlm) } : undefined,
+    openCode: legacyOpenCode ? { value: legacyOpenCode, sha256: stableJsonHash(legacyOpenCode) } : undefined
+  };
   return {
     changed,
     originalModel,
     model,
-    reason: originalModel && !supportedCodexModels.has(originalModel) ? "unsupported_model" : originalModel ? "settings_upgrade" : "missing_model",
-    settings: changed ? { ...settings, openCodeLlm: migrated } : settings
+    reason:
+      originalModel && !supportedCodexModels.has(originalModel)
+        ? "unsupported_model"
+        : active
+          ? "active_codex_upgrade"
+          : legacyLlm
+            ? "legacy_executor_retired"
+            : "missing_model",
+    retiredExecutors,
+    settings: changed ? nextSettings : settings
   };
 }
 
@@ -165,18 +191,19 @@ function normalizeSettings(settings) {
     throw new Error("AetherOps settings file must contain a JSON object.");
   }
   const input = settings;
+  assertStrictBooleanIfPresent(input.allowAgent, "allowAgent");
   assertStrictBooleanIfPresent(input.allowExternalSearch, "allowExternalSearch");
   assertStrictBooleanIfPresent(input.allowCodeExecution, "allowCodeExecution");
   const codexMigration = migrateCodexSettingsObject(input);
-  const openCodeLlm = codexMigration.settings.openCodeLlm;
+  const codex = codexMigration.settings.codex;
   const webSearch = input.webSearch && typeof input.webSearch === "object" ? input.webSearch : {};
   const embedding = input.embedding && typeof input.embedding === "object" ? input.embedding : {};
   return {
-    openCodeLlm: {
-      source: "codex-oauth",
-      model: openCodeLlm.model,
-      reasoningEffort: openCodeLlm.reasoningEffort,
-      timeoutMs: openCodeLlm.timeoutMs,
+    codex: {
+      model: codex.model,
+      reasoningEffort: codex.reasoningEffort,
+      timeoutMs: codex.timeoutMs,
+      taskTimeoutMs: codex.taskTimeoutMs,
       apiKeyConfigured: Boolean(decryptMachineBoundSecret(input.encryptedApiKey))
     },
     webSearch: {
@@ -195,6 +222,7 @@ function normalizeSettings(settings) {
     browserUse: input.browserUse && typeof input.browserUse === "object" ? input.browserUse : undefined,
     researchMetadata: input.researchMetadata && typeof input.researchMetadata === "object" ? input.researchMetadata : undefined,
     engineeringTools: input.engineeringTools && typeof input.engineeringTools === "object" ? input.engineeringTools : undefined,
+    allowAgent: input.allowAgent ?? true,
     allowExternalSearch: input.allowExternalSearch,
     allowCodeExecution: input.allowCodeExecution,
     ontologyExtractionMode: typeof input.ontologyExtractionMode === "string" ? input.ontologyExtractionMode : undefined,
@@ -204,13 +232,21 @@ function normalizeSettings(settings) {
       changed: codexMigration.changed,
       originalModel: codexMigration.originalModel,
       model: codexMigration.model,
-      reason: codexMigration.reason
+      reason: codexMigration.reason,
+      retiredExecutors: codexMigration.retiredExecutors
     }
   };
 }
 
 function validTimeout(value) {
   return typeof value === "number" && Number.isInteger(value) && value >= 1_000 && value <= 900_000 ? value : undefined;
+}
+
+function validCodexCandidate(value) {
+  if (!value || typeof value !== "object") return false;
+  if (!supportedCodexModels.has(value.model) || !supportedEfforts.has(value.reasoningEffort)) return false;
+  if (value.reasoningEffort === "max" && !String(value.model).startsWith("gpt-5.6")) return false;
+  return validTimeout(value.timeoutMs) !== undefined && validTimeout(value.taskTimeoutMs) !== undefined;
 }
 
 function assertStrictBooleanIfPresent(value, field) {

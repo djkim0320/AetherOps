@@ -35,11 +35,14 @@
     "engineering:install-tools": "node scripts/engineering/install-embedded-toolchain.mjs",
     "ui:verify": "node scripts/ui-verify.mjs",
     "metadata:verify": "npm run server:build && node scripts/research-metadata-verify.mjs",
+    "autonomy:verify": "node scripts/autonomy-verify.mjs",
     "selftest": "node scripts/selftest.mjs",
     "selftest:blocked": "node scripts/selftest.mjs --mode=blocked --skip-static",
     "selftest:live": "node scripts/selftest.mjs --mode=live"
   },
   "dependencies": {
+    "@openai/codex": "0.144.1",
+    "@radix-ui/react-dialog": "1.1.19",
     "@radix-ui/react-label": "2.1.11",
     "@radix-ui/react-scroll-area": "1.2.14",
     "@radix-ui/react-select": "2.3.3",
@@ -48,7 +51,6 @@
     "@radix-ui/react-tabs": "1.1.17",
     "@tanstack/react-query": "5.101.2",
     "lucide-react": "1.14.0",
-    "opencode-ai": "^1.15.5",
     "playwright": "^1.60.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
@@ -59,6 +61,7 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
     "@types/node": "25.7.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",

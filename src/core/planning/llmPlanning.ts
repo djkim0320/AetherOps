@@ -7,7 +7,7 @@ import {
   latestValidationPromptRows,
   limitedStrings,
   normalizeArray,
-  openCodeRunPromptRows,
+  legacyExecutionRunPromptRows,
   projectContextPromptSummary,
   questionPromptRows,
   selectedChunkPromptRows,
@@ -192,7 +192,7 @@ function requestResultJson(llm: LlmProvider, snapshot: ResearchSnapshot, iterati
         `Hybrid Context: ${JSON.stringify(hybridContextPromptSummary(snapshot.hybridContexts.at(-1)))}`,
         `Selected Evidence: ${JSON.stringify(selectedEvidencePromptRows(snapshot))}`,
         `Selected Chunks: ${JSON.stringify(selectedChunkPromptRows(snapshot))}`,
-        `OpenCode Runs: ${JSON.stringify(openCodeRunPromptRows(snapshot.openCodeRuns))}`,
+        `Archived executor runs: ${JSON.stringify(legacyExecutionRunPromptRows(snapshot.legacyAgentRuns))}`,
         `Tool Runs: ${JSON.stringify(toolRunPromptRows(snapshot.toolRuns, 12))}`
       ].join("\n");
   return llm.completeJson<LlmResultResponse>({

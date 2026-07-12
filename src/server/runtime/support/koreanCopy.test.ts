@@ -142,7 +142,7 @@ const snapshot: ResearchSnapshot = {
   benchmarkPlans: [],
   runtimeBlockers: [],
   stepErrors: [],
-  openCodeRuns: [],
+  legacyAgentRuns: [],
   ragContexts: [],
   results: [],
   iterations: []

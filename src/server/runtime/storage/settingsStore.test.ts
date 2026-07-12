@@ -14,13 +14,12 @@ afterEach(() => {
 });
 
 describe("JsonAppSettingsStore", () => {
-  it("uses the current Codex defaults without changing the engineering model", async () => {
+  it("uses the current Codex planner and workspace task defaults", async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
     const store = new JsonAppSettingsStore(join(tempRoot, "settings.json"));
 
     expect(await store.getSettings()).toMatchObject({
-      openCodeLlm: { source: "codex-oauth", model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000 },
-      openCode: { model: "gpt-5.5" }
+      codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 600_000 }
     });
   });
 
@@ -29,24 +28,29 @@ describe("JsonAppSettingsStore", () => {
     const settingsPath = join(tempRoot, "settings.json");
     writeFileSync(
       settingsPath,
-      JSON.stringify({ openCodeLlm: { source: "codex-oauth", model: "gpt-5.5-codex" }, updatedAt: "2026-07-10T00:00:00.000Z" }),
+      JSON.stringify({
+        codex: { model: "gpt-5.5-codex", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 600_000 },
+        updatedAt: "2026-07-10T00:00:00.000Z"
+      }),
       "utf8"
     );
 
     await expect(new JsonAppSettingsStore(settingsPath).getSettings()).rejects.toThrow("Unsupported Codex model");
   });
 
-  it("round-trips model, reasoning effort, and timeout independently from OpenCode", async () => {
+  it("round-trips model, reasoning effort, and both Codex timeouts", async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
     const store = new JsonAppSettingsStore(join(tempRoot, "settings.json"));
     const initial = await store.getSettings();
     const saved = await store.saveSettings({
       ...initial,
-      openCodeLlm: { source: "codex-oauth", model: "gpt-5.6-terra", reasoningEffort: "max", timeoutMs: 240_000 }
+      codex: { model: "gpt-5.6-terra", reasoningEffort: "max", timeoutMs: 240_000, taskTimeoutMs: 720_000 }
     });
 
-    expect(saved.openCodeLlm).toEqual({ source: "codex-oauth", model: "gpt-5.6-terra", reasoningEffort: "max", timeoutMs: 240_000 });
-    expect(saved.openCode).toEqual(initial.openCode);
+    expect(saved.codex).toEqual({ model: "gpt-5.6-terra", reasoningEffort: "max", timeoutMs: 240_000, taskTimeoutMs: 720_000 });
+    const persisted = JSON.parse(readFileSync(join(tempRoot, "settings.json"), "utf8"));
+    expect(persisted.openCodeLlm).toBeUndefined();
+    expect(persisted.openCode).toBeUndefined();
   });
 
   it("does not report unsupported safe encrypted keys as configured", async () => {
@@ -155,6 +159,7 @@ describe("JsonAppSettingsStore", () => {
 
     await store.saveSettings({
       ...(await store.getSettings()),
+      allowAgent: false,
       allowExternalSearch: false,
       allowCodeExecution: false
     });
@@ -162,7 +167,7 @@ describe("JsonAppSettingsStore", () => {
     const entries = readdirSync(tempRoot);
     expect(entries).toContain("settings.json");
     expect(entries.some((name) => name.startsWith("settings.json.") && name.endsWith(".tmp"))).toBe(false);
-    expect(await store.getRuntimeSettings()).toMatchObject({ allowExternalSearch: false, allowCodeExecution: false });
+    expect(await store.getRuntimeSettings()).toMatchObject({ allowAgent: false, allowExternalSearch: false, allowCodeExecution: false });
   });
 
   it("rejects non-boolean execution safety settings instead of coercing them", async () => {
@@ -172,6 +177,7 @@ describe("JsonAppSettingsStore", () => {
       settingsPath,
       JSON.stringify(
         {
+          allowAgent: true,
           allowExternalSearch: "true",
           allowCodeExecution: false,
           updatedAt: "2026-05-20T00:00:00.000Z"

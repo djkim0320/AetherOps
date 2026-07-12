@@ -31,7 +31,7 @@ export const RESEARCH_STORE_METHODS = [
   "saveGlobalMemoryItems",
   "saveRuntimeBlocker",
   "saveStepError",
-  "saveOpenCodeRun",
+  "saveLegacyAgentRun",
   "saveRagContext",
   "saveResult",
   "saveIteration",

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
 
 interface ShellPreferencesContextValue {
   railCollapsed: boolean;
@@ -24,6 +24,7 @@ function readInitialRailCollapsed(): boolean {
 
 export function ShellPreferencesProvider({ children }: { children: ReactNode }): ReactElement {
   const [railCollapsed, setRailCollapsedState] = useState(readInitialRailCollapsed);
+  const toggleRail = useCallback(() => setRailCollapsedState((current) => !current), []);
 
   useEffect(() => {
     try {
@@ -33,11 +34,10 @@ export function ShellPreferencesProvider({ children }: { children: ReactNode }):
     }
   }, [railCollapsed]);
 
-  const value: ShellPreferencesContextValue = {
-    railCollapsed,
-    setRailCollapsed: setRailCollapsedState,
-    toggleRail: () => setRailCollapsedState((current) => !current)
-  };
+  const value = useMemo<ShellPreferencesContextValue>(
+    () => ({ railCollapsed, setRailCollapsed: setRailCollapsedState, toggleRail }),
+    [railCollapsed, toggleRail]
+  );
 
   return <ShellPreferencesContext.Provider value={value}>{children}</ShellPreferencesContext.Provider>;
 }

@@ -67,7 +67,7 @@ describe("ToolRunner scheduling and availability", () => {
       }))
     );
 
-    const results = await new ToolRunner([search, new WebFetchTool()]).runAll(input, settings);
+    const results = await new ToolRunner([search, new WebFetchTool()]).execute(input, settings);
 
     expect(results).toHaveLength(2);
     expect(results[0]?.sources).toHaveLength(1);
@@ -97,7 +97,7 @@ describe("ToolRunner scheduling and availability", () => {
       sources: [webSource("seed-source", "https://example.edu/seed")],
       toolRuns: [seedToolRun]
     };
-    const observed: OpenCodeRunInput[] = [];
+    const observed: ResearchToolInput[] = [];
     const first: ResearchTool = {
       name: "First",
       run: async (): Promise<ResearchToolResult> => ({
@@ -165,12 +165,12 @@ describe("ToolRunner scheduling and availability", () => {
       }
     };
 
-    await new ToolRunner([first, second]).runAll(input, settings);
+    await new ToolRunner([first, second]).execute(input, settings);
 
     expect(observed[0]?.sources).toHaveLength(2);
     expect(observed[0]?.evidence).toHaveLength(1);
     expect(observed[0]?.artifacts).toHaveLength(1);
-    expect((observed[0] as OpenCodeRunInput & { toolRuns?: unknown[] }).toolRuns).toHaveLength(2);
+    expect((observed[0] as ResearchToolInput & { toolRuns?: unknown[] }).toolRuns).toHaveLength(2);
     expect(input.sources).toHaveLength(1);
     expect(input.evidence).toEqual([]);
     expect(input.artifacts).toEqual([]);
@@ -207,8 +207,8 @@ describe("ToolRunner scheduling and availability", () => {
     });
     const runner = new ToolRunner([makeTool("First"), makeTool("Second"), makeTool("Third")]);
 
-    const firstPass = await runner.runAll(input, settings, { includeTools: ["Second"] });
-    const secondPass = await runner.runAll(input, settings, { excludeTools: ["Second"] });
+    const firstPass = await runner.execute(input, settings, { includeTools: ["Second"] });
+    const secondPass = await runner.execute(input, settings, { excludeTools: ["Second"] });
 
     expect(firstPass.map((result) => result.toolRun.toolName)).toEqual(["Second"]);
     expect(secondPass.map((result) => result.toolRun.toolName)).toEqual(["First", "Third"]);
@@ -258,7 +258,7 @@ describe("ToolRunner scheduling and availability", () => {
     };
 
     try {
-      await new ToolRunner([first, second]).runAll(input, settings);
+      await new ToolRunner([first, second]).execute(input, settings);
       throw new Error("expected ToolRunnerError");
     } catch (error) {
       expect(error).toBeInstanceOf(ToolRunnerError);
@@ -300,7 +300,7 @@ describe("ToolRunner scheduling and availability", () => {
       }
     };
 
-    await expect(new ToolRunner([first, throwing]).runAll(input, settings)).rejects.toMatchObject({
+    await expect(new ToolRunner([first, throwing]).execute(input, settings)).rejects.toMatchObject({
       partialResults: expect.arrayContaining([expect.objectContaining({ toolRun: expect.objectContaining({ toolName: "First" }) })]),
       failedResult: expect.objectContaining({
         toolRun: expect.objectContaining({
@@ -321,7 +321,7 @@ describe("ToolRunner scheduling and availability", () => {
     };
 
     try {
-      await new ToolRunner([malformed]).runAll(input, settings);
+      await new ToolRunner([malformed]).execute(input, settings);
       throw new Error("expected ToolRunnerError");
     } catch (error) {
       expect(error).toBeInstanceOf(ToolRunnerError);
@@ -400,7 +400,7 @@ describe("ToolRunner scheduling and availability", () => {
     };
 
     try {
-      await new ToolRunner([first, malformed]).runAll(input, settings);
+      await new ToolRunner([first, malformed]).execute(input, settings);
       throw new Error("expected ToolRunnerError");
     } catch (error) {
       expect(error).toBeInstanceOf(ToolRunnerError);
@@ -457,7 +457,7 @@ describe("ToolRunner scheduling and availability", () => {
     };
 
     try {
-      await new ToolRunner([malformed]).runAll(input, settings);
+      await new ToolRunner([malformed]).execute(input, settings);
       throw new Error("expected ToolRunnerError");
     } catch (error) {
       expect(error).toBeInstanceOf(ToolRunnerError);

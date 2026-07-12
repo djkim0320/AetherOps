@@ -126,9 +126,12 @@ ${table(["Evidence ID", "traceabilityKind", "canSupportHypothesis", "citation", 
 
 - Korean blocked-path input preserved: ${data.utf8.blockedJsonHasKorean ? "PASS" : "not run/fail"}
 - Korean blocked-path sentinels: \`${JSON.stringify(data.utf8.blockedJsonKoreanSentinels ?? {})}\`
+- Korean blocked-path sentinel requirement: ${data.utf8.blockedJsonKoreanSentinelsPassed ? "PASS" : "FAIL"}
 - Blocked-path JSON fatal UTF-8 decode: ${data.utf8.blockedJsonFatalUtf8 ? "PASS" : "FAIL"} (first bytes: \`${data.utf8.blockedJsonFirstBytes ?? ""}\`)
 - Audit markdown Korean preserved: ${data.utf8.auditHasKoreanRequirement ? "PASS" : "not run/fail"}
 - Audit markdown Korean sentinels: \`${JSON.stringify(data.utf8.auditKoreanSentinels ?? {})}\`
+- Audit markdown per-file sentinels: \`${JSON.stringify(data.utf8.auditFileKoreanSentinels ?? {})}\`
+- Audit markdown sentinel requirement: ${data.utf8.auditKoreanSentinelsPassed ? "PASS" : "FAIL"}
 - Generated text files fatal UTF-8 decode: ${data.utf8.generatedTextFatalUtf8 ? "PASS" : "FAIL"} (${data.utf8.generatedTextFileCount ?? 0} files)
 - Generated text BOM files: \`${JSON.stringify(data.utf8.generatedTextBomFiles ?? [])}\`
 - Generated text fatal failures: \`${JSON.stringify(data.utf8.generatedTextFatalFailures ?? [])}\`

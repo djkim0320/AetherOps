@@ -6,28 +6,25 @@ import { nowIso } from "../../../core/shared/ids.js";
 import {
   createInputProject,
   createStrictTestOrchestrator,
-  DeterministicOpenCodeAdapter,
+  DeterministicCodexCliAdapter,
   DeterministicLlmProvider,
   strictTestSettings
 } from "../../../core/testing/orchestratorTestHarness.js";
 import type { LlmJsonRequest } from "../../../core/providers/llm.js";
 import { ToolRunner } from "../../../core/tools/toolRunner.js";
-import type { ResearchTool, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import type { ResearchTool, ResearchToolResult, ToolExecutionContext } from "../../../core/tools/researchToolTypes.js";
 import { InMemoryResearchStore } from "../../../core/memory/memoryStore.js";
 import { ValidationEngine } from "../../../core/reasoning/validationEngine.js";
-import {
-  ResearchLoopStep,
-  type EvidenceItem,
-  type HybridContext,
-  type NormalizedResearchRecord,
-  type OntologyRelation,
-  type OpenCodeRunInput,
-  type OpenCodeRunOutput,
-  type ProjectContextSnapshot,
-  type ResearchProjectInput
-} from "../../../core/shared/types.js";
+import { ResearchLoopStep, type CodexCliAdapterRequest, type CodexCliTaskResult, type ResearchProjectInput } from "../../../core/shared/types.js";
 import { NodeProjectStorage } from "../storage/projectResearchStore.js";
 import { failingAdapter, UnregisteredToolPlanner } from "../../../../tests/contract/server/strictExecutionTestDoubles.js";
+import {
+  finalClaimEvidence,
+  finalClaimHybridContext,
+  finalClaimProjectContext,
+  finalClaimRecord,
+  finalClaimRelation
+} from "./orchestratorStrictExecutionFixtures.js";
 
 let tempDir: string | undefined;
 
@@ -43,12 +40,12 @@ const input: ResearchProjectInput = {
   }
 };
 
-class CapturingOpenCodeAdapter extends DeterministicOpenCodeAdapter {
-  readonly inputs: OpenCodeRunInput[] = [];
+class CapturingCodexCliAdapter extends DeterministicCodexCliAdapter {
+  readonly requests: CodexCliAdapterRequest[] = [];
 
-  override async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
-    this.inputs.push(input);
-    return super.run(input);
+  override async run(request: CodexCliAdapterRequest): Promise<CodexCliTaskResult> {
+    this.requests.push(request);
+    return super.run(request);
   }
 }
 
@@ -62,18 +59,68 @@ class MetadataFirstPlanner extends DeterministicLlmProvider {
   override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
     if (request.schemaName === "AetherOpsResearchPlan") {
       return {
-        objective: "Collect OpenAlex metadata before OpenCode analysis.",
+        objective: "Collect OpenAlex metadata before Codex CLI analysis.",
         targetQuestions: ["q1"],
         targetHypotheses: ["h1"],
-        requiredTools: ["OpenCodeTool", "ResearchMetadataTool"],
+        toolRequests: [
+          {
+            intentId: "collect-metadata",
+            toolName: "ResearchMetadataTool",
+            purpose: "Collect traceable scholarly metadata before engineering analysis.",
+            expectedOutcome: "OpenAlex sources and evidence are available to the next action.",
+            inputs: { query: "Pomodoro study break metadata" }
+          },
+          {
+            intentId: "analyze-with-codex-cli",
+            toolName: "CodexCliTool",
+            purpose: "Analyze the acquired metadata with the explicitly authorized engineering agent.",
+            expectedOutcome: "A Codex CLI artifact based on the acquired metadata.",
+            inputs: { task: "Analyze the acquired Pomodoro metadata.", inputArtifactIds: [], outputs: [{ relativePath: "analysis.md", kind: "report" }] }
+          }
+        ],
         expectedSources: ["OpenAlex paper metadata"],
         expectedArtifacts: ["metadata-aware analysis"],
-        executionSteps: ["Run ResearchMetadataTool", "Run OpenCode with acquired metadata"],
-        stopCriteria: ["OpenCode input contains metadata sources"]
+        executionSteps: ["Run ResearchMetadataTool", "Run Codex CLI with acquired metadata"],
+        stopCriteria: ["Codex CLI reaches a terminal state"],
+        fetchCandidateUrls: []
       } as T;
     }
     return super.completeJson(request);
   }
+}
+
+class CodexCliOnlyPlanner extends DeterministicLlmProvider {
+  override async completeJson<T>(request: LlmJsonRequest): Promise<T> {
+    if (request.schemaName === "AetherOpsResearchPlan") {
+      return {
+        objective: "Run one explicitly authorized Codex CLI analysis.",
+        targetQuestions: ["q1"],
+        targetHypotheses: ["h1"],
+        toolRequests: [
+          {
+            intentId: "authorized-codex-cli",
+            toolName: "CodexCliTool",
+            purpose: "Run the explicitly authorized engineering analysis.",
+            expectedOutcome: "A traceable Codex CLI artifact.",
+            inputs: { task: "Analyze the active research brief.", inputArtifactIds: [], outputs: [{ relativePath: "analysis.md", kind: "report" }] }
+          }
+        ],
+        expectedSources: [],
+        expectedArtifacts: ["Codex CLI analysis artifact"],
+        executionSteps: ["Run the authorized Codex CLI action."],
+        stopCriteria: ["The Codex CLI action reaches a terminal state."],
+        fetchCandidateUrls: []
+      } as T;
+    }
+    return super.completeJson(request);
+  }
+}
+
+function explicitCodexCliExecution(sourceAccess: ToolExecutionContext["toolPolicy"]["sourceAccess"] = { mode: "offline" }): ToolExecutionContext {
+  return {
+    allowCodexCli: true,
+    toolPolicy: { allowCodexCli: true, sourceAccess }
+  };
 }
 
 class FinalClaimPlanner extends DeterministicLlmProvider {
@@ -102,7 +149,7 @@ class FinalClaimPlanner extends DeterministicLlmProvider {
 
 const metadataAcquisitionTool: ResearchTool = {
   name: "ResearchMetadataTool",
-  run: async (input: OpenCodeRunInput): Promise<ResearchToolResult> => {
+  run: async (input: ResearchToolInput): Promise<ResearchToolResult> => {
     const completedAt = nowIso();
     return {
       toolRun: {
@@ -153,104 +200,6 @@ const metadataAcquisitionTool: ResearchTool = {
   }
 };
 
-function finalClaimEvidence(projectId: string, hypothesisId: string, createdAt: string): EvidenceItem {
-  return {
-    id: "e-final-claim-support",
-    projectId,
-    category: "web_source",
-    title: "Short-break fatigue study",
-    summary: "A controlled study directly supports frequent short breaks reduce fatigue.",
-    sourceId: "source-final-claim-support",
-    sourceUri: "https://example.edu/final-claim-support",
-    citation: "Example citation final-claim-support",
-    keywords: ["short", "breaks", "fatigue"],
-    linkedHypothesisIds: [hypothesisId],
-    reliabilityScore: 0.9,
-    relevanceScore: 0.9,
-    evidenceStrength: "strong",
-    limitations: [],
-    createdAt
-  };
-}
-
-function finalClaimRecord(projectId: string, evidence: EvidenceItem, createdAt: string): NormalizedResearchRecord {
-  return {
-    id: "record-final-claim-support",
-    projectId,
-    memoryScope: "global",
-    validationStatus: "normalized",
-    iteration: 1,
-    kind: "evidence",
-    title: evidence.title,
-    content: evidence.summary,
-    sourceId: evidence.sourceId,
-    evidenceId: evidence.id,
-    citation: evidence.citation,
-    sourceUri: evidence.sourceUri,
-    metadata: {
-      traceabilityKind: "external_source",
-      sourceQualityTier: "scholarly",
-      canSupportHypothesis: true
-    },
-    confidence: 0.9,
-    createdAt
-  };
-}
-
-function finalClaimRelation(projectId: string, hypothesisId: string, evidenceId: string, sourceRecordId: string, createdAt: string): OntologyRelation {
-  return {
-    id: "relation-final-claim-support",
-    projectId,
-    memoryScope: "global",
-    validationStatus: "graph_linked",
-    subjectId: "entity-final-claim-support",
-    predicate: "supports",
-    objectId: hypothesisId,
-    sourceRecordId,
-    sourceEvidenceId: evidenceId,
-    confidence: 0.9,
-    createdAt
-  };
-}
-
-function finalClaimProjectContext(projectId: string, evidenceId: string, recordId: string, relationId: string, createdAt: string): ProjectContextSnapshot {
-  return {
-    id: "context-final-claim",
-    projectId,
-    iteration: 1,
-    query: "short breaks fatigue",
-    selectedRecordIds: [recordId],
-    selectedSourceIds: ["source-final-claim-support"],
-    selectedEvidenceIds: [evidenceId],
-    selectedChunkIds: [],
-    selectedEntityIds: [],
-    selectedRelationIds: [relationId],
-    citations: ["https://example.edu/final-claim-support"],
-    selectionReason: "Fixture selected traceable support evidence for final answer scoring.",
-    createdAt
-  };
-}
-
-function finalClaimHybridContext(projectId: string, evidenceId: string, relationId: string, createdAt: string): HybridContext {
-  return {
-    id: "hybrid-final-claim",
-    projectId,
-    iteration: 1,
-    query: "short breaks fatigue",
-    vectorChunkIds: [],
-    ontologyEntityIds: [],
-    ontologyRelationIds: [relationId],
-    evidenceIds: [evidenceId],
-    artifactIds: [],
-    citations: ["https://example.edu/final-claim-support"],
-    vectorSummary: "Frequent short breaks reduce fatigue.",
-    graphSummary: "Short-break evidence supports the fatigue hypothesis.",
-    contextText: "A controlled study directly supports frequent short breaks reduce fatigue.",
-    retrievalScores: { [evidenceId]: 1 },
-    createdAt
-  };
-}
-
 afterEach(() => {
   if (tempDir) {
     rmSync(tempDir, { recursive: true, force: true });
@@ -276,15 +225,17 @@ describe("AetherOps strict execution loop", () => {
     expect(snapshot.finalOutputs).toHaveLength(0);
   });
 
-  it("runs research metadata before OpenCode so the LLM receives real acquired sources", async () => {
-    const openCode = new CapturingOpenCodeAdapter();
+  it("runs research metadata before the authorized Codex CLI action", async () => {
+    const codexCli = new CapturingCodexCliAdapter();
     const orchestrator = createStrictTestOrchestrator({
-      openCode,
+      codexCli,
       llm: new MetadataFirstPlanner(),
       toolRunner: new ToolRunner([metadataAcquisitionTool]),
       settings: {
         ...strictTestSettings,
+        allowCodeExecution: true,
         allowExternalSearch: true,
+        allowCodeExecution: true,
         researchMetadata: { ...strictTestSettings.researchMetadata, enabled: true }
       }
     });
@@ -293,16 +244,18 @@ describe("AetherOps strict execution loop", () => {
       ...input,
       autonomyPolicy: {
         ...input.autonomyPolicy,
+        allowCodeExecution: true,
         allowExternalSearch: true,
+        allowCodeExecution: true,
         maxLoopIterations: 1
       }
     });
-    snapshot = await orchestrator.startLoop(snapshot.project.id);
+    snapshot = await orchestrator.startLoop(snapshot.project.id, explicitCodexCliExecution({ mode: "discovery", allowedDomains: ["openalex.org"] }));
 
     expect(snapshot.project.status).toBe("completed");
-    expect(openCode.inputs).toHaveLength(1);
-    expect(openCode.inputs[0]?.sources?.some((source) => source.id === "source-openalex-test")).toBe(true);
-    expect(openCode.inputs[0]?.evidence?.some((evidence) => evidence.id === "evidence-openalex-test")).toBe(true);
+    expect(codexCli.requests).toHaveLength(1);
+    expect(snapshot.sources.some((source) => source.id === "source-openalex-test")).toBe(true);
+    expect(snapshot.evidence.some((evidence) => evidence.id === "evidence-openalex-test")).toBe(true);
     expect(snapshot.toolRuns.some((toolRun) => toolRun.toolName === "ResearchMetadataTool")).toBe(true);
   });
 
@@ -378,11 +331,13 @@ describe("AetherOps strict execution loop", () => {
   });
 
   it("uses the current GUI research brief instead of stale untagged specifications or plans", async () => {
-    const openCode = new CapturingOpenCodeAdapter();
+    const codexCli = new CapturingCodexCliAdapter();
     const orchestrator = createStrictTestOrchestrator({
-      openCode,
+      codexCli,
+      llm: new CodexCliOnlyPlanner(),
       settings: {
         ...strictTestSettings,
+        allowCodeExecution: true,
         maxLoopIterations: 1
       }
     });
@@ -393,6 +348,7 @@ describe("AetherOps strict execution loop", () => {
       budget: "20 minutes",
       autonomyPolicy: {
         ...input.autonomyPolicy,
+        allowCodeExecution: true,
         maxLoopIterations: 1
       }
     };
@@ -411,17 +367,15 @@ describe("AetherOps strict execution loop", () => {
       expectedOutputs: []
     });
     const activeInputId = snapshot.researchInputs.at(-1)?.id;
-    snapshot = await orchestrator.startLoop(snapshot.project.id);
+    snapshot = await orchestrator.startLoop(snapshot.project.id, explicitCodexCliExecution());
 
     expect(snapshot.project.status).toBe("completed");
     expect(activeInputId).toBeDefined();
     expect(activeInputId).not.toBe(staleInputId);
-    expect(openCode.inputs).toHaveLength(1);
-    expect(openCode.inputs[0]?.questions.map((question) => question.text)).toEqual([nextInput.goal]);
-    expect(openCode.inputs[0]?.hypotheses.map((hypothesis) => hypothesis.statement)).toEqual([nextHypothesis]);
-    expect(openCode.inputs[0]?.specification?.sourceResearchInputId).toBe(activeInputId);
-    expect(openCode.inputs[0]?.researchPlan?.sourceResearchInputId).toBe(activeInputId);
-    expect(JSON.stringify(openCode.inputs[0])).not.toContain(input.goal);
+    expect(codexCli.requests).toHaveLength(1);
+    expect(codexCli.requests[0]?.input.task).toBe("Analyze the active research brief.");
+    expect(snapshot.specifications.at(-1)?.sourceResearchInputId).toBe(activeInputId);
+    expect(snapshot.researchPlans.at(-1)?.sourceResearchInputId).toBe(activeInputId);
   });
 
   it("fails at FinalizeOutputs when the final report cannot be written", async () => {
@@ -457,38 +411,26 @@ describe("AetherOps strict execution loop", () => {
     expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.pdf"))).toBe(false);
   });
 
-  it("blocks clearly when the OpenCode execution engine is not configured", async () => {
+  it("does not implicitly select Codex CLI when the job policy does not allow it", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "aetherops-loop-"));
     const orchestrator = createStrictTestOrchestrator({
       storage: new NodeProjectStorage(),
       projectRootBase: join(tempDir, "projects"),
-      settings: {
-        ...strictTestSettings,
-        openCode: { ...strictTestSettings.openCode, enabled: false, command: "" }
-      }
+      settings: strictTestSettings
     });
 
     let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
-    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.ExecuteTools);
-    expect(snapshot.project.status).toBe("blocked");
-    expect(snapshot.runtimeBlockers.length).toBeGreaterThan(0);
-    expect(snapshot.stepErrors.length).toBeGreaterThan(0);
-    expect(snapshot.openCodeRuns).toHaveLength(0);
-    expect(snapshot.evidence.some((item) => item.keywords.includes("tool_unavailable") || item.keywords.includes("evidence_gap"))).toBe(false);
-    expect(snapshot.report).toBeUndefined();
-    expect(snapshot.finalOutputs).toHaveLength(0);
-    expect(snapshot.runAuditOutputs).toHaveLength(1);
-    expect(snapshot.runAuditOutputs[0]).toMatchObject({
-      finalStatus: "blocked",
-      failedStep: ResearchLoopStep.ExecuteTools
-    });
-    expect(snapshot.runAuditOutputs[0]?.markdownReport).toContain("blocked before execution could proceed");
-    expect(snapshot.runAuditOutputs[0]?.unmetRequirements?.length).toBeGreaterThan(0);
-    expect(existsSync(join(snapshot.project.projectRoot, "reports", "run-audit.md"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "exports", "run-audit.json"))).toBe(true);
-    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.pdf"))).toBe(false);
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.FinalizeOutputs);
+    expect(snapshot.project.status).toBe("completed");
+    expect(snapshot.runtimeBlockers).toHaveLength(0);
+    expect(snapshot.stepErrors).toHaveLength(0);
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
+    expect(snapshot.toolRuns.map((run) => run.toolName)).toEqual(expect.arrayContaining(["DataAnalysisTool", "ArtifactWriterTool"]));
+    expect(snapshot.report).toBeDefined();
+    expect(snapshot.finalOutputs).toHaveLength(1);
+    expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.pdf"))).toBe(true);
   });
 
   it("blocks at BuildVectorIndex when the embedding API key is missing while preserving partial outputs", async () => {
@@ -524,7 +466,8 @@ describe("AetherOps strict execution loop", () => {
     });
     expect(snapshot.runAuditOutputs[0]?.unmetRequirements?.some((item) => item.requirementKey === "embedding.apiKey")).toBe(true);
     expect(snapshot.finalOutputs).toHaveLength(0);
-    expect(snapshot.openCodeRuns.length).toBeGreaterThan(0);
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
+    expect(snapshot.toolRuns.map((run) => run.toolName)).toEqual(expect.arrayContaining(["DataAnalysisTool", "ArtifactWriterTool"]));
     expect(snapshot.sources.length).toBeGreaterThan(0);
     expect(snapshot.artifacts.length).toBeGreaterThan(0);
     expect(snapshot.normalizedRecords.length).toBeGreaterThan(0);
@@ -534,64 +477,65 @@ describe("AetherOps strict execution loop", () => {
     expect(existsSync(join(snapshot.project.projectRoot, "reports", "final-report.pdf"))).toBe(false);
   });
 
-  it("blocks at PlanResearch when the LLM requests an unregistered tool", async () => {
+  it("fails validation at PlanResearch when the LLM requests an unregistered tool", async () => {
     const orchestrator = createStrictTestOrchestrator({ llm: new UnregisteredToolPlanner() });
     let snapshot = await createInputProject(orchestrator, input);
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
     expect(snapshot.project.currentStep).toBe(ResearchLoopStep.PlanResearch);
-    expect(snapshot.project.status).toBe("blocked");
-    expect(snapshot.runtimeBlockers.some((blocker) => blocker.requirementKey === "tool.registered")).toBe(true);
-    expect(snapshot.openCodeRuns).toHaveLength(0);
+    expect(snapshot.project.status).toBe("failed");
+    expect(snapshot.runtimeBlockers).toHaveLength(0);
+    expect(snapshot.stepErrors.at(-1)).toMatchObject({ step: ResearchLoopStep.PlanResearch, cause: "step_failed" });
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
     expect(snapshot.finalOutputs).toHaveLength(0);
   });
 
   it("records ExecuteTools as the failed step when a configured execution tool fails", async () => {
-    const orchestrator = createStrictTestOrchestrator({ openCode: failingAdapter() });
-    let snapshot = await createInputProject(orchestrator, input);
-    snapshot = await orchestrator.startLoop(snapshot.project.id);
+    const orchestrator = createStrictTestOrchestrator({
+      codexCli: failingAdapter(),
+      llm: new CodexCliOnlyPlanner(),
+      settings: { ...strictTestSettings, allowCodeExecution: true }
+    });
+    let snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: { ...input.autonomyPolicy, allowCodeExecution: true }
+    });
+    snapshot = await orchestrator.startLoop(snapshot.project.id, explicitCodexCliExecution());
 
     expect(snapshot.project.currentStep).toBe(ResearchLoopStep.ExecuteTools);
     expect(snapshot.project.status).toBe("failed");
     expect(snapshot.stepErrors.at(-1)?.step).toBe(ResearchLoopStep.ExecuteTools);
-    expect(snapshot.openCodeRuns).toHaveLength(1);
-    expect(snapshot.openCodeRuns[0]).toMatchObject({
-      iteration: 1,
-      status: "failed"
-    });
-    expect(snapshot.openCodeRuns[0]?.prompt).toContain(input.topic);
-    expect(snapshot.openCodeRuns[0]?.metadata?.executionBundleId).toBeDefined();
-    expect(snapshot.openCodeRuns[0]?.metadata?.error).toBe("configured OpenCode execution failed");
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
+    expect(snapshot.toolRuns).toHaveLength(0);
     expect(snapshot.finalOutputs).toHaveLength(0);
   });
 
-  it("preserves pre-OpenCode acquisition outputs when the OpenCode attempt fails", async () => {
+  it("quarantines acquisition outputs when the Codex CLI attempt fails", async () => {
     const orchestrator = createStrictTestOrchestrator({
-      openCode: failingAdapter(),
+      codexCli: failingAdapter(),
       llm: new MetadataFirstPlanner(),
       toolRunner: new ToolRunner([metadataAcquisitionTool]),
       settings: {
         ...strictTestSettings,
-        allowExternalSearch: true
+        allowExternalSearch: true,
+        allowCodeExecution: true
       }
     });
     let snapshot = await createInputProject(orchestrator, {
       ...input,
       autonomyPolicy: {
         ...input.autonomyPolicy,
-        allowExternalSearch: true
+        allowExternalSearch: true,
+        allowCodeExecution: true
       }
     });
-    snapshot = await orchestrator.startLoop(snapshot.project.id);
-
-    const failedRun = snapshot.openCodeRuns[0];
-    const bundleId = failedRun?.metadata?.executionBundleId;
+    snapshot = await orchestrator.startLoop(snapshot.project.id, explicitCodexCliExecution({ mode: "discovery", allowedDomains: ["openalex.org"] }));
 
     expect(snapshot.project.status).toBe("failed");
-    expect(failedRun?.status).toBe("failed");
-    expect(bundleId).toBeDefined();
-    expect(snapshot.toolRuns.some((toolRun) => toolRun.id === "tool-openalex-test" && toolRun.status === "completed")).toBe(true);
-    expect(snapshot.sources.some((source) => source.id === "source-openalex-test" && source.metadata.executionBundleId === bundleId)).toBe(true);
-    expect(snapshot.evidence.some((evidence) => evidence.id === "evidence-openalex-test" && evidence.metadata?.executionBundleId === bundleId)).toBe(true);
+    expect(snapshot.project.currentStep).toBe(ResearchLoopStep.ExecuteTools);
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
+    expect(snapshot.toolRuns.some((toolRun) => toolRun.id === "tool-openalex-test")).toBe(false);
+    expect(snapshot.sources.some((source) => source.id === "source-openalex-test")).toBe(false);
+    expect(snapshot.evidence.some((evidence) => evidence.id === "evidence-openalex-test")).toBe(false);
   });
 });

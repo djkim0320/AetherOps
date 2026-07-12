@@ -36,11 +36,58 @@ import type {
   RunAuditOutput,
   ValidationResult
 } from "./evaluationTypes.js";
-import type { RuntimeBlocker, StepError, OpenCodeRun } from "./recordTypes.js";
+import type { RuntimeBlocker, StepError, LegacyAgentRun } from "./recordTypes.js";
+import type { SourceAccessPolicy } from "../../shared/kernel/sourceAccessPolicy.js";
+import type { CodexSettings } from "./settingsTypes.js";
 
-export interface OpenCodeRunInput {
+export type CodexCliStage = "resolving_cli" | "authenticating" | "running" | "tool_activity" | "validating_output" | "terminal";
+
+export interface CodexCliTaskInput {
+  task: string;
+  inputArtifactIds: string[];
+  outputs: Array<{ relativePath: string; kind: "code" | "report" | "data" }>;
+}
+
+export interface CodexCliInputArtifact {
+  id: string;
+  sourcePath: string;
+  sha256: string;
+}
+
+export interface CodexCliTaskResult {
+  summary: string;
+  outputs: Array<{ relativePath: string; kind: "code" | "report" | "data"; absolutePath: string; sha256: string; bytes: number }>;
+  trace: {
+    model: string;
+    reasoningEffort: string;
+    sandboxProfile: "aetherops-codex-workspace-v1";
+    networkPolicy: "disabled";
+    durationMs: number;
+    exitCode: number;
+    eventCount: number;
+    workspaceManifestHash: string;
+    outputManifestHash: string;
+    terminationReason: string;
+  };
+}
+
+export interface CodexCliAdapterRequest {
+  actionRoot: string;
+  input: CodexCliTaskInput;
+  artifacts: CodexCliInputArtifact[];
+  settings: CodexSettings;
+  signal?: AbortSignal;
+  onStage?: (stage: CodexCliStage) => void | Promise<void>;
+}
+
+export interface CodexCliAdapter {
+  preflight?(): Promise<void>;
+  run(request: CodexCliAdapterRequest): Promise<CodexCliTaskResult>;
+  dispose?(): Promise<void>;
+}
+
+export interface ResearchToolInput {
   project: ResearchProject;
-  openCodeRunId?: string;
   executionBundleId?: string;
   questions: ResearchQuestion[];
   hypotheses: Hypothesis[];
@@ -48,8 +95,6 @@ export interface OpenCodeRunInput {
   artifacts?: ResearchArtifact[];
   sources?: ResearchSource[];
   sourceCandidates?: ResearchSource[];
-  claims?: OpenCodeClaim[];
-  observations?: OpenCodeObservation[];
   toolRuns?: ToolRun[];
   normalizedRecords?: NormalizedResearchRecord[];
   validationResults?: ValidationResult[];
@@ -59,47 +104,29 @@ export interface OpenCodeRunInput {
   hybridContext?: HybridContext;
   specification?: ResearchSpecification;
   researchPlan?: ResearchPlan;
+  executionContext?: ResearchToolExecutionContext;
+  coordinateBindings?: VerifiedAirfoilCoordinateBinding[];
   projectContextSnapshot?: ProjectContextSnapshot;
   iteration: number;
 }
 
-export interface OpenCodeRunOutput {
-  run: OpenCodeRun;
-  artifacts: ResearchArtifact[];
-  evidence: EvidenceItem[];
-  sources?: ResearchSource[];
-  sourceCandidates?: ResearchSource[];
-  claims?: OpenCodeClaim[];
-  observations?: OpenCodeObservation[];
-  chunks?: ResearchChunk[];
-  toolRuns?: ToolRun[];
-  agentPlan?: AgentPlan;
-  nextActions?: string[];
-  needsMoreEvidence?: boolean;
-  needsMoreAnalysis?: boolean;
-  fatalError?: string;
+export type ResearchSourceAccessPolicy = SourceAccessPolicy;
+
+export interface ResearchToolExecutionContext {
+  toolPolicy: {
+    allowCodexCli: boolean;
+    sourceAccess: ResearchSourceAccessPolicy;
+  };
 }
 
-export interface OpenCodeClaim {
-  title: string;
-  content: string;
-  sourceUri?: string;
-  citation?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface OpenCodeObservation {
-  title: string;
-  content: string;
-  sourceUri?: string;
-  citation?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface OpenCodeAdapter {
-  preflight?(): Promise<void>;
-  createRunAttempt?(input: OpenCodeRunInput): Promise<OpenCodeRun>;
-  run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput>;
+export interface VerifiedAirfoilCoordinateBinding {
+  id: string;
+  sourceId: string;
+  sourceUrl: string;
+  label: string;
+  sha256: string;
+  rawText: string;
+  pointCount: number;
 }
 
 export interface RagEngine {
@@ -138,7 +165,7 @@ export interface ResearchStore {
   saveGlobalMemoryItems(items: GlobalMemoryItem[]): Promise<void>;
   saveRuntimeBlocker(blocker: RuntimeBlocker): Promise<void>;
   saveStepError(error: StepError): Promise<void>;
-  saveOpenCodeRun(run: OpenCodeRun): Promise<void>;
+  saveLegacyAgentRun(run: LegacyAgentRun): Promise<void>;
   saveRagContext(context: RagContext): Promise<void>;
   saveResult(result: EvidenceBasedResult): Promise<void>;
   saveIteration(iteration: LoopIteration): Promise<void>;

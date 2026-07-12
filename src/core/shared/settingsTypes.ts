@@ -1,18 +1,10 @@
 import type { CodexModelId, CodexReasoningEffort } from "../../shared/kernel/codexModels.js";
 
-export interface OpenCodeCodexOAuthLlmSettings {
-  source: "codex-oauth";
+export interface CodexSettings {
   model: CodexModelId;
   reasoningEffort: CodexReasoningEffort;
   timeoutMs: number;
-}
-
-export interface OpenCodeCliSettings {
-  enabled: boolean;
-  command: string;
-  provider?: string;
-  model?: string;
-  timeoutMs: number;
+  taskTimeoutMs: number;
 }
 
 export interface WebSearchSettings {
@@ -92,13 +84,13 @@ export interface EngineeringProgramSettings {
 }
 
 export interface AppSettings {
-  openCodeLlm: OpenCodeCodexOAuthLlmSettings;
-  openCode: OpenCodeCliSettings;
+  codex: CodexSettings;
   webSearch: WebSearchSettings;
   embedding: EmbeddingSettings;
   browserUse: BrowserUseSettings;
   researchMetadata: ResearchMetadataSettings;
   engineeringTools: EngineeringProgramSettings;
+  allowAgent: boolean;
   allowExternalSearch: boolean;
   allowCodeExecution: boolean;
   ontologyExtractionMode?: "llm" | "rule_based" | "hybrid";

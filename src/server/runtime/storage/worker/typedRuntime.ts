@@ -110,6 +110,32 @@ export class StorageWorkerRuntime {
         return repositories.capabilities.record(command.audit);
       case "capability.listProject":
         return repositories.capabilities.listProject(command.projectId, command.limit);
+      case "trace.llm.save":
+        return repositories.trace.saveLlmInvocation(command.invocation);
+      case "trace.llm.listJob":
+        return repositories.trace.listLlmInvocations(command.jobId, command.limit);
+      case "trace.decision.record":
+        return repositories.trace.recordToolDecision(command.decision);
+      case "trace.decision.listJob":
+        return repositories.trace.listToolDecisions(command.jobId, command.limit);
+      case "trace.attempt.save":
+        return repositories.trace.saveToolAttempt(command.attempt);
+      case "trace.attempt.get":
+        return repositories.trace.getToolAttempt(command.attemptId);
+      case "trace.attempt.listJob":
+        return repositories.trace.listToolAttempts(command.jobId, command.limit);
+      case "trace.codex.save":
+        return repositories.trace.saveCodexCliExecution(command.execution);
+      case "trace.codex.listJob":
+        return repositories.trace.listCodexCliExecutions(command.jobId, command.limit);
+      case "trace.output.record":
+        return repositories.trace.recordOutputLink(command.link);
+      case "trace.output.listAttempt":
+        return repositories.trace.listOutputLinks(command.attemptId, command.limit);
+      case "trace.network.record":
+        return repositories.trace.recordNetworkAudit(command.audit);
+      case "trace.network.listJob":
+        return repositories.trace.listNetworkAudits(command.jobId, command.limit);
       case "ontology.upsertEntities":
         return repositories.ontology.upsertEntities(command.entities);
       case "ontology.upsertRelations":
@@ -196,6 +222,13 @@ export class StorageWorkerClient {
   }
 
   private readonly handleMessage = (message: unknown): void => {
+    if (isStorageWorkerReady(message)) {
+      if (!message.ok) {
+        this.closed = true;
+        this.rejectAll(workerError(message.error));
+      }
+      return;
+    }
     if (!isStorageWorkerResponse(message)) return;
     const pending = this.pending.get(message.requestId);
     if (!pending) return;
@@ -300,6 +333,10 @@ function isStorageWorkerRequest(message: unknown): message is StorageWorkerReque
 
 function isStorageWorkerResponse(message: unknown): message is StorageWorkerResponse {
   return isRecord(message) && message.type === STORAGE_WORKER_RESPONSE && typeof message.requestId === "string" && typeof message.ok === "boolean";
+}
+
+function isStorageWorkerReady(message: unknown): message is StorageWorkerReady {
+  return isRecord(message) && message.type === STORAGE_WORKER_READY && typeof message.ok === "boolean";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

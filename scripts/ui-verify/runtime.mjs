@@ -63,7 +63,7 @@ export async function collectChatLayout(page) {
       horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
       desktopGate: Boolean(document.querySelector("#desktop-required-title")),
       chatHeading: document.querySelector("#chat-title")?.textContent?.trim(),
-      inspectorTabs: Array.from(document.querySelectorAll('[aria-label="Inspector view"] [role="tab"]')).map((tab) => ({
+      inspectorTabs: Array.from(document.querySelectorAll('[aria-label="인스펙터 보기"] [role="tab"]')).map((tab) => ({
         text: tab.textContent?.trim(),
         selected: tab.getAttribute("aria-selected") === "true"
       }))

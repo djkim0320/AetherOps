@@ -17,11 +17,12 @@ import {
 import { shellQueryKeys } from "../../domain/queryKeys.js";
 import { settingsApi } from "../../domain/settingsApi.js";
 import styles from "./Settings.module.css";
+import { ko, localizeError, modelDescription, modelLabel, reasoningEffortLabel } from "../../platform/i18n.js";
 
 export const CODEX_MODEL_GROUPS: readonly { category: CodexModelCategory; label: string }[] = [
-  { category: "recommended", label: "Recommended" },
-  { category: "compatibility", label: "Compatibility" },
-  { category: "experimental", label: "Experimental" }
+  { category: "recommended", label: ko.recommended },
+  { category: "compatibility", label: ko.compatibility },
+  { category: "experimental", label: ko.experimentalGroup }
 ];
 
 export function CodexSettingsForm({ settings }: { settings: SettingsResponse }): ReactElement {
@@ -29,12 +30,13 @@ export function CodexSettingsForm({ settings }: { settings: SettingsResponse }):
   const [model, setModel] = useState<CodexModelId>(settings.codex.model);
   const [reasoningEffort, setReasoningEffort] = useState<CodexReasoningEffort>(settings.codex.reasoningEffort);
   const [timeoutMs, setTimeoutMs] = useState(settings.codex.timeoutMs);
+  const [taskTimeoutMs, setTaskTimeoutMs] = useState(settings.codex.taskTimeoutMs);
   const selectedModel = useMemo(() => CODEX_MODEL_CATALOG.find((entry) => entry.id === model)!, [model]);
-  const validationError = getCodexSettingsValidationError(model, reasoningEffort, timeoutMs);
+  const validationError = getCodexSettingsValidationError(model, reasoningEffort, timeoutMs, taskTimeoutMs);
   const save = useMutation({
     mutationFn: () =>
       settingsApi.save({
-        codex: { model, reasoningEffort, timeoutMs },
+        codex: { model, reasoningEffort, timeoutMs, taskTimeoutMs },
         embedding: editableEmbedding(settings),
         search: editableSearch(settings),
         capabilities: settings.capabilities
@@ -51,9 +53,9 @@ export function CodexSettingsForm({ settings }: { settings: SettingsResponse }):
       }}
     >
       <Label className={styles.field}>
-        <span>Model</span>
+        <span>{ko.model}</span>
         <Select value={model} onValueChange={(value) => setModel(value as CodexModelId)}>
-          <SelectTrigger aria-label="Codex model">
+          <SelectTrigger aria-label={ko.model}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent className={styles.modelMenu}>
@@ -64,46 +66,52 @@ export function CodexSettingsForm({ settings }: { settings: SettingsResponse }):
         </Select>
       </Label>
 
-      <section className={styles.modelDetails} aria-live="polite" aria-label="Selected model details">
+      <section className={styles.modelDetails} aria-live="polite" aria-label={ko.selectedModelDetails}>
         <div className={styles.modelTitle}>
-          <strong>{selectedModel.label}</strong>
-          {selectedModel.experimental ? <Badge variant="warning">Experimental</Badge> : null}
+          <strong>{modelLabel(selectedModel.id)}</strong>
+          {selectedModel.experimental ? <Badge variant="warning">{ko.experimental}</Badge> : null}
           {selectedModel.entitlement ? <Badge>{selectedModel.entitlement}</Badge> : null}
         </div>
-        <p className={styles.modelDescription}>{selectedModel.description}</p>
-        {selectedModel.id === "gpt-5.3-codex-spark" ? <small>ChatGPT Pro entitlement required. Text-only research preview.</small> : null}
+        <p className={styles.modelDescription}>{modelDescription(selectedModel.id)}</p>
+        {selectedModel.id === "gpt-5.3-codex-spark" ? <small>{ko.sparkEntitlement}</small> : null}
       </section>
 
       <Label className={styles.field}>
-        <span>Reasoning effort</span>
+        <span>{ko.reasoningEffort}</span>
         <Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as CodexReasoningEffort)}>
-          <SelectTrigger aria-label="Reasoning effort">
+          <SelectTrigger aria-label={ko.reasoningEffort}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {CODEX_REASONING_EFFORTS.map((effort) => (
               <SelectItem key={effort} value={effort}>
-                {effort}
+                {reasoningEffortLabel(effort)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <small>Maximum reasoning is available only for the GPT-5.6 family.</small>
+        <small>{ko.maxReasoningNote}</small>
       </Label>
 
       <Label className={styles.field}>
-        <span>Timeout (ms)</span>
+        <span>{ko.plannerTimeout}</span>
         <Input type="number" min={1000} max={900000} value={timeoutMs} onChange={(event) => setTimeoutMs(Number(event.target.value))} />
+      </Label>
+
+      <Label className={styles.field}>
+        <span>{ko.workspaceTaskTimeout}</span>
+        <Input type="number" min={1000} max={900000} value={taskTimeoutMs} onChange={(event) => setTaskTimeoutMs(Number(event.target.value))} />
+        <small>{ko.workspaceTimeoutNote}</small>
       </Label>
 
       <div className={styles.actions}>
         {validationError || save.error ? (
           <p className={styles.actionError} role="alert">
-            {validationError ?? save.error?.message}
+            {validationError ?? localizeError(save.error)}
           </p>
         ) : null}
         <Button type="submit" disabled={save.isPending || Boolean(validationError)}>
-          {save.isPending ? "Saving…" : "Save"}
+          {save.isPending ? ko.saving : ko.save}
         </Button>
       </div>
     </form>
@@ -126,9 +134,19 @@ function ModelGroup({ category, label, separator }: { category: CodexModelCatego
   );
 }
 
-export function getCodexSettingsValidationError(model: CodexModelId, effort: CodexReasoningEffort, timeoutMs: number): string | undefined {
-  if (!isCodexModelEffortCompatible(model, effort)) return `${effort} reasoning is not supported by ${model}. Choose a compatible effort to save.`;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 900_000) return "Timeout must be an integer between 1,000 and 900,000 ms.";
+export function getCodexSettingsValidationError(
+  model: CodexModelId,
+  effort: CodexReasoningEffort,
+  timeoutMs: number,
+  taskTimeoutMs = 600_000
+): string | undefined {
+  if (!isCodexModelEffortCompatible(model, effort)) {
+    return `${reasoningEffortLabel(effort)} 추론은 ${modelLabel(model)}에서 지원되지 않습니다. 호환되는 추론 강도를 선택한 뒤 저장하세요.`;
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 900_000) return ko.timeoutRange;
+  if (!Number.isInteger(taskTimeoutMs) || taskTimeoutMs < 1_000 || taskTimeoutMs > 900_000) {
+    return ko.workspaceTimeoutRange;
+  }
   return undefined;
 }
 

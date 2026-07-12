@@ -80,6 +80,12 @@ function renderRunAuditMarkdown(snapshot: ResearchSnapshot, output: Omit<RunAudi
       ? "**This is not a final research conclusion. The run was blocked before execution could proceed.**"
       : "**This is not a final research conclusion.**",
     "",
+    "## Project Brief",
+    `- Goal: ${snapshot.project.goal}`,
+    `- Topic: ${snapshot.project.topic}`,
+    `- Scope: ${snapshot.project.scope}`,
+    `- Budget: ${snapshot.project.budget}`,
+    "",
     "## Failure Summary",
     `- Project ID: ${output.projectId}`,
     `- Final status: ${output.finalStatus}`,

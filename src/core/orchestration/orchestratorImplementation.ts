@@ -124,7 +124,7 @@ export class AetherOpsOrchestrator extends OrchestratorPreconditions {
     const iteration: LoopIteration = {
       id: createId("iteration"),
       projectId,
-      iteration: Math.max(snapshot.openCodeRuns.length, snapshot.researchPlans.at(-1)?.iteration ?? 0),
+      iteration: Math.max(snapshot.legacyAgentRuns.length, snapshot.researchPlans.at(-1)?.iteration ?? 0),
       step,
       flowKind,
       message,

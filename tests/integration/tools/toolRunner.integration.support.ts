@@ -1,6 +1,6 @@
 import { afterEach, vi } from "vitest";
 import { EngineeringProgramTool as EngineeringProgramPort } from "../../../src/core/tools/engineeringProgramTool.js";
-import { ResearchLoopStep, type AppSettings, type CfdRunSpec, type OpenCodeRunInput, type ResearchSource } from "../../../src/core/shared/types.js";
+import { ResearchLoopStep, type AppSettings, type CfdRunSpec, type ResearchToolInput, type ResearchSource } from "../../../src/core/shared/types.js";
 import { runEngineeringProgram } from "../../../src/server/runtime/engineering/engineeringProgramRegistry.js";
 
 export class EngineeringProgramTool extends EngineeringProgramPort {
@@ -187,7 +187,11 @@ export const settings: AppSettings = {
 export function cfdRunSpec(target: Extract<CfdRunSpec["target"], "su2" | "openvsp" | "xflr5">): CfdRunSpec {
   return {
     target,
-    geometry: { source: "configuredCase", description: "Test case explicitly configured by settings." },
+    geometry: {
+      source: "configuredCase",
+      configuredCaseId: `${target}-configured-case`,
+      description: "Test case explicitly configured by settings."
+    },
     flightCondition: { reynolds: 1_000_000, mach: 0.05, alphaStart: 2, alphaEnd: 2, alphaStep: 1 },
     mesh: { strategy: "existing", boundaryLayer: false },
     solver: {
@@ -200,7 +204,7 @@ export function cfdRunSpec(target: Extract<CfdRunSpec["target"], "su2" | "openvs
   };
 }
 
-export function runInput(requiredTools: string[] = []): OpenCodeRunInput {
+export function runInput(requiredTools: string[] = []): ResearchToolInput {
   return {
     project: {
       id: "project-1",
@@ -230,6 +234,13 @@ export function runInput(requiredTools: string[] = []): OpenCodeRunInput {
       targetQuestions: ["q1"],
       targetHypotheses: ["h1"],
       requiredTools,
+      toolRequests: requiredTools.map((toolName, index) => ({
+        intentId: `intent-${index}`,
+        toolName,
+        purpose: `Run ${toolName}.`,
+        expectedOutcome: `${toolName} completes.`,
+        inputs: toolInputs(toolName)
+      })),
       expectedSources: ["web"],
       expectedArtifacts: ["fetched page"],
       executionSteps: ["Search", "Fetch"],
@@ -238,6 +249,15 @@ export function runInput(requiredTools: string[] = []): OpenCodeRunInput {
     },
     iteration: 1
   };
+}
+
+function toolInputs(toolName: string): Record<string, unknown> {
+  if (toolName === "WebSearchTool" || toolName === "ResearchMetadataTool") return { query: "web evidence collection" };
+  if (toolName === "WebFetchTool") return { urls: ["https://example.edu/study"] };
+  if (toolName === "PdfIngestionTool") return { urls: ["https://93.184.216.34/paper.pdf"] };
+  if (toolName === "DataAnalysisTool") return { checks: ["evidence_coverage"] };
+  if (toolName === "ArtifactWriterTool") return { artifacts: [{ relativePath: "artifacts/research-note.md", kind: "research_report", format: "markdown" }] };
+  return {};
 }
 
 export function webSource(id: string, url: string): ResearchSource {

@@ -35,13 +35,15 @@ import type {
   EngineeringProgramPreflightResult,
   EngineeringProgramTarget,
   EvidenceItem,
-  OpenCodeRunInput,
+  ResearchToolInput,
   ResearchArtifact,
   ToolRun
 } from "../../../core/shared/types.js";
 import type { ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import { bindFetchedAirfoilCoordinates } from "./airfoilCoordinateBinder.js";
 
-export async function runEngineeringProgram(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
+export async function runEngineeringProgram(input: ResearchToolInput, settings: AppSettings): Promise<ResearchToolResult> {
+  input = bindFetchedAirfoilCoordinates(input);
   const startedAt = nowIso();
   const requests = normalizeEngineeringProgramRequests(input.researchPlan?.programRequests);
   const completedAt = nowIso();
@@ -147,7 +149,7 @@ export async function runEngineeringProgramPreflight(
       completedAt: nowIso()
     };
   }
-  if (!settings.engineeringTools.enabled) {
+  if (!settings.engineeringTools.enabled && normalizedTarget !== "all" && normalizedTarget !== "xfoil-wasm") {
     return {
       target: normalizedTarget,
       status: "failed",
@@ -278,7 +280,7 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
 }
 
 function failedToolRun(
-  input: OpenCodeRunInput,
+  input: ResearchToolInput,
   toolName: string,
   startedAt: string,
   completedAt: string,
@@ -300,7 +302,7 @@ function failedToolRun(
   };
 }
 
-function completedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown): ToolRun {
+function completedToolRun(input: ResearchToolInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown): ToolRun {
   return {
     id: createId("tool"),
     projectId: input.project.id,

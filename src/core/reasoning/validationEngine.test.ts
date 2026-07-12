@@ -310,7 +310,7 @@ function baseSnapshot(
     globalMemoryItems: [],
     runtimeBlockers: [],
     stepErrors: [],
-    openCodeRuns: [],
+    legacyAgentRuns: [],
     ragContexts: [],
     results: [],
     iterations: []

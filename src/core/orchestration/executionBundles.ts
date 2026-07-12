@@ -1,28 +1,4 @@
-import { createId, nowIso } from "../shared/ids.js";
-import { dedupeSourcesByIdUrlDoi } from "../evidence/sourceDedupe.js";
-import type { ResearchToolResult } from "../tools/researchToolTypes.js";
-import type { EvidenceItem, OpenCodeRun, OpenCodeRunInput, OpenCodeRunOutput, ResearchArtifact, ResearchSource, ToolRun } from "../shared/types.js";
-
-export function applyToolResultsToOpenCodeInput(input: OpenCodeRunInput, results: ResearchToolResult[]): OpenCodeRunInput {
-  if (!results.length) return input;
-  let evidence = copyItems(input.evidence ?? []);
-  let artifacts = copyItems(input.artifacts ?? []);
-  let sources = copyItems(input.sources ?? []);
-  let toolRuns = copyItems(input.toolRuns ?? []);
-  for (const result of results) {
-    evidence = concatItems(evidence, result.evidence);
-    artifacts = concatItems(artifacts, result.artifacts);
-    sources = concatItems(sources, result.sources);
-    toolRuns = concatItems(toolRuns, [result.toolRun]);
-  }
-  return {
-    ...input,
-    evidence,
-    artifacts,
-    sources: dedupeSourcesByIdUrlDoi(sources),
-    toolRuns
-  };
-}
+import type { EvidenceItem, ResearchArtifact, ResearchSource, ToolRun } from "../shared/types.js";
 
 export function withToolRunBundle(toolRun: ToolRun, executionBundleId: string): ToolRun {
   return {
@@ -30,70 +6,6 @@ export function withToolRunBundle(toolRun: ToolRun, executionBundleId: string): 
     input: appendBundleToUnknown(toolRun.input, executionBundleId),
     output: appendBundleToUnknown(toolRun.output, executionBundleId)
   };
-}
-
-export function withOpenCodeRunBundle(run: OpenCodeRunOutput["run"], executionBundleId: string): OpenCodeRunOutput["run"] {
-  const logs = run.logs.some((line) => line.includes(executionBundleId)) ? run.logs : concatItems(run.logs, [`executionBundleId: ${executionBundleId}`]);
-  return {
-    ...run,
-    metadata: { ...(run.metadata ?? {}), executionBundleId },
-    logs
-  };
-}
-
-export function buildExecutionBundleId(projectId: string, iteration: number, openCodeRunId: string): string {
-  return `execution-bundle:${projectId}:${iteration}:${openCodeRunId}`;
-}
-
-export function genericOpenCodeRunAttempt(input: OpenCodeRunInput, executionBundleId: string): OpenCodeRun {
-  const startedAt = nowIso();
-  const prompt = [
-    "OpenCode adapter run input",
-    `Project: ${JSON.stringify(input.project)}`,
-    `Questions: ${JSON.stringify(input.questions)}`,
-    `Hypotheses: ${JSON.stringify(input.hypotheses)}`,
-    `ResearchPlan: ${JSON.stringify(input.researchPlan)}`,
-    `Iteration: ${input.iteration}`
-  ].join("\n");
-  return {
-    id: input.openCodeRunId ?? createId("opencode"),
-    projectId: input.project.id,
-    iteration: input.iteration,
-    prompt,
-    toolPlan: ["OpenCodeTool"],
-    status: "running",
-    logs: ["OpenCode adapter attempt started."],
-    artifactIds: [],
-    evidenceIds: [],
-    metadata: { executionBundleId },
-    startedAt
-  };
-}
-
-export function failedOpenCodeRun(run: OpenCodeRun, error: unknown, executionBundleId: string): OpenCodeRun {
-  const message = formatError(error);
-  return withOpenCodeRunBundle(
-    {
-      ...run,
-      status: "failed",
-      logs: concatItems(run.logs, [`OpenCode execution failed: ${message}`]),
-      metadata: {
-        ...(run.metadata ?? {}),
-        ...executionErrorMetadata(error),
-        executionBundleId,
-        error: message
-      },
-      completedAt: nowIso()
-    },
-    executionBundleId
-  );
-}
-
-export function executionErrorMetadata(error: unknown): Record<string, unknown> {
-  if (!error || typeof error !== "object") return {};
-  const metadata = (error as { metadata?: unknown }).metadata;
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
-  return metadata as Record<string, unknown>;
 }
 
 export function bundleToolRuns(toolRuns: ToolRun[], executionBundleId: string): ToolRun[] {
@@ -117,12 +29,6 @@ export function bundleEvidence(evidence: EvidenceItem[], executionBundleId: stri
 export function bundleArtifacts(artifacts: ResearchArtifact[], executionBundleId: string): ResearchArtifact[] {
   const bundled: ResearchArtifact[] = [];
   for (const artifact of artifacts) bundled.push(withArtifactBundle(artifact, executionBundleId));
-  return bundled;
-}
-
-export function bundleOpenCodeStructured<T extends { metadata?: Record<string, unknown> }>(values: T[], executionBundleId: string): T[] {
-  const bundled: T[] = [];
-  for (const value of values) bundled.push(withOpenCodeStructuredBundle(value, executionBundleId));
   return bundled;
 }
 
@@ -168,20 +74,9 @@ export function withArtifactBundle(artifact: ResearchArtifact, executionBundleId
   };
 }
 
-function withOpenCodeStructuredBundle<T extends { metadata?: Record<string, unknown> }>(value: T, executionBundleId: string): T {
-  return {
-    ...value,
-    metadata: { ...(value.metadata ?? {}), executionBundleId }
-  };
-}
-
 function appendBundleToUnknown(value: unknown, executionBundleId: string): unknown {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return { ...(value as Record<string, unknown>), executionBundleId };
   }
   return { value, executionBundleId };
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

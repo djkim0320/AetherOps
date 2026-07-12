@@ -48,4 +48,25 @@ describe("SSE replay/live handoff", () => {
     await replayThenSubscribe(source, "project-1", undefined, (value) => received.push(value.id));
     expect(received).toEqual([1, 2]);
   });
+
+  it("replays every committed event across pages larger than 200", async () => {
+    const all = Array.from({ length: 450 }, (_, index) => event(index + 1));
+    const requestedAfter: number[] = [];
+    const source: ProjectEventSource = {
+      subscribe() {
+        return () => undefined;
+      },
+      async eventsAfter(_projectId, lastEventId, limit = 200) {
+        const after = Number(lastEventId ?? 0);
+        requestedAfter.push(after);
+        return all.filter((item) => item.id > after).slice(0, limit);
+      }
+    };
+    const received: number[] = [];
+    await replayThenSubscribe(source, "project-1", undefined, (value) => received.push(value.id));
+    expect(received).toHaveLength(450);
+    expect(received[0]).toBe(1);
+    expect(received.at(-1)).toBe(450);
+    expect(requestedAfter).toEqual([0, 200, 400]);
+  });
 });

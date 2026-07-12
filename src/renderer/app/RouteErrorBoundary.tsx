@@ -1,5 +1,6 @@
 import { isRouteErrorResponse, Link, useRouteError } from "react-router-dom";
 import type { ReactElement } from "react";
+import { ko, localizeError } from "../platform/i18n.js";
 
 function describeRouteError(error: unknown): string {
   if (isRouteErrorResponse(error)) {
@@ -13,15 +14,15 @@ function describeRouteError(error: unknown): string {
 
 export function RouteErrorBoundary(): ReactElement {
   const error = useRouteError();
-  const message = describeRouteError(error);
+  const message = localizeError(describeRouteError(error));
 
   return (
     <main className="routeError" aria-labelledby="route-error-title">
       <section className="routeError__card" role="alert">
-        <p>Route unavailable</p>
-        <h1 id="route-error-title">This view could not be rendered.</h1>
+        <p>{ko.routeUnavailable}</p>
+        <h1 id="route-error-title">{ko.routeCouldNotRender}</h1>
         <p>{message}</p>
-        <Link to="/">Return to overview</Link>
+        <Link to="/">{ko.returnToOverview}</Link>
       </section>
     </main>
   );

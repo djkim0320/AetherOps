@@ -18,7 +18,6 @@ export const legacyResearchLoopStepMap: Record<string, ResearchLoopStep> = {
   CREATE_SUB_SESSIONS: ResearchLoopStep.CreateResearchDb,
   CREATE_RESEARCH_DB: ResearchLoopStep.CreateResearchDb,
   GENERATE_QUESTIONS_HYPOTHESES_EVIDENCE: ResearchLoopStep.BuildResearchSpecification,
-  RUN_OPENCODE: ResearchLoopStep.ExecuteTools,
   STORE_RESULTS: ResearchLoopStep.NormalizeData,
   BUILD_RAG_CONTEXT: ResearchLoopStep.BuildVectorIndex,
   DERIVE_EVIDENCE_BASED_RESULT: ResearchLoopStep.SynthesizeAndEvaluate,
@@ -96,6 +95,8 @@ export type OntologyRelationType =
 
 export interface AutonomyPolicy {
   toolApproval: "manual" | "suggested" | "automatic";
+  /** Defaults to true when reading projects created before the v2 capability split. */
+  allowAgent?: boolean;
   allowExternalSearch: boolean;
   allowCodeExecution: boolean;
   maxLoopIterations?: number;

@@ -6,6 +6,7 @@ export const shellQueryKeys = {
     snapshot: (projectId: string) => ["projects", projectId, "snapshot"] as const,
     pendingChat: (projectId: string) => ["projects", projectId, "pending-chat"] as const,
     jobs: (projectId: string) => ["projects", projectId, "jobs"] as const,
+    job: (projectId: string, jobId: string) => ["projects", projectId, "jobs", jobId] as const,
     events: (projectId: string) => ["projects", projectId, "events"] as const
   },
   settings: () => ["settings"] as const,

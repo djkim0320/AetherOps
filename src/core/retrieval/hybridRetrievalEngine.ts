@@ -101,7 +101,7 @@ export class HybridRetrievalEngine {
     return {
       id: createId("hybrid"),
       projectId: snapshot.project.id,
-      iteration: contextSnapshot.iteration ?? iteration ?? Math.max(snapshot.openCodeRuns.length, snapshot.researchPlans.at(-1)?.iteration ?? 1),
+      iteration: contextSnapshot.iteration ?? iteration ?? Math.max(snapshot.legacyAgentRuns.length, snapshot.researchPlans.at(-1)?.iteration ?? 1),
       query: activeQuery,
       vectorChunkIds,
       ontologyEntityIds,

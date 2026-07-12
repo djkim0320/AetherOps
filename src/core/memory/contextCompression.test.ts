@@ -176,7 +176,7 @@ function snapshotWithRecords(recordCount: number): ResearchSnapshot {
     benchmarkPlans: [],
     runtimeBlockers: [],
     stepErrors: [],
-    openCodeRuns: [],
+    legacyAgentRuns: [],
     ragContexts: [],
     results: [],
     iterations: []

@@ -1,22 +1,16 @@
 import type { AppSettings, ResearchSnapshot } from "../shared/types.js";
 import { hasExecutableEngineeringTool } from "./engineeringProgramTool.js";
+import { listToolDescriptors } from "./toolDescriptors.js";
 import { normalizeToolName, orderToolNames } from "./toolMerger.js";
+import type { SourceAccessPolicy } from "./sourceAccessPolicy.js";
 
 export interface ToolExecutableContext {
   snapshot: ResearchSnapshot;
   settings: AppSettings;
+  toolPolicy?: { allowCodexCli: boolean; sourceAccess?: SourceAccessPolicy };
 }
 
-const standardExecutableToolNames = new Set([
-  normalizeToolName("WebSearchTool"),
-  normalizeToolName("BackgroundBrowserTool"),
-  normalizeToolName("WebFetchTool"),
-  normalizeToolName("ResearchMetadataTool"),
-  normalizeToolName("PdfIngestionTool"),
-  normalizeToolName("EngineeringProgramTool"),
-  normalizeToolName("ArtifactWriterTool"),
-  normalizeToolName("DataAnalysisTool")
-]);
+const standardExecutableToolNames = new Set(listToolDescriptors().map((descriptor) => normalizeToolName(descriptor.name)));
 
 export function buildExecutableToolNames(registeredToolNames: string[], context: ToolExecutableContext): string[] {
   const registered = registeredToolNameMap(registeredToolNames);
@@ -24,7 +18,7 @@ export function buildExecutableToolNames(registeredToolNames: string[], context:
   const webSearchConfigured =
     context.settings.webSearch.provider !== "disabled" && Boolean(context.settings.webSearch.apiKey || context.settings.webSearch.apiKeyConfigured);
   const hasFetchCandidates = hasFetchCandidateUrls(context.snapshot) || hasContinuationFetchHint(context.snapshot);
-  const hasPdfInputs = hasPdfInput(context.snapshot);
+  const hasPdfInputs = hasPdfInput(context.snapshot) || hasPolicyPdfInput(context.toolPolicy?.sourceAccess);
   const codeAllowed = context.snapshot.project.autonomyPolicy.allowCodeExecution && context.settings.allowCodeExecution;
   const researchMetadataReady = externalAllowed && context.settings.researchMetadata.enabled;
   const engineeringProgramReady = codeAllowed && hasExecutableEngineeringTool(context.settings);
@@ -48,6 +42,7 @@ export function buildExecutableToolNames(registeredToolNames: string[], context:
   pushRegisteredTool(candidates, registered, "ResearchMetadataTool", researchMetadataReady);
   pushRegisteredTool(candidates, registered, "PdfIngestionTool", externalAllowed && hasPdfInputs);
   pushRegisteredTool(candidates, registered, "EngineeringProgramTool", engineeringProgramReady);
+  pushRegisteredTool(candidates, registered, "CodexCliTool", codeAllowed && context.toolPolicy?.allowCodexCli === true);
   pushRegisteredTool(candidates, registered, "ArtifactWriterTool", true);
   pushRegisteredTool(candidates, registered, "DataAnalysisTool", true);
   for (const tool of customRegistered) candidates.push(tool);
@@ -110,15 +105,24 @@ function hasContinuationFetchHint(snapshot: ResearchSnapshot): boolean {
 
 function hasPdfInput(snapshot: ResearchSnapshot): boolean {
   for (const source of snapshot.sources ?? []) {
-    if (pdfUrlPattern.test(source.url ?? String(source.metadata.pdfUrl ?? ""))) return true;
+    if (isPdfInputUrl(source.url ?? String(source.metadata.pdfUrl ?? ""))) return true;
   }
   for (const url of (snapshot.researchPlans ?? []).at(-1)?.fetchCandidateUrls ?? []) {
-    if (pdfUrlPattern.test(url) || arxivAbsUrlPattern.test(url)) return true;
+    if (isPdfInputUrl(url)) return true;
   }
   return false;
+}
+
+function hasPolicyPdfInput(sourceAccess: SourceAccessPolicy | undefined): boolean {
+  return sourceAccess?.mode === "allowlist" && sourceAccess.urls.some(isPdfInputUrl);
 }
 
 const httpUrlPattern = /^https?:\/\//i;
 const pdfUrlPattern = /\.pdf($|[?#])/i;
 const arxivAbsUrlPattern = /arxiv\.org\/abs\//i;
+const arxivPdfUrlPattern = /arxiv\.org\/pdf\//i;
 const webFetchHintPattern = /webfetch|fetch selected source|citation-backed evidence/i;
+
+function isPdfInputUrl(value: string): boolean {
+  return pdfUrlPattern.test(value) || arxivAbsUrlPattern.test(value) || arxivPdfUrlPattern.test(value);
+}

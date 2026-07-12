@@ -22,6 +22,13 @@ export interface ResearchPlan {
   targetQuestions: string[];
   targetHypotheses: string[];
   requiredTools: string[];
+  toolRequests?: Array<{
+    intentId: string;
+    toolName: string;
+    purpose: string;
+    expectedOutcome: string;
+    inputs: Record<string, unknown>;
+  }>;
   expectedSources: string[];
   expectedArtifacts: string[];
   executionSteps: string[];
@@ -86,6 +93,11 @@ export interface ToolRun {
   output: unknown;
   status: "completed" | "failed" | "skipped";
   error?: string;
+  /** Stable durable attempt that produced this run; absent on legacy records. */
+  originAttemptId?: string;
+  /** Stable planner decision that authorized the attempt; absent on legacy records. */
+  originDecisionId?: string;
+  executionOrdinal?: number;
   startedAt: string;
   completedAt: string;
 }
@@ -226,7 +238,8 @@ export interface StepError {
   createdAt: string;
 }
 
-export interface OpenCodeRun {
+/** Read-only execution record imported from the retired executor table. */
+export interface LegacyAgentRun {
   id: string;
   projectId: string;
   iteration: number;

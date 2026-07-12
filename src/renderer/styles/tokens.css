@@ -95,6 +95,30 @@
   --color-scrollbar-track: transparent;
   --color-disabled: rgb(132 146 162 / 48%);
   --color-disabled-surface: rgb(132 146 162 / 8%);
+  --glass-app-backdrop:
+    radial-gradient(circle at 12% 8%, rgb(86 223 197 / 18%), transparent 32%), radial-gradient(circle at 88% 12%, rgb(119 185 255 / 14%), transparent 30%),
+    radial-gradient(circle at 54% 108%, rgb(140 111 255 / 10%), transparent 38%), linear-gradient(145deg, #080c12 0%, #0c121b 46%, #091018 100%);
+  --glass-pane: rgb(12 19 28 / 78%);
+  --glass-pane-strong: rgb(18 28 40 / 88%);
+  --glass-surface: rgb(31 44 58 / 54%);
+  --glass-surface-strong: rgb(34 49 65 / 76%);
+  --glass-surface-hover: rgb(48 67 86 / 64%);
+  --glass-surface-active: rgb(59 82 104 / 70%);
+  --glass-surface-inset: rgb(5 11 18 / 54%);
+  --glass-control: rgb(20 32 44 / 64%);
+  --glass-control-hover: rgb(39 56 72 / 72%);
+  --glass-border: rgb(224 245 255 / 14%);
+  --glass-border-strong: rgb(238 251 255 / 24%);
+  --glass-divider: rgb(224 245 255 / 10%);
+  --glass-highlight: inset 0 1px rgb(255 255 255 / 9%);
+  --glass-highlight-strong: inset 0 1px rgb(255 255 255 / 15%);
+  --glass-shadow: 0 18px 48px rgb(0 0 0 / 24%), var(--glass-highlight);
+  --glass-shadow-raised: 0 24px 70px rgb(0 0 0 / 34%), var(--glass-highlight-strong);
+  --glass-accent-sheen: linear-gradient(135deg, rgb(255 255 255 / 12%), transparent 42%);
+  --glass-pane-sheen: linear-gradient(145deg, rgb(255 255 255 / 5%), transparent 34%);
+  --glass-blur: 18px;
+  --glass-blur-soft: 12px;
+  --glass-saturation: 145%;
   --color-hero-glow: radial-gradient(circle at 18% 0%, rgb(86 223 197 / 12%), transparent 36%);
   --color-hero-surface: linear-gradient(135deg, #172633 0%, #121b25 52%, #12251f 100%);
   --color-skeleton: linear-gradient(90deg, #17212c 20%, #233241 50%, #17212c 80%);
@@ -157,6 +181,28 @@
   --color-scrollbar-thumb-hover: rgb(56 73 87 / 46%);
   --color-disabled: rgb(96 113 128 / 48%);
   --color-disabled-surface: rgb(96 113 128 / 8%);
+  --glass-app-backdrop:
+    radial-gradient(circle at 12% 8%, rgb(16 151 132 / 18%), transparent 34%), radial-gradient(circle at 88% 12%, rgb(34 124 210 / 13%), transparent 32%),
+    radial-gradient(circle at 54% 108%, rgb(118 90 210 / 9%), transparent 40%), linear-gradient(145deg, #dce7ec 0%, #edf3f6 48%, #e1ebef 100%);
+  --glass-pane: rgb(248 252 253 / 72%);
+  --glass-pane-strong: rgb(255 255 255 / 86%);
+  --glass-surface: rgb(255 255 255 / 58%);
+  --glass-surface-strong: rgb(255 255 255 / 78%);
+  --glass-surface-hover: rgb(255 255 255 / 76%);
+  --glass-surface-active: rgb(231 244 245 / 84%);
+  --glass-surface-inset: rgb(231 239 243 / 68%);
+  --glass-control: rgb(255 255 255 / 62%);
+  --glass-control-hover: rgb(255 255 255 / 84%);
+  --glass-border: rgb(255 255 255 / 68%);
+  --glass-border-strong: rgb(255 255 255 / 90%);
+  --glass-divider: rgb(54 79 94 / 15%);
+  --glass-highlight: inset 0 1px rgb(255 255 255 / 74%);
+  --glass-highlight-strong: inset 0 1px rgb(255 255 255 / 94%);
+  --glass-shadow: 0 18px 48px rgb(37 59 73 / 14%), var(--glass-highlight);
+  --glass-shadow-raised: 0 24px 70px rgb(37 59 73 / 20%), var(--glass-highlight-strong);
+  --glass-accent-sheen: linear-gradient(135deg, rgb(255 255 255 / 68%), transparent 44%);
+  --glass-pane-sheen: linear-gradient(145deg, rgb(255 255 255 / 50%), transparent 36%);
+  --glass-saturation: 125%;
   --color-hero-glow: radial-gradient(circle at 18% 0%, rgb(8 122 104 / 11%), transparent 38%);
   --color-hero-surface: linear-gradient(135deg, #e9f4f1 0%, #f8fafb 52%, #edf4ef 100%);
   --color-skeleton: linear-gradient(90deg, #e4eaee 20%, #f2f5f7 50%, #e4eaee 80%);

@@ -1,17 +1,27 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, extname } from "node:path";
-import type { AppSettings, EngineeringProgramRequest, OpenCodeRunInput } from "../../../core/shared/types.js";
+import type { AppSettings, EngineeringProgramRequest, ResearchToolInput } from "../../../core/shared/types.js";
 import type { AirfoilCoordinateInput, AirfoilCoordinateResolutionPorts } from "../../../core/tools/engineeringProgramTypes.js";
 import { createDefaultPublicUrlPolicy } from "./publicUrlPolicy.js";
-import { BoundedHttpClient } from "../tools/boundedHttpClient.js";
 import { resolveConfiguredModelingRoot, resolveInsideRoot } from "./engineeringProgramMeshAdapter.js";
 
 export async function resolveWasmAirfoilInput(
   request: EngineeringProgramRequest,
   settings: AppSettings,
-  input: OpenCodeRunInput,
+  input: ResearchToolInput,
   ports: Partial<AirfoilCoordinateResolutionPorts> = {}
 ): Promise<AirfoilCoordinateInput> {
+  const bindingId = request.coordinateBindingId ?? request.cfdRunSpec?.geometry.coordinateBindingId;
+  if (bindingId) {
+    const binding = input.coordinateBindings?.find((candidate) => candidate.id === bindingId);
+    if (!binding) throw new Error(`XFOIL WebAssembly coordinate binding does not exist: ${bindingId}`);
+    const sha256 = createHash("sha256").update(binding.rawText, "utf8").digest("hex");
+    if (sha256 !== binding.sha256) throw new Error(`XFOIL WebAssembly coordinate binding hash mismatch: ${bindingId}`);
+    const metrics = validateAirfoilCoordinateText(binding.rawText);
+    if (metrics.pointCount !== binding.pointCount) throw new Error(`XFOIL WebAssembly coordinate binding validation changed: ${bindingId}`);
+    return { text: binding.rawText, label: binding.label, sourceKind: "source", sourceUrl: binding.sourceUrl };
+  }
   if (request.artifactPath?.trim()) {
     const artifactRoot = resolveConfiguredModelingRoot(settings);
     const targetPath = resolveInsideRoot(artifactRoot, request.artifactPath.trim());
@@ -34,25 +44,8 @@ export async function resolveWasmAirfoilInput(
 
   const sourceUrl = request.sourceUrl?.trim();
   if (sourceUrl) {
-    const fetchedSource = findFetchedAirfoilSource(input, sourceUrl);
-    if (fetchedSource) return fetchedSource;
-    if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
-      throw new Error(
-        "XFOIL WebAssembly sourceUrl execution requires WebFetchTool-provided rawText or external search permission for direct coordinate fetch."
-      );
-    }
-    const text = await fetchAirfoilCoordinateText(
-      sourceUrl,
-      settings.engineeringTools.xfoil.timeoutMs,
-      ports.publicUrlPolicy ?? createDefaultPublicUrlPolicy()
-    );
-    validateAirfoilCoordinateText(text);
-    return {
-      text,
-      label: airfoilLabelFromUrl(sourceUrl),
-      sourceKind: "direct-url",
-      sourceUrl
-    };
+    await (ports.publicUrlPolicy ?? createDefaultPublicUrlPolicy()).assertPublicUrl(sourceUrl);
+    throw new Error(`XFOIL WebAssembly sourceUrl requires a verified WebFetchTool coordinate binding: ${sourceUrl}`);
   }
 
   const discoveredSource = findFetchedAirfoilSource(input);
@@ -101,30 +94,7 @@ export function validateAirfoilCoordinateText(text: string): { pointCount: numbe
   return { pointCount: points.length, xMin, xMax, yMin, yMax };
 }
 
-async function fetchAirfoilCoordinateText(
-  sourceUrl: string,
-  timeoutMs: number,
-  publicUrlPolicy: AirfoilCoordinateResolutionPorts["publicUrlPolicy"]
-): Promise<string> {
-  const effectiveTimeoutMs = clampAirfoilFetchTimeout(timeoutMs);
-  const client = new BoundedHttpClient({
-    timeoutMs: effectiveTimeoutMs,
-    maxBytes: 2 * 1024 * 1024,
-    publicUrlPolicy: {
-      async assertPublicHttpUrl(value: string): Promise<string> {
-        await publicUrlPolicy.assertPublicUrl(value);
-        return value;
-      }
-    }
-  });
-  const response = await client.request(sourceUrl, {}, { accept: "text/plain,text/*,*/*" });
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`airfoil coordinate fetch failed for ${sourceUrl}: ${response.status} ${response.statusText}`);
-  }
-  return new TextDecoder("utf-8", { fatal: true }).decode(response.bytes);
-}
-
-function findFetchedAirfoilSource(input: OpenCodeRunInput, sourceUrl?: string): AirfoilCoordinateInput | undefined {
+function findFetchedAirfoilSource(input: ResearchToolInput, sourceUrl?: string): AirfoilCoordinateInput | undefined {
   const requestedUrl = sourceUrl ? normalizeUrlForCompare(sourceUrl) : undefined;
   let invalidRequestedSource: string | undefined;
   const sources = input.sources ?? [];
@@ -151,11 +121,6 @@ function findFetchedAirfoilSource(input: OpenCodeRunInput, sourceUrl?: string): 
     throw new Error(`Fetched source does not contain a valid airfoil coordinate file: ${sourceUrl} (${invalidRequestedSource})`);
   }
   return undefined;
-}
-
-function clampAirfoilFetchTimeout(timeoutMs: number): number {
-  if (!Number.isFinite(timeoutMs)) return 30_000;
-  return Math.min(120_000, Math.max(10_000, Math.trunc(timeoutMs)));
 }
 
 function normalizeUrlForCompare(rawUrl: string): string {

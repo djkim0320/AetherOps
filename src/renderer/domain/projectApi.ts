@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   ProjectSchema,
-  ProjectSummarySchema,
   ProjectsCreateParamsSchema,
   ProjectsGetParamsSchema,
   ProjectsUpdateParamsSchema,
@@ -13,7 +12,6 @@ import {
 import { callRpc } from "../platform/rpcTransport.js";
 
 export const projectApi = {
-  list: () => callRpc("projects.list", {}, z.array(ProjectSummarySchema)),
   get: (projectId: string) => callRpc("projects.get", ProjectsGetParamsSchema.parse({ projectId }), ProjectSchema),
   create: (params: z.input<typeof ProjectsCreateParamsSchema>) => callRpc("projects.create", ProjectsCreateParamsSchema.parse(params), ProjectSchema),
   update: (params: z.input<typeof ProjectsUpdateParamsSchema>) => callRpc("projects.update", ProjectsUpdateParamsSchema.parse(params), ProjectSchema),

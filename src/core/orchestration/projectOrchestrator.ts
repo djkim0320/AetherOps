@@ -2,6 +2,7 @@ import { createId, nowIso } from "../shared/ids.js";
 import { buildResearchInputPayloadFromBrief, createResearchInput, type ResearchInputPayload } from "../input/researchInput.js";
 import { createDefaultSessions } from "../input/researchSeed.js";
 import { RuntimeRequirementError } from "../tools/runtimeRequirements.js";
+import type { ToolExecutionContext } from "../tools/researchToolTypes.js";
 import { countChatSessions, summarize } from "./chatProgress.js";
 import { activeResearchContext, activeResearchSnapshot, researchInputMatchesPayload } from "./researchState.js";
 import { nextIteration } from "./loopStateMachine.js";
@@ -16,6 +17,7 @@ import {
 } from "../shared/types.js";
 import { OrchestratorRuntime } from "./orchestratorRuntime.js";
 import { slugify } from "./orchestratorResultHelpers.js";
+import { settingsWithProjectArtifactRoot } from "./projectArtifactSettings.js";
 export abstract class ProjectOrchestrator extends OrchestratorRuntime {
   async listProjects(): Promise<ResearchProject[]> {
     return this.store.listProjects();
@@ -109,7 +111,7 @@ export abstract class ProjectOrchestrator extends OrchestratorRuntime {
     }
 
     const database = await this.requireDatabase(projectId);
-    const iteration = Math.max(snapshot.openCodeRuns.length, 1);
+    const iteration = Math.max(snapshot.legacyAgentRuns.length, 1);
     const userArtifact: ResearchArtifact = {
       id: createId("artifact"),
       projectId,
@@ -206,14 +208,17 @@ export abstract class ProjectOrchestrator extends OrchestratorRuntime {
     return this.store.getSnapshot(projectId);
   }
 
-  async planResearch(projectId: string, iteration?: number, decision?: ContinuationDecision): Promise<ResearchSnapshot> {
+  async planResearch(projectId: string, iteration?: number, decision?: ContinuationDecision, execution?: ToolExecutionContext): Promise<ResearchSnapshot> {
     try {
       await this.assertStepReady(projectId, ResearchLoopStep.PlanResearch);
       const snapshot = await this.store.getSnapshot(projectId);
       const specification = await this.ensureSpecification(projectId);
-      const settings = await this.getSettings();
       const activeSnapshot = activeResearchSnapshot(snapshot);
-      const executableTools = this.executableToolNames(activeSnapshot, settings);
+      const settings = settingsWithProjectArtifactRoot(await this.getSettings(), activeSnapshot.project);
+      const executableTools = this.executableToolNames(activeSnapshot, settings, execution?.toolPolicy);
+      const effectiveCapabilities = execution?.authorizeAction
+        ? await execution.authorizeAction({ name: "research-planner", requiredCapabilities: ["agent"] })
+        : execution?.effectiveCapabilities;
       await this.moveProject(projectId, ResearchLoopStep.PlanResearch);
       const plan = await this.planner.plan({
         snapshot: activeResearchSnapshot(await this.store.getSnapshot(projectId)),
@@ -221,7 +226,11 @@ export abstract class ProjectOrchestrator extends OrchestratorRuntime {
         iteration: iteration ?? nextIteration(activeSnapshot),
         settings,
         availableTools: executableTools,
-        continuationDecision: decision ?? activeSnapshot.continuationDecisions.at(-1)
+        continuationDecision: decision ?? activeSnapshot.continuationDecisions.at(-1),
+        toolPolicy: execution?.toolPolicy,
+        effectiveCapabilities,
+        runtimeToolDiagnostics: this.runtimeDiagnostics(settings, activeSnapshot.project),
+        onLlmInvocation: execution?.onLlmInvocation
       });
       this.assertPlanToolsAllowed(plan, executableTools);
       await this.store.saveResearchPlan({

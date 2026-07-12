@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useState, type ReactElement, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
 
 export type Theme = "dark" | "light";
 
@@ -27,6 +27,7 @@ function readInitialTheme(): Theme {
 
 export function ThemeProvider({ children }: { children: ReactNode }): ReactElement {
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
+  const toggleTheme = useCallback(() => setTheme((current) => (current === "dark" ? "light" : "dark")), []);
 
   useIsomorphicLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -41,11 +42,7 @@ export function ThemeProvider({ children }: { children: ReactNode }): ReactEleme
     }
   }, [theme]);
 
-  const value: ThemeContextValue = {
-    theme,
-    setTheme,
-    toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark"))
-  };
+  const value = useMemo<ThemeContextValue>(() => ({ theme, setTheme, toggleTheme }), [theme, toggleTheme]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

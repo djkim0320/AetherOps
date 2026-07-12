@@ -1,8 +1,9 @@
 import { createId, nowIso } from "../../../core/shared/ids.js";
 import { rankResearchUrls, sourceQualityMetadata } from "../../../core/evidence/sourceQuality.js";
-import type { ResearchTool, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
-import type { AppSettings, OpenCodeRunInput, ResearchSource } from "../../../core/shared/types.js";
+import type { ResearchTool, ResearchToolExecutionContext, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import type { AppSettings, ResearchToolInput, ResearchSource } from "../../../core/shared/types.js";
 import { BoundedHttpClient } from "./boundedHttpClient.js";
+import { JobSourceAccessPolicy } from "./jobSourceAccessPolicy.js";
 
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_SEARCH_RESULTS = 5;
@@ -10,7 +11,7 @@ const MAX_SEARCH_RESULTS = 5;
 export class WebSearchTool implements ResearchTool {
   name = "WebSearchTool";
 
-  async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
+  async run(input: ResearchToolInput, settings: AppSettings, context?: ResearchToolExecutionContext): Promise<ResearchToolResult> {
     const startedAt = nowIso();
     const query = buildPublicResearchQuery(input);
     if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
@@ -20,7 +21,7 @@ export class WebSearchTool implements ResearchTool {
       throw new Error("Web search provider and API key are required.");
     }
 
-    const results = await this.search(settings, query);
+    const results = await this.search(settings, query, input.executionContext?.toolPolicy.sourceAccess, context);
     const completedAt = nowIso();
     const sources: ResearchSource[] = [];
     for (const result of results) {
@@ -43,9 +44,18 @@ export class WebSearchTool implements ResearchTool {
     };
   }
 
-  private async search(settings: AppSettings, query: string): Promise<Array<{ title: string; url: string; snippet: string }>> {
+  private async search(
+    settings: AppSettings,
+    query: string,
+    sourceAccess: NonNullable<ResearchToolInput["executionContext"]>["toolPolicy"]["sourceAccess"] | undefined,
+    context?: ResearchToolExecutionContext
+  ): Promise<Array<{ title: string; url: string; snippet: string }>> {
     const timeoutMs = searchTimeoutMs(settings.webSearch.timeoutMs);
-    const client = new BoundedHttpClient({ timeoutMs });
+    const client = new BoundedHttpClient({
+      timeoutMs,
+      ...(sourceAccess ? { publicUrlPolicy: new JobSourceAccessPolicy(sourceAccess) } : {}),
+      ...(sourceAccess && context?.onNetworkAudit ? { onNetworkAudit: (audit) => context.onNetworkAudit?.({ ...audit, sourcePolicy: sourceAccess }) } : {})
+    });
 
     if (settings.webSearch.provider === "custom" && settings.webSearch.endpoint) {
       const parsed = await fetchSearchJson<{ results?: Array<{ title?: string; url?: string; snippet?: string }> }>(
@@ -147,7 +157,7 @@ function normalizeSearchResults(
   return selected;
 }
 
-function buildPublicResearchQuery(input: OpenCodeRunInput): string {
+function buildPublicResearchQuery(input: ResearchToolInput): string {
   const parts: string[] = [];
   let openQuestion: string | undefined;
   for (const question of input.questions) {
@@ -162,7 +172,7 @@ function buildPublicResearchQuery(input: OpenCodeRunInput): string {
   return parts.join(" ").replace(/\s+/g, " ").trim().slice(0, 280);
 }
 
-function completedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown) {
+function completedToolRun(input: ResearchToolInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown) {
   return {
     id: createId("tool"),
     projectId: input.project.id,

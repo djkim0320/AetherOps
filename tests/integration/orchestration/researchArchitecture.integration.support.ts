@@ -51,7 +51,11 @@ export const settings: AppSettings = {
 export function cfdRunSpec(target: Extract<CfdRunSpec["target"], "su2" | "openvsp">): CfdRunSpec {
   return {
     target,
-    geometry: { source: "configuredCase", description: "Planner test uses an explicitly configured case." },
+    geometry: {
+      source: "configuredCase",
+      configuredCaseId: `${target}-configured-case`,
+      description: "Planner test uses an explicitly configured case."
+    },
     flightCondition: { reynolds: 1_000_000, mach: 0.05, alphaStart: 2, alphaEnd: 2, alphaStep: 1 },
     mesh: { strategy: "existing", boundaryLayer: false },
     solver: {
@@ -207,7 +211,7 @@ export function snapshot(): ResearchSnapshot {
     benchmarkPlans: [],
     runtimeBlockers: [],
     stepErrors: [],
-    openCodeRuns: [],
+    legacyAgentRuns: [],
     ragContexts: [],
     results: [],
     iterations: []

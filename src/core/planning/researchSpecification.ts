@@ -1,64 +1,12 @@
 import { createId, nowIso } from "../shared/ids.js";
-import type { LlmProvider } from "../providers/llm.js";
 import type { EvidenceItem, Hypothesis, ResearchProject, ResearchQuestion, ResearchSpecification } from "../shared/types.js";
 
-interface SpecificationLlmResponse {
-  researchQuestions?: string[];
-  refinedHypotheses?: string[];
-  assumptions?: string[];
-  constraints?: string[];
-  successCriteria?: string[];
-  requiredEvidenceTypes?: string[];
-  competencyQuestions?: string[];
-  evaluationMetrics?: string[];
-}
-
 export class ResearchSpecificationBuilder {
-  constructor(private readonly llm?: LlmProvider) {}
-
-  async build(input: {
-    project: ResearchProject;
-    questions: ResearchQuestion[];
-    hypotheses: Hypothesis[];
-    evidence: EvidenceItem[];
-  }): Promise<ResearchSpecification> {
-    const defaultSpecification = this.buildDefaultSpecification(input);
-    if (!this.llm || !(await this.llm.isAvailable())) {
-      throw new Error("LLM provider is required to build a research specification.");
-    }
-
-    const response = await this.llm.completeJson<SpecificationLlmResponse>({
-      schemaName: "AetherOpsResearchSpecification",
-      system: [
-        "You create cautious, citation-aware research specifications.",
-        "Do not invent facts, URLs, papers, DOI values, or real evidence.",
-        "Seed or user-provided ideas are planning signals only; mark uncertainty as assumptions or constraints.",
-        "Return only JSON."
-      ].join("\n"),
-      user: [
-        `Project: ${JSON.stringify(input.project)}`,
-        `Current questions: ${JSON.stringify(input.questions)}`,
-        `Current hypotheses: ${JSON.stringify(input.hypotheses)}`,
-        `Existing evidence metadata: ${JSON.stringify(evidenceMetadata(input.evidence))}`,
-        "Return keys: researchQuestions, refinedHypotheses, assumptions, constraints, successCriteria, requiredEvidenceTypes, competencyQuestions, evaluationMetrics."
-      ].join("\n\n"),
-      timeoutMs: 120_000
-    });
-
-    return {
-      ...defaultSpecification,
-      researchQuestions: take(response.researchQuestions, defaultSpecification.researchQuestions, 5, 3),
-      refinedHypotheses: take(response.refinedHypotheses, defaultSpecification.refinedHypotheses, 5, 2),
-      assumptions: take(response.assumptions, defaultSpecification.assumptions, 8, 1),
-      constraints: take(response.constraints, defaultSpecification.constraints, 8, 1),
-      successCriteria: take(response.successCriteria, defaultSpecification.successCriteria, 8, 2),
-      requiredEvidenceTypes: take(response.requiredEvidenceTypes, defaultSpecification.requiredEvidenceTypes, 8, 2),
-      competencyQuestions: take(response.competencyQuestions, defaultSpecification.competencyQuestions, 8, 2),
-      evaluationMetrics: take(response.evaluationMetrics, defaultSpecification.evaluationMetrics, 8, 2)
-    };
+  build(input: { project: ResearchProject; questions: ResearchQuestion[]; hypotheses: Hypothesis[]; evidence: EvidenceItem[] }): ResearchSpecification {
+    return this.buildSpecification(input);
   }
 
-  private buildDefaultSpecification(input: {
+  private buildSpecification(input: {
     project: ResearchProject;
     questions: ResearchQuestion[];
     hypotheses: Hypothesis[];
@@ -117,30 +65,12 @@ export class ResearchSpecificationBuilder {
   }
 }
 
-function take(value: unknown, defaultValue: string[], max: number, min: number): string[] {
-  return collectLimited(ensureMinimum(cleanStringArray(value), defaultValue, min), max);
-}
-
 function ensureMinimum(value: string[], defaultValue: string[], min: number): string[] {
   const output: string[] = [];
   const seen = new Set<string>();
   for (const item of value) pushUniqueString(output, seen, item);
   for (const item of defaultValue) pushUniqueString(output, seen, item);
   return collectLimited(output, Math.max(min, output.length));
-}
-
-function evidenceMetadata(evidence: EvidenceItem[]): Array<Pick<EvidenceItem, "title" | "summary" | "citation" | "sourceUri" | "limitations">> {
-  const metadata: Array<Pick<EvidenceItem, "title" | "summary" | "citation" | "sourceUri" | "limitations">> = [];
-  for (const item of evidence) {
-    metadata.push({
-      title: item.title,
-      summary: item.summary,
-      citation: item.citation,
-      sourceUri: item.sourceUri,
-      limitations: item.limitations
-    });
-  }
-  return metadata;
 }
 
 function hasErrorEvidenceSignal(evidence: EvidenceItem[]): boolean {
@@ -160,16 +90,6 @@ function collectHypothesisStatements(hypotheses: Hypothesis[]): string[] {
   const statements: string[] = [];
   for (const hypothesis of hypotheses) statements.push(hypothesis.statement);
   return statements;
-}
-
-function cleanStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const output: string[] = [];
-  for (const item of value) {
-    const text = typeof item === "string" ? item.trim() : "";
-    if (text) output.push(text);
-  }
-  return output;
 }
 
 function compactStrings(values: string[]): string[] {

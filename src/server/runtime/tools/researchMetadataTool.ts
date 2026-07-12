@@ -1,8 +1,9 @@
 import { createId, nowIso } from "../../../core/shared/ids.js";
 import { assessSourceQuality, sourceQualityMetadata } from "../../../core/evidence/sourceQuality.js";
-import type { ResearchTool, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
-import type { AppSettings, EvidenceItem, OpenCodeRunInput, ResearchSource } from "../../../core/shared/types.js";
+import type { ResearchTool, ResearchToolExecutionContext, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import type { AppSettings, EvidenceItem, ResearchToolInput, ResearchSource } from "../../../core/shared/types.js";
 import { BoundedHttpClient } from "./boundedHttpClient.js";
+import { JobSourceAccessPolicy } from "./jobSourceAccessPolicy.js";
 import { buildMetadataQueries } from "./metadataQueries.js";
 
 interface OpenAlexResponse {
@@ -39,12 +40,10 @@ interface OpenAlexWork {
   };
 }
 
-const DEFAULT_OPENALEX_MAILTO = "research@aetherops.local";
-
 export class ResearchMetadataTool implements ResearchTool {
   name = "ResearchMetadataTool";
 
-  async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
+  async run(input: ResearchToolInput, settings: AppSettings, context?: ResearchToolExecutionContext): Promise<ResearchToolResult> {
     const startedAt = nowIso();
     if (!input.project.autonomyPolicy.allowExternalSearch || !settings.allowExternalSearch) {
       throw new Error("ResearchMetadataTool requires external network access, but external search is disabled by project autonomy or app settings.");
@@ -56,8 +55,8 @@ export class ResearchMetadataTool implements ResearchTool {
       throw new Error(`Unsupported research metadata provider: ${settings.researchMetadata.provider}`);
     }
 
-    const queries = buildMetadataQueries(input);
-    const { query, works } = await fetchFirstUsableOpenAlexWorks(queries, settings);
+    const queries = buildMetadataQueries(input, readPlannerQuery(context?.inputs));
+    const { query, works } = await fetchFirstUsableOpenAlexWorks(queries, settings, input.executionContext?.toolPolicy.sourceAccess, context);
     const completedAt = nowIso();
     const sources: ResearchSource[] = [];
     const evidence: EvidenceItem[] = [];
@@ -138,7 +137,12 @@ export class ResearchMetadataTool implements ResearchTool {
   }
 }
 
-async function fetchFirstUsableOpenAlexWorks(queries: string[], settings: AppSettings): Promise<{ query: string; works: OpenAlexWork[] }> {
+async function fetchFirstUsableOpenAlexWorks(
+  queries: string[],
+  settings: AppSettings,
+  sourceAccess: NonNullable<ResearchToolInput["executionContext"]>["toolPolicy"]["sourceAccess"] | undefined,
+  context?: ResearchToolExecutionContext
+): Promise<{ query: string; works: OpenAlexWork[] }> {
   if (!queries.length) {
     throw new Error("ResearchMetadataTool requires a non-empty project question, hypothesis, or topic to query OpenAlex.");
   }
@@ -149,7 +153,7 @@ async function fetchFirstUsableOpenAlexWorks(queries: string[], settings: AppSet
   for (const query of queries) {
     let works: OpenAlexWork[];
     try {
-      works = await fetchOpenAlexWorks(query, settings);
+      works = await fetchOpenAlexWorks(query, settings, sourceAccess, context);
     } catch (error) {
       if (isRecoverableOpenAlexQueryError(error)) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -165,7 +169,12 @@ async function fetchFirstUsableOpenAlexWorks(queries: string[], settings: AppSet
   return { query: lastQuery, works: lastWorks };
 }
 
-async function fetchOpenAlexWorks(query: string, settings: AppSettings): Promise<OpenAlexWork[]> {
+async function fetchOpenAlexWorks(
+  query: string,
+  settings: AppSettings,
+  sourceAccess: NonNullable<ResearchToolInput["executionContext"]>["toolPolicy"]["sourceAccess"] | undefined,
+  context?: ResearchToolExecutionContext
+): Promise<OpenAlexWork[]> {
   if (!query.trim()) {
     throw new Error("ResearchMetadataTool requires a non-empty project question, hypothesis, or topic to query OpenAlex.");
   }
@@ -174,9 +183,15 @@ async function fetchOpenAlexWorks(query: string, settings: AppSettings): Promise
   url.searchParams.set("search", query);
   url.searchParams.set("per-page", String(settings.researchMetadata.maxResults));
   url.searchParams.set("sort", "relevance_score:desc");
-  url.searchParams.set("mailto", settings.researchMetadata.mailto?.trim() || DEFAULT_OPENALEX_MAILTO);
+  const mailto = settings.researchMetadata.mailto?.trim();
+  if (mailto) url.searchParams.set("mailto", mailto);
 
-  const client = new BoundedHttpClient({ timeoutMs: settings.researchMetadata.timeoutMs, maxBytes: 2 * 1024 * 1024 });
+  const client = new BoundedHttpClient({
+    timeoutMs: settings.researchMetadata.timeoutMs,
+    maxBytes: 2 * 1024 * 1024,
+    ...(sourceAccess ? { publicUrlPolicy: new JobSourceAccessPolicy(sourceAccess) } : {}),
+    ...(sourceAccess && context?.onNetworkAudit ? { onNetworkAudit: (audit) => context.onNetworkAudit?.({ ...audit, sourcePolicy: sourceAccess }) } : {})
+  });
   const response = await client.request(url.toString(), { headers: { accept: "application/json" } }, { accept: "application/json" });
   const responseText = decodeResponseText(response.bytes);
   if (response.status < 200 || response.status >= 300) {
@@ -195,6 +210,11 @@ async function fetchOpenAlexWorks(query: string, settings: AppSettings): Promise
       cause: error
     });
   }
+}
+
+function readPlannerQuery(inputs: Record<string, unknown> | undefined): string | undefined {
+  const query = inputs?.query;
+  return typeof query === "string" && query.trim() ? query.trim() : undefined;
 }
 
 function decodeResponseText(bytes: Uint8Array): string {
@@ -296,7 +316,7 @@ function cleanString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function completedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown) {
+function completedToolRun(input: ResearchToolInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown) {
   return {
     id: createId("tool"),
     projectId: input.project.id,
@@ -310,7 +330,7 @@ function completedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: 
   };
 }
 
-function failedToolRun(input: OpenCodeRunInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown, error: string) {
+function failedToolRun(input: ResearchToolInput, toolName: string, startedAt: string, completedAt: string, toolInput: unknown, output: unknown, error: string) {
   return {
     id: createId("tool"),
     projectId: input.project.id,

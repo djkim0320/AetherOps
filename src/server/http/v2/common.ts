@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ChatMessageSchema, JobReceiptSchema, JobSchema, type ChatMessage, type JobStatus } from "../../../contracts/api-v2/jobs.js";
+import { ChatMessageSchema, JobDetailSchema, JobReceiptSchema, JobSchema, type ChatMessage } from "../../../contracts/api-v2/jobs.js";
 import { ProjectSchema, ProjectSummarySchema, SessionSchema } from "../../../contracts/api-v2/projects.js";
 import { ProjectSnapshotSchema } from "../../../contracts/api-v2/snapshots.js";
 import { CapabilityGrantSchema, SettingsResponseSchema, SettingsSaveParamsSchema } from "../../../contracts/api-v2/settings.js";
@@ -16,7 +16,8 @@ import type { AppSettings, EngineeringProgramTarget, ResearchProject, ResearchSe
 import { buildServerRuntimeToolDiagnostics as buildRuntimeToolDiagnostics } from "../../runtime/engineering/runtimeEngineeringDiagnostics.js";
 import { defaultSettings as runtimeDefaultSettings, type AppSettingsStore } from "../../runtime/storage/settingsStore.js";
 import type { DurableJobRuntime } from "../../composition/durableJobRuntime.js";
-import type { DurableJobReceipt, DurableJobRecord } from "../../composition/durableJobTypes.js";
+import type { CodexCliReadiness } from "../../runtime/codex/codexCliReadiness.js";
+export { mapJobStatusFromProjectStatus, toJobDetailResponse, toJobReceipt, toJobResponse } from "./jobResponses.js";
 
 export {
   CapabilityGrantSchema,
@@ -28,6 +29,7 @@ export {
   ProjectSnapshotSchema,
   JobReceiptSchema,
   JobSchema,
+  JobDetailSchema,
   ToolsDiagnosticsResponseSchema,
   ToolDiagnosticSchema,
   CodexAuthStatusResponseSchema,
@@ -53,6 +55,7 @@ export interface RpcHandlerContext {
           cliAvailable: boolean;
           catalog: "supported" | "unsupported";
           access: "not_checked" | "available" | "unavailable";
+          sandbox?: CodexCliReadiness;
           message?: string;
         }>;
       }
@@ -69,7 +72,7 @@ export function computeProjectRevision(snapshot: ResearchSnapshot): number {
 
 export function projectCapabilities(project: ResearchProject): z.infer<typeof CapabilityGrantSchema> {
   return {
-    agent: true,
+    agent: project.autonomyPolicy.allowAgent ?? true,
     engineering: Boolean(project.autonomyPolicy.allowCodeExecution),
     search: Boolean(project.autonomyPolicy.allowExternalSearch)
   };
@@ -110,7 +113,10 @@ export function toSessionResponse(session: ResearchSession): z.infer<typeof Sess
   });
 }
 
-export function toSnapshotResponse(snapshot: ResearchSnapshot): z.infer<typeof ProjectSnapshotSchema> {
+export function toSnapshotResponse(
+  snapshot: ResearchSnapshot,
+  executionPatch: Partial<z.input<typeof ProjectSnapshotSchema>["execution"]> = {}
+): z.infer<typeof ProjectSnapshotSchema> {
   const data = {
     ...snapshot,
     messages: chatMessagesFromSnapshot(snapshot)
@@ -121,7 +127,8 @@ export function toSnapshotResponse(snapshot: ResearchSnapshot): z.infer<typeof P
     execution: {
       status: snapshot.project.status,
       currentStep: snapshot.project.currentStep,
-      revision: computeProjectRevision(snapshot)
+      revision: computeProjectRevision(snapshot),
+      ...executionPatch
     },
     updatedAt: snapshot.project.updatedAt,
     data
@@ -154,9 +161,10 @@ export function chatMessagesFromSnapshot(snapshot: Pick<ResearchSnapshot, "artif
 export function toSettingsResponse(settings: AppSettings): z.infer<typeof SettingsResponseSchema> {
   return SettingsResponseSchema.parse({
     codex: {
-      model: settings.openCodeLlm.model,
-      reasoningEffort: settings.openCodeLlm.reasoningEffort,
-      timeoutMs: settings.openCodeLlm.timeoutMs
+      model: settings.codex.model,
+      reasoningEffort: settings.codex.reasoningEffort,
+      timeoutMs: settings.codex.timeoutMs,
+      taskTimeoutMs: settings.codex.taskTimeoutMs
     },
     embedding: {
       provider: settings.embedding.provider,
@@ -172,7 +180,7 @@ export function toSettingsResponse(settings: AppSettings): z.infer<typeof Settin
       apiKeyConfigured: Boolean(settings.webSearch.apiKey || settings.webSearch.apiKeyConfigured)
     },
     capabilities: {
-      agent: Boolean(settings.openCode.enabled),
+      agent: settings.allowAgent,
       engineering: Boolean(settings.allowCodeExecution),
       search: Boolean(settings.allowExternalSearch)
     },
@@ -184,16 +192,13 @@ export function toSettingsSaveInput(params: z.input<typeof SettingsSaveParamsSch
   const parsed = SettingsSaveParamsSchema.parse(params);
   return {
     ...current,
-    openCodeLlm: {
-      source: "codex-oauth",
+    codex: {
       model: parsed.codex.model,
       reasoningEffort: parsed.codex.reasoningEffort,
-      timeoutMs: parsed.codex.timeoutMs
+      timeoutMs: parsed.codex.timeoutMs,
+      taskTimeoutMs: parsed.codex.taskTimeoutMs
     },
-    openCode: {
-      ...current.openCode,
-      enabled: parsed.capabilities.agent
-    },
+    allowAgent: parsed.capabilities.agent,
     webSearch: {
       ...current.webSearch,
       provider: parsed.search.provider,
@@ -219,8 +224,19 @@ export function toSettingsSaveInput(params: z.input<typeof SettingsSaveParamsSch
   };
 }
 
-export function toToolDiagnosticsResponse(settings: AppSettings): z.infer<typeof ToolsDiagnosticsResponseSchema> {
+export function toToolDiagnosticsResponse(
+  settings: AppSettings,
+  codexStatus?: {
+    authenticated: boolean;
+    cliAvailable: boolean;
+    catalog: "supported" | "unsupported";
+    access: "not_checked" | "available" | "unavailable";
+    message?: string;
+    sandbox?: CodexCliReadiness;
+  }
+): z.infer<typeof ToolsDiagnosticsResponseSchema> {
   const diagnostics = buildRuntimeToolDiagnostics(settings);
+  const codexDiagnostic = codexCliDiagnostic(settings, codexStatus);
   const tools = [
     {
       name: "SettingsStore",
@@ -232,11 +248,15 @@ export function toToolDiagnosticsResponse(settings: AppSettings): z.infer<typeof
       category: "storage",
       status: "ready" as const
     },
-    ...diagnostics.executableTools.slice(0, 8).map((name) => ({
-      name,
-      category: classifyTool(name),
-      status: "ready" as const
-    })),
+    codexDiagnostic,
+    ...diagnostics.executableTools
+      .filter((name) => name !== "CodexCliTool")
+      .slice(0, 8)
+      .map((name) => ({
+        name,
+        category: classifyTool(name),
+        status: "ready" as const
+      })),
     ...diagnostics.blockers.slice(0, 8).map((blocker) => ({
       name: blocker.key,
       category: classifyBlocker(blocker.key),
@@ -246,13 +266,51 @@ export function toToolDiagnosticsResponse(settings: AppSettings): z.infer<typeof
   ];
   return ToolsDiagnosticsResponseSchema.parse({
     capabilities: {
-      agent: Boolean(settings.openCode.enabled),
+      agent: settings.allowAgent,
       engineering: Boolean(settings.allowCodeExecution),
       search: Boolean(settings.allowExternalSearch)
     },
     tools,
     generatedAt: diagnostics.generatedAt
   });
+}
+
+function codexCliDiagnostic(
+  settings: AppSettings,
+  status: Parameters<typeof toToolDiagnosticsResponse>[1]
+): z.infer<typeof ToolsDiagnosticsResponseSchema>["tools"][number] {
+  if (!settings.allowAgent || !settings.allowCodeExecution) {
+    return { name: "CodexCliTool", category: "agent", status: "blocked", reason: "Codex CLI workspace execution requires Agent and Engineering capabilities." };
+  }
+  if (!status?.cliAvailable) {
+    return { name: "CodexCliTool", category: "agent", status: "unavailable", reason: status?.message ?? "The bundled Codex CLI is unavailable." };
+  }
+  if (!status.authenticated) {
+    return { name: "CodexCliTool", category: "agent", status: "blocked", reason: status.message ?? "Codex OAuth authentication is required." };
+  }
+  if (status.catalog === "unsupported" || status.access === "unavailable") {
+    return {
+      name: "CodexCliTool",
+      category: "agent",
+      status: "blocked",
+      reason: status.message ?? "The configured Codex model is not available to this account."
+    };
+  }
+  if (status.sandbox && !status.sandbox.ready) {
+    return {
+      name: "CodexCliTool",
+      category: "agent",
+      status: "blocked",
+      reason: status.sandbox?.message ?? `Codex CLI ${status.sandbox?.sandboxMode ?? "elevated"} sandbox is not ready.`
+    };
+  }
+  return {
+    name: "CodexCliTool",
+    category: "agent",
+    status: "ready",
+    reason:
+      "Filesystem and network sandbox enforcement is verified at execution. A failed permission-profile check blocks the job with NOT_READY; no fallback is used."
+  };
 }
 
 export function toLlmStatusResponse(
@@ -269,8 +327,8 @@ export function toLlmStatusResponse(
   const blocked = providerStatus.catalog === "unsupported" || providerStatus.access === "unavailable";
   return LlmStatusResponseSchema.parse({
     provider: "codex-oauth",
-    model: settings.openCodeLlm.model,
-    reasoningEffort: settings.openCodeLlm.reasoningEffort,
+    model: settings.codex.model,
+    reasoningEffort: settings.codex.reasoningEffort,
     catalog: providerStatus.catalog,
     access: providerStatus.access,
     status: blocked ? "blocked" : locallyReady ? "ready" : "not_authenticated",
@@ -291,11 +349,22 @@ export function toCodexAuthStatusResponse(available: boolean, message?: string):
 export function toEngineeringPreflightResponse(
   projectId: string,
   targets: Array<z.input<typeof EngineeringTargetSchema>>,
-  settings: AppSettings
+  settings: AppSettings,
+  codexReadiness?: CodexCliReadiness
 ): z.infer<typeof EngineeringPreflightResponseSchema> {
   const diagnostics = buildRuntimeToolDiagnostics(settings);
   const capabilityByTarget = new Map(diagnostics.engineeringPrograms.map((item) => [item.target, item]));
   const resolvedTargets = targets.map((target) => {
+    if (target === "codex") {
+      const capabilitiesReady = settings.allowAgent && settings.allowCodeExecution;
+      const ready = capabilitiesReady && codexReadiness?.ready === true;
+      const reason = !capabilitiesReady
+        ? "Codex CLI requires Agent and Engineering capabilities."
+        : !codexReadiness?.ready
+          ? (codexReadiness?.message ?? "Codex CLI elevated sandbox readiness was not verified.")
+          : undefined;
+      return { target, ready, reason };
+    }
     const runtimeTarget: EngineeringProgramTarget = target === "webxfoil" ? "xfoil-wasm" : target === "mesh" ? "modeling" : target;
     const capability = capabilityByTarget.get(runtimeTarget);
     return {
@@ -308,34 +377,12 @@ export function toEngineeringPreflightResponse(
     projectId,
     ready: resolvedTargets.every((target) => target.ready),
     capabilities: {
-      agent: Boolean(settings.openCode.enabled),
+      agent: settings.allowAgent,
       engineering: Boolean(settings.allowCodeExecution),
       search: Boolean(settings.allowExternalSearch)
     },
     targets: resolvedTargets,
     checkedAt: diagnostics.generatedAt
-  });
-}
-
-export function mapJobStatusFromProjectStatus(status: ResearchSnapshot["project"]["status"] | string): JobStatus {
-  if (status === "paused") return "paused";
-  if (status === "aborted") return "aborted";
-  if (status === "failed") return "failed";
-  if (status === "blocked") return "blocked";
-  if (status === "completed") return "completed";
-  if (status === "running") return "running";
-  return "queued";
-}
-
-export function toJobReceipt(job: DurableJobRecord, queuePosition = 0): DurableJobReceipt {
-  return JobReceiptSchema.parse({
-    jobId: job.id,
-    projectId: job.projectId,
-    kind: job.kind,
-    status: "queued",
-    queuePosition,
-    acceptedAt: job.createdAt,
-    projectRevision: job.projectRevision
   });
 }
 

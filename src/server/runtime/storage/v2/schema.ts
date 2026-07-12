@@ -1,7 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { STORAGE_JOB_STATUSES } from "./types.js";
+import { assertStorageTraceSchemaReady, migrateStorageTraceV3Schema } from "./traceSchema.js";
 
-export const STORAGE_V2_SCHEMA_VERSION = 1;
+export const STORAGE_V2_SCHEMA_VERSION = 2;
 
 const jobStatusCheck = STORAGE_JOB_STATUSES.map((status) => `'${status}'`).join(", ");
 
@@ -108,6 +109,12 @@ export function migrateStorageV2Schema(db: DatabaseSync, options: StorageV2Migra
       priority integer not null default 0,
       attempt integer not null default 0,
       idempotency_key text,
+      request_hash text,
+      requested_capabilities text,
+      effective_capabilities text,
+      tool_policy text,
+      blocked_reason text,
+      failure_reason text,
       requested_by text,
       lease_owner text,
       lease_expires_at text,
@@ -271,10 +278,27 @@ export function migrateStorageV2Schema(db: DatabaseSync, options: StorageV2Migra
     create index if not exists idx_ontology_constraints_v2_record on ontology_constraints_v2(source_record_id);
   `);
 
+  migrateStorageTraceV3Schema(db);
+  blockLegacyResearchJobsRequiringReplan(db);
   createFtsTables(db);
   db.prepare(
     "insert into storage_v2_meta (key, value, updated_at) values ('schema_version', ?, datetime('now')) on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at"
   ).run(String(STORAGE_V2_SCHEMA_VERSION));
+}
+
+function blockLegacyResearchJobsRequiringReplan(db: DatabaseSync): void {
+  db.prepare(
+    `update jobs set status='blocked',
+     error=case when payload like '%OpenCodeTool%' or payload like '%"target":"opencode"%'
+       then 'replan_required_executor_removed' else 'replan_required' end,
+     blocked_reason=case when payload like '%OpenCodeTool%' or payload like '%"target":"opencode"%'
+       then 'replan_required_executor_removed' else 'replan_required' end,
+     lease_owner=null, lease_expires_at=null,
+     completed_at=coalesce(completed_at, datetime('now')), updated_at=datetime('now')
+     where operation='research_loop' and status in ('queued', 'running', 'paused', 'interrupted')
+     and (payload like '%OpenCodeTool%' or payload like '%"target":"opencode"%' or
+       (payload like '%"requiredTools"%' and payload not like '%"toolRequests"%'))`
+  ).run();
 }
 
 export function preflightFts5(db: DatabaseSync): void {
@@ -287,6 +311,7 @@ export function assertStorageV2SchemaReady(db: DatabaseSync): void {
   if (String(row?.value ?? "") !== String(STORAGE_V2_SCHEMA_VERSION)) {
     throw new Error("Storage v2 schema is not ready. Run migrate:apply and migrate:verify before starting the storage worker.");
   }
+  assertStorageTraceSchemaReady(db);
 }
 
 function createFtsTables(db: DatabaseSync): void {

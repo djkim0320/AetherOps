@@ -1,0 +1,55 @@
+.header {
+  position: relative;
+  z-index: 5;
+  min-width: 0;
+  height: var(--shell-header-height);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--glass-divider);
+  background: var(--glass-pane-sheen), var(--glass-pane);
+  box-shadow: var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur-soft)) saturate(var(--glass-saturation));
+}
+
+.identity {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.iconButton {
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+}
+
+.iconButton:hover {
+  background: var(--glass-control-hover);
+  color: var(--color-text);
+}

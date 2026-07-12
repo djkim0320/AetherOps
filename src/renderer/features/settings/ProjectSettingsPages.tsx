@@ -12,13 +12,14 @@ import { shellQueryKeys } from "../../domain/queryKeys.js";
 import { projectQueryOptions } from "../../domain/queryOptions.js";
 import { SettingsLayout } from "./SettingsLayout.js";
 import styles from "./Settings.module.css";
+import { capabilityLabel, ko, localizeError } from "../../platform/i18n.js";
 
 export function ProjectBriefPage(): ReactElement {
   const { projectId = "" } = useParams();
   const project = useQuery(projectQueryOptions(projectId));
   return (
-    <SettingsLayout projectId={projectId} title="Research brief" description="The durable intent shared by chat and research runs.">
-      {project.data ? <BriefForm key={project.data.execution.revision} project={project.data} /> : <p>Loading project…</p>}
+    <SettingsLayout projectId={projectId} title={ko.researchBrief} description={ko.researchBriefDescription}>
+      {project.data ? <BriefForm key={project.data.execution.revision} project={project.data} /> : <p>{ko.loadingProject}</p>}
     </SettingsLayout>
   );
 }
@@ -38,16 +39,16 @@ function BriefForm({ project }: { project: Project }): ReactElement {
         save.mutate();
       }}
     >
-      <Field label="Topic">
+      <Field label={ko.topic}>
         <Input required value={input.topic} onChange={(event) => setInput({ ...input, topic: event.target.value })} />
       </Field>
-      <Field label="Goal">
+      <Field label={ko.goal}>
         <Textarea required value={input.goal} onChange={(event) => setInput({ ...input, goal: event.target.value })} />
       </Field>
-      <Field label="Scope">
+      <Field label={ko.scope}>
         <Textarea required value={input.scope} onChange={(event) => setInput({ ...input, scope: event.target.value })} />
       </Field>
-      <Field label="Budget">
+      <Field label={ko.budget}>
         <Input required value={input.budget} onChange={(event) => setInput({ ...input, budget: event.target.value })} />
       </Field>
       <Save pending={save.isPending} saved={save.isSuccess} error={save.error} />
@@ -59,8 +60,8 @@ export function RunPolicyPage(): ReactElement {
   const { projectId = "" } = useParams();
   const project = useQuery(projectQueryOptions(projectId));
   return (
-    <SettingsLayout projectId={projectId} title="Run policy" description="Project grants are intersected with app and job permissions.">
-      {project.data ? <RunPolicyForm key={project.data.execution.revision} project={project.data} /> : <p>Loading project…</p>}
+    <SettingsLayout projectId={projectId} title={ko.runPolicy} description={ko.runPolicyDescription}>
+      {project.data ? <RunPolicyForm key={project.data.execution.revision} project={project.data} /> : <p>{ko.loadingProject}</p>}
     </SettingsLayout>
   );
 }
@@ -83,7 +84,7 @@ function RunPolicyForm({ project }: { project: Project }): ReactElement {
       {(["agent", "engineering", "search"] as const).map((name) => (
         <Label className={styles.switchRow} key={name}>
           <span>
-            <strong>{name}</strong>
+            <strong>{capabilityLabel(name)}</strong>
             <small>{capabilityHelp(name)}</small>
           </span>
           <Switch checked={capabilities[name]} onCheckedChange={(checked) => setCapabilities({ ...capabilities, [name]: checked })} />
@@ -107,18 +108,18 @@ function Save({ pending, saved, error }: { pending: boolean; saved: boolean; err
     <div className={styles.actions}>
       {error ? (
         <p className={styles.actionError} role="alert">
-          {error.message}
+          {localizeError(error)}
         </p>
       ) : null}
-      {saved ? <span>Saved</span> : null}
+      {saved ? <span>{ko.saved}</span> : null}
       <Button type="submit" disabled={pending}>
-        {pending ? "Saving…" : "Save"}
+        {pending ? ko.saving : ko.save}
       </Button>
     </div>
   );
 }
 function capabilityHelp(name: "agent" | "engineering" | "search"): string {
-  if (name === "agent") return "Allow Codex and OpenCode orchestration.";
-  if (name === "engineering") return "Allow solvers and the engineering workbench.";
-  return "Allow public web search, fetching, browser and remote coordinates.";
+  if (name === "agent") return ko.agentHelp;
+  if (name === "engineering") return ko.engineeringHelp;
+  return ko.searchHelp;
 }

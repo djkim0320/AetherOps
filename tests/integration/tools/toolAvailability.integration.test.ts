@@ -47,6 +47,15 @@ describe("Tool availability and engineering capabilities", () => {
 
     expect(runner.listExecutableToolNames({ snapshot, settings })).toContain("PdfIngestionTool");
     expect(runner.listExecutableToolNames({ snapshot, settings: { ...settings, allowExternalSearch: false } })).not.toContain("PdfIngestionTool");
+    const directArxivPdf = { ...snapshot, sources: [], researchPlans: [{ ...input.researchPlan!, fetchCandidateUrls: ["https://arxiv.org/pdf/1706.03762"] }] };
+    expect(runner.listExecutableToolNames({ snapshot: directArxivPdf, settings })).toContain("PdfIngestionTool");
+    expect(
+      runner.listExecutableToolNames({
+        snapshot: { ...snapshot, sources: [], researchPlans: [] },
+        settings,
+        toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "allowlist", urls: ["https://arxiv.org/pdf/1706.03762"] } }
+      })
+    ).toContain("PdfIngestionTool");
   });
   it("exposes EngineeringProgramTool when code execution and bundled or configured engineering solvers are present", () => {
     const runner = new ToolRunner(createDefaultResearchTools());

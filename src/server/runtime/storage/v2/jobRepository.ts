@@ -8,13 +8,19 @@ export class JobRepository {
     return runAtomically(this.db, () => {
       if (input.idempotencyKey) {
         const existing = this.getByIdempotencyKey(input.projectId, input.idempotencyKey);
-        if (existing) return existing;
+        if (existing) {
+          if (input.requestHash && existing.requestHash && input.requestHash !== existing.requestHash) {
+            throw new Error(`Idempotency key conflict for project ${input.projectId}: request hash does not match.`);
+          }
+          return existing;
+        }
       }
       const createdAt = input.createdAt ?? nowIso();
       this.db
         .prepare(
-          `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key, requested_by, queued_at, created_at, updated_at, payload)
-        values (?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?, ?, ?)`
+          `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key, request_hash,
+          requested_capabilities, effective_capabilities, tool_policy, requested_by, queued_at, created_at, updated_at, payload)
+        values (?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           input.id,
@@ -22,6 +28,10 @@ export class JobRepository {
           input.operation,
           input.priority ?? 0,
           input.idempotencyKey ?? null,
+          input.requestHash ?? null,
+          input.requestedCapabilities ? json(input.requestedCapabilities) : null,
+          input.effectiveCapabilities ? json(input.effectiveCapabilities) : null,
+          input.toolPolicy ? json(input.toolPolicy) : null,
           input.requestedBy ?? null,
           input.queuedAt ?? createdAt,
           createdAt,
@@ -76,12 +86,21 @@ export class JobRepository {
     const updatedAt = patch.updatedAt ?? nowIso();
     const completedAt = patch.completedAt ?? (terminalJobStatus(patch.status) ? updatedAt : current.completedAt);
     const startedAt = patch.startedAt ?? (patch.status === "running" ? (current.startedAt ?? updatedAt) : current.startedAt);
+    const blockedReason = patch.blockedReason ?? (patch.status === "blocked" ? patch.error : undefined) ?? current.blockedReason;
+    const failureReason = patch.failureReason ?? (patch.status === "failed" ? patch.error : undefined) ?? current.failureReason;
+    if (patch.status === "blocked" && !blockedReason) throw new Error("A blocked job requires blockedReason.");
+    if (patch.status === "failed" && !failureReason) throw new Error("A failed job requires failureReason.");
     this.db
-      .prepare(`update jobs set status=?, result=?, error=?, lease_owner=?, lease_expires_at=?, started_at=?, completed_at=?, updated_at=? where id=?`)
+      .prepare(
+        `update jobs set status=?, result=?, error=?, blocked_reason=?, failure_reason=?, lease_owner=?, lease_expires_at=?,
+        started_at=?, completed_at=?, updated_at=? where id=?`
+      )
       .run(
         patch.status,
         patch.result === undefined ? (current.result === undefined ? null : json(current.result)) : json(patch.result),
         patch.error ?? current.error ?? null,
+        blockedReason ?? null,
+        failureReason ?? null,
         patch.leaseOwner ?? current.leaseOwner ?? null,
         patch.leaseExpiresAt ?? current.leaseExpiresAt ?? null,
         startedAt ?? null,

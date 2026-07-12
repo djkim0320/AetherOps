@@ -69,31 +69,43 @@ export function buildReusableKnowledge(snapshot: ResearchSnapshot): string {
 const OPEN_CODE_OPTIMIZATION_PATTERN =
   /\b(optimi[sz]ation|optimisation|optimizer|objective function|design variable|pareto|candidate|best score)\b|최적화|최적|목적\s*함수|설계\s*변수/i;
 
-export function openCodeOptimizationQuantitativeLines(snapshot: ResearchSnapshot): string[] {
-  const artifacts = collectOpenCodeOptimizationArtifacts(snapshot);
-  const completedRuns = snapshot.openCodeRuns.filter((run) => run.status === "completed");
-  if (!artifacts.length && !completedRuns.length) return [];
+export function workspaceExecutionQuantitativeLines(snapshot: ResearchSnapshot): string[] {
+  const artifacts = collectWorkspaceOptimizationArtifacts(snapshot);
+  const completedRuns = snapshot.toolRuns.filter((run) => run.toolName === "CodexCliTool" && run.status === "completed");
+  const legacyCompletedRuns = snapshot.legacyAgentRuns.filter((run) => run.status === "completed");
+  if (!artifacts.length && !completedRuns.length && !legacyCompletedRuns.length) return [];
   const lines: string[] = [];
-  if (completedRuns.length) lines.push(`OpenCode 완료 실행: ${completedRuns.length}건.`);
-  if (artifacts.length) lines.push(`OpenCode 최적화 산출물: ${artifacts.length}개.`);
+  if (completedRuns.length) lines.push(`Codex CLI completed workspace runs: ${completedRuns.length}.`);
+  if (legacyCompletedRuns.length) lines.push(`Archived legacy executor runs: ${legacyCompletedRuns.length}.`);
+  if (artifacts.length) lines.push(`Workspace optimization artifacts: ${artifacts.length}.`);
   return lines;
 }
 
-export function formatOpenCodeOptimizationSection(snapshot: ResearchSnapshot): string {
+export function formatWorkspaceExecutionSection(snapshot: ResearchSnapshot): string {
   const lines: string[] = [];
-  const runs = snapshot.openCodeRuns.filter((run) => run.status === "completed" || run.status === "failed");
-  for (const run of runs.slice(-3)) {
+  const codexRuns = snapshot.toolRuns.filter((run) => run.toolName === "CodexCliTool" && (run.status === "completed" || run.status === "failed"));
+  for (const run of codexRuns.slice(-3)) {
     lines.push(
-      `## OpenCode 실행 ${run.id}`,
-      `- 상태: ${translateStatus(run.status)}`,
-      `- 도구 계획: ${run.toolPlan.join(" / ") || "없음"}`,
-      `- 시작 시각: ${run.startedAt}${run.completedAt ? `; 완료 시각: ${run.completedAt}` : ""}`
+      `## Codex CLI run ${run.id}`,
+      `- Status: ${translateStatus(run.status)}`,
+      `- Started: ${run.startedAt}${run.completedAt ? `; completed: ${run.completedAt}` : ""}`
     );
-    for (const log of run.logs.slice(0, 4)) lines.push(`- 실행 로그: ${log}`);
+    if (run.error) lines.push(`- Terminal cause: ${run.error}`);
     lines.push("");
   }
 
-  const artifacts = collectOpenCodeOptimizationArtifacts(snapshot);
+  const legacyRuns = snapshot.legacyAgentRuns.filter((run) => run.status === "completed" || run.status === "failed");
+  for (const run of legacyRuns.slice(-3)) {
+    lines.push(
+      `## Archived legacy executor run ${run.id}`,
+      `- Status: ${translateStatus(run.status)}`,
+      `- Historical tool plan: ${run.toolPlan.join(" / ") || "none"}`,
+      `- Started: ${run.startedAt}${run.completedAt ? `; completed: ${run.completedAt}` : ""}`
+    );
+    lines.push("");
+  }
+
+  const artifacts = collectWorkspaceOptimizationArtifacts(snapshot);
   if (artifacts.length) {
     lines.push("## 최적화 산출물");
     for (const [index, artifact] of artifacts.slice(-8).entries()) {
@@ -109,7 +121,7 @@ export function formatOpenCodeOptimizationSection(snapshot: ResearchSnapshot): s
   return lines.join("\n").trim();
 }
 
-export function collectOpenCodeOptimizationArtifacts(snapshot: ResearchSnapshot): ResearchSnapshot["artifacts"] {
+export function collectWorkspaceOptimizationArtifacts(snapshot: ResearchSnapshot): ResearchSnapshot["artifacts"] {
   const artifacts: ResearchSnapshot["artifacts"] = [];
   for (const artifact of snapshot.artifacts) {
     if (artifact.category !== "generated_artifact") continue;

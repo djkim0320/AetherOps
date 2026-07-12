@@ -91,7 +91,13 @@ export function rowToJob(row: Row): StorageJob {
     payload: parseJson(row.payload),
     result: parseOptionalJson(row.result),
     error: optionalString(row.error),
+    blockedReason: optionalString(row.blocked_reason),
+    failureReason: optionalString(row.failure_reason),
     idempotencyKey: optionalString(row.idempotency_key),
+    requestHash: optionalString(row.request_hash),
+    requestedCapabilities: parseOptionalJson(row.requested_capabilities),
+    effectiveCapabilities: parseOptionalJson(row.effective_capabilities),
+    toolPolicy: parseOptionalJson(row.tool_policy),
     requestedBy: optionalString(row.requested_by),
     leaseOwner: optionalString(row.lease_owner),
     leaseExpiresAt: optionalString(row.lease_expires_at),
@@ -281,7 +287,7 @@ export function rankScore(value: unknown): number {
 }
 
 export function terminalJobStatus(status: StorageJob["status"]): boolean {
-  return status === "aborted" || status === "interrupted" || status === "failed" || status === "completed";
+  return status === "aborted" || status === "interrupted" || status === "blocked" || status === "failed" || status === "completed";
 }
 
 export function parseLastEventId(value: string | number | undefined): number {

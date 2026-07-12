@@ -10,8 +10,7 @@ export async function runSecurityHarness(context) {
   const { WebFetchTool } = await import(pathToFileURL(webFetchModule).href);
   const now = new Date().toISOString();
   const settings = {
-    openCodeLlm: { source: "codex-oauth", model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180000 },
-    openCode: { enabled: true, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180000 },
+    codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180000, taskTimeoutMs: 600000 },
     webSearch: { provider: "disabled" },
     embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
     browserUse: { enabled: true, mode: "background", maxPages: 2, timeoutMs: 30000, captureScreenshots: true },
@@ -108,16 +107,24 @@ export async function validateUtf8(context) {
   const generatedTextAudit = auditUtf8Files(safeGlobFiles(context.dataRoot, /\.(?:md|json|jsonl|nt|txt)$/i));
   const auditScan = scanAuditUtf8(reportCandidates, generatedTextAudit.audits);
   const blockedJsonSentinels = sentinelStatus(blockedText, KOREAN_UTF8_SENTINELS);
+  const auditFileSentinels = Object.fromEntries(
+    reportCandidates.map((path) => [path, sentinelStatus((generatedTextAudit.audits.get(path) ?? auditUtf8File(path)).text, KOREAN_UTF8_SENTINELS)])
+  );
+  const blockedSentinelsOk = blockedText.length > 0 && Object.values(blockedJsonSentinels).every(Boolean);
+  const auditSentinelsOk = reportCandidates.length > 0 && Object.values(auditFileSentinels).every((status) => Object.values(status).every(Boolean));
   const hasQuestionQuestion = /[?]{2,}/.test(blockedText) || auditScan.hasQuestionQuestion;
   const hasReplacement = blockedText.includes("\uFFFD") || auditScan.hasReplacement;
   const hasMojibake = MOJIBAKE_MARKER.test(blockedText) || auditScan.hasMojibake || !generatedTextAudit.fatalOk;
   context.results.utf8 = {
     blockedJsonHasKorean: Object.values(blockedJsonSentinels).some(Boolean),
     blockedJsonKoreanSentinels: blockedJsonSentinels,
+    blockedJsonKoreanSentinelsPassed: blockedSentinelsOk,
     blockedJsonFatalUtf8: blockedAudit.fatalOk,
     blockedJsonFirstBytes: blockedAudit.firstBytes,
     auditHasKoreanRequirement: auditScan.hasKoreanRequirement,
     auditKoreanSentinels: auditScan.koreanSentinels,
+    auditFileKoreanSentinels: auditFileSentinels,
+    auditKoreanSentinelsPassed: auditSentinelsOk,
     generatedTextFileCount: generatedTextAudit.fileCount,
     generatedTextFatalUtf8: generatedTextAudit.fatalOk,
     generatedTextFatalFailures: generatedTextAudit.failures,
@@ -129,8 +136,11 @@ export async function validateUtf8(context) {
     markdownBomPolicy: shouldWriteMarkdownBom() ? "bom-enabled" : "bom-disabled"
   };
   if (hasMojibake) context.results.findings.medium.push("UTF-8/mojibake regression marker found in blocked-path JSON or audit markdown.");
-  if (blockedText && !Object.values(blockedJsonSentinels).every(Boolean)) {
+  if (!blockedSentinelsOk) {
     context.results.findings.medium.push("Blocked-path JSON is missing one or more Korean UTF-8 sentinel strings.");
+  }
+  if (!auditSentinelsOk) {
+    context.results.findings.medium.push("One or more audit Markdown files are missing required Korean UTF-8 sentinel strings.");
   }
   if (!generatedTextAudit.fatalOk) {
     context.results.findings.high.push(`Generated text files failed strict UTF-8 decoding: ${generatedTextAudit.failures.length}.`);

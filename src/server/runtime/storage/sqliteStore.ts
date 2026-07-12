@@ -14,7 +14,7 @@ import type {
   OntologyConstraint,
   OntologyEntity,
   OntologyRelation,
-  OpenCodeRun,
+  LegacyAgentRun,
   ProjectContextSnapshot,
   RagContext,
   ResearchArtifact,
@@ -193,7 +193,7 @@ export class SqliteResearchStore extends SqliteStoreBase implements ResearchStor
   async saveStepError(item: StepError): Promise<void> {
     this.upsertMany("step_errors", [item]);
   }
-  async saveOpenCodeRun(item: OpenCodeRun): Promise<void> {
+  async saveLegacyAgentRun(item: LegacyAgentRun): Promise<void> {
     this.upsertMany(OPEN_CODE_RUNS_TABLE, [item]);
   }
   async saveRagContext(item: RagContext): Promise<void> {
@@ -241,7 +241,7 @@ export class SqliteResearchStore extends SqliteStoreBase implements ResearchStor
       globalMemoryItems: this.byProjectOrGlobalVisible<GlobalMemoryItem>("global_memory_items", projectId),
       runtimeBlockers: this.byProject<RuntimeBlocker>("runtime_blockers", projectId),
       stepErrors: this.byProject<StepError>("step_errors", projectId),
-      openCodeRuns: this.byProject<OpenCodeRun>(OPEN_CODE_RUNS_TABLE, projectId),
+      legacyAgentRuns: this.byProject<LegacyAgentRun>(OPEN_CODE_RUNS_TABLE, projectId),
       ragContexts: this.byProject<RagContext>("rag_contexts", projectId),
       results: this.byProject<EvidenceBasedResult>("results", projectId),
       iterations: this.byProject<LoopIteration>("iterations", projectId),

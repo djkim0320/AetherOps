@@ -162,9 +162,11 @@ export function selectedChunkPromptRows(snapshot: ResearchSnapshot): Array<{ id:
   return rows;
 }
 
-export function openCodeRunPromptRows(openCodeRuns: ResearchSnapshot["openCodeRuns"]): Array<{ iteration: number; logs: string[]; toolPlan: string[] }> {
+export function legacyExecutionRunPromptRows(
+  legacyAgentRuns: ResearchSnapshot["legacyAgentRuns"]
+): Array<{ iteration: number; logs: string[]; toolPlan: string[] }> {
   const rows: Array<{ iteration: number; logs: string[]; toolPlan: string[] }> = [];
-  for (const run of openCodeRuns) {
+  for (const run of legacyAgentRuns) {
     rows.push({ iteration: run.iteration, logs: run.logs, toolPlan: run.toolPlan });
   }
   return rows;

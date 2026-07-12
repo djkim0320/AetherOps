@@ -64,11 +64,19 @@ export async function emitToolRunChanged(
   projectId: string,
   projectRevision: number,
   jobId: string,
-  toolRunId: string,
+  decisionId: string,
+  attemptId: string,
+  ordinal: number,
   toolName: string,
-  status: "queued" | "running" | "blocked" | "failed" | "completed"
+  status: "queued" | "running" | "blocked" | "failed" | "completed" | "interrupted" | "quarantined"
 ): Promise<void> {
-  await events.appendEvent({ projectId, projectRevision, occurredAt: nowIso(), type: "tool.run.changed", data: { jobId, toolRunId, toolName, status } });
+  await events.appendEvent({
+    projectId,
+    projectRevision,
+    occurredAt: nowIso(),
+    type: "tool.run.changed",
+    data: { jobId, decisionId, attemptId, ordinal, toolName, status }
+  });
 }
 
 export async function emitArtifactCreated(

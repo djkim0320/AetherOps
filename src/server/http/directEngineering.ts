@@ -6,7 +6,7 @@ import type {
   EngineeringProgramDirectRunInput,
   EngineeringProgramDirectRunResult,
   EngineeringProgramRequest,
-  OpenCodeRunInput,
+  ResearchToolInput,
   ResearchArtifact
 } from "../../core/shared/types.js";
 import { EngineeringProgramTool } from "../../core/tools/engineeringProgramTool.js";
@@ -33,7 +33,7 @@ export async function runEngineeringProgramDirect(
   for (const request of programRequests) validateDirectProgramRequest(request, executionSettings);
   const directQuestions = persistentSnapshot.questions.slice(0, 1);
   const directHypotheses = persistentSnapshot.hypotheses.slice(0, 1);
-  const input: OpenCodeRunInput = {
+  const input: ResearchToolInput = {
     project: {
       ...persistentSnapshot.project,
       currentStep: ResearchLoopStep.ExecuteTools,

@@ -63,7 +63,16 @@ describe("shared kernel vocabulary", () => {
 
   it("exports only stable runtime vocabulary from the index", () => {
     expect(Object.keys(kernel).sort()).toEqual(
-      ["CAPABILITY_KINDS", "CAPABILITY_SCOPES", "JOB_KINDS", "JOB_STATUSES", "RESEARCH_LOOP_STEPS", "SSE_EVENT_NAMES"].sort()
+      [
+        "CAPABILITY_KINDS",
+        "CAPABILITY_SCOPES",
+        "JOB_KINDS",
+        "JOB_STATUSES",
+        "RESEARCH_LOOP_STEPS",
+        "SSE_EVENT_NAMES",
+        "isValidPublicSourceDomain",
+        "normalizePublicSourceDomain"
+      ].sort()
     );
   });
 });

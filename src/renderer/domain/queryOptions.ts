@@ -7,8 +7,6 @@ import { shellQueryKeys } from "./queryKeys.js";
 
 const defaults = { gcTime: 300_000, refetchOnReconnect: true, refetchOnWindowFocus: false } as const;
 
-export const projectsListQueryOptions = () =>
-  queryOptions({ ...defaults, queryKey: shellQueryKeys.projects.all(), queryFn: projectApi.list, staleTime: Infinity });
 export const projectQueryOptions = (projectId: string) =>
   queryOptions({
     ...defaults,
@@ -31,6 +29,14 @@ export const projectJobsQueryOptions = (projectId: string) =>
     enabled: Boolean(projectId),
     queryKey: shellQueryKeys.projects.jobs(projectId),
     queryFn: () => jobApi.list(projectId),
+    staleTime: Infinity
+  });
+export const projectJobQueryOptions = (projectId: string, jobId: string) =>
+  queryOptions({
+    ...defaults,
+    enabled: Boolean(projectId && jobId),
+    queryKey: shellQueryKeys.projects.job(projectId, jobId),
+    queryFn: () => jobApi.get(projectId, jobId),
     staleTime: Infinity
   });
 export const settingsQueryOptions = () => queryOptions({ ...defaults, queryKey: shellQueryKeys.settings(), queryFn: settingsApi.get, staleTime: Infinity });

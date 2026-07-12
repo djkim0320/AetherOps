@@ -17,7 +17,6 @@ describe("ResearchLoopStep compatibility", () => {
       "DECIDE_CONTINUATION",
       "FINALIZE_OUTPUTS"
     ]);
-    expect(normalizeResearchLoopStep("RUN_OPENCODE")).toBe(ResearchLoopStep.ExecuteTools);
     expect(normalizeResearchLoopStep("BUILD_RAG_CONTEXT")).toBe(ResearchLoopStep.BuildVectorIndex);
     expect(normalizeResearchLoopStep("DERIVE_EVIDENCE_BASED_RESULT")).toBe(ResearchLoopStep.SynthesizeAndEvaluate);
     expect(() => normalizeResearchLoopStep("UNKNOWN_STEP")).toThrow("Unknown research loop step");

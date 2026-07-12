@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
+import { ko } from "../platform/i18n.js";
 
 export const MIN_DESKTOP_WIDTH = 1280;
 export const MIN_DESKTOP_HEIGHT = 720;
@@ -38,11 +39,9 @@ export function DesktopRequiredBoundary({ children }: { children: ReactNode }): 
   return (
     <main className="desktopGate shell__unsupported" aria-labelledby="desktop-required-title">
       <section className="desktopGate__card shell__unsupportedCard">
-        <p>Desktop workspace</p>
-        <h1 id="desktop-required-title">A larger viewport is required.</h1>
-        <p>
-          AetherOps requires at least {MIN_DESKTOP_WIDTH} by {MIN_DESKTOP_HEIGHT} pixels for its research workspace.
-        </p>
+        <p>{ko.desktopWorkspace}</p>
+        <h1 id="desktop-required-title">{ko.largerViewportRequired}</h1>
+        <p>{ko.desktopRequirement(MIN_DESKTOP_WIDTH, MIN_DESKTOP_HEIGHT)}</p>
       </section>
     </main>
   );

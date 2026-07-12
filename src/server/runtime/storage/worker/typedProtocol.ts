@@ -1,21 +1,27 @@
 import type {
   StorageV2RepositorySet,
   StorageCapabilityAudit,
+  StorageCodexCliExecution,
   StorageCheckpoint,
   StorageEmbeddingInput,
   StorageJobClaimOptions,
   StorageJobEventInput,
   StorageJobInput,
   StorageJobStatusPatch,
+  StorageLlmInvocation,
   StorageMemoryPayload,
   StorageOntologyConstraintPayload,
   StorageOntologyEntityPayload,
   StorageOntologyRelationPayload,
   StorageOntologyRun,
+  StorageNetworkAudit,
   StorageProjectPayload,
   StorageRecordPayload,
   StorageSearchOptions,
   StorageStepAttempt,
+  StorageToolAttempt,
+  StorageToolDecision,
+  StorageToolOutputLink,
   StorageV2OpenOptions
 } from "../v2/index.js";
 
@@ -60,6 +66,19 @@ export type StorageWorkerBaseCommand =
   | { name: "checkpoint.listStepAttempts"; jobId: string }
   | { name: "capability.record"; audit: StorageCapabilityAudit }
   | { name: "capability.listProject"; projectId: string; limit?: number }
+  | { name: "trace.llm.save"; invocation: StorageLlmInvocation }
+  | { name: "trace.llm.listJob"; jobId: string; limit?: number }
+  | { name: "trace.decision.record"; decision: StorageToolDecision }
+  | { name: "trace.decision.listJob"; jobId: string; limit?: number }
+  | { name: "trace.attempt.save"; attempt: StorageToolAttempt }
+  | { name: "trace.attempt.get"; attemptId: string }
+  | { name: "trace.attempt.listJob"; jobId: string; limit?: number }
+  | { name: "trace.codex.save"; execution: StorageCodexCliExecution }
+  | { name: "trace.codex.listJob"; jobId: string; limit?: number }
+  | { name: "trace.output.record"; link: StorageToolOutputLink }
+  | { name: "trace.output.listAttempt"; attemptId: string; limit?: number }
+  | { name: "trace.network.record"; audit: StorageNetworkAudit }
+  | { name: "trace.network.listJob"; jobId: string; limit?: number }
   | { name: "ontology.upsertEntities"; entities: StorageOntologyEntityPayload[] }
   | { name: "ontology.upsertRelations"; relations: StorageOntologyRelationPayload[] }
   | { name: "ontology.upsertConstraints"; constraints: StorageOntologyConstraintPayload[] }

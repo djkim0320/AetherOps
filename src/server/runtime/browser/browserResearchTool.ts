@@ -1,15 +1,17 @@
 import { createId, nowIso } from "../../../core/shared/ids.js";
 import { assessSourceQuality, rankResearchUrls, sourceQualityMetadata } from "../../../core/evidence/sourceQuality.js";
-import type { ResearchTool, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
-import type { AppSettings, EvidenceItem, OpenCodeRunInput, ResearchArtifact, ResearchSource } from "../../../core/shared/types.js";
+import type { ResearchTool, ResearchToolExecutionContext, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import type { AppSettings, EvidenceItem, ResearchToolInput, ResearchArtifact, ResearchSource } from "../../../core/shared/types.js";
 import type { BrowserCollectedPage, BrowserPageCollector } from "./backgroundBrowserRuntime.js";
+import type { ResearchSourceAccessPolicy } from "../../../core/shared/adapterTypes.js";
+import { assertSourceAccess, sourceDiscoveryAllowed } from "../../../core/tools/sourceAccessPolicy.js";
 
 export class BrowserResearchTool implements ResearchTool {
   name = "BackgroundBrowserTool";
 
   constructor(private readonly browser: BrowserPageCollector) {}
 
-  async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
+  async run(input: ResearchToolInput, settings: AppSettings, context?: ResearchToolExecutionContext): Promise<ResearchToolResult> {
     const startedAt = nowIso();
     if (!settings.browserUse.enabled) {
       throw new Error("AetherOps background browser is disabled in settings.");
@@ -18,16 +20,20 @@ export class BrowserResearchTool implements ResearchTool {
       throw new Error("External browsing is disabled by project autonomy or app settings.");
     }
 
-    const query = buildQuery(input);
-    const urls = extractHttpEvidenceUrls(input).slice(0, settings.browserUse.maxPages);
+    const sourceAccess = input.executionContext?.toolPolicy.sourceAccess ?? { mode: "discovery", allowedDomains: [] };
+    const urls = scopedDirectUrls(input, sourceAccess).slice(0, settings.browserUse.maxPages);
+    const query = sourceDiscoveryAllowed(sourceAccess) && !(input.researchPlan?.fetchCandidateUrls?.length ?? 0) ? buildQuery(input) : "";
 
     try {
       const pages = await this.browser.collect({
         project: input.project,
         query,
         urls,
-        settings: settings.browserUse
+        settings: settings.browserUse,
+        sourceAccess,
+        ...(context?.onNetworkAudit ? { onNetworkAudit: (audit) => context.onNetworkAudit?.({ ...audit, sourcePolicy: sourceAccess }) } : {})
       });
+      for (const page of pages) assertSourceAccess(sourceAccess, page.url);
       return completed(input, startedAt, this.name, query, pages, settings);
     } catch (error) {
       throw new Error(`Background browser failed for query "${query}": ${formatError(error)}`, { cause: error });
@@ -36,7 +42,7 @@ export class BrowserResearchTool implements ResearchTool {
 }
 
 function completed(
-  input: OpenCodeRunInput,
+  input: ResearchToolInput,
   startedAt: string,
   toolName: string,
   query: string,
@@ -138,7 +144,7 @@ function completed(
   };
 }
 
-function buildQuery(input: OpenCodeRunInput): string {
+function buildQuery(input: ResearchToolInput): string {
   const plannedQuestion = firstNonEmptyString(input.researchPlan?.targetQuestions);
   const question = plannedQuestion ?? firstOpenQuestionText(input);
   const hypotheses = hypothesisStatements(input);
@@ -160,7 +166,7 @@ function firstNonEmptyString(values: string[] | undefined): string | undefined {
   return undefined;
 }
 
-function firstOpenQuestionText(input: OpenCodeRunInput): string | undefined {
+function firstOpenQuestionText(input: ResearchToolInput): string | undefined {
   for (const question of input.questions) {
     if (question.status === "open") return question.text;
   }
@@ -177,13 +183,31 @@ function compactSearchQuery(value: string): string {
     .slice(0, 280);
 }
 
-function extractHttpEvidenceUrls(input: OpenCodeRunInput): string[] {
+function scopedDirectUrls(input: ResearchToolInput, policy: ResearchSourceAccessPolicy): string[] {
   const urls: string[] = [];
+  for (const value of input.researchPlan?.fetchCandidateUrls ?? []) pushRequiredPlanUrl(urls, policy, value);
+  const secondaryUrls: string[] = [];
   for (const item of input.evidence ?? []) {
     const value = item.sourceUri;
-    if (value?.startsWith("http://") || value?.startsWith("https://")) urls.push(value);
+    if (value) pushAllowedUrl(secondaryUrls, policy, value);
   }
-  return rankResearchUrls(urls);
+  if (policy.mode === "allowlist") for (const value of policy.urls) pushAllowedUrl(secondaryUrls, policy, value);
+  for (const value of rankResearchUrls(secondaryUrls)) if (!urls.includes(value)) urls.push(value);
+  return urls;
+}
+
+function pushRequiredPlanUrl(output: string[], policy: ResearchSourceAccessPolicy, value: string): void {
+  const canonical = assertSourceAccess(policy, value);
+  if (!output.includes(canonical)) output.push(canonical);
+}
+
+function pushAllowedUrl(output: string[], policy: ResearchSourceAccessPolicy, value: string): void {
+  try {
+    const canonical = assertSourceAccess(policy, value);
+    if (!output.includes(canonical)) output.push(canonical);
+  } catch {
+    // The policy boundary rejects out-of-scope plan/evidence URLs before browser navigation.
+  }
 }
 
 function keywordSlice(value: string): string[] {
@@ -196,7 +220,7 @@ function keywordSlice(value: string): string[] {
   return keywords;
 }
 
-function hypothesisIds(input: OpenCodeRunInput): string[] {
+function hypothesisIds(input: ResearchToolInput): string[] {
   const ids: string[] = [];
   for (const hypothesis of input.hypotheses) ids.push(hypothesis.id);
   return ids;
@@ -208,7 +232,7 @@ function pageUrls(pages: BrowserCollectedPage[]): string[] {
   return urls;
 }
 
-function hypothesisStatements(input: OpenCodeRunInput): string {
+function hypothesisStatements(input: ResearchToolInput): string {
   const statements: string[] = [];
   for (const hypothesis of input.hypotheses) statements.push(hypothesis.statement);
   return statements.join(" ");

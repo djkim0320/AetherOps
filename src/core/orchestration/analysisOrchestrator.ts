@@ -288,7 +288,7 @@ export abstract class AnalysisOrchestrator extends ExecutionOrchestrator {
 
   async storeArtifact(projectId: string, artifact: Partial<ResearchArtifact>): Promise<ResearchSnapshot> {
     const snapshot = await this.store.getSnapshot(projectId);
-    const iteration = Math.max(snapshot.openCodeRuns.length, 1);
+    const iteration = Math.max(snapshot.legacyAgentRuns.length, 1);
     const savedArtifact: ResearchArtifact = {
       id: artifact.id ?? createId("artifact"),
       projectId,

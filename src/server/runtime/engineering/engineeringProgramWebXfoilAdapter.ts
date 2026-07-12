@@ -2,21 +2,21 @@ import { excerpt, boundedNumber, boundedPositiveNumber, requestWithCfdSpecDefaul
 import { parseXfoilPolarRows } from "./engineeringProgramXfoilAdapter.js";
 import { resolveWasmAirfoilInput } from "./engineeringProgramCoordinateResolver.js";
 import type { AirfoilCoordinateResolutionPorts } from "../../../core/tools/engineeringProgramTypes.js";
-import type { AppSettings, EngineeringProgramRequest, OpenCodeRunInput } from "../../../core/shared/types.js";
+import type { AppSettings, EngineeringProgramRequest, ResearchToolInput } from "../../../core/shared/types.js";
 import type { XfoilWasmPolarSummary } from "../../../core/tools/engineeringProgramTypes.js";
 
 export function hasConfiguredXfoilWasm(settings: AppSettings): boolean {
-  return settings.engineeringTools.enabled;
+  return settings.allowCodeExecution;
 }
 
 export async function runXfoilWasmPolar(
   request: EngineeringProgramRequest,
   settings: AppSettings,
-  input: OpenCodeRunInput,
+  input: ResearchToolInput,
   ports: Partial<AirfoilCoordinateResolutionPorts> = {}
 ): Promise<XfoilWasmPolarSummary> {
   if (!hasConfiguredXfoilWasm(settings)) {
-    throw new Error("XFOIL WebAssembly polar execution requires engineering program tools to be enabled.");
+    throw new Error("XFOIL WebAssembly polar execution requires Engineering capability to be enabled.");
   }
   const executionRequest = requestWithCfdSpecDefaults(request, "xfoil-wasm", settings);
   const coordinateInput = await resolveWasmAirfoilInput(executionRequest, settings, input, ports);

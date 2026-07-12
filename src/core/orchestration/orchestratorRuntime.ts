@@ -14,21 +14,35 @@ import { ResearchPlanner } from "../planning/researchPlanner.js";
 import { ResearchSpecificationBuilder } from "../planning/researchSpecification.js";
 import { RuntimeRequirementChecker } from "../tools/runtimeRequirements.js";
 import { ToolRunner } from "../tools/toolRunner.js";
+import { CodexCliTool } from "../tools/codexCliTool.js";
 import { ValidationEngine } from "../reasoning/validationEngine.js";
 import { ResultSynthesizer } from "../reasoning/resultSynthesizer.js";
-import { ResearchLoopStep, type AppSettings, type OpenCodeAdapter, type RagEngine, type ResearchStore } from "../shared/types.js";
-import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT, DEFAULT_CODEX_TIMEOUT_MS } from "../../shared/kernel/codexModels.js";
+import {
+  ResearchLoopStep,
+  type AppSettings,
+  type CodexCliAdapter,
+  type RagEngine,
+  type ResearchProject,
+  type ResearchStore,
+  type RuntimeToolDiagnostics
+} from "../shared/types.js";
+import { buildRuntimeToolDiagnostics } from "../tools/runtimeToolDiagnostics.js";
+import {
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
+  DEFAULT_CODEX_TASK_TIMEOUT_MS,
+  DEFAULT_CODEX_TIMEOUT_MS
+} from "../../shared/kernel/codexModels.js";
 
 type SettingsGetter = () => AppSettings | Promise<AppSettings>;
 
 const defaultSettings: AppSettings = {
-  openCodeLlm: {
-    source: "codex-oauth",
+  codex: {
     model: DEFAULT_CODEX_MODEL,
     reasoningEffort: DEFAULT_CODEX_REASONING_EFFORT,
-    timeoutMs: DEFAULT_CODEX_TIMEOUT_MS
+    timeoutMs: DEFAULT_CODEX_TIMEOUT_MS,
+    taskTimeoutMs: DEFAULT_CODEX_TASK_TIMEOUT_MS
   },
-  openCode: { enabled: false, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled" },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
@@ -66,6 +80,7 @@ const defaultSettings: AppSettings = {
       timeoutMs: 30 * 60_000
     }
   },
+  allowAgent: true,
   allowExternalSearch: false,
   allowCodeExecution: false,
   ontologyExtractionMode: "rule_based",
@@ -88,16 +103,19 @@ export abstract class OrchestratorRuntime {
 
   constructor(
     protected readonly store: ResearchStore,
-    protected readonly openCode: OpenCodeAdapter,
+    protected readonly codexCli: CodexCliAdapter,
     protected readonly ragEngine: RagEngine,
     protected readonly projectRootBase = ".aetherops/projects",
     protected readonly llm: LlmProvider | undefined,
     protected readonly projectStorage: ProjectStorage,
     protected readonly embeddingProvider: EmbeddingProvider,
     protected readonly getSettings: SettingsGetter = () => defaultSettings,
-    protected readonly toolRunner?: ToolRunner
+    protected readonly toolRunner?: ToolRunner,
+    protected readonly runtimeDiagnostics: (settings: AppSettings, project: ResearchProject) => RuntimeToolDiagnostics = (settings) =>
+      buildRuntimeToolDiagnostics(settings)
   ) {
-    this.specificationBuilder = new ResearchSpecificationBuilder(llm);
+    this.toolRunner?.registerTool(new CodexCliTool(codexCli));
+    this.specificationBuilder = new ResearchSpecificationBuilder();
     this.planner = new ResearchPlanner(llm, async (projectId, error, retryAttempt) => {
       await this.saveStepError(projectId, ResearchLoopStep.PlanResearch, error.message, "llm_timeout", {
         ...error.metadata,
@@ -132,9 +150,7 @@ export abstract class OrchestratorRuntime {
   abstract decideContinuation(...args: any[]): any;
   abstract finalizeOutputs(...args: any[]): any;
   abstract storeArtifact(...args: any[]): any;
-  protected abstract persistExecutionOutputs(...args: any[]): any;
   protected abstract persistToolResults(...args: any[]): any;
-  protected abstract createOpenCodeRunAttempt(...args: any[]): any;
   protected abstract preflightExecutionEngine(...args: any[]): any;
   protected abstract ensureResearchDb(...args: any[]): any;
   protected abstract ensureResearchInput(...args: any[]): any;

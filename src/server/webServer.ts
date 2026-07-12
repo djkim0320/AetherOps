@@ -6,6 +6,7 @@ import { AetherOpsOrchestrator } from "../core/orchestration/orchestrator.js";
 import { ApiEmbeddingProvider } from "../core/providers/embeddingProvider.js";
 import { VectorRagEngine } from "../core/retrieval/vectorRagEngine.js";
 import { dedupeResearchTools, ToolRunner } from "../core/tools/toolRunner.js";
+import { CodexCliTool } from "../core/tools/codexCliTool.js";
 import { DurableJobRuntime } from "./composition/durableJobRuntime.js";
 import { registerDurableJobHandlers } from "./composition/registerDurableJobHandlers.js";
 import { runRequiredMigration } from "./composition/migrationGate.js";
@@ -17,8 +18,9 @@ import { handleRpcV2, RpcV2Error } from "./http/v2/rpcRouter.js";
 import { serveProjectEvents } from "./http/v2/sseController.js";
 import { BackgroundBrowserRuntime } from "./runtime/browser/backgroundBrowserRuntime.js";
 import { BrowserResearchTool } from "./runtime/browser/browserResearchTool.js";
-import { CodexOAuthLlmProvider } from "./runtime/opencode/codexOAuthLlmProvider.js";
-import { RealOpenCodeAdapter } from "./runtime/opencode/realOpenCodeAdapter.js";
+import { CodexOAuthLlmProvider } from "./runtime/codex/codexOAuthLlmProvider.js";
+import { CodexCliAdapter } from "./runtime/codex/codexCliAdapter.js";
+import { buildServerRuntimeToolDiagnostics } from "./runtime/engineering/runtimeEngineeringDiagnostics.js";
 import {
   addRestrictedCorsHeaders,
   assertLoopbackHostAllowed,
@@ -28,6 +30,7 @@ import {
 } from "./runtime/security/loopbackRpcSecurity.js";
 import { createLegacyStorageWorker } from "./runtime/storage/worker/legacyStorageClient.js";
 import { createRuntimeResearchTools } from "./runtime/tools/defaultResearchTools.js";
+import { FileToolExecutionWorkspace } from "./runtime/tools/toolExecutionWorkspace.js";
 
 // UTF-8 request decoding is delegated to readJsonBody, which uses decodeStrictUtf8Chunks.
 // Static UTF-8 contracts are delegated to staticFiles: return "text/markdown; charset=utf-8",
@@ -82,31 +85,35 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<We
     }
   };
   const llm = new CodexOAuthLlmProvider({
-    cwd: dataRoot,
+    appRoot,
     settings: async () => {
-      const { openCodeLlm } = await settingsStore.getRuntimeSettings();
+      const { codex } = await settingsStore.getRuntimeSettings();
       return {
-        model: openCodeLlm.model,
-        reasoningEffort: openCodeLlm.reasoningEffort,
-        timeoutMs: openCodeLlm.timeoutMs
+        model: codex.model,
+        reasoningEffort: codex.reasoningEffort,
+        timeoutMs: codex.timeoutMs
       };
     }
   });
-  const openCode = new RealOpenCodeAdapter(settings, { searchRoots: [appRoot, process.cwd()] });
+  const codexCli = new CodexCliAdapter({ appRoot });
   const browserRuntime = new BackgroundBrowserRuntime(dataRoot);
-  const toolRunner = new ToolRunner(dedupeResearchTools([...createRuntimeResearchTools(), new BrowserResearchTool(browserRuntime)]));
+  const toolRunner = new ToolRunner(
+    dedupeResearchTools([...createRuntimeResearchTools(), new BrowserResearchTool(browserRuntime), new CodexCliTool(codexCli)]),
+    new FileToolExecutionWorkspace(dataRoot)
+  );
   const orchestrator = new AetherOpsOrchestrator(
     store,
-    openCode,
+    codexCli,
     new VectorRagEngine(embeddingProvider),
     join(dataRoot, "projects"),
     llm,
     legacyStorage.projectStorage,
     embeddingProvider,
     settings,
-    toolRunner
+    toolRunner,
+    (runtimeSettings) => buildServerRuntimeToolDiagnostics(runtimeSettings)
   );
-  registerDurableJobHandlers({ orchestrator, settingsStore, jobs, events: jobs });
+  registerDurableJobHandlers({ dataRoot, orchestrator, settingsStore, jobs, events: jobs, codexCli });
   await jobs.initialize();
 
   const server = createServer(async (request, response) => {
@@ -178,6 +185,7 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<We
     if (closed) return;
     closed = true;
     llm.dispose();
+    await codexCli.dispose();
     await jobs.close();
     await legacyStorage.close();
     await new Promise<void>((resolveClose, rejectClose) => server.close((error) => (error ? rejectClose(error) : resolveClose())));

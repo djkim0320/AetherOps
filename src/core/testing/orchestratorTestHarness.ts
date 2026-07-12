@@ -8,9 +8,9 @@ import type { ProjectStorage } from "../storage/projectStorage.js";
 import { VectorRagEngine } from "../retrieval/vectorRagEngine.js";
 import type {
   AppSettings,
-  OpenCodeAdapter,
-  OpenCodeRunInput,
-  OpenCodeRunOutput,
+  CodexCliAdapter,
+  CodexCliAdapterRequest,
+  CodexCliTaskResult,
   RagEngine,
   ResearchArtifact,
   ResearchDatabase,
@@ -22,8 +22,7 @@ import type {
 } from "../shared/types.js";
 
 export const strictTestSettings: AppSettings = {
-  openCodeLlm: { source: "codex-oauth", model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000 },
-  openCode: { enabled: true, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
+  codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 600_000 },
   webSearch: { provider: "disabled" },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 64, apiKey: "test-key", apiKeyConfigured: true },
   browserUse: { enabled: false, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: false },
@@ -61,6 +60,7 @@ export const strictTestSettings: AppSettings = {
       timeoutMs: 30 * 60_000
     }
   },
+  allowAgent: true,
   allowExternalSearch: false,
   allowCodeExecution: false,
   ontologyExtractionMode: "rule_based",
@@ -78,7 +78,7 @@ export const strictResearchInput = {
 export function createStrictTestOrchestrator(
   options: {
     store?: ResearchStore;
-    openCode?: OpenCodeAdapter;
+    codexCli?: CodexCliAdapter;
     ragEngine?: RagEngine;
     llm?: LlmProvider;
     embeddingProvider?: EmbeddingProvider;
@@ -91,7 +91,7 @@ export function createStrictTestOrchestrator(
   const embeddingProvider = options.embeddingProvider ?? new DeterministicEmbeddingProvider(strictTestSettings.embedding.dimensions ?? 64);
   return new AetherOpsOrchestrator(
     options.store ?? new InMemoryResearchStore(),
-    options.openCode ?? new DeterministicOpenCodeAdapter(),
+    options.codexCli ?? new DeterministicCodexCliAdapter(),
     options.ragEngine ?? new VectorRagEngine(embeddingProvider),
     options.projectRootBase ?? ".aetherops/test-projects",
     options.llm ?? new DeterministicLlmProvider(),
@@ -155,11 +155,27 @@ export class DeterministicLlmProvider implements LlmProvider {
         objective: secondIteration ? "Iteration 2: resolve remaining validation gaps." : "Iteration 1: gather traceable execution evidence.",
         targetQuestions: ["q1"],
         targetHypotheses: ["h1"],
-        requiredTools: ["OpenCodeTool", "ArtifactWriterTool", "DataAnalysisTool"],
+        toolRequests: [
+          {
+            intentId: "analyze-results",
+            toolName: "DataAnalysisTool",
+            purpose: "Analyze the deterministic research evidence.",
+            expectedOutcome: "A traceable evidence assessment.",
+            inputs: { checks: ["evidence_coverage", "hypothesis_coverage"] }
+          },
+          {
+            intentId: "write-artifact",
+            toolName: "ArtifactWriterTool",
+            purpose: "Write the deterministic research note.",
+            expectedOutcome: "A persisted iteration research note.",
+            inputs: { artifacts: [{ relativePath: "artifacts/research-note.md", kind: "research_report", format: "markdown" }] }
+          }
+        ],
         expectedSources: ["tool log", "artifact"],
         expectedArtifacts: ["research-note.md"],
-        executionSteps: ["Run OpenCodeTool", "Normalize outputs", "Validate hypotheses"],
-        stopCriteria: ["Enough cited evidence exists", "Internal safety cap reached"]
+        executionSteps: ["Analyze outputs", "Write the research note", "Validate hypotheses"],
+        stopCriteria: ["Enough cited evidence exists", "Internal safety cap reached"],
+        fetchCandidateUrls: []
       } as T;
     }
     if (request.schemaName === "AetherOpsEvidenceBasedResult") {
@@ -198,52 +214,28 @@ export class DeterministicLlmProvider implements LlmProvider {
   }
 }
 
-export class DeterministicOpenCodeAdapter implements OpenCodeAdapter {
-  async run(input: OpenCodeRunInput): Promise<OpenCodeRunOutput> {
-    const createdAt = nowIso();
-    const artifact = {
-      id: `artifact-${input.iteration}`,
-      projectId: input.project.id,
-      category: "generated_artifact" as const,
-      title: `Deterministic analysis ${input.iteration}`,
-      relativePath: `artifacts/iteration-${input.iteration}/analysis.md`,
-      mimeType: "text/markdown",
-      summary: `Analysis artifact for ${input.project.topic}`,
-      content: `Iteration ${input.iteration} analysis for ${input.project.topic}.`,
-      createdAt
-    };
-    const evidence = {
-      id: `evidence-${input.iteration}`,
-      projectId: input.project.id,
-      category: "experiment_log" as const,
-      title: `Deterministic evidence ${input.iteration}`,
-      summary: `Execution evidence for ${input.project.topic}.`,
-      sourceUri: artifact.relativePath,
-      citation: `${artifact.relativePath}#iteration-${input.iteration}`,
-      keywords: ["analysis", `iteration-${input.iteration}`],
-      linkedHypothesisIds: input.hypotheses.map((item) => item.id),
-      reliabilityScore: 0.65,
-      relevanceScore: 0.7,
-      evidenceStrength: "medium" as const,
-      limitations: ["Test-only evidence, not a real external source."],
-      createdAt
-    };
+export class DeterministicCodexCliAdapter implements CodexCliAdapter {
+  async run(request: CodexCliAdapterRequest): Promise<CodexCliTaskResult> {
     return {
-      run: {
-        id: `opencode-${input.iteration}`,
-        projectId: input.project.id,
-        iteration: input.iteration,
-        prompt: `deterministic test run ${input.iteration}`,
-        toolPlan: ["OpenCodeTool"],
-        status: "completed",
-        logs: [`deterministic run ${input.iteration}`],
-        artifactIds: [artifact.id],
-        evidenceIds: [evidence.id],
-        startedAt: createdAt,
-        completedAt: createdAt
-      },
-      artifacts: [artifact],
-      evidence: [evidence]
+      summary: "Deterministic Codex CLI test execution.",
+      outputs: request.input.outputs.map((output) => ({
+        ...output,
+        absolutePath: `${request.actionRoot}/workspace/outputs/${output.relativePath}`,
+        sha256: "a".repeat(64),
+        bytes: 1
+      })),
+      trace: {
+        model: request.settings.model,
+        reasoningEffort: request.settings.reasoningEffort,
+        sandboxProfile: "aetherops-codex-workspace-v1",
+        networkPolicy: "disabled",
+        durationMs: 1,
+        exitCode: 0,
+        eventCount: 1,
+        workspaceManifestHash: "b".repeat(64),
+        outputManifestHash: "c".repeat(64),
+        terminationReason: "completed"
+      }
     };
   }
 }

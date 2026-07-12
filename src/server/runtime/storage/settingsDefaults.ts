@@ -1,16 +1,26 @@
 import { nowIso } from "../../../core/shared/ids.js";
 import { embeddedEngineeringToolchainStatus } from "../engineering/engineeringToolchain.js";
 import type { AppSettings, EmbeddingSettings, EngineeringProgramSettings, ResearchMetadataSettings, WebSearchSettings } from "../../../core/shared/types.js";
-import { assertCodexSettings, DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT, DEFAULT_CODEX_TIMEOUT_MS } from "../../../shared/kernel/codexModels.js";
+import {
+  assertCodexSettings,
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
+  DEFAULT_CODEX_TASK_TIMEOUT_MS,
+  DEFAULT_CODEX_TIMEOUT_MS
+} from "../../../shared/kernel/codexModels.js";
 
 export interface PersistedSettings {
-  openCodeLlm?: AppSettings["openCodeLlm"];
-  openCode?: AppSettings["openCode"];
+  codex?: AppSettings["codex"];
+  /** Read-only migration inputs. New writes never persist these fields. */
+  openCodeLlm?: Record<string, unknown>;
+  /** Read-only migration input retained only in pre-migration backups. */
+  openCode?: Record<string, unknown>;
   webSearch?: Omit<WebSearchSettings, "apiKey" | "apiKeyConfigured">;
   embedding?: Omit<EmbeddingSettings, "apiKey" | "apiKeyConfigured">;
   browserUse?: AppSettings["browserUse"];
   researchMetadata?: ResearchMetadataSettings;
   engineeringTools?: EngineeringProgramSettings;
+  allowAgent?: boolean;
   allowExternalSearch?: boolean;
   allowCodeExecution?: boolean;
   maxLoopIterations?: number;
@@ -22,13 +32,12 @@ export interface PersistedSettings {
 }
 
 export const defaultSettings: AppSettings = {
-  openCodeLlm: {
-    source: "codex-oauth",
+  codex: {
     model: DEFAULT_CODEX_MODEL,
     reasoningEffort: DEFAULT_CODEX_REASONING_EFFORT,
-    timeoutMs: DEFAULT_CODEX_TIMEOUT_MS
+    timeoutMs: DEFAULT_CODEX_TIMEOUT_MS,
+    taskTimeoutMs: DEFAULT_CODEX_TASK_TIMEOUT_MS
   },
-  openCode: { enabled: true, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
   webSearch: { provider: "disabled", timeoutMs: 10_000 },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
   browserUse: { enabled: true, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: true },
@@ -67,6 +76,7 @@ export const defaultSettings: AppSettings = {
       timeoutMs: 30 * 60_000
     }
   },
+  allowAgent: true,
   allowExternalSearch: true,
   allowCodeExecution: false,
   ontologyExtractionMode: "rule_based",
@@ -75,12 +85,7 @@ export const defaultSettings: AppSettings = {
 };
 
 export function normalizePersisted(settings: PersistedSettings): PersistedSettings {
-  const openCode = {
-    ...defaultSettings.openCode,
-    ...(settings.openCode ?? {}),
-    provider: normalizeRuntimeProvider(settings.openCode?.provider ?? defaultSettings.openCode.provider)
-  };
-  const openCodeLlm = normalizeCodexSettings(settings.openCodeLlm, openCode.timeoutMs);
+  const codex = normalizeCodexSettings(settings.codex, settings.openCodeLlm, settings.openCode?.timeoutMs);
   const embedding = {
     ...defaultSettings.embedding,
     ...(settings.embedding ?? {}),
@@ -88,13 +93,13 @@ export function normalizePersisted(settings: PersistedSettings): PersistedSettin
   };
   return {
     ...settings,
-    openCodeLlm,
-    openCode,
+    codex,
     webSearch: normalizeWebSearch(settings.webSearch),
     embedding,
     browserUse: normalizeBrowserUse(settings.browserUse),
     researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
     engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
+    allowAgent: normalizeStrictBoolean(settings.allowAgent, defaultSettings.allowAgent, "allowAgent"),
     allowExternalSearch: normalizeStrictBoolean(settings.allowExternalSearch, defaultSettings.allowExternalSearch, "allowExternalSearch"),
     allowCodeExecution: normalizeStrictBoolean(settings.allowCodeExecution, defaultSettings.allowCodeExecution, "allowCodeExecution"),
     ontologyExtractionMode: ["llm", "rule_based", "hybrid"].includes(settings.ontologyExtractionMode ?? "")
@@ -110,18 +115,28 @@ export function normalizePersisted(settings: PersistedSettings): PersistedSettin
   };
 }
 
-export function normalizeCodexSettings(value: unknown, legacyTimeoutMs?: number): AppSettings["openCodeLlm"] {
-  if (value === undefined) return { ...defaultSettings.openCodeLlm, timeoutMs: validTimeout(legacyTimeoutMs) ?? DEFAULT_CODEX_TIMEOUT_MS };
-  if (!value || typeof value !== "object") throw new Error("AetherOps Codex settings must be an object.");
-  const input = value as Record<string, unknown>;
+export function normalizeCodexSettings(value: unknown, legacyLlm?: unknown, legacyTaskTimeoutMs?: unknown): AppSettings["codex"] {
+  if (value !== undefined && (!value || typeof value !== "object")) throw new Error("AetherOps Codex settings must be an object.");
+  const input = (value ?? normalizeLegacyCodexSettings(legacyLlm)) as Record<string, unknown>;
+  const legacyTaskTimeout = validTimeout(legacyTaskTimeoutMs);
   const candidate = {
     model: input.model ?? DEFAULT_CODEX_MODEL,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_CODEX_REASONING_EFFORT,
-    timeoutMs: input.timeoutMs ?? validTimeout(legacyTimeoutMs) ?? DEFAULT_CODEX_TIMEOUT_MS
+    timeoutMs: input.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS,
+    taskTimeoutMs: input.taskTimeoutMs ?? Math.max(DEFAULT_CODEX_TASK_TIMEOUT_MS, legacyTaskTimeout ?? 0)
   };
   assertCodexSettings(candidate);
-  if (input.source !== undefined && input.source !== "codex-oauth") throw new Error(`Unsupported Codex settings source: ${String(input.source)}`);
-  return { source: "codex-oauth", ...candidate };
+  return candidate;
+}
+
+function normalizeLegacyCodexSettings(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object") return {};
+  const legacy = value as Record<string, unknown>;
+  return {
+    model: legacy.model,
+    reasoningEffort: legacy.reasoningEffort,
+    timeoutMs: legacy.timeoutMs
+  };
 }
 
 export function normalizeBrowserUse(settings: unknown): AppSettings["browserUse"] {
@@ -256,10 +271,6 @@ function normalizeStrictBoolean(value: unknown, fallback: boolean, field: string
   if (value === undefined) return fallback;
   assertStrictBoolean(value, field);
   return value;
-}
-
-function normalizeRuntimeProvider(provider: unknown): string {
-  return provider === "openrouter" ? "google" : typeof provider === "string" && provider ? provider : "openai";
 }
 
 function normalizeEmbeddingProvider(provider: unknown): EmbeddingSettings["provider"] {

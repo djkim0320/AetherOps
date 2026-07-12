@@ -38,6 +38,19 @@ export const STORAGE_JOB_STATUSES = [
 
 export type StorageJobOperation = "research" | "chat" | "engineering" | (string & {});
 
+export interface StorageCapabilitySet {
+  agent: boolean;
+  engineering: boolean;
+  search: boolean;
+}
+
+export type StorageSourceAccessPolicy = { mode: "offline" } | { mode: "allowlist"; urls: string[] } | { mode: "discovery"; allowedDomains: string[] };
+
+export interface StorageJobToolPolicy {
+  allowCodexCli: boolean;
+  sourceAccess: StorageSourceAccessPolicy;
+}
+
 export interface StorageJobInput {
   id: string;
   projectId: string;
@@ -45,6 +58,10 @@ export interface StorageJobInput {
   payload?: unknown;
   priority?: number;
   idempotencyKey?: string;
+  requestHash?: string;
+  requestedCapabilities?: StorageCapabilitySet;
+  effectiveCapabilities?: StorageCapabilitySet;
+  toolPolicy?: StorageJobToolPolicy;
   requestedBy?: string;
   createdAt?: string;
   queuedAt?: string;
@@ -60,7 +77,13 @@ export interface StorageJob {
   payload: unknown;
   result?: unknown;
   error?: string;
+  blockedReason?: string;
+  failureReason?: string;
   idempotencyKey?: string;
+  requestHash?: string;
+  requestedCapabilities?: StorageCapabilitySet;
+  effectiveCapabilities?: StorageCapabilitySet;
+  toolPolicy?: StorageJobToolPolicy;
   requestedBy?: string;
   leaseOwner?: string;
   leaseExpiresAt?: string;
@@ -82,6 +105,8 @@ export interface StorageJobStatusPatch {
   status: StorageJobStatus;
   result?: unknown;
   error?: string;
+  blockedReason?: string;
+  failureReason?: string;
   leaseOwner?: string;
   leaseExpiresAt?: string;
   startedAt?: string;

@@ -18,7 +18,7 @@ export interface RuntimeRequirementContext {
   snapshot: ResearchSnapshot;
   settings: AppSettings;
   llmAvailable: boolean;
-  openCodeReady?: boolean;
+  codexCliReady?: boolean;
   storageWritable?: boolean;
   registeredToolNames?: string[];
 }
@@ -41,14 +41,22 @@ export class RuntimeRequirementChecker {
 
     if (step === ResearchLoopStep.ExecuteTools) {
       const requiredTools = context.snapshot.researchPlans.at(-1)?.requiredTools ?? [];
-      const openCodeRequired = normalizedToolSet(requiredTools).has("opencodetool");
-      if (openCodeRequired) {
-        requirements.push(requirement("opencode.enabled", "OpenCode 사용 설정", step, settings.openCode.enabled, "OpenCode 도구 엔진을 활성화해야 합니다."));
+      const codexCliRequired = normalizedToolSet(requiredTools).has("codexclitool");
+      if (codexCliRequired) {
+        requirements.push(requirement("codex.agent", "Codex Agent capability", step, settings.allowAgent, "Codex CLI requires the Agent capability."));
         requirements.push(
-          requirement("opencode.command", "OpenCode command/path", step, Boolean(settings.openCode.command?.trim()), "OpenCode command/path가 필요합니다.")
+          requirement("codex.engineering", "Codex Engineering capability", step, settings.allowCodeExecution, "Codex CLI requires the Engineering capability.")
         );
-        if (context.openCodeReady !== undefined) {
-          requirements.push(requirement("opencode.preflight", "OpenCode CLI 준비 상태", step, context.openCodeReady, "OpenCode CLI를 실행할 수 없습니다."));
+        if (context.codexCliReady !== undefined) {
+          requirements.push(
+            requirement(
+              "codex.preflight",
+              "Codex CLI readiness",
+              step,
+              context.codexCliReady,
+              "The bundled Codex CLI cannot enforce the required workspace profile."
+            )
+          );
         }
       }
       requirements.push(...requiredToolRequirements(step, project, settings, requiredTools, context.registeredToolNames ?? []));
@@ -109,7 +117,7 @@ function requirement(key: string, label: string, step: ResearchLoopStep, isSatis
 }
 
 function requiresLlm(step: ResearchLoopStep): boolean {
-  return step === ResearchLoopStep.BuildResearchSpecification || step === ResearchLoopStep.PlanResearch || step === ResearchLoopStep.SynthesizeAndEvaluate;
+  return step === ResearchLoopStep.PlanResearch || step === ResearchLoopStep.SynthesizeAndEvaluate;
 }
 
 function hasResearchInput(snapshot: ResearchSnapshot): boolean {
@@ -128,7 +136,7 @@ function requiredToolRequirements(
   const registered = normalizedToolSet(registeredToolNames);
 
   for (const tool of normalizedTools) {
-    if (tool && tool !== "opencodetool" && !registered.has(tool)) {
+    if (tool && tool !== "codexclitool" && !registered.has(tool)) {
       requirements.push(requirement("tool.registered", "Registered research tool", step, false, `Research plan requires an unregistered tool: ${tool}`));
     }
   }

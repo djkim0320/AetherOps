@@ -33,7 +33,9 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.researchInputs).toHaveLength(1);
     expect(snapshot.questions.length).toBeGreaterThan(0);
     expect(snapshot.hypotheses.every((item) => item.status === "supported" || item.status === "needs_more_evidence")).toBe(true);
-    expect(snapshot.openCodeRuns).toHaveLength(2);
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
+    expect(snapshot.toolRuns.filter((run) => run.toolName === "DataAnalysisTool")).toHaveLength(2);
+    expect(snapshot.toolRuns.filter((run) => run.toolName === "ArtifactWriterTool")).toHaveLength(2);
     expect(snapshot.ragContexts.length).toBeGreaterThanOrEqual(2);
     expect(snapshot.specifications.length).toBeGreaterThan(0);
     expect(snapshot.researchPlans.length).toBeGreaterThanOrEqual(2);
@@ -87,7 +89,9 @@ describe("AetherOpsOrchestrator", () => {
     });
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
-    expect(snapshot.openCodeRuns).toHaveLength(1);
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
+    expect(snapshot.toolRuns.filter((run) => run.toolName === "DataAnalysisTool")).toHaveLength(1);
+    expect(snapshot.toolRuns.filter((run) => run.toolName === "ArtifactWriterTool")).toHaveLength(1);
     expect(snapshot.continuationDecisions.at(-1)?.forceStop).toBe(true);
     expect(snapshot.project.status).toBe("completed");
   });
@@ -106,15 +110,16 @@ describe("AetherOpsOrchestrator", () => {
 
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
-    expect(snapshot.openCodeRuns).toHaveLength(1);
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
+    expect(snapshot.toolRuns.filter((run) => run.toolName === "DataAnalysisTool")).toHaveLength(1);
+    expect(snapshot.toolRuns.filter((run) => run.toolName === "ArtifactWriterTool")).toHaveLength(1);
     expect(snapshot.researchPlans).toHaveLength(planCount);
     expect(snapshot.project.status).toBe("completed");
   });
 
-  it("runs registered research tools without requiring OpenCode when the LLM plan excludes OpenCodeTool", async () => {
+  it("runs registered research tools without requiring Codex CLI when the plan excludes CodexCliTool", async () => {
     const settings: AppSettings = {
       ...strictTestSettings,
-      openCode: { ...strictTestSettings.openCode, enabled: false },
       allowExternalSearch: false,
       allowCodeExecution: false
     };
@@ -122,12 +127,12 @@ describe("AetherOpsOrchestrator", () => {
     const orchestrator = createStrictTestOrchestrator({
       settings,
       llm,
-      openCode: {
+      codexCli: {
         preflight: async () => {
-          throw new Error("OpenCode preflight should not run for a tool-only plan.");
+          throw new Error("Codex CLI preflight should not run for a tool-only plan.");
         },
         run: async () => {
-          throw new Error("OpenCode run should not run for a tool-only plan.");
+          throw new Error("Codex CLI run should not run for a tool-only plan.");
         }
       }
     });
@@ -142,9 +147,9 @@ describe("AetherOpsOrchestrator", () => {
     snapshot = await orchestrator.startLoop(snapshot.project.id);
 
     expect(snapshot.project.status).toBe("completed");
-    expect(snapshot.openCodeRuns).toHaveLength(0);
-    expect(snapshot.toolRuns.map((toolRun) => toolRun.toolName)).toEqual(["ArtifactWriterTool", "DataAnalysisTool"]);
-    expect(snapshot.iterations.some((iteration) => iteration.message.includes("Autonomous registered research tools completed"))).toBe(true);
+    expect(snapshot.legacyAgentRuns).toHaveLength(0);
+    expect(snapshot.toolRuns.map((toolRun) => toolRun.toolName)).toEqual(["DataAnalysisTool", "ArtifactWriterTool"]);
+    expect(snapshot.iterations.some((iteration) => iteration.step === ResearchLoopStep.ExecuteTools)).toBe(true);
   });
 
   it("does not synthesize without a ProjectContextSnapshot", async () => {
@@ -165,7 +170,8 @@ describe("AetherOpsOrchestrator", () => {
     const categories = new Set([...snapshot.evidence.map((item) => item.category), ...snapshot.artifacts.map((item) => item.category)]);
 
     expect(categories.has("generated_artifact")).toBe(true);
-    expect(categories.has("experiment_log")).toBe(true);
+    expect(categories.has("experiment_log")).toBe(false);
+    expect(snapshot.toolRuns.some((run) => run.toolName === "DataAnalysisTool" && run.status === "completed")).toBe(true);
     expect(snapshot.sources.length).toBeGreaterThan(0);
     expect(snapshot.chunks.length).toBeGreaterThan(0);
     expect(snapshot.ontologyEntities.length).toBeGreaterThan(0);
@@ -224,11 +230,29 @@ class ToolOnlyPlanLlmProvider implements LlmProvider {
       objective: "Iteration 1: run registered AetherOps research tools without OpenCode.",
       targetQuestions: ["q1"],
       targetHypotheses: ["h1"],
-      requiredTools: ["ArtifactWriterTool", "DataAnalysisTool"],
+      toolRequests: [
+        {
+          intentId: "analyze-results",
+          toolName: "DataAnalysisTool",
+          purpose: "Analyze the deterministic research evidence.",
+          expectedOutcome: "A traceable evidence assessment.",
+          inputs: { checks: ["evidence_coverage", "hypothesis_coverage"] }
+        },
+        {
+          intentId: "write-artifact",
+          toolName: "ArtifactWriterTool",
+          purpose: "Write the deterministic research note.",
+          expectedOutcome: "A persisted iteration research note.",
+          inputs: {
+            artifacts: [{ relativePath: "artifacts/iteration-1/research-note.md", kind: "research_report", format: "markdown" }]
+          }
+        }
+      ],
       expectedSources: ["tool log", "artifact"],
       expectedArtifacts: ["research-note.md"],
       executionSteps: ["Run registered research tools"],
-      stopCriteria: ["Internal safety cap reached"]
+      stopCriteria: ["Internal safety cap reached"],
+      fetchCandidateUrls: []
     } as T;
   }
 }

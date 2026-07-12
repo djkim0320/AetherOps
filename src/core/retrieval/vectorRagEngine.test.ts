@@ -66,7 +66,7 @@ describe("VectorRagEngine", () => {
       benchmarkPlans: [],
       runtimeBlockers: [],
       stepErrors: [],
-      openCodeRuns: [],
+      legacyAgentRuns: [],
       ragContexts: [],
       results: [],
       iterations: []

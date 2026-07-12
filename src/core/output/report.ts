@@ -13,10 +13,10 @@ import {
   bulletLines,
   formatEvidenceScorecardBlock,
   formatHypothesisVerification,
-  formatOpenCodeOptimizationSection,
+  formatWorkspaceExecutionSection,
   formatValidationBlock,
   groupValidationsByHypothesisId,
-  openCodeOptimizationQuantitativeLines
+  workspaceExecutionQuantitativeLines
 } from "./report/reportSections.js";
 import { appendReferences, appendToolRows, collectLimitations, formatDecisionReason } from "./report/reportLocalization.js";
 
@@ -29,10 +29,10 @@ export function buildResearchReport(snapshot: ResearchSnapshot): ResearchReport 
   const hypothesisVerification = formatHypothesisVerification(snapshot, validationsByHypothesisId);
   const engineeringPolars = collectEngineeringPolars(snapshot);
   const engineeringSection = formatEngineeringPolarSection(engineeringPolars);
-  const openCodeOptimizationSection = formatOpenCodeOptimizationSection(snapshot);
+  const workspaceExecutionSection = formatWorkspaceExecutionSection(snapshot);
   const quantitativeItems = [
     ...engineeringQuantitativeLines(engineeringPolars),
-    ...openCodeOptimizationQuantitativeLines(snapshot),
+    ...workspaceExecutionQuantitativeLines(snapshot),
     ...(latestResult?.quantitativeResults ?? [])
   ];
   const qualitativeItems = filterQualitativeResults(latestResult?.qualitativeResults ?? [], engineeringPolars);
@@ -83,8 +83,8 @@ export function buildResearchReport(snapshot: ResearchSnapshot): ResearchReport 
     "# 공력 해석 결과",
     engineeringSection || "- EngineeringProgramTool의 polar 산출물이 아직 없습니다.",
     "",
-    "# OpenCode 최적화 결과",
-    openCodeOptimizationSection || "- OpenCode 최적화 산출물이 아직 없습니다."
+    "# Codex CLI workspace results",
+    workspaceExecutionSection || "- No completed Codex CLI workspace output is available."
   );
   markdownLines.push(
     "",

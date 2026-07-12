@@ -16,18 +16,19 @@ const now = "2026-07-10T00:00:00.000Z";
 describe("API v2 auxiliary contracts", () => {
   it("accepts the catalog and enforces model-specific reasoning efforts", () => {
     for (const descriptor of CODEX_MODEL_CATALOG) {
-      expect(CodexSettingsSchema.safeParse({ model: descriptor.id, reasoningEffort: "xhigh", timeoutMs: 60_000 }).success).toBe(true);
+      expect(CodexSettingsSchema.safeParse({ model: descriptor.id, reasoningEffort: "xhigh", timeoutMs: 60_000, taskTimeoutMs: 600_000 }).success).toBe(true);
     }
-    expect(CodexSettingsSchema.safeParse({ model: "gpt-5.6", reasoningEffort: "max", timeoutMs: 60_000 }).success).toBe(true);
-    expect(CodexSettingsSchema.safeParse({ model: "gpt-5.5", reasoningEffort: "max", timeoutMs: 60_000 }).success).toBe(false);
+    expect(CodexSettingsSchema.safeParse({ model: "gpt-5.6", reasoningEffort: "max", timeoutMs: 60_000, taskTimeoutMs: 600_000 }).success).toBe(true);
+    expect(CodexSettingsSchema.safeParse({ model: "gpt-5.5", reasoningEffort: "max", timeoutMs: 60_000, taskTimeoutMs: 600_000 }).success).toBe(false);
     for (const model of ["gpt-5.2", "gpt-5.3-codex", "gpt-5.5-codex", "unknown"]) {
-      expect(CodexSettingsSchema.safeParse({ model, reasoningEffort: "xhigh", timeoutMs: 60_000 }).success).toBe(false);
+      expect(CodexSettingsSchema.safeParse({ model, reasoningEffort: "xhigh", timeoutMs: 60_000, taskTimeoutMs: 600_000 }).success).toBe(false);
     }
     expect(
       CodexSettingsSchema.safeParse({
         model: "gpt-5.6",
         reasoningEffort: "xhigh",
         timeoutMs: 60_000,
+        taskTimeoutMs: 600_000,
         provider: "openai",
         apiKey: "secret"
       }).success
@@ -36,7 +37,7 @@ describe("API v2 auxiliary contracts", () => {
 
   it("retains embedding and search secret writes but never exposes response secrets", () => {
     const save = {
-      codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 60_000 },
+      codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 60_000, taskTimeoutMs: 600_000 },
       embedding: { provider: "openai", model: "text-embedding-3-large", dimensions: 3_072, apiKey: "embed-secret" },
       search: { provider: "tavily", endpoint: "https://api.tavily.com/search", timeoutMs: 10_000, apiKey: "search-secret" },
       capabilities
@@ -67,12 +68,16 @@ describe("API v2 auxiliary contracts", () => {
       projectId: "project-1",
       idempotencyKey: "engineering-1",
       requests: [{ target: "xfoil", objective: "Compute a polar", inputs: { naca: "0012" } }],
-      capabilities
+      requestedCapabilities: capabilities
     };
     expect(EngineeringEnqueueParamsSchema.safeParse(enqueue).success).toBe(true);
     expect(EngineeringEnqueueParamsSchema.safeParse({ ...enqueue, projectId: undefined }).success).toBe(false);
-    expect(EngineeringPreflightParamsSchema.safeParse({ projectId: "project-1", targets: ["xfoil"], capabilities }).success).toBe(true);
-    expect(EngineeringPreflightParamsSchema.safeParse({ targets: ["xfoil"], capabilities }).success).toBe(false);
+    expect(EngineeringPreflightParamsSchema.safeParse({ projectId: "project-1", targets: ["xfoil"], requestedCapabilities: capabilities }).success).toBe(true);
+    expect(EngineeringPreflightParamsSchema.safeParse({ targets: ["xfoil"], requestedCapabilities: capabilities }).success).toBe(false);
+    expect(EngineeringEnqueueParamsSchema.safeParse({ ...enqueue, requests: [{ target: "codex", objective: "Implement change", inputs: {} }] }).success).toBe(
+      true
+    );
+    expect(EngineeringEnqueueParamsSchema.safeParse({ ...enqueue, requests: [{ target: "opencode", objective: "legacy", inputs: {} }] }).success).toBe(false);
     expect(
       EngineeringJobReceiptSchema.safeParse({
         jobId: "job-1",

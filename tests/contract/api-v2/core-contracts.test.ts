@@ -99,6 +99,10 @@ describe("project and session contracts", () => {
 });
 
 describe("job contracts", () => {
+  const runPolicy = {
+    requestedCapabilities: { agent: true, engineering: false, search: false },
+    toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" } }
+  } as const;
   it("keeps the complete public status vocabulary and queued receipt", () => {
     expect(JOB_STATUSES_V2).toEqual([
       "queued",
@@ -138,14 +142,44 @@ describe("job contracts", () => {
 
   it.each([
     ["chat.enqueue", { projectId: "p1", sessionId: "s1", content: "hello", clientMutationId: "cm1", idempotencyKey: "ik1" }],
-    ["loop.start", { projectId: "p1", idempotencyKey: "ik2" }],
+    ["loop.start", { projectId: "p1", idempotencyKey: "ik2", ...runPolicy }],
     ["loop.pause", { projectId: "p1", jobId: "j1", expectedProjectRevision: 2 }],
-    ["loop.resume", { projectId: "p1", interruptedJobId: "j1", checkpointId: "c1", idempotencyKey: "ik3" }],
+    ["loop.resume", { projectId: "p1", interruptedJobId: "j1", checkpointId: "c1", idempotencyKey: "ik3", ...runPolicy }],
     ["loop.abort", { projectId: "p1", jobId: "j1", expectedProjectRevision: 2 }],
     ["jobs.get", { projectId: "p1", jobId: "j1" }],
     ["jobs.list", { projectId: "p1" }]
   ])("validates %s", (method, params) => {
     expect(JobRpcRequestSchema.parse({ requestId: `request-${method}`, method, params }).method).toBe(method);
+  });
+
+  it("requires an explicit capability and source/OpenCode policy for research runs", () => {
+    expect(JobRpcRequestSchema.safeParse({ requestId: "r-start", method: "loop.start", params: { projectId: "p1", idempotencyKey: "ik" } }).success).toBe(
+      false
+    );
+    expect(
+      JobRpcRequestSchema.safeParse({
+        requestId: "r-start",
+        method: "loop.start",
+        params: { projectId: "p1", idempotencyKey: "ik", ...runPolicy, requestedCapabilities: { agent: true } }
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects internal, wildcard, and IP literals as discovery domains", () => {
+    for (const domain of ["localhost", "service.internal", "*.example.edu", "127.0.0.1"]) {
+      expect(
+        JobRpcRequestSchema.safeParse({
+          requestId: `r-domain-${domain}`,
+          method: "loop.start",
+          params: {
+            projectId: "p1",
+            idempotencyKey: "ik-domain",
+            requestedCapabilities: { agent: true, engineering: false, search: true },
+            toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "discovery", allowedDomains: [domain] } }
+          }
+        }).success
+      ).toBe(false);
+    }
   });
 });
 
@@ -181,7 +215,7 @@ describe("SSE event contracts", () => {
     ],
     ["run.status.changed", { jobId: "j1", status: "running" }],
     ["run.step.changed", { jobId: "j1", step: "EXECUTE_TOOLS" }],
-    ["tool.run.changed", { jobId: "j1", toolRunId: "t1", toolName: "WebSearch", status: "completed" }],
+    ["tool.run.changed", { jobId: "j1", decisionId: "d1", attemptId: "t1", ordinal: 0, toolName: "WebSearch", status: "completed" }],
     ["artifact.created", { jobId: "j1", artifactId: "a1", name: "report.md", kind: "report" }]
   ])("validates %s", (type, data) => {
     expect(SseEventSchema.parse({ ...common, type, data }).type).toBe(type);

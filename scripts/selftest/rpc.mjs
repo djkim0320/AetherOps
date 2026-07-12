@@ -94,21 +94,38 @@ export async function runBlockedPath(context) {
     scope: "검색 snippet은 evidence가 아님을 유지하며 한 번 실행합니다.",
     budget: "설정 부족 상태의 오프라인 1회 실행"
   });
-  const receipt = await enqueueLoop(context, port, project.id, `blocked-${project.id}`);
+  const receipt = await enqueueLoop(context, port, project.id, `blocked-${project.id}`, {
+    requestedCapabilities: { agent: true, engineering: false, search: false },
+    toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" } }
+  });
   const startedAt = performance.now();
   const terminal = await waitForTerminalJob(context, port, project.id, receipt.jobId, 360_000);
+  const detail = (await rpc(context, port, "jobs.get", { projectId: project.id, jobId: receipt.jobId })).result;
   const snapshot = (await rpc(context, port, "snapshots.get", { projectId: project.id })).result;
+  const runtimeBlockers = Array.isArray(snapshot.data?.runtimeBlockers) ? snapshot.data.runtimeBlockers : [];
+  const stepErrors = Array.isArray(snapshot.data?.stepErrors) ? snapshot.data.stepErrors : [];
   context.results.blockedPath = {
     status: terminal.status,
     projectId: project.id,
     jobId: receipt.jobId,
     elapsedSeconds: Number(((performance.now() - startedAt) / 1_000).toFixed(2)),
     revision: snapshot.revision,
-    currentStep: snapshot.execution?.currentStep
+    currentStep: snapshot.execution?.currentStep,
+    blockedReason: detail.blockedReason,
+    failureReason: detail.failureReason,
+    runtimeBlockers: runtimeBlockers.length,
+    stepErrors: stepErrors.length,
+    latestBlocker: runtimeBlockers.at(-1)
   };
   writeFileSync(join(context.dataRoot, "blocked-path-result.json"), `${JSON.stringify({ snapshot }, null, 2)}\n`, "utf8");
   if (!["blocked", "failed"].includes(terminal.status)) {
     context.results.findings.high.push(`Blocked path ended with ${terminal.status}.`);
+  }
+  if (terminal.status === "blocked" && (!detail.blockedReason || runtimeBlockers.length === 0)) {
+    context.results.findings.high.push("Blocked job did not persist both blockedReason and a runtime blocker.");
+  }
+  if (terminal.status === "failed" && !detail.failureReason) {
+    context.results.findings.high.push("Failed job did not persist failureReason.");
   }
 }
 
@@ -140,7 +157,14 @@ export async function runLivePath(context) {
     scope: "Use real configured providers and one bounded research iteration.",
     budget: "Thirty minutes"
   });
-  const receipt = await enqueueLoop(context, port, project.id, `live-${project.id}`);
+  const search = Boolean(context.results.settings?.capabilities?.search);
+  const receipt = await enqueueLoop(context, port, project.id, `live-${project.id}`, {
+    requestedCapabilities: { agent: true, engineering: false, search },
+    toolPolicy: {
+      allowCodexCli: false,
+      sourceAccess: search ? { mode: "discovery", allowedDomains: [] } : { mode: "offline" }
+    }
+  });
   const terminal = await waitForTerminalJob(context, port, project.id, receipt.jobId, 900_000);
   const snapshot = (await rpc(context, port, "snapshots.get", { projectId: project.id })).result;
   context.results.livePath = {
@@ -247,8 +271,8 @@ async function createProject(context, port, input, capabilities = { search: true
   return updated.project ?? updated;
 }
 
-async function enqueueLoop(context, port, projectId, idempotencyKey) {
-  const result = (await rpc(context, port, "loop.start", { projectId, idempotencyKey })).result;
+async function enqueueLoop(context, port, projectId, idempotencyKey, policy) {
+  const result = (await rpc(context, port, "loop.start", { projectId, idempotencyKey, ...policy })).result;
   return result.receipt ?? result;
 }
 

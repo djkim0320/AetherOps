@@ -82,7 +82,9 @@ export function connectProjectEventStream(options: ProjectEventStreamOptions): (
       return;
     }
     const event = parsed.data;
-    if ((revision > 0 && event.projectRevision > revision + 1) || (lastEventId > 0 && event.id > lastEventId + 1)) {
+    // Event IDs are globally allocated and can legitimately skip when other projects
+    // commit events. Only a project revision jump indicates missing project state.
+    if (revision > 0 && event.projectRevision > revision + 1) {
       revision = event.projectRevision;
       lastEventId = event.id;
       state("gap", "Event gap detected; snapshot refresh required.");

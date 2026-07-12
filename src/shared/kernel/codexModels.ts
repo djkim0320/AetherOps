@@ -29,6 +29,7 @@ export interface CodexSettingsValue {
   readonly model: CodexModelId;
   readonly reasoningEffort: CodexReasoningEffort;
   readonly timeoutMs: number;
+  readonly taskTimeoutMs: number;
 }
 
 const STANDARD_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
@@ -55,6 +56,7 @@ export const CODEX_MODEL_CATALOG: readonly CodexModelDescriptor[] = [
 export const DEFAULT_CODEX_MODEL: CodexModelId = "gpt-5.6";
 export const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = "xhigh";
 export const DEFAULT_CODEX_TIMEOUT_MS = 180_000;
+export const DEFAULT_CODEX_TASK_TIMEOUT_MS = 600_000;
 
 const modelIds = new Set<string>(CODEX_MODEL_IDS);
 const effortIds = new Set<string>(CODEX_REASONING_EFFORTS);
@@ -88,6 +90,9 @@ export function assertCodexSettings(value: unknown): asserts value is CodexSetti
   }
   if (!Number.isInteger(candidate.timeoutMs) || Number(candidate.timeoutMs) < 1_000 || Number(candidate.timeoutMs) > 900_000) {
     throw new Error("Codex timeoutMs must be an integer between 1000 and 900000.");
+  }
+  if (!Number.isInteger(candidate.taskTimeoutMs) || Number(candidate.taskTimeoutMs) < 1_000 || Number(candidate.taskTimeoutMs) > 900_000) {
+    throw new Error("Codex taskTimeoutMs must be an integer between 1000 and 900000.");
   }
 }
 

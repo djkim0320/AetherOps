@@ -1,14 +1,68 @@
-export interface LlmJsonRequest {
+import type { ZodType } from "zod";
+
+export interface LlmJsonRequest<T = unknown> {
   system: string;
   user: string;
   schemaName: string;
   timeoutMs?: number;
+  schema?: ZodType<T>;
+  promptVersion?: string;
+  schemaVersion?: string;
+}
+
+export interface LlmInvocationMetadata {
+  provider: string;
+  model?: string;
+  reasoningEffort?: string;
+  schemaName: string;
+  promptVersion: string;
+  schemaVersion: string;
+  promptHash?: string;
+  responseHash?: string;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  repairCount: 0 | 1;
+  status?: "completed" | "failed";
+  validationErrors?: string[];
+}
+
+export interface LlmJsonCompletion<T> {
+  value: T;
+  metadata: LlmInvocationMetadata;
+}
+
+export function invocationMetadataFromError(error: unknown): LlmInvocationMetadata | undefined {
+  if (!error || typeof error !== "object" || !("llmInvocationMetadata" in error)) return undefined;
+  return (error as { llmInvocationMetadata?: LlmInvocationMetadata }).llmInvocationMetadata;
 }
 
 export interface LlmProvider {
   readonly name: string;
   isAvailable(): Promise<boolean>;
-  completeJson<T>(request: LlmJsonRequest): Promise<T>;
+  completeJson<T>(request: LlmJsonRequest<T>): Promise<T>;
+  completeJsonWithMetadata?<T>(request: LlmJsonRequest<T>): Promise<LlmJsonCompletion<T>>;
+}
+
+export async function completeValidatedJson<T>(provider: LlmProvider, request: LlmJsonRequest<T> & { schema: ZodType<T> }): Promise<LlmJsonCompletion<T>> {
+  if (provider.completeJsonWithMetadata) return provider.completeJsonWithMetadata(request);
+  const startedAt = new Date().toISOString();
+  const start = Date.now();
+  const value = request.schema.parse(await provider.completeJson(request));
+  const completedAt = new Date().toISOString();
+  return {
+    value,
+    metadata: {
+      provider: provider.name,
+      schemaName: request.schemaName,
+      promptVersion: request.promptVersion ?? "unspecified",
+      schemaVersion: request.schemaVersion ?? request.schemaName,
+      startedAt,
+      completedAt,
+      durationMs: Date.now() - start,
+      repairCount: 0
+    }
+  };
 }
 
 export class LlmTimeoutError extends Error {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DataAnalysisTool } from "../../../src/core/tools/dataAnalysisTool.js";
+import type { ResearchToolExecutionContext } from "../../../src/core/tools/researchToolTypes.js";
 import { createdAt, installToolRunnerTestCleanup, runInput, webSource } from "./toolRunner.integration.support.js";
 
 installToolRunnerTestCleanup();
@@ -105,7 +106,7 @@ describe("DataAnalysisTool", () => {
       ]
     };
 
-    const result = await new DataAnalysisTool().run(input);
+    const result = await new DataAnalysisTool().run(input, undefined, analysisContext());
 
     expect(result.evidence).toEqual([]);
     expect(result.sources).toEqual([]);
@@ -118,30 +119,18 @@ describe("DataAnalysisTool", () => {
       traceabilityKindDistribution: { external_source: 1, internal_artifact: 1 },
       hypothesisEvidenceCoverage: { h1: { linkedEvidenceCount: 1, supportEligibleEvidenceCount: 1 } },
       validationStatusDistribution: { partially_supported: 1 },
-      iterationGrowthSummary: {
-        iteration: 1,
-        evidenceCount: 2,
-        artifactCount: 1,
-        sourceCount: 1,
-        toolRunCount: 1,
-        normalizedRecordCount: 2,
-        validationResultCount: 1,
-        projectContextSnapshotCount: 0,
-        synthesizedResultCount: 0
-      },
       inputAvailability: {
         normalizedRecordCount: 2,
         validationResultCount: 1,
         projectContextSnapshotCount: 0,
         resultCount: 0
       },
-      missingInputWarnings: ["projectContextSnapshots input was not available; context coverage analysis may be incomplete."],
-      evidenceGapsFromLatestValidation: ["Need a stronger source."]
+      evidenceGaps: expect.arrayContaining(["Need a stronger source."])
     });
   });
 
   it("reports missing analysis inputs explicitly", async () => {
-    const result = await new DataAnalysisTool().run({ ...runInput(["DataAnalysisTool"]), evidence: [] });
+    const result = await new DataAnalysisTool().run({ ...runInput(["DataAnalysisTool"]), evidence: [] }, undefined, analysisContext());
 
     expect(result.toolRun.output).toMatchObject({
       supportEligibleEvidenceCount: 0,
@@ -150,10 +139,18 @@ describe("DataAnalysisTool", () => {
         validationResultCount: 0,
         projectContextSnapshotCount: 0
       },
-      missingInputWarnings: expect.arrayContaining([
-        "normalizedRecords input was not available; support eligibility may be undercounted.",
-        "validationResults input was not available; latest evidence gaps may be incomplete."
-      ])
+      checkAssessments: expect.arrayContaining([expect.objectContaining({ check: "evidence_coverage", status: "unverifiable" })])
     });
   });
 });
+
+function analysisContext(): ResearchToolExecutionContext {
+  return {
+    signal: new AbortController().signal,
+    attemptId: "attempt-analysis",
+    decisionId: "decision-analysis",
+    ordinal: 0,
+    phase: "analysis",
+    inputs: { checks: ["evidence_coverage", "hypothesis_coverage"] }
+  };
+}

@@ -7,7 +7,7 @@ export function normalizeEngineeringProgramRequests(value: unknown): Engineering
   if (!Array.isArray(value)) return [];
   const requests: EngineeringProgramRequest[] = [];
   for (const item of value) {
-    if (!item || typeof item !== "object") continue;
+    if (!item || typeof item !== "object") throw new Error("EngineeringProgramTool request entries must be objects.");
     const request = item as Partial<EngineeringProgramRequest>;
     if (
       request.kind !== "toolchain-check" &&
@@ -17,14 +17,31 @@ export function normalizeEngineeringProgramRequests(value: unknown): Engineering
       request.kind !== "su2-case-run" &&
       request.kind !== "openvsp-analysis-run" &&
       request.kind !== "xflr5-analysis-run"
-    )
-      continue;
+    ) {
+      throw new Error(`Unsupported EngineeringProgramTool request kind: ${String(request.kind)}`);
+    }
+    const normalizedTarget = normalizeEngineeringProgramTarget(request.target);
+    if (request.target !== undefined && !normalizedTarget) {
+      throw new Error(`Unsupported EngineeringProgramTool target: ${String(request.target)}`);
+    }
+    assertKindTarget(request.kind, normalizedTarget);
+    const cfdRunSpec = normalizeEngineeringCfdRunSpec(request.cfdRunSpec);
+    if (cfdRunSpec && normalizedTarget && cfdRunSpec.target !== normalizedTarget) {
+      throw new Error(`${request.kind} received cfdRunSpec.target=${cfdRunSpec.target}; expected ${normalizedTarget}.`);
+    }
+    if (cfdRunSpec && !solverAllowedForTarget(cfdRunSpec.solver.name, cfdRunSpec.target)) {
+      throw new Error(`${cfdRunSpec.target} CFD execution received incompatible solver ${cfdRunSpec.solver.name}.`);
+    }
+    if (cfdRunSpec?.geometry.source === "configuredCase" && !cfdRunSpec.geometry.configuredCaseId) {
+      throw new Error("cfdRunSpec.geometry.configuredCaseId is required for configuredCase geometry.");
+    }
     requests.push({
       kind: request.kind,
-      target: normalizeEngineeringProgramTarget(request.target),
-      cfdRunSpec: normalizeCfdRunSpec(request.cfdRunSpec),
+      target: normalizedTarget,
+      cfdRunSpec,
       artifactPath: typeof request.artifactPath === "string" ? request.artifactPath : undefined,
       sourceUrl: typeof request.sourceUrl === "string" ? request.sourceUrl : undefined,
+      coordinateBindingId: typeof request.coordinateBindingId === "string" ? request.coordinateBindingId : undefined,
       outputFileName: typeof request.outputFileName === "string" ? request.outputFileName : undefined,
       naca: typeof request.naca === "string" ? request.naca : undefined,
       reynolds: finiteNumber(request.reynolds),
@@ -36,6 +53,13 @@ export function normalizeEngineeringProgramRequests(value: unknown): Engineering
     });
   }
   return requests;
+}
+
+function normalizeEngineeringCfdRunSpec(value: unknown): CfdRunSpec | undefined {
+  if (value === undefined) return undefined;
+  const normalized = normalizeCfdRunSpec(value);
+  if (!normalized) throw new Error("EngineeringProgramTool received an invalid cfdRunSpec.");
+  return normalized;
 }
 
 export function supportedEngineeringProgramKinds(): EngineeringProgramRequest["kind"][] {
@@ -120,6 +144,8 @@ export function normalizeCfdRunSpec(value: unknown): CfdRunSpec | undefined {
       artifactPath: stringValue(geometryRecord.artifactPath),
       sourceUrl: stringValue(geometryRecord.sourceUrl),
       naca: stringValue(geometryRecord.naca),
+      configuredCaseId: stringValue(geometryRecord.configuredCaseId),
+      coordinateBindingId: stringValue(geometryRecord.coordinateBindingId),
       description: stringValue(geometryRecord.description)
     },
     flightCondition: {
@@ -261,7 +287,21 @@ function validateCfdGeometry(
   }
   if (geometry.source === "configuredCase") {
     if (target !== "su2" && target !== "openvsp" && target !== "xflr5") throw new Error(`${target} does not support configuredCase geometry.`);
+    if (!geometry.configuredCaseId) throw new Error("cfdRunSpec.geometry.configuredCaseId is required for configuredCase geometry.");
   }
+}
+
+function assertKindTarget(kind: EngineeringProgramRequest["kind"], target: EngineeringProgramTarget | undefined): void {
+  const expected: Partial<Record<EngineeringProgramRequest["kind"], EngineeringProgramTarget>> = {
+    "mesh-inspect": "modeling",
+    "xfoil-polar": "xfoil",
+    "xfoil-wasm-polar": "xfoil-wasm",
+    "su2-case-run": "su2",
+    "openvsp-analysis-run": "openvsp",
+    "xflr5-analysis-run": "xflr5"
+  };
+  const required = expected[kind];
+  if (required && target !== required) throw new Error(`${kind} requires target=${required}; received ${target ?? "missing"}.`);
 }
 
 function validateCfdMesh(spec: CfdRunSpec, settings: AppSettings): void {

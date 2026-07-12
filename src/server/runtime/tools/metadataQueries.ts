@@ -1,4 +1,4 @@
-import type { OpenCodeRunInput } from "../../../core/shared/types.js";
+import type { ResearchToolInput } from "../../../core/shared/types.js";
 
 const MAX_QUERY_LENGTH = 240;
 const MAX_METADATA_QUERIES = 4;
@@ -29,13 +29,13 @@ const metadataStopwords = new Set([
   "without"
 ]);
 
-export function buildMetadataQueries(input: OpenCodeRunInput): string[] {
+export function buildMetadataQueries(input: ResearchToolInput, preferredQuery?: string): string[] {
   const parts: string[] = [];
   for (const question of input.questions) parts.push(question.text);
   for (const question of input.specification?.researchQuestions ?? []) parts.push(question);
   for (const hypothesis of input.hypotheses) parts.push(hypothesis.statement);
   parts.push(input.researchPlan?.objective ?? "", input.project.topic, input.project.goal);
-  const candidates = [input.project.topic, safeKeywordQuery(parts), expandedAcronymQuery(parts), ...parts];
+  const candidates = [preferredQuery ?? "", input.project.topic, safeKeywordQuery(parts), expandedAcronymQuery(parts), ...parts];
   const queries: string[] = [];
   const seen = new Set<string>();
   for (const candidate of candidates) {

@@ -4,17 +4,17 @@ import type {
   EngineeringProgramCapability,
   EngineeringProgramPreflightResult,
   EngineeringProgramTarget,
-  OpenCodeRunInput
+  ResearchToolInput
 } from "../shared/types.js";
 import type { ResearchTool, ResearchToolResult } from "./researchToolTypes.js";
 export type { MeshSummary } from "./engineeringProgramTypes.js";
 
-export type EngineeringProgramExecutor = (input: OpenCodeRunInput, settings: AppSettings) => Promise<ResearchToolResult>;
+export type EngineeringProgramExecutor = (input: ResearchToolInput, settings: AppSettings) => Promise<ResearchToolResult>;
 
 export class EngineeringProgramTool implements ResearchTool {
   readonly name = "EngineeringProgramTool";
   constructor(private readonly execute?: EngineeringProgramExecutor) {}
-  async run(input: OpenCodeRunInput, settings: AppSettings): Promise<ResearchToolResult> {
+  async run(input: ResearchToolInput, settings: AppSettings): Promise<ResearchToolResult> {
     if (!input.project.autonomyPolicy.allowCodeExecution || !settings.allowCodeExecution) {
       throw new Error("EngineeringProgramTool requires engineering permission from project and app settings.");
     }
@@ -24,34 +24,98 @@ export class EngineeringProgramTool implements ResearchTool {
 }
 
 export function hasExecutableEngineeringTool(settings: AppSettings): boolean {
-  const tools = settings.engineeringTools;
-  if (!tools.enabled) return false;
-  return Boolean(
-    (tools.xfoil.enabled && tools.xfoil.command?.trim()) ||
-    (tools.modeling.enabled && tools.modeling.artifactRoot?.trim()) ||
-    (tools.su2.enabled && tools.su2.command?.trim()) ||
-    (tools.openVsp.enabled && tools.openVsp.command?.trim()) ||
-    (tools.xflr5.enabled && tools.xflr5.command?.trim())
-  );
+  return settings.allowCodeExecution;
 }
 
 export function describeEngineeringProgramCapabilities(settings: AppSettings): EngineeringProgramCapability[] {
-  const targets: Array<[EngineeringProgramCapability["kind"], EngineeringProgramTarget, boolean]> = [
-    ["xfoil-polar", "xfoil", Boolean(settings.engineeringTools.xfoil.enabled && settings.engineeringTools.xfoil.command?.trim())],
-    ["mesh-inspect", "modeling", Boolean(settings.engineeringTools.modeling.enabled && settings.engineeringTools.modeling.artifactRoot?.trim())],
-    ["su2-case-run", "su2", Boolean(settings.engineeringTools.su2.enabled && settings.engineeringTools.su2.command?.trim())],
-    ["openvsp-analysis-run", "openvsp", Boolean(settings.engineeringTools.openVsp.enabled && settings.engineeringTools.openVsp.command?.trim())],
-    ["xflr5-analysis-run", "xflr5", Boolean(settings.engineeringTools.xflr5.enabled && settings.engineeringTools.xflr5.command?.trim())]
+  const tools = settings.engineeringTools;
+  const enabled = tools.enabled;
+  const ready = {
+    xfoil: enabled && Boolean(tools.xfoil.enabled && tools.xfoil.command?.trim()),
+    xfoilWasm: settings.allowCodeExecution,
+    modeling: enabled && Boolean(tools.modeling.enabled && tools.modeling.artifactRoot?.trim()),
+    su2: enabled && Boolean(tools.su2.enabled && tools.su2.command?.trim() && tools.su2.caseRoot?.trim() && tools.su2.configFile?.trim()),
+    openVsp: enabled && Boolean(tools.openVsp.enabled && tools.openVsp.command?.trim()),
+    xflr5: enabled && Boolean(tools.xflr5.enabled && tools.xflr5.command?.trim())
+  };
+  const capabilities: EngineeringProgramCapability[] = [
+    capability(
+      "toolchain-check",
+      "all",
+      Object.values(ready).some(Boolean),
+      ["kind"],
+      ["target", "reason"],
+      "Probe configured engineering targets.",
+      "No engineering target is configured."
+    ),
+    capability(
+      "mesh-inspect",
+      "modeling",
+      ready.modeling,
+      ["kind", "artifactPath"],
+      ["reason"],
+      "Inspect a validated project mesh artifact.",
+      "Modeling artifact root is not configured."
+    ),
+    capability(
+      "xfoil-polar",
+      "xfoil",
+      ready.xfoil,
+      ["kind", "naca or artifactPath"],
+      ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "reason"],
+      "Run the embedded native XFOIL executable.",
+      "Embedded XFOIL is not configured."
+    ),
+    capability(
+      "xfoil-wasm-polar",
+      "xfoil-wasm",
+      ready.xfoilWasm,
+      ["kind", "naca or artifactPath or sourceUrl"],
+      ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "reason"],
+      "Run the bundled WebXFOIL WebAssembly solver without substituting another solver.",
+      "WebXFOIL is unavailable because engineering tools are disabled."
+    ),
+    capability(
+      "su2-case-run",
+      "su2",
+      ready.su2,
+      ["kind", "target", "cfdRunSpec"],
+      ["outputFileName", "reason"],
+      "Run a validated SU2 case.",
+      "SU2 is not configured."
+    ),
+    capability(
+      "openvsp-analysis-run",
+      "openvsp",
+      ready.openVsp,
+      ["kind", "target", "cfdRunSpec"],
+      ["outputFileName", "reason"],
+      "Run a validated OpenVSP analysis.",
+      "OpenVSP is not configured."
+    ),
+    capability(
+      "xflr5-analysis-run",
+      "xflr5",
+      ready.xflr5,
+      ["kind", "target", "cfdRunSpec"],
+      ["outputFileName", "reason"],
+      "Run a validated XFLR5 analysis.",
+      "XFLR5 is not configured."
+    )
   ];
-  return targets.map(([kind, target, configured]) => ({
-    kind,
-    target,
-    ready: settings.engineeringTools.enabled && configured,
-    requiredFields: [],
-    optionalFields: [],
-    description: `${target} runtime adapter capability.`,
-    blockedReason: settings.engineeringTools.enabled && configured ? undefined : `${target} runtime is not configured.`
-  }));
+  return capabilities.map((item) => (item.ready ? { ...item, blockedReason: undefined } : item));
+}
+
+function capability(
+  kind: EngineeringProgramCapability["kind"],
+  target: EngineeringProgramCapability["target"],
+  ready: boolean,
+  requiredFields: string[],
+  optionalFields: string[],
+  description: string,
+  blockedReason: string
+): EngineeringProgramCapability {
+  return { kind, target, ready, requiredFields, optionalFields, description, blockedReason };
 }
 
 export async function runEngineeringProgramPreflight(settings: AppSettings, target?: EngineeringProgramTarget): Promise<EngineeringProgramPreflightResult> {

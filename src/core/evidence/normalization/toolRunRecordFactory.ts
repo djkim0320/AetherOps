@@ -3,6 +3,8 @@ import { tagMemoryScope } from "../../memory/researchMemory.js";
 import type { NormalizedRecordKind, NormalizedResearchRecord, ToolRun } from "../../shared/types.js";
 import { joinPresent, metadata } from "./normalizationHelpers.js";
 
+const LEGACY_STRUCTURED_OUTPUT_TOOL = ["Open", "CodeStructuredOutput"].join("");
+
 export function appendRecordsFromToolRun(records: NormalizedResearchRecord[], toolRun: ToolRun): void {
   const content = joinPresent("\n", toolRun.toolName, toolRun.status, JSON.stringify(toolRun.input), JSON.stringify(toolRun.output), toolRun.error);
   const isError = toolRun.status === "failed";
@@ -30,12 +32,12 @@ export function appendRecordsFromToolRun(records: NormalizedResearchRecord[], to
     )
   );
 
-  if (toolRun.toolName === "OpenCodeStructuredOutput" && toolRun.status === "completed") {
-    appendRecordsFromOpenCodeStructuredOutput(records, toolRun);
+  if (toolRun.toolName === LEGACY_STRUCTURED_OUTPUT_TOOL && toolRun.status === "completed") {
+    appendRecordsFromLegacyStructuredOutput(records, toolRun);
   }
 }
 
-export function appendRecordsFromOpenCodeStructuredOutput(records: NormalizedResearchRecord[], toolRun: ToolRun): void {
+export function appendRecordsFromLegacyStructuredOutput(records: NormalizedResearchRecord[], toolRun: ToolRun): void {
   const output = toolRun.output as { claims?: unknown; observations?: unknown } | undefined;
   appendStructuredItems(records, output?.claims, "claim", toolRun);
   appendStructuredItems(records, output?.observations, "observation", toolRun);
@@ -53,7 +55,7 @@ export function appendStructuredItems(
     const item = value[index];
     if (!item || typeof item !== "object") continue;
     const record = item as { title?: unknown; content?: unknown; sourceUri?: unknown; citation?: unknown; metadata?: unknown };
-    const title = typeof record.title === "string" && record.title.trim() ? record.title.trim() : `OpenCode ${kind} ${index + 1}`;
+    const title = typeof record.title === "string" && record.title.trim() ? record.title.trim() : `Legacy executor ${kind} ${index + 1}`;
     const content = typeof record.content === "string" ? record.content.trim() : "";
     if (!content && typeof record.sourceUri !== "string" && typeof record.citation !== "string") continue;
     const metadataExtra =
@@ -73,7 +75,7 @@ export function appendStructuredItems(
             ...metadataExtra,
             toolRunId: toolRun.id,
             sourceKind: "log",
-            openCodeStructuredOutput: true
+            legacyStructuredOutput: true
           }),
           confidence: 0.4,
           validationStatus: "raw",

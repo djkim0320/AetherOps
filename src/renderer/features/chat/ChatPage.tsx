@@ -1,16 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Send } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Button } from "../../components/ui/button.js";
-import { ScrollArea } from "../../components/ui/scroll-area.js";
-import { Textarea } from "../../components/ui/textarea.js";
 import { jobApi } from "../../domain/jobApi.js";
 import { projectApi } from "../../domain/projectApi.js";
 import { shellQueryKeys } from "../../domain/queryKeys.js";
 import { projectQueryOptions, projectSnapshotQueryOptions } from "../../domain/queryOptions.js";
+import { ChatComposer } from "./ChatComposer.js";
 import styles from "./ChatPage.module.css";
+import { ChatTranscript } from "./ChatTranscript.js";
 import { pendingMessagesForDisplay, selectChatMessages, type PendingChatMessage } from "./transcript.js";
+import { ko } from "../../platform/i18n.js";
 
 export function ChatPage({ newSession = false }: { newSession?: boolean }): ReactElement {
   const { projectId = "", sessionId: routeSessionId } = useParams();
@@ -25,15 +24,14 @@ export function ChatPage({ newSession = false }: { newSession?: boolean }): Reac
     initialData: [] as PendingChatMessage[],
     staleTime: Number.POSITIVE_INFINITY
   });
-  const composing = useRef(false);
-  const messages = useMemo(() => {
-    return selectChatMessages(snapshot.data?.data.messages, routeSessionId);
-  }, [routeSessionId, snapshot.data]);
-  const visiblePending = pendingMessagesForDisplay(messages, pending.data);
+  const rawMessages = snapshot.data?.data.messages;
+  const messages = useMemo(() => selectChatMessages(rawMessages, routeSessionId), [rawMessages, routeSessionId]);
+  const visiblePending = useMemo(() => pendingMessagesForDisplay(messages, pending.data), [messages, pending.data]);
+
   useEffect(() => {
-    if (visiblePending.length === pending.data.length) return;
+    if (samePendingMessages(visiblePending, pending.data)) return;
     queryClient.setQueryData(shellQueryKeys.projects.pendingChat(projectId), visiblePending);
-  }, [pending.data.length, projectId, queryClient, visiblePending]);
+  }, [pending.data, projectId, queryClient, visiblePending]);
 
   const send = useMutation({
     mutationFn: async ({ content, clientMutationId }: PendingChatMessage) => {
@@ -62,65 +60,27 @@ export function ChatPage({ newSession = false }: { newSession?: boolean }): Reac
         )
     });
   }
-  function keyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key === "Enter" && !event.shiftKey && !composing.current) {
-      event.preventDefault();
-      submit();
-    }
-  }
 
   return (
     <section className={styles.chat} data-ui="chat-workspace" aria-labelledby="chat-title">
       <header className={styles.title}>
-        <p>{project.data?.input.topic ?? "Project"}</p>
-        <h1 id="chat-title">Research chat</h1>
-      </header>
-      <ScrollArea className={styles.transcript}>
-        <div className={styles.messages} data-ui="chat-transcript" aria-live="polite">
-          {messages.length + visiblePending.length === 0 ? (
-            <div className={styles.welcome}>
-              <h2>Start with a question</h2>
-              <p>Your message is queued in this project&apos;s durable execution lane.</p>
-            </div>
-          ) : null}
-          {messages.map((message) => (
-            <article key={message.id} className={styles.message} data-role={message.role}>
-              <span>{message.role === "user" ? "You" : "AetherOps"}</span>
-              <p>{message.content}</p>
-            </article>
-          ))}
-          {visiblePending.map((message) => (
-            <article key={message.clientMutationId} className={styles.message} data-role="user" data-pending="true">
-              <span>You · pending</span>
-              <p>{message.content}</p>
-            </article>
-          ))}
+        <div>
+          <p>{ko.researchConversation}</p>
+          <h1 id="chat-title">{project.data?.input.topic ?? ko.unnamedProject}</h1>
         </div>
-      </ScrollArea>
-      <div className={styles.composer} data-ui="chat-composer">
-        <Textarea
-          aria-label="Message"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={keyDown}
-          onCompositionStart={() => {
-            composing.current = true;
-          }}
-          onCompositionEnd={() => {
-            composing.current = false;
-          }}
-          placeholder="Ask a research question"
-          rows={3}
-        />
-        <Button size="icon" onClick={submit} disabled={!draft.trim() || send.isPending} aria-label="Send message">
-          <Send aria-hidden="true" />
-        </Button>
-        {send.error ? (
-          <p role="alert" className={styles.error}>
-            {send.error.message}
-          </p>
-        ) : null}
-      </div>
+        <span>
+          {messages.length} {ko.messages}
+        </span>
+      </header>
+      <ChatTranscript messages={messages} pending={visiblePending} topic={project.data?.input.topic} />
+      <ChatComposer draft={draft} sending={send.isPending} error={send.error} onDraftChange={setDraft} onSubmit={submit} />
     </section>
+  );
+}
+
+function samePendingMessages(left: PendingChatMessage[], right: PendingChatMessage[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => item.clientMutationId === right[index]?.clientMutationId && item.content === right[index]?.content)
   );
 }

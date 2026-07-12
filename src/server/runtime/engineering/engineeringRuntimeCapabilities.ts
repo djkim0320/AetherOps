@@ -6,7 +6,6 @@ import { hasConfiguredXfoilWasm } from "./engineeringProgramWebXfoilAdapter.js";
 import { hasConfiguredXfoil } from "./engineeringProgramXfoilAdapter.js";
 
 export function hasExecutableEngineeringTool(settings: AppSettings): boolean {
-  if (!settings.engineeringTools.enabled) return false;
   return (
     hasConfiguredXfoil(settings) ||
     hasConfiguredXfoilWasm(settings) ||
@@ -21,7 +20,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
   const toolsEnabled = settings.engineeringTools.enabled;
   const ready = {
     xfoil: toolsEnabled && hasConfiguredXfoil(settings),
-    xfoilWasm: toolsEnabled && hasConfiguredXfoilWasm(settings),
+    xfoilWasm: hasConfiguredXfoilWasm(settings),
     modeling: toolsEnabled && hasConfiguredModelingRoot(settings),
     su2: toolsEnabled && hasConfiguredSu2(settings),
     openVsp: toolsEnabled && hasConfiguredOpenVsp(settings),

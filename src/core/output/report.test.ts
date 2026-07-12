@@ -30,6 +30,39 @@ describe("buildResearchReport evidence scorecards", () => {
     );
     expect(report.comprehensiveReport).toContain("Evidence: e1");
   });
+
+  it("labels current Codex CLI runs separately from archived executor history", () => {
+    const current = snapshot([]);
+    current.toolRuns.push({
+      id: "tool-codex",
+      projectId: current.project.id,
+      iteration: 1,
+      toolName: "CodexCliTool",
+      input: {},
+      output: {},
+      status: "completed",
+      startedAt: createdAt,
+      completedAt: createdAt
+    });
+    current.legacyAgentRuns.push({
+      id: "legacy-run",
+      projectId: current.project.id,
+      iteration: 1,
+      prompt: "archived",
+      status: "completed",
+      toolPlan: ["legacy-tool"],
+      logs: [],
+      artifactIds: [],
+      evidenceIds: [],
+      startedAt: createdAt,
+      completedAt: createdAt
+    });
+
+    const report = buildResearchReport(current);
+    expect(report.comprehensiveReport).toContain("## Codex CLI run tool-codex");
+    expect(report.comprehensiveReport).toContain("## Archived legacy executor run legacy-run");
+    expect(report.comprehensiveReport).not.toContain("# OpenCode");
+  });
 });
 
 function snapshot(validationResults: ValidationResult[], results: EvidenceBasedResult[] = []): ResearchSnapshot {
@@ -84,7 +117,7 @@ function snapshot(validationResults: ValidationResult[], results: EvidenceBasedR
     globalMemoryItems: [],
     runtimeBlockers: [],
     stepErrors: [],
-    openCodeRuns: [],
+    legacyAgentRuns: [],
     ragContexts: [],
     results,
     iterations: []

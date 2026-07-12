@@ -187,7 +187,7 @@ function engineeringTemplateRequest(
       kind: "su2-case-run",
       target: "su2",
       outputFileName: "su2-run-output.txt",
-      cfdRunSpec: cfdSpecForCaseTarget("su2", meshArtifact?.relativePath),
+      cfdRunSpec: cfdSpecForCaseTarget("su2", meshArtifact?.relativePath, "su2:configured-case"),
       reason: "Generate a validated SU2 config from the LLM CFD spec, then run the embedded SU2_CFD executable."
     };
   }
@@ -196,7 +196,7 @@ function engineeringTemplateRequest(
       kind: "openvsp-analysis-run",
       target: "openvsp",
       outputFileName: "openvsp-analysis-output.json",
-      cfdRunSpec: cfdSpecForCaseTarget("openvsp", vspArtifact?.relativePath),
+      cfdRunSpec: cfdSpecForCaseTarget("openvsp", vspArtifact?.relativePath, "openvsp:configured-adapter"),
       reason: "Run OpenVSP/VSPAERO with the LLM-generated CFD run spec JSON."
     };
   }
@@ -204,7 +204,7 @@ function engineeringTemplateRequest(
     kind: "xflr5-analysis-run",
     target: "xflr5",
     outputFileName: "xflr5-analysis-output.json",
-    cfdRunSpec: airfoilArtifact ? cfdSpecForCaseTarget("xflr5", airfoilArtifact.relativePath) : cfdSpecForXflr5Naca(),
+    cfdRunSpec: airfoilArtifact ? cfdSpecForCaseTarget("xflr5", airfoilArtifact.relativePath, "xflr5:configured-adapter") : cfdSpecForXflr5Naca(),
     reason: "Run XFLR5 with the LLM-generated CFD run spec JSON."
   };
 }
@@ -245,11 +245,19 @@ function cfdSpecForXfoil(target: Extract<CfdRunSpec["target"], "xfoil" | "xfoil-
   };
 }
 
-function cfdSpecForCaseTarget(target: Extract<CfdRunSpec["target"], "su2" | "openvsp" | "xflr5">, artifactPath?: string): CfdRunSpec {
+function cfdSpecForCaseTarget(
+  target: Extract<CfdRunSpec["target"], "su2" | "openvsp" | "xflr5">,
+  artifactPath?: string,
+  configuredCaseId?: string
+): CfdRunSpec {
   const solverName = target === "su2" ? "su2" : target === "openvsp" ? "openvsp-vspaero" : "xflr5";
   const geometry = artifactPath
     ? { source: "artifact" as const, artifactPath }
-    : { source: "configuredCase" as const, description: "Use the configured case or adapter script input; no path is invented by the LLM." };
+    : {
+        source: "configuredCase" as const,
+        configuredCaseId: configuredCaseId ?? `${target}:configured-case`,
+        description: "Use the explicitly identified configured case or adapter input; no path is invented by the LLM."
+      };
   return {
     target,
     geometry,

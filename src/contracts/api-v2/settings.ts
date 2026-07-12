@@ -15,7 +15,8 @@ export const CodexSettingsSchema = z
   .object({
     model: CodexModelIdSchema,
     reasoningEffort: CodexReasoningEffortSchema,
-    timeoutMs: positiveTimeoutMs
+    timeoutMs: positiveTimeoutMs,
+    taskTimeoutMs: positiveTimeoutMs
   })
   .strict()
   .superRefine((value, context) => {
@@ -30,6 +31,7 @@ export {
   CODEX_REASONING_EFFORTS,
   DEFAULT_CODEX_MODEL,
   DEFAULT_CODEX_REASONING_EFFORT,
+  DEFAULT_CODEX_TASK_TIMEOUT_MS,
   DEFAULT_CODEX_TIMEOUT_MS,
   assertCodexSettings,
   isCodexModelEffortCompatible,

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "fixtureKind": "sanitized-live-failure-baseline",
+  "sourceReportSha256": "315d14dad06ac2e3e103f6c3cde01f3ebe2194549de7d40f4fc6493045851703",
+  "capturedAt": "2026-07-10T16:13:48.550Z",
+  "runtime": {
+    "provider": "codex-oauth",
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "timeoutMs": 180000,
+    "server": "api-v2",
+    "storage": "sqlite-worker",
+    "syntheticSuccess": false
+  },
+  "cases": [
+    {
+      "id": "official-url-bounded",
+      "expected": {
+        "requiredTools": ["WebFetchTool", "ArtifactWriterTool", "DataAnalysisTool"],
+        "allowedUrls": ["https://www.rfc-editor.org/rfc/rfc9110.html", "https://html.spec.whatwg.org/multipage/server-sent-events.html"],
+        "forbiddenTools": ["OpenCodeTool", "BackgroundBrowserTool", "ResearchMetadataTool", "EngineeringProgramTool"]
+      },
+      "observed": {
+        "terminalStatus": "blocked",
+        "terminalStep": "BUILD_VECTOR_INDEX",
+        "resolvedTools": ["OpenCodeTool", "BackgroundBrowserTool", "WebFetchTool", "ArtifactWriterTool", "DataAnalysisTool"],
+        "attemptedTools": ["BackgroundBrowserTool", "OpenCodeStructuredOutput", "WebFetchTool", "ArtifactWriterTool", "DataAnalysisTool"],
+        "evidenceUrls": [
+          "https://www.semanticscholar.org/",
+          "https://www.semanticscholar.org/about",
+          "https://www.rfc-editor.org/rfc/rfc9110.html",
+          "https://html.spec.whatwg.org/multipage/server-sent-events.html",
+          "https://www.semanticscholar.org/"
+        ],
+        "toolLifecycleSseCount": 0
+      },
+      "verdict": "failed",
+      "failureCodes": ["UNNECESSARY_TOOL", "SOURCE_SCOPE_VIOLATION", "TOOL_TRACE_MISSING"]
+    },
+    {
+      "id": "clark-y-webxfoil-remote",
+      "expected": {
+        "requiredTools": ["WebFetchTool", "EngineeringProgramTool", "DataAnalysisTool", "ArtifactWriterTool"],
+        "requiredEngineeringKind": "xfoil-wasm-polar",
+        "requiredEngineeringTarget": "xfoil-wasm",
+        "forbiddenEngineeringTargets": ["xflr5", "su2", "openvsp"],
+        "sourceUrl": "https://m-selig.ae.illinois.edu/ads/coord/clarky.dat"
+      },
+      "observed": {
+        "terminalStatus": "failed",
+        "terminalStep": "EXECUTE_TOOLS",
+        "resolvedTools": ["WebFetchTool", "EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"],
+        "attemptedTools": ["WebFetchTool", "EngineeringProgramTool"],
+        "engineeringKind": "xflr5-analysis-run",
+        "engineeringTarget": "xflr5",
+        "geometryBinding": "configuredCase-without-identifier",
+        "committedEvidenceCount": 1,
+        "toolLifecycleSseCount": 0
+      },
+      "verdict": "failed",
+      "failureCodes": ["WRONG_SOLVER", "UNGROUNDED_ARGUMENT", "QUARANTINE_LEAK", "TOOL_TRACE_MISSING"]
+    }
+  ]
+}

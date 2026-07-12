@@ -19,7 +19,7 @@ export function codexSettings(settings) {
 export function capabilitySettings(settings) {
   if (settings.capabilities) return settings.capabilities;
   return {
-    agent: true,
+    agent: settings.allowAgent ?? true,
     engineering: Boolean(settings.allowCodeExecution),
     search: Boolean(settings.allowExternalSearch)
   };

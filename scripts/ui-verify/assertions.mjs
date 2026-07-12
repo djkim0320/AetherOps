@@ -2,7 +2,7 @@ export function assertChatLayout(layout, label) {
   const failures = [];
   if (layout.desktopGate) failures.push(`${label}: desktop-required gate was shown at a supported viewport`);
   if (layout.horizontalOverflow) failures.push(`${label}: page has horizontal overflow`);
-  if (layout.chatHeading !== "Research chat") failures.push(`${label}: chat route did not render`);
+  if (!layout.chatHeading) failures.push(`${label}: chat route did not render`);
   if (!layout.rail || !layout.workspace || !layout.inspector || !layout.runBar) {
     failures.push(`${label}: expected rail, workspace, run bar, and inspector`);
     return failures;

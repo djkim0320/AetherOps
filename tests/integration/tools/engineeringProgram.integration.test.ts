@@ -189,28 +189,25 @@ describe("Engineering program adapters", () => {
         ...withoutTarget.researchPlan!,
         programRequests: [{ kind: "su2-case-run", outputFileName: "su2-result.txt" }]
       };
-      const missingTargetResult = await new EngineeringProgramTool().run(withoutTarget, {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          su2: {
-            ...settings.engineeringTools.su2,
+      await expect(
+        new EngineeringProgramTool().run(withoutTarget, {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
             enabled: true,
-            command: process.execPath,
-            caseRoot,
-            configFile: "case.cfg",
-            runArgsTemplate: ["{config}", "--output", "{output}"],
-            probeArgs: ["--version"]
+            su2: {
+              ...settings.engineeringTools.su2,
+              enabled: true,
+              command: process.execPath,
+              caseRoot,
+              configFile: "case.cfg",
+              runArgsTemplate: ["{config}", "--output", "{output}"],
+              probeArgs: ["--version"]
+            }
           }
-        }
-      });
-
-      expect(missingTargetResult.toolRun.status).toBe("failed");
-      expect(missingTargetResult.toolRun.error).toContain("requires target su2");
-      expect(missingTargetResult.artifacts).toHaveLength(0);
-      expect(missingTargetResult.evidence).toHaveLength(0);
+        })
+      ).rejects.toThrow("requires target=su2");
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }

@@ -5,7 +5,7 @@ import { TimestampSchema, rpcRequestSchema } from "./common.js";
 
 const identifier = z.string().trim().min(1).max(256);
 
-export const EngineeringTargetSchema = z.enum(["xfoil", "webxfoil", "su2", "openvsp", "xflr5", "mesh"]);
+export const EngineeringTargetSchema = z.enum(["xfoil", "webxfoil", "su2", "openvsp", "xflr5", "mesh", "codex"]);
 
 export const EngineeringRequestSchema = z
   .object({
@@ -20,7 +20,7 @@ export const EngineeringEnqueueParamsSchema = z
     projectId: identifier,
     idempotencyKey: identifier,
     requests: z.array(EngineeringRequestSchema).min(1).max(16),
-    capabilities: CapabilityGrantSchema
+    requestedCapabilities: CapabilityGrantSchema
   })
   .strict();
 
@@ -28,7 +28,7 @@ export const EngineeringPreflightParamsSchema = z
   .object({
     projectId: identifier,
     targets: z.array(EngineeringTargetSchema).min(1).max(6),
-    capabilities: CapabilityGrantSchema
+    requestedCapabilities: CapabilityGrantSchema
   })
   .strict();
 

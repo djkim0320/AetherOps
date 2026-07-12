@@ -1,0 +1,46 @@
+name: Autonomy live verification
+
+on:
+  schedule:
+    - cron: "30 16 * * *"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Bounded live autonomy profile"
+        required: true
+        type: choice
+        default: smoke
+        options:
+          - smoke
+          - nightly
+          - release
+
+jobs:
+  live-autonomy:
+    name: ${{ github.event_name == 'schedule' && 'nightly' || inputs.profile }} gpt-5.6-sol/high
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run exact-runtime autonomy evaluation
+        shell: pwsh
+        run: |
+          $profile = if ("${{ github.event_name }}" -eq "schedule") { "nightly" } else { "${{ inputs.profile }}" }
+          npm run autonomy:verify -- --profile $profile
+
+      - name: Upload sanitized autonomy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomy-${{ github.run_id }}
+          if-no-files-found: error
+          include-hidden-files: true
+          path: .tmp/autonomy-verify/**

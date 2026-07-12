@@ -1,7 +1,7 @@
 import type { ResearchTool } from "./researchToolTypes.js";
 
 const canonicalToolOrder = [
-  "opencodetool",
+  "codexclitool",
   "websearchtool",
   "backgroundbrowsertool",
   "webfetchtool",

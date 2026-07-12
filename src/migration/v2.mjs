@@ -25,7 +25,7 @@ export function migrateV1AppDbToV2(sourceDbPath, targetDbPath) {
   const sourceExists = existsSync(sourceDbPath);
   const sourceDb = sourceExists ? openDatabase(sourceDbPath) : undefined;
   const targetDb = createV2Database(targetDbPath, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceSchemaFingerprint: sourceExists ? sqliteSchemaFingerprint(sourceDbPath) : undefined,
     expectedSchemaFingerprint: buildV2SchemaFingerprint()
   });

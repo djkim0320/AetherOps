@@ -17,6 +17,32 @@ afterEach(async () => {
 });
 
 describe("DurableJobRuntime recovery", () => {
+  it("commits an explicit step checkpoint and its SSE event atomically", async () => {
+    const databasePath = createDatabase("step-checkpoint");
+    const seed = new DatabaseSync(databasePath);
+    const now = new Date().toISOString();
+    seed
+      .prepare(
+        `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key,
+         queued_at, created_at, updated_at, payload) values (?, ?, 'research_loop', 'running', 0, 1, ?, ?, ?, ?, ?)`
+      )
+      .run("job-step", "project-step", "step-key", now, now, now, JSON.stringify({ projectRevision: 3 }));
+    seed.close();
+    runtime = new DurableJobRuntime(databasePath, 1);
+
+    const checkpoint = await runtime.commitCheckpoint({
+      projectId: "project-step",
+      jobId: "job-step",
+      step: "EXECUTE_TOOLS",
+      projectRevision: 3
+    });
+
+    await expect(runtime.latestCommittedCheckpoint("job-step")).resolves.toMatchObject({ id: checkpoint.id, status: "committed" });
+    await expect(runtime.eventsAfter("project-step")).resolves.toEqual([
+      expect.objectContaining({ type: "run.step.changed", data: { jobId: "job-step", step: "EXECUTE_TOOLS", checkpointId: checkpoint.id } })
+    ]);
+  });
+
   it("runs a persisted queued job through the registered handler and commits only the completed checkpoint", async () => {
     root = mkdtempSync(join(tmpdir(), "aetherops-durable-runtime-"));
     const databasePath = join(root, "storage.sqlite");
@@ -87,8 +113,11 @@ describe("DurableJobRuntime recovery", () => {
       kind: "chat_reply",
       projectRevision: 1,
       idempotencyKey: "a-1",
-      payload: { label: "ignored" }
+      payload: { label: "a-1" }
     });
+    await expect(
+      runtime.enqueue({ projectId: "project-a", kind: "chat_reply", projectRevision: 1, idempotencyKey: "a-1", payload: { label: "changed" } })
+    ).rejects.toThrow(/request hash does not match/);
     await runtime.enqueue({ projectId: "project-a", kind: "chat_reply", projectRevision: 1, idempotencyKey: "a-2", payload: { label: "a-2" } });
     await runtime.enqueue({ projectId: "project-b", kind: "chat_reply", projectRevision: 1, idempotencyKey: "b-1", payload: { label: "b-1" } });
 
@@ -128,6 +157,65 @@ describe("DurableJobRuntime recovery", () => {
     await runtime.initialize();
 
     await expect(runtime.get("job-expired")).resolves.toMatchObject({ status: "interrupted", failureReason: "Worker lease expired." });
+  });
+
+  it("commits tool attempt state with its public lifecycle event and exposes detailed trace only from getDetail", async () => {
+    const databasePath = createDatabase("trace");
+    const seed = new DatabaseSync(databasePath);
+    const now = new Date().toISOString();
+    seed
+      .prepare(
+        `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key, request_hash, queued_at, created_at, updated_at, payload)
+         values (?, ?, ?, 'queued', 0, 0, ?, ?, ?, ?, ?, ?)`
+      )
+      .run("job-trace", "project-trace", "research_loop", "trace-key", "request-hash", now, now, now, JSON.stringify({ projectRevision: 3 }));
+    seed.close();
+    runtime = new DurableJobRuntime(databasePath, 1);
+    const eventIds: number[] = [];
+    runtime.subscribe((item) => eventIds.push(item.id));
+    await runtime.recordToolDecision({
+      id: "decision-1",
+      projectId: "project-trace",
+      jobId: "job-trace",
+      toolName: "WebFetchTool",
+      purpose: "Fetch the pinned source.",
+      expectedOutcome: "A validated source.",
+      rawSelection: { url: "https://example.com/source" },
+      userPinned: true,
+      policyStatus: "accepted",
+      createdAt: now
+    });
+    await runtime.recordToolAttemptAndEvent({
+      projectRevision: 3,
+      toolName: "WebFetchTool",
+      attempt: {
+        id: "attempt-1",
+        projectId: "project-trace",
+        jobId: "job-trace",
+        decisionId: "decision-1",
+        ordinal: 0,
+        status: "queued",
+        inputHash: "input-hash",
+        queuedAt: now
+      }
+    });
+    const detail = await runtime.getDetail("job-trace");
+    const list = await runtime.list("project-trace");
+    expect(detail).toMatchObject({
+      traceAvailability: "available",
+      trace: {
+        toolDecisions: [{ id: "decision-1" }],
+        toolAttempts: [{ id: "attempt-1", status: "queued" }]
+      }
+    });
+    expect(list.jobs[0]).not.toHaveProperty("trace");
+    expect(eventIds).toHaveLength(1);
+    await expect(runtime.eventsAfter("project-trace")).resolves.toMatchObject([
+      {
+        type: "tool.run.changed",
+        data: { decisionId: "decision-1", attemptId: "attempt-1", ordinal: 0, status: "queued" }
+      }
+    ]);
   });
 });
 

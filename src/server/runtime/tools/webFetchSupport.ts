@@ -1,12 +1,12 @@
 import { extname } from "node:path";
-import type { OpenCodeRunInput, ResearchSource } from "../../../core/shared/types.js";
+import type { ResearchToolInput, ResearchSource } from "../../../core/shared/types.js";
 
 const ALLOWED_FETCH_CONTENT_TYPES = new Set(["text/html", "text/plain", "application/xhtml+xml"]);
 const TEXT_FETCH_EXTENSIONS = new Set([".csv", ".dat", ".json", ".md", ".tab", ".tsv", ".txt"]);
 const HTML_META_CHARSET_PATTERN = /<meta\b[^>]*charset\s*=\s*["']?\s*([a-z0-9._:-]+)/i;
 const LATIN1_TEXT_DECODER = new TextDecoder("latin1");
 
-export function selectFetchTargets(input: OpenCodeRunInput): { urls: string[]; skippedUrls: string[]; duplicateUrls: string[] } {
+export function selectFetchTargets(input: ResearchToolInput): { urls: string[]; skippedUrls: string[]; duplicateUrls: string[] } {
   const alreadyFetched = new Set<string>();
   const sourceCandidates: Array<string | undefined> = [];
   const programSourceCandidates: Array<string | undefined> = [];
@@ -158,7 +158,7 @@ export function runWithConcurrency<T, R>(items: T[], limit: number, task: (item:
   return Promise.all(workers).then(() => results);
 }
 
-export function linkedHypothesisIds(input: OpenCodeRunInput): string[] {
+export function linkedHypothesisIds(input: ResearchToolInput): string[] {
   const ids: string[] = [];
   for (const hypothesis of input.hypotheses) ids.push(hypothesis.id);
   return ids;
@@ -185,8 +185,10 @@ export function arxivPdfUrl(value: string | undefined): string | undefined {
   try {
     const parsed = new URL(value);
     if (parsed.hostname.replace(/^www\./, "").toLowerCase() !== "arxiv.org") return undefined;
-    const match = parsed.pathname.match(/^\/abs\/([^/?#]+)/i);
-    return match?.[1] ? `https://arxiv.org/pdf/${match[1]}` : undefined;
+    const abstractMatch = parsed.pathname.match(/^\/abs\/([^/?#]+)/i);
+    if (abstractMatch?.[1]) return `https://arxiv.org/pdf/${abstractMatch[1]}`;
+    const pdfMatch = parsed.pathname.match(/^\/pdf\/([^/?#]+?)(?:\.pdf)?$/i);
+    return pdfMatch?.[1] ? `https://arxiv.org/pdf/${pdfMatch[1]}` : undefined;
   } catch {
     return undefined;
   }

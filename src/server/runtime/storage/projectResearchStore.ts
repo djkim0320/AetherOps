@@ -8,7 +8,7 @@ import type {
   OntologyConstraint,
   OntologyEntity,
   OntologyRelation,
-  OpenCodeRun,
+  LegacyAgentRun,
   ResearchArtifact,
   ResearchChunk,
   ResearchDatabase,
@@ -102,7 +102,13 @@ export class NodeProjectStorage implements ProjectStorage {
     });
   }
 
-  async writeRunLog(project: ResearchProject, database: ResearchDatabase, iteration: number, run: OpenCodeRun, toolRuns: ToolRun[]): Promise<ResearchSource> {
+  async writeRunLog(
+    project: ResearchProject,
+    database: ResearchDatabase,
+    iteration: number,
+    run: LegacyAgentRun,
+    toolRuns: ToolRun[]
+  ): Promise<ResearchSource> {
     const absolutePath = safeJoin(project.projectRoot, `logs/iteration-${iteration}.json`);
     writeJsonFileSync(absolutePath, { run, toolRuns });
     const source: ResearchSource = {

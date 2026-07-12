@@ -21,7 +21,7 @@ HTMLElement.prototype.setPointerCapture = vi.fn();
 HTMLElement.prototype.releasePointerCapture = vi.fn();
 
 const baseSettings: SettingsResponse = {
-  codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000 },
+  codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 600_000 },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKeyConfigured: true },
   search: { provider: "disabled", timeoutMs: 30_000, apiKeyConfigured: false },
   capabilities: { agent: true, engineering: false, search: false },
@@ -34,26 +34,26 @@ describe("CodexSettingsForm", () => {
   it("shows the selected experimental model's entitlement and preview constraints", () => {
     renderForm({ ...baseSettings, codex: { ...baseSettings.codex, model: "gpt-5.3-codex-spark" } });
 
-    expect(screen.getByRole("region", { name: "Selected model details" }).textContent).toContain("Text-only research preview");
-    expect(screen.getByText("Experimental")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "선택한 모델 세부 정보" }).textContent).toContain("텍스트 전용 연구 미리보기");
+    expect(screen.getByText("실험용")).toBeTruthy();
     expect(screen.getByText("ChatGPT Pro")).toBeTruthy();
   });
 
   it("groups the complete model catalog in the Radix Select", () => {
     renderForm(baseSettings);
     const nativeModelSelect = document.querySelectorAll("select")[0] as HTMLSelectElement;
-    expect(CODEX_MODEL_GROUPS.map((group) => group.label)).toEqual(["Recommended", "Compatibility", "Experimental"]);
+    expect(CODEX_MODEL_GROUPS.map((group) => group.label)).toEqual(["권장", "호환", "실험용"]);
     expect(Array.from(nativeModelSelect.options, (option) => option.text)).toContain("GPT-5.6");
     expect(Array.from(nativeModelSelect.options, (option) => option.text)).toContain("GPT-5.3 Codex Spark");
   });
 
   it("keeps an incompatible effort selected and blocks saving instead of falling back", async () => {
     renderForm({ ...baseSettings, codex: { ...baseSettings.codex, reasoningEffort: "max" } });
-    selectOption("Codex model", "GPT-5.5");
+    selectOption("모델", "GPT-5.5");
 
-    expect((await screen.findByRole("alert")).textContent).toContain("max reasoning is not supported by gpt-5.5");
-    expect(screen.getByRole("combobox", { name: "Reasoning effort" }).textContent).toContain("max");
-    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByRole("alert")).textContent).toContain("최대 추론은 GPT-5.5에서 지원되지 않습니다");
+    expect(screen.getByRole("combobox", { name: "추론 강도" }).textContent).toContain("최대");
+    expect((screen.getByRole("button", { name: "저장" }) as HTMLButtonElement).disabled).toBe(true);
     expect(settingsApi.save).not.toHaveBeenCalled();
   });
 
@@ -61,11 +61,13 @@ describe("CodexSettingsForm", () => {
     const saved = { ...baseSettings, codex: { ...baseSettings.codex, reasoningEffort: "high" as const }, updatedAt: "2026-07-10T00:01:00.000Z" };
     vi.mocked(settingsApi.save).mockResolvedValue(saved);
     const client = renderForm(baseSettings);
-    selectOption("Reasoning effort", "high");
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    selectOption("추론 강도", "높음");
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
     await waitFor(() => expect(settingsApi.save).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(settingsApi.save).mock.calls[0]?.[0]).toMatchObject({ codex: { model: "gpt-5.6", reasoningEffort: "high" } });
+    expect(vi.mocked(settingsApi.save).mock.calls[0]?.[0]).toMatchObject({
+      codex: { model: "gpt-5.6", reasoningEffort: "high", timeoutMs: 180_000, taskTimeoutMs: 600_000 }
+    });
     await waitFor(() => expect(client.getQueryData(["settings"])).toEqual(saved));
   });
 });
@@ -73,7 +75,11 @@ describe("CodexSettingsForm", () => {
 describe("getCodexSettingsValidationError", () => {
   it("allows max only for the GPT-5.6 family", () => {
     expect(getCodexSettingsValidationError("gpt-5.6-terra", "max", 180_000)).toBeUndefined();
-    expect(getCodexSettingsValidationError("gpt-5.4", "max", 180_000)).toContain("not supported");
+    expect(getCodexSettingsValidationError("gpt-5.4", "max", 180_000)).toContain("지원되지 않습니다");
+  });
+
+  it("rejects an invalid workspace task timeout", () => {
+    expect(getCodexSettingsValidationError("gpt-5.6", "high", 180_000, 999)).toContain("워크스페이스 작업 제한 시간");
   });
 });
 
@@ -84,7 +90,7 @@ function renderForm(settings: SettingsResponse): QueryClient {
 }
 
 function selectOption(selectName: string, optionName: string): void {
-  const index = selectName === "Codex model" ? 0 : 1;
+  const index = selectName === "모델" ? 0 : 1;
   const select = document.querySelectorAll("select")[index] as HTMLSelectElement;
   const option = Array.from(select.options).find((candidate) => candidate.text === optionName);
   if (!option) throw new Error(`Missing option: ${optionName}`);

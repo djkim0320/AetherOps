@@ -1,6 +1,7 @@
 import { Navigate, createBrowserRouter } from "react-router-dom";
 import { AppShell } from "./AppShell.js";
 import { RouteErrorBoundary } from "./RouteErrorBoundary.js";
+import { ko } from "../platform/i18n.js";
 
 const projectsPage = () => import("../features/projects/public.js").then((module) => ({ Component: module.ProjectsPage }));
 const newProjectPage = () => import("../features/projects/public.js").then((module) => ({ Component: module.NewProjectPage }));
@@ -17,6 +18,7 @@ export const appRouter = createBrowserRouter([
   {
     element: <AppShell />,
     errorElement: <RouteErrorBoundary />,
+    hydrateFallbackElement: <div role="status">{ko.loadingApp}</div>,
     children: [
       { index: true, element: <Navigate to="/projects" replace /> },
       { path: "projects", lazy: projectsPage },

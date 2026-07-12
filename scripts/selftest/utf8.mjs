@@ -17,7 +17,7 @@ export function auditUtf8Files(files) {
 
 export function auditUtf8File(file) {
   if (!existsSync(file)) {
-    return { text: "", fatalOk: true, hasBom: false, firstBytes: "", relativePath: file };
+    return { text: "", fatalOk: false, hasBom: false, firstBytes: "", relativePath: file, error: "File does not exist." };
   }
   const bytes = readFileSync(file);
   const firstBytes = bytes.subarray(0, 4).toString("hex");

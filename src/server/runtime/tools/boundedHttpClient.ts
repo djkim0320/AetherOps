@@ -3,6 +3,7 @@ import { PublicUrlPolicy } from "./publicUrlPolicy.js";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 10;
+const DEFAULT_USER_AGENT = "AetherOps/0.2 research client";
 
 export interface BoundedHttpClientOptions {
   publicUrlPolicy?: PublicHttpUrlPolicy;
@@ -10,6 +11,15 @@ export interface BoundedHttpClientOptions {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  onNetworkAudit?: (audit: BoundedNetworkAuditEvent) => void | Promise<void>;
+}
+
+export interface BoundedNetworkAuditEvent {
+  url: string;
+  redirectChain: string[];
+  policyDecision: "allowed" | "denied";
+  reason?: string;
+  auditedAt: string;
 }
 
 export interface PublicHttpUrlPolicy {
@@ -36,6 +46,7 @@ export class BoundedHttpClient {
   private readonly timeoutMs: number;
   private readonly maxBytes: number;
   private readonly maxRedirects: number;
+  private readonly onNetworkAudit?: BoundedHttpClientOptions["onNetworkAudit"];
 
   constructor(options: BoundedHttpClientOptions = {}) {
     this.policy = options.publicUrlPolicy ?? new PublicUrlPolicy();
@@ -43,6 +54,7 @@ export class BoundedHttpClient {
     this.timeoutMs = normalizeTimeout(options.timeoutMs, DEFAULT_TIMEOUT_MS);
     this.maxBytes = normalizeMaxBytes(options.maxBytes, DEFAULT_MAX_BYTES);
     this.maxRedirects = normalizeMaxRedirects(options.maxRedirects, DEFAULT_MAX_REDIRECTS);
+    this.onNetworkAudit = options.onNetworkAudit;
   }
 
   async request(url: string, init: RequestInit = {}, options: BoundedHttpRequestOptions = {}): Promise<BoundedHttpResponse> {
@@ -56,6 +68,23 @@ export class BoundedHttpClient {
         contentType: raw.response.headers.get("content-type") ?? "unknown",
         headers: raw.response.headers,
         bytes
+      };
+    } finally {
+      clearTimeout(raw.timeout);
+      raw.controller.abort();
+    }
+  }
+
+  async head(url: string, init: RequestInit = {}, options: BoundedHttpRequestOptions = {}): Promise<BoundedHttpResponse> {
+    const raw = await this.requestRaw(url, { ...init, method: "HEAD", body: undefined }, options);
+    try {
+      return {
+        url: raw.url,
+        status: raw.response.status,
+        statusText: raw.response.statusText,
+        contentType: raw.response.headers.get("content-type") ?? "unknown",
+        headers: raw.response.headers,
+        bytes: new Uint8Array()
       };
     } finally {
       clearTimeout(raw.timeout);
@@ -103,8 +132,10 @@ export class BoundedHttpClient {
     const deadline = Date.now() + this.timeoutMs;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-    let currentUrl = await this.policy.assertPublicHttpUrl(url);
-    let requestInit = normalizeRequestInit(init, options.accept, controller.signal);
+    const requestSignal = init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
+    const redirectChain: string[] = [];
+    let currentUrl = await this.assertAuditedUrl(url, redirectChain);
+    let requestInit = normalizeRequestInit(init, options.accept, requestSignal);
     let completed = false;
 
     try {
@@ -116,8 +147,8 @@ export class BoundedHttpClient {
             throw new Error(`redirect response from ${currentUrl} missing Location header`);
           }
           const nextUrl = new URL(location, currentUrl);
-          currentUrl = await this.policy.assertPublicHttpUrl(nextUrl.toString());
-          requestInit = followRedirectRequestInit(requestInit, response.status, controller.signal);
+          currentUrl = await this.assertAuditedUrl(nextUrl.toString(), redirectChain);
+          requestInit = followRedirectRequestInit(requestInit, response.status, requestSignal);
           continue;
         }
         completed = true;
@@ -129,6 +160,31 @@ export class BoundedHttpClient {
         clearTimeout(timeout);
         controller.abort();
       }
+    }
+  }
+
+  private async assertAuditedUrl(value: string, redirectChain: string[]): Promise<string> {
+    try {
+      const allowed = await this.policy.assertPublicHttpUrl(value);
+      redirectChain.push(redactAuditUrl(allowed));
+      await this.onNetworkAudit?.({
+        url: redactAuditUrl(allowed),
+        redirectChain: [...redirectChain],
+        policyDecision: "allowed",
+        auditedAt: new Date().toISOString()
+      });
+      return allowed;
+    } catch (error) {
+      const redacted = redactAuditUrl(value);
+      if (redirectChain.at(-1) !== redacted) redirectChain.push(redacted);
+      await this.onNetworkAudit?.({
+        url: redacted,
+        redirectChain: [...redirectChain],
+        policyDecision: "denied",
+        reason: formatError(error),
+        auditedAt: new Date().toISOString()
+      });
+      throw error;
     }
   }
 
@@ -148,6 +204,7 @@ export class BoundedHttpClient {
 function normalizeRequestInit(init: RequestInit, accept: string | undefined, signal: AbortSignal): RequestInit {
   const headers = new Headers(init.headers ?? undefined);
   if (accept && !headers.has("accept")) headers.set("accept", accept);
+  if (!headers.has("user-agent")) headers.set("user-agent", DEFAULT_USER_AGENT);
   return { ...init, headers, signal };
 }
 
@@ -262,4 +319,17 @@ function isAbortOrTimeout(error: unknown, deadline: number): boolean {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+export function redactAuditUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    for (const key of Array.from(url.searchParams.keys())) url.searchParams.set(key, "<redacted>");
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "<invalid-url>";
+  }
 }

@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -15,7 +15,8 @@ export function assessCodex(settings) {
   const catalog = SUPPORTED_CODEX_MODELS.has(codex.model) ? "supported" : "unsupported";
   const effortSupported = isSupportedEffort(codex.model, codex.reasoningEffort);
   const authenticated = hasCodexOAuth(resolve(process.env.CODEX_HOME ?? join(homedir(), ".codex")));
-  const cliAvailable = authenticated && commandAvailable("codex");
+  const sandbox = assessCodexSandbox(process.cwd());
+  const cliAvailable = sandbox.cliAvailable;
   const status = !valid
     ? "invalid_non_codex_orchestrator"
     : !configured
@@ -28,15 +29,67 @@ export function assessCodex(settings) {
             ? "unauthenticated"
             : !cliAvailable
               ? "cli_unavailable"
-              : "access_not_checked";
+              : !sandbox.ready
+                ? sandbox.status
+                : "access_not_checked";
   return {
-    ready: valid && configured && catalog === "supported" && effortSupported && authenticated && cliAvailable,
+    ready: valid && configured && catalog === "supported" && effortSupported && authenticated && cliAvailable && sandbox.ready,
     status,
     catalog,
     access: "not_checked",
     authenticated,
-    cliAvailable
+    cliAvailable,
+    sandboxReady: sandbox.ready,
+    sandboxStatus: sandbox.status,
+    sandboxMode: sandbox.mode
   };
+}
+
+export function assessCodexSandbox(appRoot, platform = process.platform) {
+  const packageRoot = resolve(appRoot, "node_modules", "@openai", "codex");
+  const cli = join(packageRoot, "bin", "codex.js");
+  if (!fileExists(cli)) return { ready: false, cliAvailable: false, status: "cli_unavailable", mode: platform === "win32" ? "elevated" : "platform-default" };
+  if (platform !== "win32") return { ready: true, cliAvailable: true, status: "ready", mode: "platform-default" };
+  const root = mkdtempSync(join(tmpdir(), "aetherops-doctor-codex-"));
+  try {
+    mkdirSync(join(root, "inputs"), { recursive: true });
+    mkdirSync(join(root, "outputs"), { recursive: true });
+    const profile =
+      '{description="AetherOps doctor probe.",filesystem={":root"="deny",":minimal"="read",":tmpdir"="deny",":slash_tmp"="deny",":workspace_roots"={"."="read","inputs"="read","outputs"="write"}},network={enabled=false}}';
+    const result = spawnSync(
+      process.execPath,
+      [
+        cli,
+        "-c",
+        'default_permissions="aetherops-workspace"',
+        "-c",
+        `permissions.aetherops-workspace=${profile}`,
+        "-c",
+        'windows.sandbox="elevated"',
+        "sandbox",
+        "-P",
+        "aetherops-workspace",
+        "-C",
+        root,
+        "cmd.exe",
+        "/d",
+        "/c",
+        "exit",
+        "0"
+      ],
+      { encoding: "utf8", timeout: 10_000, windowsHide: true }
+    );
+    return {
+      ready: result.status === 0,
+      cliAvailable: true,
+      status: result.status === 0 ? "ready" : "elevated_sandbox_unavailable",
+      mode: "elevated"
+    };
+  } catch {
+    return { ready: false, cliAvailable: true, status: "sandbox_probe_failed", mode: "elevated" };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 function isSupportedEffort(model, effort) {

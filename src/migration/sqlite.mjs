@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { normalizeForStableJson, semanticTextHash, sha256Hex, stableJsonHash, stableStringify } from "./hash.mjs";
 
 const v2SchemaSourceUrl = new URL("../server/runtime/storage/v2/schema.ts", import.meta.url);
+const traceSchemaSourceUrl = new URL("../server/runtime/storage/v2/traceSchema.ts", import.meta.url);
 const canonicalEntityTables = new Set([
   "projects_v2",
   "records_v2",
@@ -126,7 +127,7 @@ export function createV2Database(dbPath, metadata = {}) {
 }
 
 export function loadV2SchemaSql() {
-  return extractTemplateSql(v2SchemaSourceUrl, "export function migrateStorageV2Schema", "${jobStatusCheck}", [
+  const base = extractTemplateSql(v2SchemaSourceUrl, "export function migrateStorageV2Schema", "${jobStatusCheck}", [
     "'queued'",
     "'running'",
     "'pause_requested'",
@@ -138,6 +139,8 @@ export function loadV2SchemaSql() {
     "'failed'",
     "'completed'"
   ]);
+  const trace = extractTemplateSql(traceSchemaSourceUrl, "export function migrateStorageTraceV3Schema");
+  return `${base}\n${trace}`;
 }
 
 export function loadV2FtsSql() {

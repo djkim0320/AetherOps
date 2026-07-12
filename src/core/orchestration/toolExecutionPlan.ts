@@ -1,40 +1,6 @@
-import { filterResearchMetadataTool } from "../planning/researchPlanner.js";
-import { createStableId, nowIso } from "../shared/ids.js";
-import { ResearchLoopStep, type ResearchPlan, type ResearchSnapshot, type ResearchSource, type RuntimeRequirement } from "../shared/types.js";
+import { ResearchLoopStep, type ResearchPlan, type ResearchSnapshot, type RuntimeRequirement } from "../shared/types.js";
 import { normalizeToolName } from "../tools/toolRunner.js";
 import { concatItems } from "./executionBundles.js";
-import { sameStringArray } from "./researchState.js";
-
-const preOpenCodeToolOrder = ["websearchtool", "backgroundbrowsertool", "researchmetadatatool", "pdfingestiontool", "engineeringprogramtool"];
-
-const preOpenCodeToolSet = new Set(preOpenCodeToolOrder);
-
-export function preOpenCodeToolNames(plan: ResearchPlan | undefined): string[] {
-  if (!plan?.requiredTools.length) return [];
-  const requested = new Set<string>();
-  for (const tool of plan.requiredTools) {
-    const normalized = normalizeToolName(tool);
-    if (preOpenCodeToolSet.has(normalized)) requested.add(normalized);
-  }
-  const output: string[] = [];
-  for (const tool of preOpenCodeToolOrder) {
-    if (requested.has(tool)) output.push(tool);
-  }
-  return output;
-}
-
-export function planForExecution(plan: ResearchPlan | undefined, snapshot: ResearchSnapshot): ResearchPlan | undefined {
-  if (!plan) return undefined;
-  const specification = snapshot.specifications.at(-1);
-  if (!specification) return plan;
-  const requiredTools = filterResearchMetadataTool(plan.requiredTools, {
-    snapshot,
-    specification,
-    continuationDecision: snapshot.continuationDecisions.at(-1)
-  });
-  if (sameStringArray(requiredTools, plan.requiredTools)) return plan;
-  return { ...plan, requiredTools };
-}
 
 export function planRequiresTool(plan: ResearchPlan | undefined, toolName: string): boolean {
   const normalizedTarget = normalizeToolName(toolName);
@@ -44,14 +10,14 @@ export function planRequiresTool(plan: ResearchPlan | undefined, toolName: strin
   return false;
 }
 
-export function stepRequiresOpenCode(step: ResearchLoopStep, snapshot: ResearchSnapshot): boolean {
-  return step === ResearchLoopStep.ExecuteTools && planRequiresTool(snapshot.researchPlans.at(-1), "OpenCodeTool");
+export function stepRequiresCodexCli(step: ResearchLoopStep, snapshot: ResearchSnapshot): boolean {
+  return step === ResearchLoopStep.ExecuteTools && planRequiresTool(snapshot.researchPlans.at(-1), "CodexCliTool");
 }
 
-export function collectExecutableToolNames(tools: string[], includeOpenCode: boolean): string[] {
+export function collectExecutableToolNames(tools: string[], includeCodexCli: boolean): string[] {
   const output: string[] = [];
   const seen = new Set<string>();
-  if (includeOpenCode) pushUniqueToolName(output, seen, "OpenCodeTool");
+  if (includeCodexCli) pushUniqueToolName(output, seen, "CodexCliTool");
   for (const tool of tools) pushUniqueToolName(output, seen, tool);
   return output;
 }
@@ -67,7 +33,7 @@ export function collectPlanToolRequirements(requiredTools: string[], registered:
   const unavailable: RuntimeRequirement[] = [];
   for (const tool of requiredTools) {
     const normalized = normalizeToolNameForPlan(tool);
-    if (normalized === "opencodetool") continue;
+    if (normalized === "codexclitool") continue;
     if (!registered.has(normalized)) {
       missing.push({
         key: "tool.registered",
@@ -90,58 +56,10 @@ export function collectPlanToolRequirements(requiredTools: string[], registered:
   return concatItems(missing, unavailable);
 }
 
-export function sourceCandidatesFromPlan(
-  projectId: string,
-  iteration: number,
-  plan: ResearchPlan | undefined,
-  context: ResearchSnapshot["projectContextSnapshots"][number] | undefined
-): ResearchSource[] {
-  const urls = new Map<string, string>();
-  for (const url of plan?.fetchCandidateUrls ?? []) {
-    const normalized = normalizePublicHttpUrl(url);
-    if (normalized) urls.set(normalized, normalized);
-  }
-  const sources: ResearchSource[] = [];
-  let index = 0;
-  for (const url of urls.values()) {
-    sources.push({
-      id: createStableId("source", `${projectId}:${iteration}:fetch-candidate:${url}`),
-      projectId,
-      kind: "web",
-      title: `Continuation fetch candidate ${index + 1}`,
-      url,
-      retrievedAt: nowIso(),
-      metadata: {
-        fromContinuationDecision: true,
-        fromResearchPlan: plan?.id,
-        fromProjectContextSnapshotId: context?.id,
-        memoryScope: "project_only",
-        sourceCandidateOnly: true,
-        canSupportHypothesis: false
-      },
-      createdAt: nowIso()
-    });
-    index += 1;
-  }
-  return sources;
-}
-
 function pushUniqueToolName(output: string[], seen: Set<string>, tool: string): void {
   if (seen.has(tool)) return;
   seen.add(tool);
   output.push(tool);
-}
-
-function normalizePublicHttpUrl(value: string): string | undefined {
-  try {
-    const parsed = new URL(value.trim());
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
-    parsed.hash = "";
-    parsed.hostname = parsed.hostname.toLowerCase();
-    return parsed.toString();
-  } catch {
-    return undefined;
-  }
 }
 
 function normalizeToolNameForPlan(value: string): string {

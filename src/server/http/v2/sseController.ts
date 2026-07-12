@@ -4,7 +4,7 @@ import type { DurableJobRuntime } from "../../composition/durableJobRuntime.js";
 type ProjectEvent = Awaited<ReturnType<DurableJobRuntime["eventsAfter"]>>[number];
 
 export interface ProjectEventSource {
-  eventsAfter(projectId: string, lastEventId?: string): Promise<ProjectEvent[]>;
+  eventsAfter(projectId: string, lastEventId?: string, limit?: number): Promise<ProjectEvent[]>;
   subscribe(listener: (event: ProjectEvent) => void): () => void;
 }
 
@@ -46,12 +46,16 @@ export async function replayThenSubscribe(
     else emit(event);
   });
   try {
-    const replay = await events.eventsAfter(projectId, lastEventId);
     let lastSequence = Number(lastEventId ?? 0);
-    for (const event of replay) {
-      if (event.id <= lastSequence) continue;
-      emit(event);
-      lastSequence = event.id;
+    const pageSize = 200;
+    while (true) {
+      const replay = await events.eventsAfter(projectId, String(lastSequence), pageSize);
+      for (const event of replay) {
+        if (event.id <= lastSequence) continue;
+        emit(event);
+        lastSequence = event.id;
+      }
+      if (replay.length < pageSize) break;
     }
     buffered.sort((left, right) => left.id - right.id);
     for (const event of buffered) {

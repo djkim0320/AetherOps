@@ -1,22 +1,64 @@
 .bar {
+  position: relative;
+  z-index: 4;
   min-height: 44px;
+  display: grid;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--glass-divider);
+  background: var(--glass-pane-sheen), var(--glass-pane);
+  box-shadow: var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur-soft)) saturate(var(--glass-saturation));
+}
+
+.primaryRow,
+.runState {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-surface);
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-muted);
+}
+
+.statusDot[data-status="running"],
+.statusDot[data-status="queued"] {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.statusDot[data-status="completed"] {
+  background: var(--color-success);
+}
+
+.statusDot[data-status="failed"],
+.statusDot[data-status="blocked"],
+.statusDot[data-status="interrupted"] {
+  background: var(--color-danger);
 }
 
 .step {
+  min-width: 0;
+  overflow: hidden;
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stale {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-warning-soft);
   color: var(--color-warning);
   font-size: var(--text-sm);
 }
@@ -35,4 +77,57 @@
 .error {
   color: var(--color-danger);
   font-size: var(--text-xs);
+}
+
+.runReason {
+  margin-top: var(--space-2);
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+  width: fit-content;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: var(--text-xs);
+}
+
+.runReason svg {
+  width: 15px;
+  flex: 0 0 auto;
+}
+
+.policyDialog {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.policyRows {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.policyRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.policyRow span,
+.policyField {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.policyRow small {
+  color: var(--color-text-secondary);
+}
+
+.policyActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }

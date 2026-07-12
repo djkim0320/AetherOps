@@ -14,7 +14,7 @@ import {
 import type { JobKind } from "../../../shared/kernel/job.js";
 
 export const JOB_KIND_REQUIRED_CAPABILITIES: Record<JobKind, readonly (keyof CapabilityDecisionSet)[]> = {
-  research_loop: ["agent", "search"],
+  research_loop: ["agent"],
   chat_reply: ["agent"],
   engineering_run: ["agent", "engineering"]
 };
@@ -32,7 +32,12 @@ export interface CapabilityAuthorizationResult {
 
 export function authorizeJobCapabilities(input: CapabilityAuthorizationInput): CapabilityAuthorizationResult {
   const decisions = resolveCapabilitySet(input);
-  const requiredCapabilityKinds = JOB_KIND_REQUIRED_CAPABILITIES[input.jobKind];
+  const requiredCapabilityKinds = Array.from(
+    new Set([
+      ...JOB_KIND_REQUIRED_CAPABILITIES[input.jobKind],
+      ...(Object.keys(input.job ?? {}) as Array<keyof CapabilityDecisionSet>).filter((kind) => input.job?.[kind] === true)
+    ])
+  );
   const allowed = requiredCapabilityKinds.every((kind) => decisions[kind].allowed);
   return {
     decisions,

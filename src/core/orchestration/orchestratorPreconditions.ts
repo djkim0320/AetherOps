@@ -2,7 +2,7 @@ import { createId, nowIso } from "../shared/ids.js";
 import { RuntimeRequirementError } from "../tools/runtimeRequirements.js";
 import { activeResearchContext, activeResearchSnapshot, activeResearchSpecification, idSet, isPlanCurrentForActiveResearch } from "./researchState.js";
 import { nextExecutionIteration } from "./loopStateMachine.js";
-import { collectExecutableToolNames, collectPlanToolRequirements, normalizedToolNameSet, stepRequiresOpenCode } from "./toolExecutionPlan.js";
+import { collectExecutableToolNames, collectPlanToolRequirements, normalizedToolNameSet, stepRequiresCodexCli } from "./toolExecutionPlan.js";
 import {
   ResearchLoopStep,
   type AppSettings,
@@ -16,6 +16,7 @@ import {
 } from "../shared/types.js";
 import { AnalysisOrchestrator } from "./analysisOrchestrator.js";
 import { sourceFromEvidence } from "./orchestratorResultHelpers.js";
+import type { ToolExecutionContext } from "../tools/researchToolTypes.js";
 export abstract class OrchestratorPreconditions extends AnalysisOrchestrator {
   protected async ensureResearchDb(projectId: string): Promise<ResearchSnapshot> {
     let snapshot = await this.store.getSnapshot(projectId);
@@ -37,7 +38,7 @@ export abstract class OrchestratorPreconditions extends AnalysisOrchestrator {
     return snapshot;
   }
 
-  protected async ensureResearchPlan(projectId: string, iteration?: number): Promise<ResearchSnapshot> {
+  protected async ensureResearchPlan(projectId: string, iteration?: number, execution?: ToolExecutionContext): Promise<ResearchSnapshot> {
     const snapshot = await this.store.getSnapshot(projectId);
     const activeSnapshot = activeResearchSnapshot(snapshot);
     const activeIteration = iteration ?? nextExecutionIteration(activeSnapshot);
@@ -45,7 +46,7 @@ export abstract class OrchestratorPreconditions extends AnalysisOrchestrator {
     const plan = activeSnapshot.researchPlans.find(
       (item) => item.iteration === activeIteration && isPlanCurrentForActiveResearch(item, activeSnapshot, specification)
     );
-    return plan ? snapshot : this.planResearch(projectId, activeIteration);
+    return plan ? snapshot : this.planResearch(projectId, activeIteration, undefined, execution);
   }
 
   protected async ensureSpecification(projectId: string): Promise<ResearchSpecification> {
@@ -123,24 +124,24 @@ export abstract class OrchestratorPreconditions extends AnalysisOrchestrator {
   protected async assertStepReady(
     projectId: string,
     step: ResearchLoopStep,
-    options: { checkOpenCodePreflight?: boolean; storageWritable?: boolean } = {}
+    options: { checkCodexCliPreflight?: boolean; storageWritable?: boolean } = {}
   ): Promise<void> {
     const snapshot = await this.store.getSnapshot(projectId);
     const settings = await this.getSettings();
-    let openCodeReady: boolean | undefined;
-    if (options.checkOpenCodePreflight && stepRequiresOpenCode(step, snapshot)) {
+    let codexCliReady: boolean | undefined;
+    if (options.checkCodexCliPreflight && stepRequiresCodexCli(step, snapshot)) {
       try {
         await this.preflightExecutionEngine(projectId);
-        openCodeReady = true;
+        codexCliReady = true;
       } catch {
-        openCodeReady = false;
+        codexCliReady = false;
       }
     }
     this.requirements.assertStepReady(step, {
       snapshot,
       settings,
       llmAvailable: this.llm ? await this.llm.isAvailable() : false,
-      openCodeReady,
+      codexCliReady,
       storageWritable: options.storageWritable,
       registeredToolNames: this.registeredToolNames()
     });
@@ -150,9 +151,9 @@ export abstract class OrchestratorPreconditions extends AnalysisOrchestrator {
     return this.toolRunner?.listRegisteredToolNames?.() ?? this.toolRunner?.listToolNames() ?? [];
   }
 
-  protected executableToolNames(snapshot: ResearchSnapshot, settings: AppSettings): string[] {
-    const tools = this.toolRunner?.listExecutableToolNames?.({ snapshot, settings }) ?? this.registeredToolNames();
-    return collectExecutableToolNames(tools, settings.openCode.enabled && Boolean(settings.openCode.command?.trim()));
+  protected executableToolNames(snapshot: ResearchSnapshot, settings: AppSettings, toolPolicy?: ToolExecutionContext["toolPolicy"]): string[] {
+    const tools = this.toolRunner?.listExecutableToolNames?.({ snapshot, settings, toolPolicy }) ?? this.registeredToolNames();
+    return collectExecutableToolNames(tools, settings.allowAgent && settings.allowCodeExecution);
   }
 
   protected assertPlanToolsAllowed(plan: ResearchPlan, allowedTools: string[]): void {

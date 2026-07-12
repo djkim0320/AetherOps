@@ -5,12 +5,15 @@ import type { JobKind } from "../../../contracts/api-v2/jobs.js";
 import { authorizeJobCapabilities, defaultJobCapabilityPolicy, type CapabilityPolicy } from "../../../core/application/capabilities/index.js";
 import type { StorageCapabilityAudit } from "../../runtime/storage/v2/types.js";
 import type { RpcHandlerContext } from "./context.js";
+import { PublicUrlPolicy } from "../../runtime/tools/publicUrlPolicy.js";
 import {
   computeProjectRevision,
   projectCapabilities,
   toCodexAuthStatusResponse,
   toEngineeringPreflightResponse,
   toLlmStatusResponse,
+  toJobDetailResponse,
+  toJobResponse,
   toProjectResponse,
   toProjectSummary,
   toSessionResponse,
@@ -47,6 +50,9 @@ export async function handleRpcV2(body: unknown, context: RpcHandlerContext): Pr
     if (error instanceof RpcNotReadyError) {
       throw new RpcV2Error(503, parsed.data.requestId, "NOT_READY", error.message, error.details, error);
     }
+    if (error instanceof RpcValidationError) {
+      throw new RpcV2Error(400, parsed.data.requestId, "VALIDATION_ERROR", error.message, error.details, error);
+    }
     if (error instanceof RpcV2Error) throw error;
     const message = error instanceof Error ? error.message : "The RPC method could not be completed.";
     throw new RpcV2Error(500, parsed.data.requestId, "INTERNAL_ERROR", message, undefined, error);
@@ -60,7 +66,7 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
       return toProjectResponse(
         await orchestrator.createProject({
           ...request.params.input,
-          autonomyPolicy: { toolApproval: "suggested", allowExternalSearch: false, allowCodeExecution: false, maxLoopIterations: 3 }
+          autonomyPolicy: { toolApproval: "suggested", allowAgent: true, allowExternalSearch: false, allowCodeExecution: false, maxLoopIterations: 3 }
         })
       );
     case "projects.get":
@@ -77,6 +83,7 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
         budget: current.project.budget,
         autonomyPolicy: {
           ...current.project.autonomyPolicy,
+          allowAgent: request.params.capabilities?.agent ?? current.project.autonomyPolicy.allowAgent ?? true,
           allowCodeExecution: request.params.capabilities?.engineering ?? current.project.autonomyPolicy.allowCodeExecution,
           allowExternalSearch: request.params.capabilities?.search ?? current.project.autonomyPolicy.allowExternalSearch
         },
@@ -105,15 +112,24 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
         clientMutationId: request.params.clientMutationId
       });
     case "loop.start":
-      return enqueue(context, request.params.projectId, "research_loop", request.params.idempotencyKey, { action: "start" });
-    case "loop.resume":
+      await validateSourcePolicy(request.params.toolPolicy.sourceAccess);
       return enqueue(
         context,
         request.params.projectId,
         "research_loop",
         request.params.idempotencyKey,
-        { action: "resume" },
-        undefined,
+        { action: "start", requestedCapabilities: request.params.requestedCapabilities, toolPolicy: request.params.toolPolicy },
+        request.params.requestedCapabilities
+      );
+    case "loop.resume":
+      await validateSourcePolicy(request.params.toolPolicy.sourceAccess);
+      return enqueue(
+        context,
+        request.params.projectId,
+        "research_loop",
+        request.params.idempotencyKey,
+        { action: "resume", requestedCapabilities: request.params.requestedCapabilities, toolPolicy: request.params.toolPolicy },
+        request.params.requestedCapabilities,
         request.params.interruptedJobId,
         request.params.checkpointId
       );
@@ -122,30 +138,36 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
       await orchestrator.pause(request.params.projectId);
       const job = await jobs.requestPause(request.params.jobId);
       await emitRunStatusChanged(events, job.projectId, job.projectRevision, job.id, job.status, before?.status);
-      return job;
+      return toJobResponse(job);
     }
     case "loop.abort": {
       const before = await jobs.get(request.params.jobId);
       await orchestrator.abort(request.params.projectId);
       const job = await jobs.requestAbort(request.params.jobId);
       await emitRunStatusChanged(events, job.projectId, job.projectRevision, job.id, job.status, before?.status);
-      return job;
+      return toJobResponse(job);
     }
     case "jobs.get": {
-      const job = await jobs.get(request.params.jobId);
+      const job = await jobs.getDetail(request.params.jobId);
       if (!job || job.projectId !== request.params.projectId) throw new RpcNotFoundError("Job not found.");
-      return job;
+      return toJobDetailResponse(job);
     }
-    case "jobs.list":
-      return jobs.list(request.params.projectId, request.params);
-    case "engineering.preflight":
-      return toEngineeringPreflightResponse(request.params.projectId, request.params.targets, await settingsStore.getRuntimeSettings());
+    case "jobs.list": {
+      const result = await jobs.list(request.params.projectId, request.params);
+      return { jobs: result.jobs.map(toJobResponse) };
+    }
+    case "engineering.preflight": {
+      await assertRequestedCapabilities(context, request.params.projectId, "engineering_run", request.params.requestedCapabilities);
+      const codexStatus = request.params.targets.includes("codex") && context.llm ? await context.llm.getStatus() : undefined;
+      return toEngineeringPreflightResponse(request.params.projectId, request.params.targets, await settingsStore.getRuntimeSettings(), codexStatus?.sandbox);
+    }
     case "engineering.enqueue": {
       const runtimeSettings = await settingsStore.getRuntimeSettings();
       const preflight = toEngineeringPreflightResponse(
         request.params.projectId,
         request.params.requests.map((item) => item.target),
-        runtimeSettings
+        runtimeSettings,
+        request.params.requests.some((item) => item.target === "codex") && context.llm ? (await context.llm.getStatus()).sandbox : undefined
       );
       if (!preflight.ready) throw new RpcNotReadyError("One or more engineering adapters are not ready.", { targets: preflight.targets });
       return enqueue(
@@ -153,20 +175,22 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
         request.params.projectId,
         "engineering_run",
         request.params.idempotencyKey,
-        { requests: request.params.requests },
-        request.params.capabilities
+        { requests: request.params.requests, requestedCapabilities: request.params.requestedCapabilities },
+        request.params.requestedCapabilities
       );
     }
     case "snapshots.get":
-      return toSnapshotResponse(await orchestrator.getSnapshot(request.params.projectId));
+      return durableSnapshotResponse(context, await orchestrator.getSnapshot(request.params.projectId));
     case "settings.get":
       return toSettingsResponse(await settingsStore.getRuntimeSettings());
     case "settings.save": {
       const current = await settingsStore.getRuntimeSettings();
       return toSettingsResponse(await settingsStore.saveSettings(toSettingsSaveInput(request.params, current)));
     }
-    case "tools.diagnostics":
-      return toToolDiagnosticsResponse(await settingsStore.getRuntimeSettings());
+    case "tools.diagnostics": {
+      const codexStatus = context.llm ? await context.llm.getStatus() : undefined;
+      return toToolDiagnosticsResponse(await settingsStore.getRuntimeSettings(), codexStatus);
+    }
     case "auth.codexStatus":
       return toCodexAuthStatusResponse(Boolean(context.llm && (await context.llm.getStatus()).authenticated));
     case "llm.status": {
@@ -176,6 +200,21 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
       return toLlmStatusResponse(await settingsStore.getRuntimeSettings(), providerStatus);
     }
   }
+}
+
+async function durableSnapshotResponse(context: RpcHandlerContext, snapshot: Awaited<ReturnType<RpcHandlerContext["orchestrator"]["getSnapshot"]>>) {
+  const listed = await context.jobs.list(snapshot.project.id, { limit: 200 });
+  const job = listed.jobs
+    .filter((candidate) => candidate.kind === "research_loop")
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0];
+  if (!job) return toSnapshotResponse(snapshot);
+  const checkpoint = await context.jobs.latestCommittedCheckpoint(job.id);
+  return toSnapshotResponse(snapshot, {
+    status: job.status,
+    activeJobId: job.id,
+    ...(checkpoint ? { lastCheckpointId: checkpoint.id, currentStep: checkpoint.step as typeof snapshot.project.currentStep } : {}),
+    revision: job.projectRevision
+  });
 }
 
 async function enqueue(
@@ -190,11 +229,17 @@ async function enqueue(
 ) {
   const snapshot = await context.orchestrator.getSnapshot(projectId);
   const settings = await context.settingsStore.getRuntimeSettings();
+  const defaultCapabilities = defaultJobCapabilityPolicy(kind);
+  const requestedPolicy = {
+    agent: requestedCapabilities?.agent ?? defaultCapabilities.agent,
+    engineering: requestedCapabilities?.engineering ?? defaultCapabilities.engineering,
+    search: requestedCapabilities?.search ?? defaultCapabilities.search
+  };
   const authorization = authorizeJobCapabilities({
-    app: { agent: Boolean(settings.openCode.enabled), engineering: Boolean(settings.allowCodeExecution), search: Boolean(settings.allowExternalSearch) },
+    app: { agent: settings.allowAgent, engineering: Boolean(settings.allowCodeExecution), search: Boolean(settings.allowExternalSearch) },
     project: projectCapabilities(snapshot.project),
     jobKind: kind,
-    job: requestedCapabilities ?? defaultJobCapabilityPolicy(kind),
+    job: requestedPolicy,
     projectId,
     recordedAt: new Date().toISOString()
   });
@@ -209,12 +254,44 @@ async function enqueue(
     projectRevision: computeProjectRevision(snapshot),
     currentStep: snapshot.project.currentStep,
     idempotencyKey,
+    requestedCapabilities: requestedPolicy,
+    effectiveCapabilities: {
+      agent: authorization.decisions.agent.allowed,
+      engineering: authorization.decisions.engineering.allowed,
+      search: authorization.decisions.search.allowed
+    },
+    ...(kind === "research_loop" && payload && typeof payload === "object" && "toolPolicy" in payload
+      ? { toolPolicy: (payload as { toolPolicy: NonNullable<Parameters<typeof context.jobs.enqueue>[0]["toolPolicy"]> }).toolPolicy }
+      : {}),
     resumesJobId,
     resumeCheckpointId,
     payload
   });
   await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits, receipt.jobId));
   return receipt;
+}
+
+async function assertRequestedCapabilities(
+  context: RpcHandlerContext,
+  projectId: string,
+  kind: JobKind,
+  requestedCapabilities: CapabilityPolicy
+): Promise<void> {
+  const snapshot = await context.orchestrator.getSnapshot(projectId);
+  const settings = await context.settingsStore.getRuntimeSettings();
+  const authorization = authorizeJobCapabilities({
+    app: { agent: settings.allowAgent, engineering: settings.allowCodeExecution, search: settings.allowExternalSearch },
+    project: projectCapabilities(snapshot.project),
+    jobKind: kind,
+    job: requestedCapabilities,
+    projectId,
+    recordedAt: new Date().toISOString()
+  });
+  await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits));
+  if (!authorization.allowed) {
+    const denied = authorization.requiredCapabilityKinds.filter((capability) => !authorization.decisions[capability].allowed);
+    throw new RpcCapabilityDeniedError(`Required capabilities are denied: ${denied.join(", ")}.`, { denied });
+  }
 }
 
 export class RpcConflictError extends Error {}
@@ -233,6 +310,29 @@ export class RpcNotReadyError extends Error {
     readonly details?: Record<string, unknown>
   ) {
     super(message);
+  }
+}
+export class RpcValidationError extends Error {
+  constructor(
+    message: string,
+    readonly details?: Record<string, unknown>
+  ) {
+    super(message);
+  }
+}
+
+async function validateSourcePolicy(policy: { mode: string; urls?: string[] }): Promise<void> {
+  if (policy.mode !== "allowlist") return;
+  const validator = new PublicUrlPolicy();
+  for (const [urlIndex, url] of (policy.urls ?? []).entries()) {
+    try {
+      await validator.assertPublicHttpUrl(url);
+    } catch (error) {
+      throw new RpcValidationError("A source allowlist URL is not publicly reachable.", {
+        urlIndex,
+        reason: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }
 

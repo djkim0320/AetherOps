@@ -42,14 +42,14 @@ export class JsonAppSettingsStore implements AppSettingsStore {
   }
 
   async saveSettings(settings: AppSettings): Promise<AppSettings> {
+    assertStrictBoolean(settings.allowAgent, "allowAgent");
     assertStrictBoolean(settings.allowExternalSearch, "allowExternalSearch");
     assertStrictBoolean(settings.allowCodeExecution, "allowCodeExecution");
     const current = this.readPersisted();
     const currentWebSearchKey = this.decryptKey(current.encryptedWebSearchKey);
     const currentEmbeddingKey = this.decryptKey(current.encryptedEmbeddingKey);
     const persisted: PersistedSettings = {
-      openCodeLlm: normalizeCodexSettings(settings.openCodeLlm),
-      openCode: settings.openCode,
+      codex: normalizeCodexSettings(settings.codex),
       webSearch: { provider: settings.webSearch.provider, endpoint: settings.webSearch.endpoint, timeoutMs: settings.webSearch.timeoutMs },
       embedding: {
         provider: settings.embedding.provider,
@@ -60,6 +60,7 @@ export class JsonAppSettingsStore implements AppSettingsStore {
       browserUse: normalizeBrowserUse(settings.browserUse),
       researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
       engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
+      allowAgent: settings.allowAgent,
       allowExternalSearch: settings.allowExternalSearch,
       allowCodeExecution: settings.allowCodeExecution,
       ontologyExtractionMode: settings.ontologyExtractionMode,
@@ -99,8 +100,7 @@ export class JsonAppSettingsStore implements AppSettingsStore {
 
   private toPersisted(settings: AppSettings): PersistedSettings {
     return {
-      openCodeLlm: settings.openCodeLlm,
-      openCode: settings.openCode,
+      codex: settings.codex,
       webSearch: { provider: settings.webSearch.provider, endpoint: settings.webSearch.endpoint, timeoutMs: settings.webSearch.timeoutMs },
       embedding: {
         provider: settings.embedding.provider,
@@ -111,6 +111,7 @@ export class JsonAppSettingsStore implements AppSettingsStore {
       browserUse: normalizeBrowserUse(settings.browserUse),
       researchMetadata: normalizeResearchMetadata(settings.researchMetadata),
       engineeringTools: normalizeEngineeringTools(settings.engineeringTools),
+      allowAgent: settings.allowAgent,
       allowExternalSearch: settings.allowExternalSearch,
       allowCodeExecution: settings.allowCodeExecution,
       ontologyExtractionMode: settings.ontologyExtractionMode,
@@ -122,13 +123,13 @@ export class JsonAppSettingsStore implements AppSettingsStore {
   private toPublicSettings(settings: PersistedSettings): AppSettings {
     const normalized = normalizePersisted(settings);
     return {
-      openCodeLlm: normalizeCodexSettings(normalized.openCodeLlm, normalized.openCode?.timeoutMs),
-      openCode: normalized.openCode ?? defaultSettings.openCode,
+      codex: normalizeCodexSettings(normalized.codex, normalized.openCodeLlm, normalized.openCode?.timeoutMs),
       webSearch: { ...(normalized.webSearch ?? defaultSettings.webSearch), apiKeyConfigured: this.isEncryptedKeyUsable(normalized.encryptedWebSearchKey) },
       embedding: { ...(normalized.embedding ?? defaultSettings.embedding), apiKeyConfigured: this.isEncryptedKeyUsable(normalized.encryptedEmbeddingKey) },
       browserUse: normalizeBrowserUse(normalized.browserUse),
       researchMetadata: normalizeResearchMetadata(normalized.researchMetadata),
       engineeringTools: normalizeEngineeringTools(normalized.engineeringTools),
+      allowAgent: normalized.allowAgent ?? defaultSettings.allowAgent,
       allowExternalSearch: normalized.allowExternalSearch ?? defaultSettings.allowExternalSearch,
       allowCodeExecution: normalized.allowCodeExecution ?? defaultSettings.allowCodeExecution,
       ontologyExtractionMode: normalized.ontologyExtractionMode ?? defaultSettings.ontologyExtractionMode,

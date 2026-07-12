@@ -8,7 +8,11 @@ body {
   min-width: var(--desktop-min-width);
   min-height: var(--desktop-min-height);
   overflow: hidden;
-  background: var(--color-app);
+  background: var(--glass-app-backdrop);
+}
+
+#root {
+  min-height: 100vh;
 }
 
 button,
@@ -20,6 +24,8 @@ textarea,
 }
 
 :focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
   box-shadow: var(--shadow-focus);
 }
 
@@ -36,15 +42,17 @@ a {
   display: grid;
   place-items: center;
   padding: var(--space-8);
-  background: var(--color-app);
+  background: var(--glass-app-backdrop);
 }
 
 .desktopGate__card {
   max-width: 520px;
   padding: var(--space-8);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--glass-border-strong);
   border-radius: var(--radius-xl);
-  background: var(--color-surface);
+  background: var(--glass-pane-sheen), var(--glass-pane-strong);
+  box-shadow: var(--glass-shadow-raised);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   text-align: center;
 }
 
@@ -59,5 +67,7 @@ a {
   padding: var(--space-8);
   border: 1px solid var(--color-danger-border);
   border-radius: var(--radius-lg);
-  background: var(--color-danger-soft);
+  background: var(--glass-pane-sheen), var(--glass-pane-strong);
+  box-shadow: var(--glass-shadow-raised);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
 }

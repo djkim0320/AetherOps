@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ResearchLoopStep, type AppSettings, type OpenCodeRunInput } from "../../../core/shared/types.js";
+import { ResearchLoopStep, type AppSettings, type ResearchToolInput } from "../../../core/shared/types.js";
 import { BrowserResearchTool } from "./browserResearchTool.js";
 import type { BrowserCollectInput, BrowserPageCollector } from "./backgroundBrowserRuntime.js";
 
 const createdAt = "2026-05-21T00:00:00.000Z";
 
 const settings: AppSettings = {
-  openCodeLlm: { source: "codex-oauth", model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000 },
-  openCode: { enabled: false, command: "opencode", provider: "openai", model: "gpt-5.5", timeoutMs: 180_000 },
+  codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 600_000 },
   webSearch: { provider: "disabled" },
   embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKey: "test-key", apiKeyConfigured: true },
   browserUse: { enabled: true, mode: "background", maxPages: 2, timeoutMs: 30_000, captureScreenshots: true },
@@ -81,9 +80,95 @@ describe("BrowserResearchTool", () => {
 
     await expect(new BrowserResearchTool(collector).run(input(), disabled)).rejects.toThrow("background browser is disabled");
   });
+
+  it("uses plan URLs directly and prohibits search in allowlist mode", async () => {
+    let captured: BrowserCollectInput | undefined;
+    const collector: BrowserPageCollector = {
+      collect: async (value) => {
+        captured = value;
+        return [{ url: "https://example.test/planned", title: "Planned", text: "planned page" }];
+      }
+    };
+    const runInput = input();
+    runInput.researchPlan = {
+      id: "plan-browser",
+      projectId: runInput.project.id,
+      iteration: 1,
+      objective: "Inspect explicit page",
+      targetQuestions: [],
+      targetHypotheses: [],
+      requiredTools: ["BackgroundBrowserTool"],
+      expectedSources: [],
+      expectedArtifacts: [],
+      executionSteps: [],
+      stopCriteria: [],
+      fetchCandidateUrls: ["https://example.test/planned"],
+      createdAt
+    };
+    runInput.executionContext = {
+      toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "allowlist", urls: ["https://example.test/planned"] } }
+    };
+    await new BrowserResearchTool(collector).run(runInput, settings);
+    expect(captured?.query).toBe("");
+    expect(captured?.urls).toEqual(["https://example.test/planned"]);
+  });
+
+  it("fails instead of silently dropping an out-of-policy plan URL", async () => {
+    const runInput = input();
+    runInput.researchPlan = {
+      id: "plan-browser-denied",
+      projectId: runInput.project.id,
+      iteration: 1,
+      objective: "Inspect explicit page",
+      targetQuestions: [],
+      targetHypotheses: [],
+      requiredTools: ["BackgroundBrowserTool"],
+      expectedSources: [],
+      expectedArtifacts: [],
+      executionSteps: [],
+      stopCriteria: [],
+      fetchCandidateUrls: ["https://outside.example/"],
+      createdAt
+    };
+    runInput.executionContext = {
+      toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "allowlist", urls: ["https://example.test/planned"] } }
+    };
+    await expect(new BrowserResearchTool({ collect: async () => [] }).run(runInput, settings)).rejects.toThrow(/outside the job allowlist/);
+  });
+
+  it("keeps plan URLs ahead of ranked evidence URLs", async () => {
+    let captured: BrowserCollectInput | undefined;
+    const runInput = input();
+    runInput.researchPlan = {
+      id: "plan-browser-priority",
+      projectId: runInput.project.id,
+      iteration: 1,
+      objective: "Inspect explicit page",
+      targetQuestions: [],
+      targetHypotheses: [],
+      requiredTools: ["BackgroundBrowserTool"],
+      expectedSources: [],
+      expectedArtifacts: [],
+      executionSteps: [],
+      stopCriteria: [],
+      fetchCandidateUrls: ["https://example.test/planned"],
+      createdAt
+    };
+    runInput.executionContext = {
+      toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "discovery", allowedDomains: [] } }
+    };
+    await new BrowserResearchTool({
+      collect: async (value) => {
+        captured = value;
+        return [{ url: value.urls?.[0] ?? "https://example.test/planned", title: "Planned", text: "planned page" }];
+      }
+    }).run(runInput, settings);
+    expect(captured?.urls?.[0]).toBe("https://example.test/planned");
+    expect(captured?.query).toBe("");
+  });
 });
 
-function input(): OpenCodeRunInput {
+function input(): ResearchToolInput {
   return {
     project: {
       id: "project-browser",

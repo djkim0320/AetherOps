@@ -109,6 +109,42 @@ describe("API v2 auxiliary contracts", () => {
       ToolsDiagnosticsResponseSchema.safeParse({
         capabilities,
         tools: [{ name: "WebXFOIL", category: "engineering", status: "ready" }],
+        reliability: {
+          generatedAt: now,
+          countersSince: now,
+          runtime: {
+            activeProjectCount: 1,
+            activeJobCount: 1,
+            leaseRenewalSuccessCount: 2,
+            leaseRenewalFailureCount: 0,
+            leaseLostCount: 0,
+            staleWriteRejectionCount: 0,
+            recoveryScannedProjectCount: 3
+          },
+          sse: {
+            activeConnectionCount: 1,
+            bufferedEventCount: 2,
+            bufferedBytes: 256,
+            peakBufferedEventCount: 4,
+            peakBufferedBytes: 512,
+            slowConsumerDisconnectCount: 1,
+            replayCount: 2,
+            replayedEventCount: 6,
+            replayTotalDurationMs: 9,
+            replayMaxDurationMs: 5,
+            replayLastDurationMs: 4
+          },
+          traceQueries: { queryCount: 2, totalDurationMs: 7, maxDurationMs: 4, lastDurationMs: 3, totalRows: 5, maxRows: 3, lastRows: 2 },
+          storageTransactions: { transactionCount: 2, totalDurationMs: 11, maxDurationMs: 6, lastDurationMs: 5 },
+          queue: {
+            projects: [{ projectId: "project-1", depth: 2, oldestQueuedAt: now, oldestQueuedAgeMs: 0 }],
+            totalDepth: 2,
+            oldestQueuedAt: now,
+            oldestQueuedAgeMs: 0,
+            totalProjects: 1,
+            truncated: false
+          }
+        },
         generatedAt: now
       }).success
     ).toBe(true);

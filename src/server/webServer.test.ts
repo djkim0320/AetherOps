@@ -1,7 +1,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createStrictTestOrchestrator, strictTestSettings } from "../core/testing/orchestratorTestHarness.js";
 import type { ResearchProjectInput } from "../core/shared/types.js";
 import { assertLoopbackHostAllowed, rpcAuthConfigFileName, rpcTokenCookieName, rpcTokenHeader } from "./runtime/security/loopbackRpcSecurity.js";
@@ -25,6 +26,7 @@ const originalEnv = {
 };
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (serverHandle) {
     await serverHandle.close();
     serverHandle = undefined;
@@ -220,6 +222,49 @@ describe("web server security boundary", () => {
       body: "not-compressed"
     });
     expect(compressed.status).toBe(415);
+  });
+
+  it("applies explicit conservative HTTP ingress limits without limiting long RPC handler execution", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aetherops-web-timeouts-"));
+    process.env.AETHEROPS_RPC_TOKEN = rpcToken;
+    serverHandle = await startWebServer({
+      port: 0,
+      host: "127.0.0.1",
+      dataRoot: tempDir,
+      appRoot: process.cwd(),
+      installSignalHandlers: false,
+      httpPolicy: {
+        headersTimeoutMs: 12_000,
+        requestTimeoutMs: 90_000,
+        bodyReadTimeoutMs: 15_000,
+        keepAliveTimeoutMs: 4_000,
+        maxRequestsPerSocket: 25,
+        connectionsCheckingIntervalMs: 2_000
+      }
+    });
+
+    expect(serverHandle.httpPolicy).toEqual({
+      headersTimeoutMs: 12_000,
+      requestTimeoutMs: 90_000,
+      bodyReadTimeoutMs: 15_000,
+      keepAliveTimeoutMs: 4_000,
+      maxRequestsPerSocket: 25,
+      connectionsCheckingIntervalMs: 2_000
+    });
+  });
+
+  it("handles malformed HTTP at the socket boundary without logging or returning packet contents", async () => {
+    const server = await startTestServer();
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const secretMarker = "client-error-secret-marker";
+
+    const rawResponse = await sendRawHttp(server, `GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: session=${secretMarker}\r\nInvalid Header\r\n\r\n`);
+
+    expect(rawResponse).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+    expect(rawResponse).toContain("Connection: close");
+    expect(rawResponse).not.toContain(secretMarker);
+    expect(diagnostic).toHaveBeenCalledOnce();
+    expect(String(diagnostic.mock.calls[0]?.[0])).not.toContain(secretMarker);
   });
 
   it("authenticates SSE with the HttpOnly cookie and replays committed events", async () => {
@@ -507,6 +552,18 @@ async function readSseChunk(response: Response, controller: AbortController): Pr
     controller.abort();
     await reader.cancel().catch(() => undefined);
   }
+}
+
+function sendRawHttp(server: WebServerHandle, request: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connect({ host: server.host, port: server.port });
+    const chunks: Buffer[] = [];
+    socket.setTimeout(5_000, () => socket.destroy(new Error("Raw HTTP response timed out.")));
+    socket.on("connect", () => socket.end(request));
+    socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("error", reject);
+  });
 }
 
 function restoreEnv(): void {

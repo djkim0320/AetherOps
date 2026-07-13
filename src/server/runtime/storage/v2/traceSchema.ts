@@ -83,6 +83,7 @@ export function migrateStorageTraceV3Schema(db: DatabaseSync): void {
       data text
     );
     create index if not exists idx_tool_attempts_job on tool_attempts(job_id, ordinal, queued_at, id);
+    create index if not exists idx_tool_attempts_job_queued on tool_attempts(job_id, queued_at, id);
     create index if not exists idx_tool_attempts_decision on tool_attempts(decision_id, queued_at);
     create index if not exists idx_tool_attempts_status on tool_attempts(project_id, status, queued_at);
 

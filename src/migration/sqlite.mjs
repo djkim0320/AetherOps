@@ -5,6 +5,7 @@ import { normalizeForStableJson, semanticTextHash, sha256Hex, stableJsonHash, st
 
 const v2SchemaSourceUrl = new URL("../server/runtime/storage/v2/schema.ts", import.meta.url);
 const traceSchemaSourceUrl = new URL("../server/runtime/storage/v2/traceSchema.ts", import.meta.url);
+const jobSchemaSourceUrl = new URL("../server/runtime/storage/v2/jobSchema.ts", import.meta.url);
 const canonicalEntityTables = new Set([
   "projects_v2",
   "records_v2",
@@ -140,7 +141,8 @@ export function loadV2SchemaSql() {
     "'completed'"
   ]);
   const trace = extractTemplateSql(traceSchemaSourceUrl, "export function migrateStorageTraceV3Schema");
-  return `${base}\n${trace}`;
+  const jobFencing = extractTemplateSql(jobSchemaSourceUrl, "function installStorageJobV4Objects");
+  return `${base}\n${trace}\n${jobFencing}`;
 }
 
 export function loadV2FtsSql() {

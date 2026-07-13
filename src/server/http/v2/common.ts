@@ -37,7 +37,6 @@ export {
   EngineeringPreflightResponseSchema,
   EngineeringTargetSchema
 };
-
 export interface RpcHandlerContext {
   appRoot: string;
   dataRoot: string;
@@ -226,14 +225,17 @@ export function toSettingsSaveInput(params: z.input<typeof SettingsSaveParamsSch
 
 export function toToolDiagnosticsResponse(
   settings: AppSettings,
-  codexStatus?: {
-    authenticated: boolean;
-    cliAvailable: boolean;
-    catalog: "supported" | "unsupported";
-    access: "not_checked" | "available" | "unavailable";
-    message?: string;
-    sandbox?: CodexCliReadiness;
-  }
+  codexStatus:
+    | {
+        authenticated: boolean;
+        cliAvailable: boolean;
+        catalog: "supported" | "unsupported";
+        access: "not_checked" | "available" | "unavailable";
+        message?: string;
+        sandbox?: CodexCliReadiness;
+      }
+    | undefined,
+  reliability: Awaited<ReturnType<DurableJobRuntime["operationalDiagnostics"]>>
 ): z.infer<typeof ToolsDiagnosticsResponseSchema> {
   const diagnostics = buildRuntimeToolDiagnostics(settings);
   const codexDiagnostic = codexCliDiagnostic(settings, codexStatus);
@@ -271,6 +273,7 @@ export function toToolDiagnosticsResponse(
       search: Boolean(settings.allowExternalSearch)
     },
     tools,
+    reliability,
     generatedAt: diagnostics.generatedAt
   });
 }
@@ -393,6 +396,4 @@ function classifyTool(name: string): "agent" | "engineering" | "search" | "stora
   return "agent";
 }
 
-function classifyBlocker(key: string): "agent" | "engineering" | "search" | "storage" {
-  return classifyTool(key);
-}
+const classifyBlocker = classifyTool;

@@ -104,7 +104,7 @@ describe("job contracts", () => {
     requestedCapabilities: { agent: true, engineering: false, search: false },
     toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" } }
   } as const;
-  it("keeps the complete public status vocabulary and queued receipt", () => {
+  it("keeps the complete public status vocabulary and reports an idempotent receipt's actual status", () => {
     expect(JOB_STATUSES_V2).toEqual([
       "queued",
       "running",
@@ -128,17 +128,16 @@ describe("job contracts", () => {
         projectRevision: 4
       }).status
     ).toBe("queued");
-    expect(() =>
+    expect(
       JobReceiptSchema.parse({
         jobId: "j1",
         projectId: "p1",
         kind: "research_loop",
-        status: "running",
-        queuePosition: 0,
+        status: "completed",
         acceptedAt: timestamp,
         projectRevision: 4
       })
-    ).toThrow();
+    ).not.toHaveProperty("queuePosition");
   });
 
   it.each([
@@ -151,6 +150,25 @@ describe("job contracts", () => {
     ["jobs.list", { projectId: "p1" }]
   ])("validates %s", (method, params) => {
     expect(JobRpcRequestSchema.parse({ requestId: `request-${method}`, method, params }).method).toBe(method);
+  });
+
+  it("strictly validates bounded jobs.get trace pages", () => {
+    const valid = {
+      requestId: "request-job-trace-page",
+      method: "jobs.get",
+      params: { projectId: "p1", jobId: "j1", tracePage: { category: "toolAttempts", cursor: "eyJ2IjoxfQ", limit: 200 } }
+    };
+    expect(JobRpcRequestSchema.parse(valid)).toMatchObject(valid);
+    for (const tracePage of [
+      { category: "unknown" },
+      { category: "toolAttempts", cursor: "not base64url!" },
+      { category: "toolAttempts", cursor: "a".repeat(2_049) },
+      { category: "toolAttempts", limit: 0 },
+      { category: "toolAttempts", limit: 201 },
+      { category: "toolAttempts", extra: true }
+    ]) {
+      expect(JobRpcRequestSchema.safeParse({ ...valid, params: { projectId: "p1", jobId: "j1", tracePage } }).success).toBe(false);
+    }
   });
 
   it("requires an explicit capability and source/OpenCode policy for research runs", () => {

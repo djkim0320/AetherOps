@@ -9,6 +9,36 @@ import type {
   StorageToolDecision,
   StorageToolOutputLink
 } from "../runtime/storage/v2/traceTypes.js";
+import type { StorageTraceCategory, StorageTraceSummary } from "../runtime/storage/v2/traceTypes.js";
+
+export const DURABLE_TRACE_PREVIEW_LIMIT = 20;
+export const DURABLE_TRACE_MAX_RECORDS = 300;
+export const DURABLE_TRACE_MAX_SERIALIZED_BYTES = 2_097_152;
+
+export interface DurableTracePageRequest {
+  category: StorageTraceCategory;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface DurableTracePageMetadata {
+  order: "newest_first";
+  total: number;
+  returned: number;
+  truncated: boolean;
+  nextCursor?: string;
+}
+
+export type DurableTracePages = Record<StorageTraceCategory, DurableTracePageMetadata>;
+export type DurableTraceContinuationCursors = Record<StorageTraceCategory, string[]>;
+
+export interface DurableTraceBudget {
+  maxRecords: 300;
+  maxSerializedBytes: 2_097_152;
+  returned: number;
+  total: number;
+  truncated: boolean;
+}
 
 export interface DurableJobRecord {
   id: string;
@@ -36,14 +66,18 @@ export interface DurableJobReceipt {
   jobId: string;
   projectId: string;
   kind: JobKind;
-  status: "queued";
-  queuePosition: number;
+  status: JobStatus;
+  queuePosition?: number;
   acceptedAt: string;
   projectRevision: number;
 }
 
 export interface DurableJobDetail extends DurableJobRecord {
   traceAvailability: "available" | "legacy_unavailable";
+  traceSummary: StorageTraceSummary;
+  tracePages: DurableTracePages;
+  traceContinuationCursors?: DurableTraceContinuationCursors;
+  traceBudget: DurableTraceBudget;
   trace: {
     llmInvocations: StorageLlmInvocation[];
     toolDecisions: StorageToolDecision[];

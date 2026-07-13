@@ -74,6 +74,7 @@ export interface StorageJob {
   status: StorageJobStatus;
   priority: number;
   attempt: number;
+  leaseGeneration: number;
   payload: unknown;
   result?: unknown;
   error?: string;
@@ -97,8 +98,85 @@ export interface StorageJob {
 export interface StorageJobClaimOptions {
   projectId?: string;
   leaseOwner: string;
-  leaseExpiresAt?: string;
+  leaseExpiresAt: string;
   now?: string;
+}
+
+export interface StorageLeaseFence {
+  jobId: string;
+  attempt: number;
+  leaseOwner: string;
+  leaseGeneration: number;
+}
+
+export type StorageClaimStartOptions = StorageJobClaimOptions;
+
+export interface StorageClaimStartResult {
+  job: StorageJob;
+  fence: StorageLeaseFence;
+  event: StorageJobEvent;
+  stepAttempt?: StorageStepAttempt;
+}
+
+export type StorageSettledJobStatus = "paused" | "aborted" | "interrupted" | "blocked" | "failed" | "completed";
+
+export interface StorageStepDispositionInput {
+  fence: StorageLeaseFence;
+  step: string;
+  projectRevision: number;
+  occurredAt?: string;
+  checkpointData?: unknown;
+  outputRef?: string;
+  outputHash?: string;
+}
+
+export interface StorageCompletedStepInput {
+  step: string;
+  checkpointData?: unknown;
+  outputRef?: string;
+  outputHash?: string;
+}
+
+export interface StorageQuarantinedStepInput extends StorageStepDispositionInput {
+  error: string;
+  quarantineRef?: string;
+}
+
+export interface StorageStepDispositionResult {
+  job: StorageJob;
+  checkpoint: StorageCheckpoint;
+  stepAttempt: StorageStepAttempt;
+  event: StorageJobEvent;
+}
+
+export interface StorageRunnableProjectPage {
+  projectIds: string[];
+  nextCursor?: string;
+}
+
+export interface StorageQueuedProjectDiagnostic {
+  projectId: string;
+  depth: number;
+  oldestQueuedAt: string;
+}
+
+export interface StorageJobQueueDiagnostics {
+  projects: StorageQueuedProjectDiagnostic[];
+  totalDepth: number;
+  oldestQueuedAt?: string;
+  totalProjects: number;
+  truncated: boolean;
+}
+
+export interface StorageProjectJobListOptions {
+  status?: StorageJobStatus;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface StorageProjectJobPage {
+  jobs: StorageJob[];
+  nextCursor?: string;
 }
 
 export interface StorageJobStatusPatch {

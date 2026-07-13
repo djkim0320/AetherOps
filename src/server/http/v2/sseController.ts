@@ -1,76 +1,100 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { DurableJobRuntime } from "../../composition/durableJobRuntime.js";
+import { EntityIdSchema } from "../../../contracts/api-v2/common.js";
+import type { SseRuntimeDiagnostics } from "../../composition/sseRuntimeDiagnostics.js";
+import { HttpError, setSseHeaders } from "../response.js";
+import {
+  acquireSseConnection,
+  parseLastEventId,
+  resolveSseLimits,
+  SerializedSseWriter,
+  SseConnectionLimiter,
+  SseSlowConsumerError,
+  type SseDeliveryLimits
+} from "./sseDelivery.js";
+import { replayThenSubscribe, type ProjectEventSource } from "./sseReplay.js";
 
-type ProjectEvent = Awaited<ReturnType<DurableJobRuntime["eventsAfter"]>>[number];
+export { parseLastEventId, SseConnectionLimiter } from "./sseDelivery.js";
+export { replayThenSubscribe } from "./sseReplay.js";
+export type { ProjectEventSource, ReplaySubscriptionOptions } from "./sseReplay.js";
 
-export interface ProjectEventSource {
-  eventsAfter(projectId: string, lastEventId?: string, limit?: number): Promise<ProjectEvent[]>;
-  subscribe(listener: (event: ProjectEvent) => void): () => void;
+export interface ServeProjectEventsOptions extends Partial<SseDeliveryLimits> {
+  limiter?: SseConnectionLimiter;
+  now?: () => number;
+  diagnostics?: SseRuntimeDiagnostics;
 }
 
-export async function serveProjectEvents(request: IncomingMessage, response: ServerResponse, url: URL, events: ProjectEventSource): Promise<() => void> {
-  const projectId = url.searchParams.get("projectId")?.trim();
-  if (!projectId) throw new Error("projectId is required for SSE.");
-  const lastEventId = request.headers["last-event-id"];
-  response.writeHead(200, {
-    "content-type": "text/event-stream; charset=utf-8",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    "x-accel-buffering": "no"
-  });
-  const unsubscribe = await replayThenSubscribe(events, projectId, Array.isArray(lastEventId) ? lastEventId[0] : lastEventId, (event) =>
-    writeEvent(response, event)
-  );
-  const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 15_000);
-  heartbeat.unref();
-  const close = () => {
-    clearInterval(heartbeat);
-    unsubscribe();
-  };
-  request.once("close", close);
-  response.once("close", close);
-  return close;
-}
+const defaultConnectionLimiter = new SseConnectionLimiter();
 
-export async function replayThenSubscribe(
+export async function serveProjectEvents(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
   events: ProjectEventSource,
-  projectId: string,
-  lastEventId: string | undefined,
-  emit: (event: ProjectEvent) => void
+  options: ServeProjectEventsOptions = {}
 ): Promise<() => void> {
-  let replaying = true;
-  const buffered: ProjectEvent[] = [];
-  const unsubscribe = events.subscribe((event) => {
-    if (event.projectId !== projectId) return;
-    if (replaying) buffered.push(event);
-    else emit(event);
-  });
+  const parsedProjectId = EntityIdSchema.safeParse(url.searchParams.get("projectId"));
+  if (!parsedProjectId.success) throw new HttpError(400, "A valid projectId is required for SSE.");
+  const projectId = parsedProjectId.data;
+  const lastEventId = parseLastEventId(request.headers["last-event-id"]);
+  const limits = resolveSseLimits(options);
+  const releaseConnection = acquireSseConnection(options.limiter ?? defaultConnectionLimiter, projectId, response);
+  options.diagnostics?.recordConnectionOpened();
+  const controller = new AbortController();
+  const writer = new SerializedSseWriter(response, limits, options.diagnostics);
+  let replayUnsubscribe: (() => void) | undefined;
+  const heartbeat: { timer?: ReturnType<typeof setInterval> } = {};
+  let closed = false;
+
+  const cleanup = (): void => {
+    if (closed) return;
+    closed = true;
+    if (heartbeat.timer) clearInterval(heartbeat.timer);
+    request.off("close", cleanup);
+    request.off("error", terminate);
+    response.off("close", cleanup);
+    response.off("error", terminate);
+    controller.abort(new Error("SSE connection closed."));
+    replayUnsubscribe?.();
+    writer.close(controller.signal.reason);
+    releaseConnection();
+    options.diagnostics?.recordConnectionClosed();
+  };
+  const terminate = (reason: unknown): void => {
+    const wasClosed = closed;
+    if (!wasClosed && reason instanceof SseSlowConsumerError) options.diagnostics?.recordSlowConsumerDisconnect();
+    cleanup();
+    if (!wasClosed && !response.destroyed && !response.writableEnded) response.end();
+    void reason;
+  };
+
+  request.once("close", cleanup);
+  request.once("error", terminate);
+  response.once("close", cleanup);
+  response.once("error", terminate);
   try {
-    let lastSequence = Number(lastEventId ?? 0);
-    const pageSize = 200;
-    while (true) {
-      const replay = await events.eventsAfter(projectId, String(lastSequence), pageSize);
-      for (const event of replay) {
-        if (event.id <= lastSequence) continue;
-        emit(event);
-        lastSequence = event.id;
-      }
-      if (replay.length < pageSize) break;
-    }
-    buffered.sort((left, right) => left.id - right.id);
-    for (const event of buffered) {
-      if (event.id <= lastSequence) continue;
-      emit(event);
-      lastSequence = event.id;
-    }
-    replaying = false;
-    return unsubscribe;
+    setSseHeaders(response);
   } catch (error) {
-    unsubscribe();
+    cleanup();
     throw error;
   }
-}
 
-function writeEvent(response: ServerResponse, event: { id: number; type: string; [key: string]: unknown }): void {
-  response.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  heartbeat.timer = setInterval(() => void writer.heartbeat().catch(terminate), limits.heartbeatMs);
+  heartbeat.timer.unref();
+  const replay = replayThenSubscribe(events, projectId, lastEventId, (event) => writer.event(event), {
+    pageSize: limits.pageSize,
+    maxBufferedEvents: limits.maxBufferedEvents,
+    maxBufferedBytes: limits.maxBufferedBytes,
+    maxReplayEvents: limits.maxReplayEvents,
+    maxReplayBytes: limits.maxReplayBytes,
+    maxReplayDurationMs: limits.maxReplayDurationMs,
+    signal: controller.signal,
+    now: options.now,
+    onError: terminate,
+    observer: options.diagnostics
+  });
+  void replay.then((unsubscribe) => {
+    if (closed) unsubscribe();
+    else replayUnsubscribe = unsubscribe;
+  }, terminate);
+  return cleanup;
 }

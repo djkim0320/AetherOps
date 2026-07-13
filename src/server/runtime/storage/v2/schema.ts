@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { STORAGE_JOB_STATUSES } from "./types.js";
 import { assertStorageTraceSchemaReady, migrateStorageTraceV3Schema } from "./traceSchema.js";
+import { assertStorageJobV4SchemaReady, migrateStorageJobV4Schema } from "./jobSchema.js";
 
 export const STORAGE_V2_SCHEMA_VERSION = 2;
 
@@ -108,6 +109,7 @@ export function migrateStorageV2Schema(db: DatabaseSync, options: StorageV2Migra
       status text not null check(status in (${jobStatusCheck})),
       priority integer not null default 0,
       attempt integer not null default 0,
+      lease_generation integer not null default 0,
       idempotency_key text,
       request_hash text,
       requested_capabilities text,
@@ -128,8 +130,8 @@ export function migrateStorageV2Schema(db: DatabaseSync, options: StorageV2Migra
       error text
     );
     create unique index if not exists idx_jobs_project_idempotency on jobs(project_id, idempotency_key) where idempotency_key is not null;
-    create index if not exists idx_jobs_project_lane on jobs(project_id, status, priority desc, queued_at, created_at);
-    create index if not exists idx_jobs_ready on jobs(status, priority desc, queued_at, created_at);
+    create index if not exists idx_jobs_project_lane on jobs(project_id, status, queued_at, id);
+    create index if not exists idx_jobs_ready on jobs(status, queued_at, id);
     create index if not exists idx_jobs_lease on jobs(status, lease_expires_at);
 
     create table if not exists job_events (
@@ -279,6 +281,7 @@ export function migrateStorageV2Schema(db: DatabaseSync, options: StorageV2Migra
   `);
 
   migrateStorageTraceV3Schema(db);
+  migrateStorageJobV4Schema(db);
   blockLegacyResearchJobsRequiringReplan(db);
   createFtsTables(db);
   db.prepare(
@@ -312,6 +315,7 @@ export function assertStorageV2SchemaReady(db: DatabaseSync): void {
     throw new Error("Storage v2 schema is not ready. Run migrate:apply and migrate:verify before starting the storage worker.");
   }
   assertStorageTraceSchemaReady(db);
+  assertStorageJobV4SchemaReady(db);
 }
 
 function createFtsTables(db: DatabaseSync): void {

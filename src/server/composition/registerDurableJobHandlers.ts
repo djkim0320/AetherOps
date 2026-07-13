@@ -97,7 +97,6 @@ export function registerDurableJobHandlers(deps: HandlerDependencies): void {
       },
       onCheckpoint: async (step) => {
         const projectRevision = computeProjectRevision(await deps.orchestrator.getSnapshot(job.projectId));
-        await trace.promoteCompletedOutputs(projectRevision);
         await deps.jobs.commitCheckpoint({
           projectId: job.projectId,
           jobId: job.id,
@@ -116,8 +115,7 @@ export function registerDurableJobHandlers(deps: HandlerDependencies): void {
       const status = snapshot.project.status as "paused" | "aborted" | "blocked" | "failed";
       await deps.jobs.settle(job.id, status, revision, terminalReason(snapshot, status));
     } else {
-      await trace.promoteCompletedOutputs(revision);
-      await deps.jobs.finish(job.id, revision);
+      await deps.jobs.finish(job.id, revision, trace.completedOutputPromotions());
     }
     await emitProjectSnapshotChanged(deps.events, snapshot, "job_changed");
   });

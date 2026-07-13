@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE } from "../runtime/storage/v2/jobErrors.js";
+import type { StorageWorkerCommand } from "../runtime/storage/worker/typedProtocol.js";
+import { StorageWorkerClient, StorageWorkerRuntime } from "../runtime/storage/worker/typedRuntime.js";
 import { DurableJobRuntime } from "./durableJobRuntime.js";
+import type { DurableRuntimeTimer } from "./durableRuntimeConfig.js";
 import { migrateStorageV2Schema } from "../runtime/storage/v2/schema.js";
 
 let root: string | undefined;
@@ -17,7 +21,228 @@ afterEach(async () => {
 });
 
 describe("DurableJobRuntime recovery", () => {
-  it("commits an explicit step checkpoint and its SSE event atomically", async () => {
+  it("fails enqueue closed when no durable handler is registered", async () => {
+    const databasePath = createDatabase("missing-handler");
+    runtime = new DurableJobRuntime(databasePath, 1);
+    await runtime.initialize();
+
+    await expect(
+      runtime.enqueue({ projectId: "project-missing", kind: "chat_reply", projectRevision: 1, idempotencyKey: "missing", payload: {} })
+    ).rejects.toThrow(/handler.*registered/i);
+  });
+
+  it("keeps a project active until its handler returns even after the handler commits completion", async () => {
+    const databasePath = createDatabase("handler-lifetime-lane");
+    runtime = new DurableJobRuntime(databasePath, 4);
+    const firstMayReturn = deferred<void>();
+    const firstCommitted = deferred<void>();
+    let secondStarted = false;
+    runtime.registerHandler("chat_reply", async (job, request) => {
+      const label = (request as { label: string }).label;
+      if (label === "first") {
+        await runtime?.finish(job.id, 1);
+        firstCommitted.resolve();
+        await firstMayReturn.promise;
+      } else {
+        secondStarted = true;
+        await runtime?.finish(job.id, 1);
+      }
+    });
+    await runtime.initialize();
+    await runtime.enqueue({ projectId: "project-one", kind: "chat_reply", projectRevision: 1, idempotencyKey: "first", payload: { label: "first" } });
+    await firstCommitted.promise;
+    await runtime.enqueue({ projectId: "project-one", kind: "chat_reply", projectRevision: 1, idempotencyKey: "second", payload: { label: "second" } });
+
+    await flushTurns(20);
+    expect(secondStarted).toBe(false);
+    firstMayReturn.resolve();
+    await waitUntil(() => secondStarted);
+  });
+
+  it("discovers runnable projects beyond the first 1,000 rows during startup", async () => {
+    const databasePath = createDatabase("recovery-cursor");
+    const seed = new DatabaseSync(databasePath);
+    const insert = seed.prepare(
+      `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key, queued_at, created_at, updated_at, payload)
+       values (?, ?, 'chat_reply', 'queued', 0, 0, ?, ?, ?, ?, ?)`
+    );
+    const queuedAt = "2026-07-14T00:00:00.000Z";
+    seed.exec("begin immediate");
+    for (let index = 0; index < 1_001; index += 1) {
+      const suffix = String(index).padStart(4, "0");
+      insert.run(`job-${suffix}`, `project-${suffix}`, `key-${suffix}`, queuedAt, queuedAt, queuedAt, JSON.stringify({ projectRevision: 1 }));
+    }
+    seed.exec("commit");
+    seed.close();
+
+    runtime = new DurableJobRuntime(databasePath, 8);
+    let handled = 0;
+    const firstThousand = deferred<void>();
+    runtime.registerHandler("chat_reply", async (job) => {
+      handled += 1;
+      await runtime?.finish(job.id, 1);
+      if (handled === 1_000) firstThousand.resolve();
+    });
+    await runtime.initialize();
+    await firstThousand.promise;
+    await waitUntil(() => handled === 1_001);
+
+    expect(handled).toBe(1_001);
+  }, 30_000);
+
+  it("returns one shared shutdown promise for concurrent close calls", async () => {
+    const databasePath = createDatabase("close-idempotent");
+    runtime = new DurableJobRuntime(databasePath, 1);
+    await runtime.initialize();
+    const first = runtime.close();
+    const second = runtime.close();
+    expect(second).toBe(first);
+    await first;
+    runtime = undefined;
+  });
+
+  it("bounds shutdown, revokes an ignored handler lease, and leaves restart-readable state", async () => {
+    const databasePath = createDatabase("close-revoke");
+    const timer = manualTimer();
+    runtime = new DurableJobRuntime(databasePath, { concurrency: 1, shutdownGraceMs: 1, timer });
+    const started = deferred<void>();
+    const release = deferred<void>();
+    runtime.registerHandler("chat_reply", async (job) => {
+      started.resolve();
+      await release.promise;
+      await runtime?.finish(job.id, 2);
+    });
+    await runtime.initialize();
+    const receipt = await runtime.enqueue({
+      projectId: "project-close",
+      kind: "chat_reply",
+      projectRevision: 1,
+      idempotencyKey: "close-key",
+      payload: {}
+    });
+    await started.promise;
+
+    const closing = runtime.close();
+    timer.fireDelay(1);
+    await flushTurns(2);
+    timer.fireDelay(1);
+    await closing;
+    const verify = new DatabaseSync(databasePath, { readOnly: true });
+    const row = verify.prepare("select status from jobs where id=?").get(receipt.jobId) as { status: string };
+    verify.close();
+    expect(row.status).toBe("interrupted");
+
+    release.resolve();
+    await flushTurns(10);
+    runtime = undefined;
+  });
+
+  it("interrupts a claim that commits after shutdown starts without running its handler", async () => {
+    const databasePath = createDatabase("close-claim-race");
+    const storage = new StorageWorkerRuntime({
+      appDbPath: databasePath,
+      vectorDbPath: databasePath,
+      ontologyDbPath: databasePath,
+      requireFts5: true
+    });
+    const claimStarted = deferred<void>();
+    const releaseClaim = deferred<void>();
+    const storageClient = {
+      async request<T>(command: StorageWorkerCommand): Promise<T> {
+        if (command.name === "job.claimAndStart") {
+          claimStarted.resolve();
+          await releaseClaim.promise;
+        }
+        return storage.handle(command) as T;
+      },
+      async close(): Promise<void> {
+        storage.close();
+      }
+    } as unknown as StorageWorkerClient;
+    runtime = new DurableJobRuntime(databasePath, { concurrency: 1, storageClient });
+    let handlerRan = false;
+    runtime.registerHandler("chat_reply", async () => {
+      handlerRan = true;
+    });
+    await runtime.initialize();
+    const receipt = await runtime.enqueue({
+      projectId: "project-close-claim",
+      kind: "chat_reply",
+      projectRevision: 1,
+      idempotencyKey: "close-claim-key",
+      payload: {}
+    });
+    await claimStarted.promise;
+
+    const closing = runtime.close();
+    releaseClaim.resolve();
+    await closing;
+
+    const verify = new DatabaseSync(databasePath, { readOnly: true });
+    const stored = verify.prepare("select status from jobs where id=?").get(receipt.jobId) as { status: string };
+    const events = verify.prepare("select type from job_events where job_id=? order by sequence").all(receipt.jobId) as Array<{ type: string }>;
+    verify.close();
+    expect(handlerRan).toBe(false);
+    expect(stored.status).toBe("interrupted");
+    expect(events.map((event) => event.type)).toEqual(["run.status.changed", "run.status.changed", "run.status.changed"]);
+    runtime = undefined;
+  });
+
+  it("observes a control requested by another runtime and prevents late completion overwrite", async () => {
+    const databasePath = createDatabase("cross-runtime-control");
+    const timer = manualTimer();
+    runtime = new DurableJobRuntime(databasePath, { concurrency: 1, leaseTtlMs: 1_000, leaseRenewalMs: 10, leaseSweepMs: 500, timer });
+    const started = deferred<void>();
+    runtime.registerHandler("chat_reply", async (job, _request, context) => {
+      started.resolve();
+      await new Promise<void>((resolve) => context.signal.addEventListener("abort", () => resolve(), { once: true }));
+      await runtime?.finish(job.id, 1);
+    });
+    await runtime.initialize();
+    const receipt = await runtime.enqueue({
+      projectId: "project-control",
+      kind: "chat_reply",
+      projectRevision: 1,
+      idempotencyKey: "control-key",
+      payload: {}
+    });
+    await started.promise;
+
+    const other = new DurableJobRuntime(databasePath, 1);
+    await other.initialize();
+    try {
+      await other.requestAbort(receipt.jobId, 1);
+      timer.fireDelay(10);
+      await waitUntilAsync(async () => (await runtime?.get(receipt.jobId))?.status === "aborted");
+      await expect(runtime.get(receipt.jobId)).resolves.toMatchObject({ status: "aborted" });
+    } finally {
+      await other.close();
+    }
+  });
+
+  it("reports the stored terminal status when an idempotent enqueue is replayed", async () => {
+    const databasePath = createDatabase("terminal-receipt");
+    runtime = new DurableJobRuntime(databasePath, 1);
+    runtime.registerHandler("chat_reply", async (job) => {
+      await runtime?.finish(job.id, 7);
+    });
+    await runtime.initialize();
+    const input = {
+      projectId: "project-terminal",
+      kind: "chat_reply" as const,
+      projectRevision: 7,
+      idempotencyKey: "terminal-key",
+      payload: { message: "same" }
+    };
+    const first = await runtime.enqueue(input);
+    await waitUntilAsync(async () => (await runtime?.get(first.jobId))?.status === "completed");
+
+    const replay = await runtime.enqueue(input);
+    expect(replay).toMatchObject({ jobId: first.jobId, status: "completed" });
+    expect(replay).not.toHaveProperty("queuePosition");
+  });
+
+  it("rejects an explicit checkpoint outside the active leased handler", async () => {
     const databasePath = createDatabase("step-checkpoint");
     const seed = new DatabaseSync(databasePath);
     const now = new Date().toISOString();
@@ -30,17 +255,11 @@ describe("DurableJobRuntime recovery", () => {
     seed.close();
     runtime = new DurableJobRuntime(databasePath, 1);
 
-    const checkpoint = await runtime.commitCheckpoint({
-      projectId: "project-step",
-      jobId: "job-step",
-      step: "EXECUTE_TOOLS",
-      projectRevision: 3
-    });
-
-    await expect(runtime.latestCommittedCheckpoint("job-step")).resolves.toMatchObject({ id: checkpoint.id, status: "committed" });
-    await expect(runtime.eventsAfter("project-step")).resolves.toEqual([
-      expect.objectContaining({ type: "run.step.changed", data: { jobId: "job-step", step: "EXECUTE_TOOLS", checkpointId: checkpoint.id } })
-    ]);
+    await expect(runtime.commitCheckpoint({ projectId: "project-step", jobId: "job-step", step: "EXECUTE_TOOLS", projectRevision: 3 })).rejects.toThrow(
+      /active lease fence/
+    );
+    await expect(runtime.latestCommittedCheckpoint("job-step")).resolves.toBeUndefined();
+    await expect(runtime.eventsAfter("project-step")).resolves.toEqual([]);
   });
 
   it("runs a persisted queued job through the registered handler and commits only the completed checkpoint", async () => {
@@ -78,7 +297,7 @@ describe("DurableJobRuntime recovery", () => {
     });
     await runtime.initialize();
     await Promise.race([handled, timeout(5_000)]);
-    expect((await runtime.get("job-recovered"))?.status).toBe("completed");
+    await waitUntilAsync(async () => (await runtime?.get("job-recovered"))?.status === "completed");
     await waitForCheckpoint(databasePath);
     await runtime.close();
     runtime = undefined;
@@ -88,7 +307,7 @@ describe("DurableJobRuntime recovery", () => {
     verify.close();
     expect(checkpoints).toHaveLength(1);
     expect(checkpoints[0]?.status).toBe("committed");
-    expect(JSON.parse(checkpoints[0]?.data ?? "{}")).toMatchObject({ phase: "step_completed" });
+    expect(JSON.parse(checkpoints[0]?.data ?? "{}")).toMatchObject({ phase: "execute_tools_completed" });
   });
 
   it("deduplicates idempotency keys, serializes each project FIFO, and runs different projects concurrently", async () => {
@@ -117,7 +336,7 @@ describe("DurableJobRuntime recovery", () => {
     });
     await expect(
       runtime.enqueue({ projectId: "project-a", kind: "chat_reply", projectRevision: 1, idempotencyKey: "a-1", payload: { label: "changed" } })
-    ).rejects.toThrow(/request hash does not match/);
+    ).rejects.toThrow(IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE);
     await runtime.enqueue({ projectId: "project-a", kind: "chat_reply", projectRevision: 1, idempotencyKey: "a-2", payload: { label: "a-2" } });
     await runtime.enqueue({ projectId: "project-b", kind: "chat_reply", projectRevision: 1, idempotencyKey: "b-1", payload: { label: "b-1" } });
 
@@ -127,6 +346,71 @@ describe("DurableJobRuntime recovery", () => {
     releaseFirst();
     await waitUntil(() => started.includes("a-2"));
     expect(started.filter((label) => label === "a-1")).toHaveLength(1);
+  });
+
+  it("serializes simultaneous enqueues for one project without duplicate execution or events", async () => {
+    const databasePath = createDatabase("simultaneous-enqueue");
+    runtime = new DurableJobRuntime(databasePath, 4);
+    const firstStarted = deferred<void>();
+    const releaseFirst = deferred<void>();
+    const allCompleted = deferred<void>();
+    const executed = new Set<string>();
+    let active = 0;
+    let maxActive = 0;
+    let completedEvents = 0;
+    runtime.subscribe((event) => {
+      if (event.type === "run.status.changed" && event.data.status === "completed") {
+        completedEvents += 1;
+        if (completedEvents === 12) allCompleted.resolve();
+      }
+    });
+    runtime.registerHandler("chat_reply", async (job) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      executed.add(job.id);
+      if (executed.size === 1) {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      }
+      await runtime?.finish(job.id, 1);
+      active -= 1;
+    });
+    await runtime.initialize();
+
+    const receiptsPromise = Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        runtime?.enqueue({
+          projectId: "project-simultaneous",
+          kind: "chat_reply",
+          projectRevision: 1,
+          idempotencyKey: `simultaneous-${index}`,
+          payload: { index }
+        })
+      )
+    );
+    await firstStarted.promise;
+    const receipts = await receiptsPromise;
+    await flushTurns(8);
+    expect(maxActive).toBe(1);
+    expect(executed.size).toBe(1);
+
+    releaseFirst.resolve();
+    await allCompleted.promise;
+    expect(maxActive).toBe(1);
+    expect(executed.size).toBe(12);
+    expect(new Set(receipts.map((receipt) => receipt?.jobId)).size).toBe(12);
+
+    const verify = new DatabaseSync(databasePath, { readOnly: true });
+    expect(
+      verify
+        .prepare("select count(*) as count from jobs where project_id=? and status='completed' and attempt=1 and lease_generation=1")
+        .get("project-simultaneous")
+    ).toEqual({
+      count: 12
+    });
+    expect(verify.prepare("select count(*) as count from job_events where project_id=?").get("project-simultaneous")).toEqual({ count: 36 });
+    expect(verify.prepare("select count(distinct event_id) as count from job_events where project_id=?").get("project-simultaneous")).toEqual({ count: 36 });
+    verify.close();
   });
 
   it("marks an expired running lease interrupted during startup recovery", async () => {
@@ -161,45 +445,50 @@ describe("DurableJobRuntime recovery", () => {
 
   it("commits tool attempt state with its public lifecycle event and exposes detailed trace only from getDetail", async () => {
     const databasePath = createDatabase("trace");
-    const seed = new DatabaseSync(databasePath);
     const now = new Date().toISOString();
-    seed
-      .prepare(
-        `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key, request_hash, queued_at, created_at, updated_at, payload)
-         values (?, ?, ?, 'queued', 0, 0, ?, ?, ?, ?, ?, ?)`
-      )
-      .run("job-trace", "project-trace", "research_loop", "trace-key", "request-hash", now, now, now, JSON.stringify({ projectRevision: 3 }));
-    seed.close();
     runtime = new DurableJobRuntime(databasePath, 1);
     const eventIds: number[] = [];
     runtime.subscribe((item) => eventIds.push(item.id));
-    await runtime.recordToolDecision({
-      id: "decision-1",
+    runtime.registerHandler("research_loop", async (job) => {
+      await runtime?.recordToolDecision({
+        id: "decision-1",
+        projectId: job.projectId,
+        jobId: job.id,
+        toolName: "WebFetchTool",
+        purpose: "Fetch the pinned source.",
+        expectedOutcome: "A validated source.",
+        rawSelection: { url: "https://example.com/source" },
+        userPinned: true,
+        policyStatus: "accepted",
+        createdAt: now
+      });
+      await runtime?.recordToolAttemptAndEvent({
+        projectRevision: 3,
+        toolName: "WebFetchTool",
+        attempt: {
+          id: "attempt-1",
+          projectId: job.projectId,
+          jobId: job.id,
+          decisionId: "decision-1",
+          ordinal: 0,
+          status: "queued",
+          inputHash: "input-hash",
+          queuedAt: now
+        }
+      });
+      await runtime?.finish(job.id, 3);
+    });
+    await runtime.initialize();
+    const receipt = await runtime.enqueue({
       projectId: "project-trace",
-      jobId: "job-trace",
-      toolName: "WebFetchTool",
-      purpose: "Fetch the pinned source.",
-      expectedOutcome: "A validated source.",
-      rawSelection: { url: "https://example.com/source" },
-      userPinned: true,
-      policyStatus: "accepted",
-      createdAt: now
-    });
-    await runtime.recordToolAttemptAndEvent({
+      kind: "research_loop",
       projectRevision: 3,
-      toolName: "WebFetchTool",
-      attempt: {
-        id: "attempt-1",
-        projectId: "project-trace",
-        jobId: "job-trace",
-        decisionId: "decision-1",
-        ordinal: 0,
-        status: "queued",
-        inputHash: "input-hash",
-        queuedAt: now
-      }
+      idempotencyKey: "trace-key",
+      requestHash: "request-hash",
+      payload: {}
     });
-    const detail = await runtime.getDetail("job-trace");
+    await waitUntilAsync(async () => (await runtime?.get(receipt.jobId))?.status === "completed");
+    const detail = await runtime.getDetail(receipt.jobId);
     const list = await runtime.list("project-trace");
     expect(detail).toMatchObject({
       traceAvailability: "available",
@@ -209,13 +498,19 @@ describe("DurableJobRuntime recovery", () => {
       }
     });
     expect(list.jobs[0]).not.toHaveProperty("trace");
-    expect(eventIds).toHaveLength(1);
-    await expect(runtime.eventsAfter("project-trace")).resolves.toMatchObject([
-      {
-        type: "tool.run.changed",
-        data: { decisionId: "decision-1", attemptId: "attempt-1", ordinal: 0, status: "queued" }
-      }
-    ]);
+    expect(eventIds.length).toBeGreaterThanOrEqual(3);
+    await expect(runtime.eventsAfter("project-trace")).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.any(Number),
+          projectId: "project-trace",
+          projectRevision: 3,
+          occurredAt: expect.any(String),
+          type: "tool.run.changed",
+          data: expect.objectContaining({ decisionId: "decision-1", attemptId: "attempt-1", ordinal: 0, status: "queued" })
+        })
+      ])
+    );
   });
 });
 
@@ -249,4 +544,46 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("Durable runtime condition timed out.");
+}
+
+async function waitUntilAsync(predicate: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("Durable async runtime condition timed out.");
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+async function flushTurns(count: number): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+function manualTimer(): DurableRuntimeTimer & { fireDelay(delayMs: number): void } {
+  const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
+  return {
+    setTimeout(callback, delayMs) {
+      const handle = {} as ReturnType<typeof setTimeout>;
+      scheduled.set(handle, { callback, delayMs });
+      return handle;
+    },
+    clearTimeout(handle) {
+      scheduled.delete(handle);
+    },
+    fireDelay(delayMs) {
+      const entry = [...scheduled.entries()].find(([, value]) => value.delayMs === delayMs);
+      if (!entry) throw new Error(`No ${delayMs}ms timer is pending.`);
+      scheduled.delete(entry[0]);
+      entry[1].callback();
+    }
+  };
 }

@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { StorageWorkerRuntime } from "../worker/typedRuntime.js";
 import { createStorageV2Repositories } from "./repositories.js";
+import { IdempotencyConflictError } from "./jobErrors.js";
 import { migrateStorageV2Schema, STORAGE_V2_SCHEMA_VERSION } from "./schema.js";
+import { STORAGE_JOB_MIGRATION_CHECKSUM } from "./jobSchema.js";
 import { STORAGE_TRACE_MIGRATION_CHECKSUM } from "./traceSchema.js";
 
 describe("storage operational trace v3", () => {
@@ -28,7 +30,8 @@ describe("storage operational trace v3", () => {
     expect(db.prepare("select value from storage_v2_meta where key='schema_version'").get()).toEqual({ value: String(STORAGE_V2_SCHEMA_VERSION) });
     expect(db.prepare("select version, checksum_sha256 from schema_migrations").all()).toEqual([
       { version: 2, checksum_sha256: "99b17d1e0aebc8bb0a2c29084f2f44a263d6644a551a2116429542a20e24016c" },
-      { version: 3, checksum_sha256: STORAGE_TRACE_MIGRATION_CHECKSUM }
+      { version: 3, checksum_sha256: STORAGE_TRACE_MIGRATION_CHECKSUM },
+      { version: 4, checksum_sha256: STORAGE_JOB_MIGRATION_CHECKSUM }
     ]);
     db.close();
   });
@@ -71,7 +74,7 @@ describe("storage operational trace v3", () => {
     };
     expect(jobs.enqueue(input)).toMatchObject(input);
     expect(jobs.enqueue({ ...input, id: "job-duplicate" }).id).toBe("job-1");
-    expect(() => jobs.enqueue({ ...input, id: "job-conflict", requestHash: "hash-b" })).toThrow(/request hash does not match/);
+    expect(() => jobs.enqueue({ ...input, id: "job-conflict", requestHash: "hash-b" })).toThrow(IdempotencyConflictError);
     db.close();
   });
 
@@ -79,6 +82,7 @@ describe("storage operational trace v3", () => {
     const db = migratedDatabase();
     const jobs = createStorageV2Repositories({ appDb: db }).jobs;
     jobs.enqueue({ id: "job-reason", projectId: "project-1", operation: "research_loop" });
+    jobs.claimNext({ leaseOwner: "worker-reason", leaseExpiresAt: "2999-01-01T00:00:00.000Z" });
     expect(() => jobs.updateStatus("job-reason", { status: "blocked" })).toThrow("blockedReason");
     expect(jobs.updateStatus("job-reason", { status: "blocked", blockedReason: "capability_revoked" })).toMatchObject({
       status: "blocked",
@@ -95,6 +99,29 @@ describe("storage operational trace v3", () => {
     const runtime = new StorageWorkerRuntime({ appDbPath: databasePath, vectorDbPath: databasePath, ontologyDbPath: databasePath });
     try {
       runtime.handle({
+        name: "job.enqueue",
+        job: {
+          id: "job-1",
+          projectId: "project-1",
+          operation: "research_loop",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          queuedAt: "2026-01-01T00:00:00.000Z",
+          payload: { projectRevision: 1, currentStep: "EXECUTE_TOOLS" }
+        }
+      });
+      const claimed = runtime.handle({
+        name: "job.claimAndStart",
+        options: {
+          projectId: "project-1",
+          leaseOwner: "trace-worker",
+          leaseExpiresAt: "2026-01-01T01:00:00.000Z",
+          now: "2026-01-01T00:00:00.500Z"
+        }
+      }) as import("./types.js").StorageClaimStartResult;
+      const write = (command: import("../worker/typedProtocol.js").StorageFencedWriteCommand) =>
+        runtime.handle({ name: "fencedTransaction", fence: claimed.fence, now: "2026-01-01T00:00:00.500Z", commands: [command] });
+
+      write({
         name: "trace.llm.save",
         invocation: {
           id: "llm-1",
@@ -111,7 +138,7 @@ describe("storage operational trace v3", () => {
           completedAt: "2026-01-01T00:00:01.000Z"
         }
       });
-      runtime.handle({
+      write({
         name: "trace.decision.record",
         decision: {
           id: "decision-1",
@@ -127,7 +154,7 @@ describe("storage operational trace v3", () => {
           createdAt: "2026-01-01T00:00:01.000Z"
         }
       });
-      runtime.handle({
+      write({
         name: "trace.attempt.save",
         attempt: {
           id: "attempt-1",
@@ -145,7 +172,7 @@ describe("storage operational trace v3", () => {
           completedAt: "2026-01-01T00:00:02.000Z"
         }
       });
-      runtime.handle({
+      write({
         name: "trace.codex.save",
         execution: {
           id: "codex-1",
@@ -165,21 +192,7 @@ describe("storage operational trace v3", () => {
           completedAt: "2026-01-01T00:00:01.500Z"
         }
       });
-      runtime.handle({
-        name: "trace.output.record",
-        link: {
-          id: "link-1",
-          projectId: "project-1",
-          jobId: "job-1",
-          attemptId: "attempt-1",
-          outputKind: "evidence",
-          outputId: "evidence-1",
-          promoted: true,
-          createdAt: "2026-01-01T00:00:02.000Z",
-          promotedAt: "2026-01-01T00:00:02.100Z"
-        }
-      });
-      runtime.handle({
+      write({
         name: "trace.network.record",
         audit: {
           id: "network-1",
@@ -193,6 +206,30 @@ describe("storage operational trace v3", () => {
           auditedAt: "2026-01-01T00:00:01.200Z"
         }
       });
+      runtime.handle({
+        name: "job.transitionTerminal",
+        input: {
+          fence: claimed.fence,
+          status: "completed",
+          projectRevision: 1,
+          occurredAt: "2026-01-01T00:00:02.100Z",
+          promotions: [
+            {
+              link: {
+                id: "link-1",
+                projectId: "project-1",
+                jobId: "job-1",
+                attemptId: "attempt-1",
+                outputKind: "evidence",
+                outputId: "evidence-1",
+                promoted: true,
+                createdAt: "2026-01-01T00:00:02.000Z",
+                promotedAt: "2026-01-01T00:00:02.100Z"
+              }
+            }
+          ]
+        }
+      });
       expect(runtime.handle({ name: "trace.llm.listJob", jobId: "job-1" })).toEqual([expect.objectContaining({ id: "llm-1", model: "gpt-5.6-sol" })]);
       expect(runtime.handle({ name: "trace.decision.listJob", jobId: "job-1" })).toEqual([
         expect.objectContaining({ id: "decision-1", policyStatus: "accepted" })
@@ -202,6 +239,9 @@ describe("storage operational trace v3", () => {
         expect.objectContaining({ id: "codex-1", networkPolicy: "disabled", eventCount: 4 })
       ]);
       expect(runtime.handle({ name: "trace.output.listAttempt", attemptId: "attempt-1" })).toEqual([expect.objectContaining({ id: "link-1", promoted: true })]);
+      expect(runtime.handle({ name: "trace.output.listAttempts", attemptIds: ["missing", "attempt-1"], limit: 100 })).toEqual([
+        expect.objectContaining({ id: "link-1", promoted: true })
+      ]);
       expect(runtime.handle({ name: "trace.network.listJob", jobId: "job-1" })).toEqual([
         expect.objectContaining({ id: "network-1", policyDecision: "allowed" })
       ]);
@@ -210,7 +250,166 @@ describe("storage operational trace v3", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("rejects cross-job trace parents and permits only exact terminal-attempt retries", () => {
+    const root = mkdtempSync(join(tmpdir(), "aetherops-trace-linkage-"));
+    const databasePath = join(root, "storage.sqlite");
+    migratedDatabase(databasePath).close();
+    const runtime = new StorageWorkerRuntime({ appDbPath: databasePath, vectorDbPath: databasePath, ontologyDbPath: databasePath });
+    const enqueueAndClaim = (jobId: string, projectId: string) => {
+      runtime.handle({ name: "job.enqueue", job: { id: jobId, projectId, operation: "research_loop", payload: { projectRevision: 1 } } });
+      return runtime.handle({
+        name: "job.claimAndStart",
+        options: { projectId, leaseOwner: `worker-${jobId}`, leaseExpiresAt: "2026-01-01T01:00:00.000Z", now: "2026-01-01T00:00:00.000Z" }
+      }) as import("./types.js").StorageClaimStartResult;
+    };
+    const jobA = enqueueAndClaim("job-a", "project-a");
+    const jobB = enqueueAndClaim("job-b", "project-b");
+    const write = (claimed: typeof jobA, commands: import("../worker/typedProtocol.js").StorageFencedWriteCommand[]) =>
+      runtime.handle({ name: "fencedTransaction", fence: claimed.fence, now: "2026-01-01T00:00:01.000Z", commands });
+    const decision = (claimed: typeof jobA, id: string, invocationId?: string) => ({
+      name: "trace.decision.record" as const,
+      decision: {
+        id,
+        projectId: claimed.job.projectId,
+        jobId: claimed.job.id,
+        invocationId,
+        toolName: "DataAnalysisTool",
+        purpose: "Validate trace linkage.",
+        expectedOutcome: "A linked trace record.",
+        rawSelection: {},
+        userPinned: false,
+        policyStatus: "accepted" as const,
+        createdAt: "2026-01-01T00:00:00.500Z"
+      }
+    });
+    const attemptB = terminalAttempt(jobB, "attempt-b", "decision-b");
+    const attemptA = terminalAttempt(jobA, "attempt-a", "decision-a");
+
+    try {
+      write(jobB, [
+        {
+          name: "trace.llm.save",
+          invocation: {
+            id: "llm-b",
+            projectId: jobB.job.projectId,
+            jobId: jobB.job.id,
+            model: "gpt-5.6-sol",
+            reasoningEffort: "high",
+            promptVersion: "planner-v2",
+            schemaVersion: "2",
+            promptHash: "prompt-b",
+            repairCount: 0,
+            status: "completed",
+            startedAt: "2026-01-01T00:00:00.000Z"
+          }
+        },
+        decision(jobB, "decision-b", "llm-b"),
+        { name: "trace.attempt.save", attempt: attemptB },
+        { name: "trace.codex.save", execution: { ...codexExecution(jobB, "attempt-b"), id: "codex-b" } }
+      ]);
+      write(jobA, [decision(jobA, "decision-a"), { name: "trace.attempt.save", attempt: attemptA }]);
+
+      expect(() => write(jobA, [decision(jobA, "decision-cross", "llm-b")])).toThrow(/LLM invocation linkage/i);
+      expect(() =>
+        write(jobA, [
+          {
+            name: "trace.llm.save",
+            invocation: {
+              id: "llm-b",
+              projectId: jobA.job.projectId,
+              jobId: jobA.job.id,
+              model: "gpt-5.6-sol",
+              reasoningEffort: "high",
+              promptVersion: "planner-v2",
+              schemaVersion: "2",
+              promptHash: "prompt-a",
+              repairCount: 0,
+              status: "completed",
+              startedAt: "2026-01-01T00:00:00.000Z"
+            }
+          }
+        ])
+      ).toThrow(/identity.*leased job/i);
+      expect(() => write(jobA, [decision(jobA, "decision-b")])).toThrow(/identity.*leased job/i);
+      expect(() => write(jobA, [{ name: "trace.attempt.save", attempt: { ...attemptA, id: "attempt-cross", decisionId: "decision-b" } }])).toThrow(
+        /tool decision linkage/i
+      );
+      expect(() => write(jobA, [{ name: "trace.codex.save", execution: codexExecution(jobA, "attempt-b") }])).toThrow(/tool attempt linkage/i);
+      expect(() => write(jobA, [{ name: "trace.codex.save", execution: { ...codexExecution(jobA, "attempt-a"), id: "codex-b" } }])).toThrow(
+        /identity.*leased job/i
+      );
+      expect(() => write(jobA, [{ name: "trace.output.record", link: outputLink(jobA, "attempt-b") }])).toThrow(/tool attempt linkage/i);
+      expect(() => write(jobA, [{ name: "trace.network.record", audit: networkAudit(jobA, "attempt-b") }])).toThrow(/tool attempt linkage/i);
+
+      expect(write(jobA, [{ name: "trace.attempt.save", attempt: attemptA }])).toEqual([attemptA]);
+      expect(() => write(jobA, [{ name: "trace.attempt.save", attempt: { ...attemptA, outputHash: "mutated-output" } }])).toThrow(/retry must be identical/i);
+    } finally {
+      runtime.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
+
+function terminalAttempt(claimed: import("./types.js").StorageClaimStartResult, id: string, decisionId: string) {
+  return {
+    id,
+    projectId: claimed.job.projectId,
+    jobId: claimed.job.id,
+    decisionId,
+    ordinal: 0,
+    status: "completed" as const,
+    inputHash: "input-hash",
+    outputHash: "output-hash",
+    terminalCause: "completed",
+    dependsOnAttemptIds: [],
+    queuedAt: "2026-01-01T00:00:00.500Z",
+    startedAt: "2026-01-01T00:00:00.600Z",
+    completedAt: "2026-01-01T00:00:00.700Z"
+  };
+}
+
+function codexExecution(claimed: import("./types.js").StorageClaimStartResult, attemptId: string) {
+  return {
+    id: "codex-cross",
+    projectId: claimed.job.projectId,
+    jobId: claimed.job.id,
+    attemptId,
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+    sandboxProfile: "workspace-v1",
+    networkPolicy: "disabled" as const,
+    eventCount: 0,
+    createdAt: "2026-01-01T00:00:00.800Z"
+  };
+}
+
+function outputLink(claimed: import("./types.js").StorageClaimStartResult, attemptId: string) {
+  return {
+    id: "output-cross",
+    projectId: claimed.job.projectId,
+    jobId: claimed.job.id,
+    attemptId,
+    outputKind: "artifact" as const,
+    outputId: "artifact-cross",
+    promoted: false,
+    createdAt: "2026-01-01T00:00:00.800Z"
+  };
+}
+
+function networkAudit(claimed: import("./types.js").StorageClaimStartResult, attemptId: string) {
+  return {
+    id: "network-cross",
+    projectId: claimed.job.projectId,
+    jobId: claimed.job.id,
+    attemptId,
+    url: "https://example.com",
+    redirectChain: [],
+    sourcePolicy: { mode: "offline" },
+    policyDecision: "allowed" as const,
+    auditedAt: "2026-01-01T00:00:00.800Z"
+  };
+}
 
 function migratedDatabase(path = ":memory:"): DatabaseSync {
   const db = new DatabaseSync(path);

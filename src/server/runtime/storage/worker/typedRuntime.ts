@@ -2,35 +2,71 @@ import { randomUUID } from "node:crypto";
 import { Worker, isMainThread, parentPort, workerData, type MessagePort } from "node:worker_threads";
 import { StorageV2Database, type StorageV2RepositorySet } from "../v2/index.js";
 import {
+  claimAndStart,
+  commitStep,
+  enqueueJob,
+  interruptExpiredLeases,
+  quarantineStep,
+  requestControl,
+  transitionTerminal
+} from "../v2/jobAtomicOperations.js";
+import {
   STORAGE_WORKER_READY,
   STORAGE_WORKER_REQUEST,
   STORAGE_WORKER_RESPONSE,
   type StorageWorkerBaseCommand,
   type StorageWorkerCommand,
-  type StorageWorkerErrorPayload,
   type StorageWorkerInit,
   type StorageWorkerReady,
   type StorageWorkerRequest,
   type StorageWorkerResponse
 } from "./typedProtocol.js";
 import { sourceAwareWorkerExecArgv, sourceAwareWorkerUrl } from "./sourceWorkerRuntime.js";
+import { assertFencedWriteScope } from "./fencedWriteScope.js";
+import { executeFencedWrite } from "./fencedWriteDispatch.js";
+import { isStorageWorkerReady, isStorageWorkerRequest, isStorageWorkerResponse, serializeWorkerError, workerError } from "./workerMessageSupport.js";
+import { isTraceReadCommand, StorageRuntimeDiagnostics, traceReadResultRows, type StorageRuntimeDiagnosticsOptions } from "./storageRuntimeDiagnostics.js";
 export * from "./typedProtocol.js";
 export class StorageWorkerRuntime {
   private readonly storage: StorageV2Database;
+  private readonly diagnostics: StorageRuntimeDiagnostics;
   private closed = false;
 
-  constructor(init: StorageWorkerInit) {
+  constructor(init: StorageWorkerInit, diagnosticsOptions: StorageRuntimeDiagnosticsOptions = {}) {
     this.storage = new StorageV2Database(init);
+    this.diagnostics = new StorageRuntimeDiagnostics(diagnosticsOptions);
   }
 
   handle(command: StorageWorkerCommand): unknown {
     if (this.closed && command.name !== "close") {
       throw new Error("Storage worker runtime is closed.");
     }
-    if (command.name === "transaction") {
-      return this.storage.transaction((repositories) => command.commands.map((entry) => this.handleBase(entry, repositories)));
+    switch (command.name) {
+      case "fencedTransaction":
+        return this.transaction((repositories) => {
+          const job = repositories.jobs.assertFence(command.fence, command.now);
+          return command.commands.map((entry) => {
+            assertFencedWriteScope(entry, job, repositories);
+            return executeFencedWrite(entry, repositories);
+          });
+        });
+      case "job.enqueue":
+        return this.transaction((repositories) => enqueueJob(repositories, command.job));
+      case "job.claimAndStart":
+        return this.transaction((repositories) => claimAndStart(repositories, command.options));
+      case "job.requestControl":
+        return this.transaction((repositories) => requestControl(repositories, command.input));
+      case "job.markInterruptedExpiredLeases":
+        return this.transaction((repositories) => interruptExpiredLeases(repositories, command.now));
+      case "job.transitionTerminal":
+        return this.transaction((repositories) => transitionTerminal(repositories, command.input));
+      case "job.commitStep":
+        return this.transaction((repositories) => commitStep(repositories, command.input));
+      case "job.quarantineStep":
+        return this.transaction((repositories) => quarantineStep(repositories, command.input));
+      default:
+        return this.handleBase(command, this.storage.repositories);
     }
-    return this.handleBase(command, this.storage.repositories);
   }
 
   close(): void {
@@ -40,12 +76,24 @@ export class StorageWorkerRuntime {
   }
 
   private handleBase(command: StorageWorkerBaseCommand, repositories: StorageV2RepositorySet): unknown {
+    if (isTraceReadCommand(command.name)) {
+      return this.diagnostics.measureTraceQuery(
+        () => this.dispatchBase(command, repositories),
+        (result) => traceReadResultRows(command.name, result)
+      );
+    }
+    return this.dispatchBase(command, repositories);
+  }
+
+  private dispatchBase(command: StorageWorkerBaseCommand, repositories: StorageV2RepositorySet): unknown {
     switch (command.name) {
       case "ping":
         return { ok: true };
       case "close":
         this.close();
         return { closed: true };
+      case "diagnostics.storage":
+        return this.diagnostics.snapshot();
       case "project.upsert":
         return repositories.projects.upsert(command.project);
       case "project.get":
@@ -70,72 +118,55 @@ export class StorageWorkerRuntime {
         return repositories.memory.search(command.query, command.options);
       case "embedding.getByOwner":
         return repositories.embeddings.getByOwner(command.ownerTable, command.ownerId);
-      case "job.enqueue":
-        return repositories.jobs.enqueue(command.job);
       case "job.get":
         return repositories.jobs.get(command.jobId);
       case "job.listProject":
-        return repositories.jobs.listProject(command.projectId, command.limit);
-      case "job.listQueued":
-        return repositories.jobs.listQueued(command.limit);
-      case "job.claimNext":
-        return repositories.jobs.claimNext(command.options);
-      case "job.updateStatus":
-        return repositories.jobs.updateStatus(command.jobId, command.patch);
-      case "job.requestPause":
-        return repositories.jobs.requestPause(command.jobId, command.updatedAt);
-      case "job.requestCancel":
-        return repositories.jobs.requestCancel(command.jobId, command.updatedAt);
-      case "job.markInterruptedExpiredLeases":
-        return repositories.jobs.markInterruptedExpiredLeases(command.now);
+        return repositories.jobs.listProject(command.projectId, { status: command.status, cursor: command.cursor, limit: command.limit });
       case "job.renewLease":
-        return repositories.jobs.renewLease(command.jobId, command.leaseOwner, command.leaseExpiresAt, command.updatedAt);
+        return repositories.jobs.renewLease(command.fence, command.leaseExpiresAt, command.now);
+      case "job.listRunnableProjects":
+        return repositories.jobs.listRunnableProjects(command.cursor, command.limit);
+      case "job.queueDiagnostics":
+        return repositories.jobs.queueDiagnostics(command.limit);
+      case "job.queuePosition":
+        return repositories.jobs.queuePosition(command.jobId);
       case "event.append":
+        if (command.event.jobId) throw new Error("Job events require an active fenced transaction.");
         return repositories.events.append(command.event);
       case "event.after":
         return repositories.events.after(command.projectId, command.lastEventId, command.limit);
-      case "checkpoint.save":
-        return repositories.checkpoints.saveCheckpoint(command.checkpoint);
       case "checkpoint.get":
         return repositories.checkpoints.get(command.checkpointId);
       case "checkpoint.latestCommittedForJob":
         return repositories.checkpoints.latestCommittedForJob(command.jobId);
       case "checkpoint.listForJob":
         return repositories.checkpoints.listForJob(command.jobId);
-      case "checkpoint.recordStepAttempt":
-        return repositories.checkpoints.recordStepAttempt(command.attempt);
       case "checkpoint.listStepAttempts":
         return repositories.checkpoints.listStepAttempts(command.jobId);
       case "capability.record":
         return repositories.capabilities.record(command.audit);
       case "capability.listProject":
         return repositories.capabilities.listProject(command.projectId, command.limit);
-      case "trace.llm.save":
-        return repositories.trace.saveLlmInvocation(command.invocation);
       case "trace.llm.listJob":
         return repositories.trace.listLlmInvocations(command.jobId, command.limit);
-      case "trace.decision.record":
-        return repositories.trace.recordToolDecision(command.decision);
       case "trace.decision.listJob":
         return repositories.trace.listToolDecisions(command.jobId, command.limit);
-      case "trace.attempt.save":
-        return repositories.trace.saveToolAttempt(command.attempt);
       case "trace.attempt.get":
         return repositories.trace.getToolAttempt(command.attemptId);
       case "trace.attempt.listJob":
         return repositories.trace.listToolAttempts(command.jobId, command.limit);
-      case "trace.codex.save":
-        return repositories.trace.saveCodexCliExecution(command.execution);
       case "trace.codex.listJob":
         return repositories.trace.listCodexCliExecutions(command.jobId, command.limit);
-      case "trace.output.record":
-        return repositories.trace.recordOutputLink(command.link);
       case "trace.output.listAttempt":
         return repositories.trace.listOutputLinks(command.attemptId, command.limit);
-      case "trace.network.record":
-        return repositories.trace.recordNetworkAudit(command.audit);
+      case "trace.output.listAttempts":
+        return repositories.trace.listOutputLinksForAttempts(command.attemptIds, command.limit);
       case "trace.network.listJob":
         return repositories.trace.listNetworkAudits(command.jobId, command.limit);
+      case "trace.summaryJob":
+        return repositories.trace.summaryJob(command.jobId);
+      case "trace.pageJob":
+        return repositories.trace.pageJob(command.jobId, command.category, command.cursor, command.limit);
       case "ontology.upsertEntities":
         return repositories.ontology.upsertEntities(command.entities);
       case "ontology.upsertRelations":
@@ -151,6 +182,10 @@ export class StorageWorkerRuntime {
       default:
         return assertNever(command);
     }
+  }
+
+  private transaction<T>(work: (repositories: StorageV2RepositorySet) => T): T {
+    return this.diagnostics.measureTransaction(() => this.storage.transaction(work));
   }
 }
 
@@ -201,10 +236,6 @@ export class StorageWorkerClient {
       this.pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject, timeout });
       this.worker.postMessage(message);
     });
-  }
-
-  transaction<T = unknown[]>(commands: StorageWorkerBaseCommand[], clientRequestId?: string): Promise<T> {
-    return this.request<T>({ name: "transaction", commands }, clientRequestId);
   }
 
   async close(): Promise<void> {
@@ -288,7 +319,7 @@ function startStorageWorker(port: MessagePort, init: StorageWorkerInit): void {
     runtime = new StorageWorkerRuntime(init);
     port.postMessage({ type: STORAGE_WORKER_READY, ok: true } satisfies StorageWorkerReady);
   } catch (error) {
-    port.postMessage({ type: STORAGE_WORKER_READY, ok: false, error: serializeError(error) } satisfies StorageWorkerReady);
+    port.postMessage({ type: STORAGE_WORKER_READY, ok: false, error: serializeWorkerError(error) } satisfies StorageWorkerReady);
     port.close();
     return;
   }
@@ -314,47 +345,11 @@ function startStorageWorker(port: MessagePort, init: StorageWorkerInit): void {
         requestId: message.requestId,
         clientRequestId: message.clientRequestId,
         ok: false,
-        error: serializeError(error)
+        error: serializeWorkerError(error)
       };
       port.postMessage(response);
     }
   });
-}
-
-function isStorageWorkerRequest(message: unknown): message is StorageWorkerRequest {
-  return (
-    isRecord(message) &&
-    message.type === STORAGE_WORKER_REQUEST &&
-    typeof message.requestId === "string" &&
-    isRecord(message.command) &&
-    typeof message.command.name === "string"
-  );
-}
-
-function isStorageWorkerResponse(message: unknown): message is StorageWorkerResponse {
-  return isRecord(message) && message.type === STORAGE_WORKER_RESPONSE && typeof message.requestId === "string" && typeof message.ok === "boolean";
-}
-
-function isStorageWorkerReady(message: unknown): message is StorageWorkerReady {
-  return isRecord(message) && message.type === STORAGE_WORKER_READY && typeof message.ok === "boolean";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function serializeError(error: unknown): StorageWorkerErrorPayload {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message, stack: error.stack };
-  }
-  return { name: "Error", message: String(error) };
-}
-
-function workerError(error: StorageWorkerErrorPayload): Error {
-  const next = new Error(error.message);
-  next.name = error.name;
-  next.stack = error.stack;
-  return next;
 }
 
 function assertNever(value: never): never {

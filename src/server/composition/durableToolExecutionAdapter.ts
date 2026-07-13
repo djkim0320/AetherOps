@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ToolExecutionStatusEvent } from "../../core/tools/researchToolTypes.js";
+import type { StorageOutputPromotion } from "../runtime/storage/v2/jobAtomicTypes.js";
 import type { StorageToolAttempt, StorageToolOutputLink } from "../runtime/storage/v2/traceTypes.js";
 import type { DurableJobRuntime } from "./durableJobRuntime.js";
 import type { DurableJobRecord } from "./durableJobTypes.js";
@@ -10,6 +11,7 @@ interface AttemptState {
   attempt: StorageToolAttempt;
   toolName: string;
   outputs: NonNullable<ToolExecutionStatusEvent["outputs"]>;
+  outputLinks: StorageToolOutputLink[];
 }
 
 export class DurableToolExecutionAdapter {
@@ -49,9 +51,11 @@ export class DurableToolExecutionAdapter {
       data: { phase: event.phase }
     };
     const outputs = event.outputs ?? previous?.outputs ?? [];
-    this.attempts.set(attemptId, { attempt, toolName: event.toolName, outputs });
+    const outputLinks =
+      event.status === "completed" ? preserveOutputLinks(this.job, attemptId, outputs, event.occurredAt, previous?.outputLinks) : (previous?.outputLinks ?? []);
+    this.attempts.set(attemptId, { attempt, toolName: event.toolName, outputs, outputLinks });
     await this.runtime.recordToolAttemptAndEvent({ attempt, projectRevision: await this.readProjectRevision(), toolName: event.toolName });
-    if (event.status === "completed") await this.recordUnpromotedOutputs(attemptId, outputs, event.occurredAt);
+    if (event.status === "completed") await this.recordUnpromotedOutputs(outputLinks);
     if (event.status === "completed" && event.codexCliTrace) {
       const trace = event.codexCliTrace;
       await this.runtime.saveCodexCliExecution({
@@ -75,23 +79,22 @@ export class DurableToolExecutionAdapter {
     }
   };
 
-  async promoteCompletedOutputs(projectRevision: number): Promise<void> {
-    const promotedAt = new Date().toISOString();
+  completedOutputPromotions(promotedAt = new Date().toISOString()): StorageOutputPromotion[] {
+    const promotions: StorageOutputPromotion[] = [];
     for (const state of [...this.attempts.values()].sort((left, right) => left.attempt.ordinal - right.attempt.ordinal)) {
       if (state.attempt.status !== "completed") continue;
-      for (const output of state.outputs) {
-        const link = outputLink(this.job, state.attempt.id, output, true, promotedAt);
-        if (output.kind === "artifact") {
-          await this.runtime.recordPromotedArtifactAndEvent({
-            link,
-            projectRevision,
-            artifact: { name: output.name ?? output.id, kind: output.artifactKind ?? "artifact" }
-          });
-        } else {
-          await this.runtime.recordToolOutput(link);
-        }
+      const outputs = new Map(state.outputs.map((output) => [outputIdentity(output.kind, output.id), output]));
+      for (const originalLink of state.outputLinks) {
+        const output = outputs.get(outputIdentity(originalLink.outputKind, originalLink.outputId));
+        if (!output) throw new Error(`Completed output metadata is missing for ${originalLink.id}.`);
+        const link = { ...originalLink, promoted: true, promotedAt };
+        promotions.push({
+          link,
+          ...(output.kind === "artifact" ? { artifact: { name: output.name ?? output.id, kind: output.artifactKind ?? "artifact" } } : {})
+        });
       }
     }
+    return promotions;
   }
 
   private async ensureDecision(event: ToolExecutionStatusEvent, decisionId: string): Promise<void> {
@@ -117,8 +120,8 @@ export class DurableToolExecutionAdapter {
     return write;
   }
 
-  private async recordUnpromotedOutputs(attemptId: string, outputs: NonNullable<ToolExecutionStatusEvent["outputs"]>, createdAt: string): Promise<void> {
-    for (const output of outputs) await this.runtime.recordToolOutput(outputLink(this.job, attemptId, output, false, createdAt));
+  private async recordUnpromotedOutputs(links: StorageToolOutputLink[]): Promise<void> {
+    for (const link of links) await this.runtime.recordToolOutput(link);
   }
 }
 
@@ -126,8 +129,7 @@ function outputLink(
   job: DurableJobRecord,
   attemptId: string,
   output: NonNullable<ToolExecutionStatusEvent["outputs"]>[number],
-  promoted: boolean,
-  timestamp: string
+  createdAt: string
 ): StorageToolOutputLink {
   return {
     id: traceId("output", attemptId, output.kind, output.id),
@@ -136,10 +138,24 @@ function outputLink(
     attemptId,
     outputKind: output.kind,
     outputId: output.id,
-    promoted,
-    createdAt: timestamp,
-    ...(promoted ? { promotedAt: timestamp } : {})
+    promoted: false,
+    createdAt
   };
+}
+
+function preserveOutputLinks(
+  job: DurableJobRecord,
+  attemptId: string,
+  outputs: NonNullable<ToolExecutionStatusEvent["outputs"]>,
+  createdAt: string,
+  previous: StorageToolOutputLink[] = []
+): StorageToolOutputLink[] {
+  const existing = new Map(previous.map((link) => [outputIdentity(link.outputKind, link.outputId), link]));
+  return outputs.map((output) => existing.get(outputIdentity(output.kind, output.id)) ?? outputLink(job, attemptId, output, createdAt));
+}
+
+function outputIdentity(kind: string, id: string): string {
+  return `${kind}\u0000${id}`;
 }
 
 function traceId(prefix: string, ...parts: string[]): string {

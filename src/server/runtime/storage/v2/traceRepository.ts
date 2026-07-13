@@ -1,16 +1,34 @@
 import type { DatabaseSync } from "node:sqlite";
-import { boolInt, json, normalizeLimit, optionalString, parseOptionalJson, requiredNumber, requiredString, type Row } from "./repositorySupport.js";
+import { boolInt, json, normalizeLimit, type Row } from "./repositorySupport.js";
+import { rowToCodexCliExecution, rowToLlmInvocation, rowToNetworkAudit, rowToOutputLink, rowToToolAttempt, rowToToolDecision } from "./traceMappers.js";
+import { TracePaginationRepository } from "./tracePagination.js";
 import type {
   StorageCodexCliExecution,
   StorageLlmInvocation,
   StorageNetworkAudit,
+  StorageTraceCategory,
+  StorageTracePage,
+  StorageTraceSummary,
   StorageToolAttempt,
   StorageToolDecision,
   StorageToolOutputLink
 } from "./traceTypes.js";
+import { assertOutputLinkUpdate, assertToolAttemptUpdate } from "./traceState.js";
 
 export class TraceRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  private readonly pagination: TracePaginationRepository;
+
+  constructor(private readonly db: DatabaseSync) {
+    this.pagination = new TracePaginationRepository(db);
+  }
+
+  summaryJob(jobId: string): StorageTraceSummary {
+    return this.pagination.summaryJob(jobId);
+  }
+
+  pageJob<C extends StorageTraceCategory>(jobId: string, category: C, cursor?: string, limit?: number): StorageTracePage<C> {
+    return this.pagination.pageJob(jobId, category, cursor, limit);
+  }
 
   saveLlmInvocation(value: StorageLlmInvocation): StorageLlmInvocation {
     this.db
@@ -49,6 +67,11 @@ export class TraceRepository {
     );
   }
 
+  getLlmInvocation(invocationId: string): StorageLlmInvocation | undefined {
+    const row = this.db.prepare("select * from llm_invocations where id=?").get(invocationId) as Row | undefined;
+    return row ? rowToLlmInvocation(row) : undefined;
+  }
+
   recordToolDecision(value: StorageToolDecision): StorageToolDecision {
     this.db
       .prepare(
@@ -83,7 +106,14 @@ export class TraceRepository {
     );
   }
 
+  getToolDecision(decisionId: string): StorageToolDecision | undefined {
+    const row = this.db.prepare("select * from tool_decisions where id=?").get(decisionId) as Row | undefined;
+    return row ? rowToToolDecision(row) : undefined;
+  }
+
   saveToolAttempt(value: StorageToolAttempt): StorageToolAttempt {
+    const existing = this.getToolAttempt(value.id);
+    if (existing) assertToolAttemptUpdate(existing, value);
     this.db
       .prepare(
         `insert into tool_attempts (id, project_id, job_id, decision_id, checkpoint_id, ordinal, status, input_hash,
@@ -158,6 +188,11 @@ export class TraceRepository {
     ).map(rowToCodexCliExecution);
   }
 
+  getCodexCliExecution(executionId: string): StorageCodexCliExecution | undefined {
+    const row = this.db.prepare("select * from codex_cli_executions where id=?").get(executionId) as Row | undefined;
+    return row ? rowToCodexCliExecution(row) : undefined;
+  }
+
   getToolAttempt(attemptId: string): StorageToolAttempt | undefined {
     const row = this.db.prepare("select * from tool_attempts where id=?").get(attemptId) as Row | undefined;
     return row ? rowToToolAttempt(row) : undefined;
@@ -169,7 +204,22 @@ export class TraceRepository {
     ).map(rowToToolAttempt);
   }
 
+  interruptActiveToolAttempts(jobId: string, completedAt: string, error: string): StorageToolAttempt[] {
+    this.db
+      .prepare(
+        `update tool_attempts set status='interrupted',terminal_cause='lease_expired',error=?,completed_at=?
+         where job_id=? and status in ('queued','running')`
+      )
+      .run(error, completedAt, jobId);
+    return this.listToolAttempts(jobId, 1_000).filter((attempt) => attempt.status === "interrupted" && attempt.completedAt === completedAt);
+  }
+
   recordOutputLink(value: StorageToolOutputLink): StorageToolOutputLink {
+    const existingRow = this.db
+      .prepare("select * from tool_output_links where attempt_id=? and output_kind=? and output_id=?")
+      .get(value.attemptId, value.outputKind, value.outputId) as Row | undefined;
+    const existing = existingRow ? rowToOutputLink(existingRow) : undefined;
+    if (existing) assertOutputLinkUpdate(existing, value);
     this.db
       .prepare(
         `insert into tool_output_links (id, project_id, job_id, attempt_id, output_kind, output_id, promoted, created_at, promoted_at, data)
@@ -192,12 +242,27 @@ export class TraceRepository {
     const row = this.db
       .prepare("select * from tool_output_links where attempt_id=? and output_kind=? and output_id=?")
       .get(value.attemptId, value.outputKind, value.outputId) as Row;
-    return rowToOutputLink(row);
+    const stored = rowToOutputLink(row);
+    if (stored.id !== value.id || stored.projectId !== value.projectId || stored.jobId !== value.jobId) {
+      throw new Error(`Tool output link identity conflict: ${value.id}.`);
+    }
+    return stored;
   }
 
   listOutputLinks(attemptId: string, limit = 100): StorageToolOutputLink[] {
     return (
       this.db.prepare("select * from tool_output_links where attempt_id=? order by created_at, id limit ?").all(attemptId, normalizeLimit(limit)) as Row[]
+    ).map(rowToOutputLink);
+  }
+
+  listOutputLinksForAttempts(attemptIds: string[], limit = 100): StorageToolOutputLink[] {
+    const ids = [...new Set(attemptIds)].slice(0, 1_000);
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    return (
+      this.db
+        .prepare(`select * from tool_output_links where attempt_id in (${placeholders}) order by attempt_id,created_at,id limit ?`)
+        .all(...ids, normalizeLimit(limit)) as Row[]
     ).map(rowToOutputLink);
   }
 
@@ -247,120 +312,4 @@ export class TraceRepository {
     if (!attempt) throw new Error(`Storage tool attempt not found: ${id}`);
     return attempt;
   }
-}
-
-function rowToLlmInvocation(row: Row): StorageLlmInvocation {
-  return {
-    id: requiredString(row.id, "llm_invocation.id"),
-    projectId: requiredString(row.project_id, "llm_invocation.project_id"),
-    jobId: requiredString(row.job_id, "llm_invocation.job_id"),
-    model: requiredString(row.model, "llm_invocation.model"),
-    reasoningEffort: requiredString(row.reasoning_effort, "llm_invocation.reasoning_effort"),
-    promptVersion: requiredString(row.prompt_version, "llm_invocation.prompt_version"),
-    schemaVersion: requiredString(row.schema_version, "llm_invocation.schema_version"),
-    promptHash: requiredString(row.prompt_hash, "llm_invocation.prompt_hash"),
-    responseHash: optionalString(row.response_hash),
-    latencyMs: typeof row.latency_ms === "number" ? row.latency_ms : undefined,
-    repairCount: requiredNumber(row.repair_count, "llm_invocation.repair_count"),
-    status: requiredString(row.status, "llm_invocation.status") as StorageLlmInvocation["status"],
-    error: optionalString(row.error),
-    startedAt: requiredString(row.started_at, "llm_invocation.started_at"),
-    completedAt: optionalString(row.completed_at),
-    data: parseOptionalJson(row.data)
-  };
-}
-
-function rowToToolDecision(row: Row): StorageToolDecision {
-  return {
-    id: requiredString(row.id, "tool_decision.id"),
-    projectId: requiredString(row.project_id, "tool_decision.project_id"),
-    jobId: requiredString(row.job_id, "tool_decision.job_id"),
-    invocationId: optionalString(row.invocation_id),
-    toolName: requiredString(row.tool_name, "tool_decision.tool_name"),
-    purpose: requiredString(row.purpose, "tool_decision.purpose"),
-    expectedOutcome: requiredString(row.expected_outcome, "tool_decision.expected_outcome"),
-    rawSelection: parseOptionalJson(row.raw_selection),
-    userPinned: Boolean(row.user_pinned),
-    policyStatus: requiredString(row.policy_status, "tool_decision.policy_status") as StorageToolDecision["policyStatus"],
-    policyReason: optionalString(row.policy_reason),
-    compiledAction: parseOptionalJson(row.compiled_action),
-    createdAt: requiredString(row.created_at, "tool_decision.created_at"),
-    data: parseOptionalJson(row.data)
-  };
-}
-
-function rowToToolAttempt(row: Row): StorageToolAttempt {
-  return {
-    id: requiredString(row.id, "tool_attempt.id"),
-    projectId: requiredString(row.project_id, "tool_attempt.project_id"),
-    jobId: requiredString(row.job_id, "tool_attempt.job_id"),
-    decisionId: requiredString(row.decision_id, "tool_attempt.decision_id"),
-    checkpointId: optionalString(row.checkpoint_id),
-    ordinal: requiredNumber(row.ordinal, "tool_attempt.ordinal"),
-    status: requiredString(row.status, "tool_attempt.status") as StorageToolAttempt["status"],
-    inputHash: requiredString(row.input_hash, "tool_attempt.input_hash"),
-    outputHash: optionalString(row.output_hash),
-    terminalCause: optionalString(row.terminal_cause),
-    dependsOnAttemptIds: parseOptionalJson<string[]>(row.depends_on_attempt_ids) ?? [],
-    stagingRef: optionalString(row.staging_ref),
-    quarantineRef: optionalString(row.quarantine_ref),
-    error: optionalString(row.error),
-    queuedAt: requiredString(row.queued_at, "tool_attempt.queued_at"),
-    startedAt: optionalString(row.started_at),
-    completedAt: optionalString(row.completed_at),
-    data: parseOptionalJson(row.data)
-  };
-}
-
-function rowToCodexCliExecution(row: Row): StorageCodexCliExecution {
-  return {
-    id: requiredString(row.id, "codex_cli_execution.id"),
-    projectId: requiredString(row.project_id, "codex_cli_execution.project_id"),
-    jobId: requiredString(row.job_id, "codex_cli_execution.job_id"),
-    attemptId: requiredString(row.attempt_id, "codex_cli_execution.attempt_id"),
-    model: requiredString(row.model, "codex_cli_execution.model"),
-    reasoningEffort: requiredString(row.reasoning_effort, "codex_cli_execution.reasoning_effort"),
-    sandboxProfile: requiredString(row.sandbox_profile, "codex_cli_execution.sandbox_profile"),
-    networkPolicy: requiredString(row.network_policy, "codex_cli_execution.network_policy") as "disabled",
-    durationMs: typeof row.duration_ms === "number" ? row.duration_ms : undefined,
-    exitCode: typeof row.exit_code === "number" ? row.exit_code : undefined,
-    terminationReason: optionalString(row.termination_reason),
-    eventCount: requiredNumber(row.event_count, "codex_cli_execution.event_count"),
-    workspaceManifestHash: optionalString(row.workspace_manifest_hash),
-    outputManifestHash: optionalString(row.output_manifest_hash),
-    createdAt: requiredString(row.created_at, "codex_cli_execution.created_at"),
-    completedAt: optionalString(row.completed_at),
-    data: parseOptionalJson(row.data)
-  };
-}
-
-function rowToOutputLink(row: Row): StorageToolOutputLink {
-  return {
-    id: requiredString(row.id, "tool_output_link.id"),
-    projectId: requiredString(row.project_id, "tool_output_link.project_id"),
-    jobId: requiredString(row.job_id, "tool_output_link.job_id"),
-    attemptId: requiredString(row.attempt_id, "tool_output_link.attempt_id"),
-    outputKind: requiredString(row.output_kind, "tool_output_link.output_kind") as StorageToolOutputLink["outputKind"],
-    outputId: requiredString(row.output_id, "tool_output_link.output_id"),
-    promoted: Boolean(row.promoted),
-    createdAt: requiredString(row.created_at, "tool_output_link.created_at"),
-    promotedAt: optionalString(row.promoted_at),
-    data: parseOptionalJson(row.data)
-  };
-}
-
-function rowToNetworkAudit(row: Row): StorageNetworkAudit {
-  return {
-    id: requiredString(row.id, "network_audit.id"),
-    projectId: requiredString(row.project_id, "network_audit.project_id"),
-    jobId: requiredString(row.job_id, "network_audit.job_id"),
-    attemptId: optionalString(row.attempt_id),
-    url: requiredString(row.url, "network_audit.url"),
-    redirectChain: parseOptionalJson<string[]>(row.redirect_chain) ?? [],
-    sourcePolicy: parseOptionalJson(row.source_policy),
-    policyDecision: requiredString(row.policy_decision, "network_audit.policy_decision") as StorageNetworkAudit["policyDecision"],
-    reason: optionalString(row.reason),
-    auditedAt: requiredString(row.audited_at, "network_audit.audited_at"),
-    data: parseOptionalJson(row.data)
-  };
 }

@@ -2,12 +2,13 @@ import type {
   StorageV2RepositorySet,
   StorageCapabilityAudit,
   StorageCodexCliExecution,
-  StorageCheckpoint,
+  StorageClaimStartOptions,
   StorageEmbeddingInput,
-  StorageJobClaimOptions,
   StorageJobEventInput,
   StorageJobInput,
-  StorageJobStatusPatch,
+  StorageJobControlInput,
+  StorageJobStatus,
+  StorageLeaseFence,
   StorageLlmInvocation,
   StorageMemoryPayload,
   StorageOntologyConstraintPayload,
@@ -15,10 +16,13 @@ import type {
   StorageOntologyRelationPayload,
   StorageOntologyRun,
   StorageNetworkAudit,
+  StorageTraceCategory,
   StorageProjectPayload,
   StorageRecordPayload,
   StorageSearchOptions,
-  StorageStepAttempt,
+  StorageStepDispositionInput,
+  StorageQuarantinedStepInput,
+  StorageTerminalTransitionInput,
   StorageToolAttempt,
   StorageToolDecision,
   StorageToolOutputLink,
@@ -34,6 +38,7 @@ export type StorageWorkerInit = StorageV2OpenOptions;
 export type StorageWorkerBaseCommand =
   | { name: "ping" }
   | { name: "close" }
+  | { name: "diagnostics.storage" }
   | { name: "project.upsert"; project: StorageProjectPayload }
   | { name: "project.get"; projectId: string }
   | { name: "project.list" }
@@ -46,39 +51,30 @@ export type StorageWorkerBaseCommand =
   | { name: "memory.get"; memoryId: string }
   | { name: "memory.search"; query: string; options?: StorageSearchOptions }
   | { name: "embedding.getByOwner"; ownerTable: string; ownerId: string }
-  | { name: "job.enqueue"; job: StorageJobInput }
   | { name: "job.get"; jobId: string }
-  | { name: "job.listProject"; projectId: string; limit?: number }
-  | { name: "job.listQueued"; limit?: number }
-  | { name: "job.claimNext"; options: StorageJobClaimOptions }
-  | { name: "job.updateStatus"; jobId: string; patch: StorageJobStatusPatch }
-  | { name: "job.requestPause"; jobId: string; updatedAt?: string }
-  | { name: "job.requestCancel"; jobId: string; updatedAt?: string }
-  | { name: "job.markInterruptedExpiredLeases"; now?: string }
-  | { name: "job.renewLease"; jobId: string; leaseOwner: string; leaseExpiresAt: string; updatedAt?: string }
+  | { name: "job.listProject"; projectId: string; status?: StorageJobStatus; cursor?: string; limit?: number }
+  | { name: "job.renewLease"; fence: StorageLeaseFence; leaseExpiresAt: string; now?: string }
+  | { name: "job.listRunnableProjects"; cursor?: string; limit?: number }
+  | { name: "job.queueDiagnostics"; limit?: number }
+  | { name: "job.queuePosition"; jobId: string }
   | { name: "event.append"; event: StorageJobEventInput }
   | { name: "event.after"; projectId: string; lastEventId?: string | number; limit?: number }
-  | { name: "checkpoint.save"; checkpoint: StorageCheckpoint }
   | { name: "checkpoint.get"; checkpointId: string }
   | { name: "checkpoint.latestCommittedForJob"; jobId: string }
   | { name: "checkpoint.listForJob"; jobId: string }
-  | { name: "checkpoint.recordStepAttempt"; attempt: StorageStepAttempt }
   | { name: "checkpoint.listStepAttempts"; jobId: string }
   | { name: "capability.record"; audit: StorageCapabilityAudit }
   | { name: "capability.listProject"; projectId: string; limit?: number }
-  | { name: "trace.llm.save"; invocation: StorageLlmInvocation }
   | { name: "trace.llm.listJob"; jobId: string; limit?: number }
-  | { name: "trace.decision.record"; decision: StorageToolDecision }
   | { name: "trace.decision.listJob"; jobId: string; limit?: number }
-  | { name: "trace.attempt.save"; attempt: StorageToolAttempt }
   | { name: "trace.attempt.get"; attemptId: string }
   | { name: "trace.attempt.listJob"; jobId: string; limit?: number }
-  | { name: "trace.codex.save"; execution: StorageCodexCliExecution }
   | { name: "trace.codex.listJob"; jobId: string; limit?: number }
-  | { name: "trace.output.record"; link: StorageToolOutputLink }
   | { name: "trace.output.listAttempt"; attemptId: string; limit?: number }
-  | { name: "trace.network.record"; audit: StorageNetworkAudit }
+  | { name: "trace.output.listAttempts"; attemptIds: string[]; limit?: number }
   | { name: "trace.network.listJob"; jobId: string; limit?: number }
+  | { name: "trace.summaryJob"; jobId: string }
+  | { name: "trace.pageJob"; jobId: string; category: StorageTraceCategory; cursor?: string; limit?: number }
   | { name: "ontology.upsertEntities"; entities: StorageOntologyEntityPayload[] }
   | { name: "ontology.upsertRelations"; relations: StorageOntologyRelationPayload[] }
   | { name: "ontology.upsertConstraints"; constraints: StorageOntologyConstraintPayload[] }
@@ -86,7 +82,26 @@ export type StorageWorkerBaseCommand =
   | { name: "ontology.startRun"; run: StorageOntologyRun }
   | { name: "ontology.finishRun"; runId: string; patch: Parameters<StorageV2RepositorySet["ontology"]["finishRun"]>[1] };
 
-export type StorageWorkerCommand = StorageWorkerBaseCommand | { name: "transaction"; commands: StorageWorkerBaseCommand[] };
+export type StorageFencedWriteCommand =
+  | { name: "event.append"; event: StorageJobEventInput }
+  | { name: "trace.llm.save"; invocation: StorageLlmInvocation }
+  | { name: "trace.decision.record"; decision: StorageToolDecision }
+  | { name: "trace.attempt.save"; attempt: StorageToolAttempt }
+  | { name: "trace.codex.save"; execution: StorageCodexCliExecution }
+  | { name: "trace.output.record"; link: StorageToolOutputLink }
+  | { name: "trace.network.record"; audit: StorageNetworkAudit };
+
+export type StorageWorkerAtomicCommand =
+  | { name: "job.enqueue"; job: StorageJobInput }
+  | { name: "job.claimAndStart"; options: StorageClaimStartOptions }
+  | { name: "job.requestControl"; input: StorageJobControlInput }
+  | { name: "job.markInterruptedExpiredLeases"; now?: string }
+  | { name: "job.transitionTerminal"; input: StorageTerminalTransitionInput }
+  | { name: "job.commitStep"; input: StorageStepDispositionInput }
+  | { name: "job.quarantineStep"; input: StorageQuarantinedStepInput }
+  | { name: "fencedTransaction"; fence: StorageLeaseFence; now?: string; commands: StorageFencedWriteCommand[] };
+
+export type StorageWorkerCommand = StorageWorkerBaseCommand | StorageWorkerAtomicCommand;
 
 export interface StorageWorkerRequest {
   type: typeof STORAGE_WORKER_REQUEST;
@@ -99,6 +114,7 @@ export interface StorageWorkerErrorPayload {
   name: string;
   message: string;
   stack?: string;
+  code?: "IDEMPOTENCY_CONFLICT";
 }
 
 export type StorageWorkerResponse =

@@ -12,7 +12,10 @@ export async function assertDurableResumeSource(client: StorageWorkerClient, inp
   if (
     !checkpoint ||
     checkpoint.status !== "committed" ||
+    checkpoint.projectId !== input.projectId ||
     checkpoint.jobId !== source?.id ||
+    source.projectId !== input.projectId ||
+    source.operation !== input.kind ||
     !["paused", "interrupted", "blocked", "failed"].includes(source.status)
   ) {
     throw new Error("Resume requires a committed checkpoint from a paused, interrupted, blocked, or failed source job.");

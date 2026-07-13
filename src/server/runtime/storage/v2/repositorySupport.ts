@@ -11,10 +11,24 @@ import type {
   StorageSearchOptions,
   StorageStepAttempt
 } from "./types.js";
+import { InvalidJobTransitionError } from "./leaseFence.js";
 
 export type Row = Record<string, unknown>;
 
 export const activeLaneStatuses = "'running', 'pause_requested', 'cancel_requested'";
+
+const allowedJobTransitions: Readonly<Record<StorageJob["status"], readonly StorageJob["status"][]>> = {
+  queued: ["running", "aborted"],
+  running: ["pause_requested", "paused", "cancel_requested", "aborted", "interrupted", "blocked", "failed", "completed"],
+  pause_requested: ["paused", "cancel_requested", "aborted", "interrupted", "blocked", "failed"],
+  paused: [],
+  cancel_requested: ["aborted", "interrupted", "failed"],
+  aborted: [],
+  interrupted: [],
+  blocked: [],
+  failed: [],
+  completed: []
+};
 
 export function runAtomically<T>(db: DatabaseSync, work: () => T): T {
   if (db.isTransaction) return work();
@@ -88,6 +102,7 @@ export function rowToJob(row: Row): StorageJob {
     status: requiredString(row.status, "job.status") as StorageJob["status"],
     priority: requiredNumber(row.priority, "job.priority"),
     attempt: requiredNumber(row.attempt, "job.attempt"),
+    leaseGeneration: requiredNumber(row.lease_generation, "job.lease_generation"),
     payload: parseJson(row.payload),
     result: parseOptionalJson(row.result),
     error: optionalString(row.error),
@@ -288,6 +303,11 @@ export function rankScore(value: unknown): number {
 
 export function terminalJobStatus(status: StorageJob["status"]): boolean {
   return status === "aborted" || status === "interrupted" || status === "blocked" || status === "failed" || status === "completed";
+}
+
+export function assertJobTransition(job: StorageJob, target: StorageJob["status"]): void {
+  if (job.status === target) return;
+  if (!allowedJobTransitions[job.status].includes(target)) throw new InvalidJobTransitionError(job.id, job.status, target);
 }
 
 export function parseLastEventId(value: string | number | undefined): number {

@@ -8,6 +8,9 @@ import { CodexModelIdSchema, CodexReasoningEffortSchema } from "./settings.js";
 
 export const JOB_STATUSES_V2 = JOB_STATUSES;
 export const JOB_KINDS_V2 = JOB_KINDS;
+export const TRACE_CATEGORIES_V2 = ["llmInvocations", "toolDecisions", "toolAttempts", "codexCliExecutions", "outputs", "networkAudits"] as const;
+export const TRACE_MAX_RECORDS = 300;
+export const TRACE_MAX_SERIALIZED_BYTES = 2_097_152;
 
 export const JobStatusSchema = z.enum(JOB_STATUSES_V2);
 export const JobKindSchema = z.enum(JOB_KINDS_V2);
@@ -19,8 +22,8 @@ export const JobReceiptSchema = z
     jobId: EntityIdSchema,
     projectId: EntityIdSchema,
     kind: JobKindSchema,
-    status: z.literal("queued"),
-    queuePosition: z.number().int().nonnegative(),
+    status: JobStatusSchema,
+    queuePosition: z.number().int().nonnegative().optional(),
     acceptedAt: TimestampSchema,
     projectRevision: RevisionSchema
   })
@@ -123,7 +126,20 @@ const JobControlParamsSchema = z
 
 export const LoopPauseParamsSchema = JobControlParamsSchema;
 export const LoopAbortParamsSchema = JobControlParamsSchema;
-export const JobsGetParamsSchema = z.object({ projectId: EntityIdSchema, jobId: EntityIdSchema }).strict();
+export const TraceCategorySchema = z.enum(TRACE_CATEGORIES_V2);
+export const TraceCursorSchema = z
+  .string()
+  .min(1)
+  .max(2_048)
+  .regex(/^[A-Za-z0-9_-]+$/, "A base64url trace cursor is required.");
+export const TracePageRequestSchema = z
+  .object({
+    category: TraceCategorySchema,
+    cursor: TraceCursorSchema.optional(),
+    limit: z.number().int().min(1).max(200).optional()
+  })
+  .strict();
+export const JobsGetParamsSchema = z.object({ projectId: EntityIdSchema, jobId: EntityIdSchema, tracePage: TracePageRequestSchema.optional() }).strict();
 export const JobsListParamsSchema = z
   .object({
     projectId: EntityIdSchema,
@@ -154,6 +170,9 @@ export const JobRpcRequestSchema = z.discriminatedUnion("method", [
 export type JobRpcRequest = z.infer<typeof JobRpcRequestSchema>;
 export type SourceAccessPolicy = z.infer<typeof SourceAccessPolicySchema>;
 export type JobToolPolicy = z.infer<typeof JobToolPolicySchema>;
+export type TraceCategory = z.infer<typeof TraceCategorySchema>;
+export type TracePageRequest = z.infer<typeof TracePageRequestSchema>;
+export type JobsGetParams = z.infer<typeof JobsGetParamsSchema>;
 
 export const LlmInvocationTraceSchema = z
   .object({
@@ -256,6 +275,61 @@ export const NetworkAuditTraceSchema = z
   })
   .strict();
 
+export const TraceCategoryCountsSchema = z
+  .object({
+    llmInvocations: z.number().int().nonnegative(),
+    toolDecisions: z.number().int().nonnegative(),
+    toolAttempts: z.number().int().nonnegative(),
+    codexCliExecutions: z.number().int().nonnegative(),
+    outputs: z.number().int().nonnegative(),
+    networkAudits: z.number().int().nonnegative()
+  })
+  .strict();
+
+export const TraceSummarySchema = z
+  .object({ counts: TraceCategoryCountsSchema, total: z.number().int().nonnegative() })
+  .strict()
+  .superRefine((summary, context) => {
+    const counted = TRACE_CATEGORIES_V2.reduce((total, category) => total + summary.counts[category], 0);
+    if (counted !== summary.total) context.addIssue({ code: "custom", path: ["total"], message: "Trace summary count does not match its total." });
+  });
+
+export const TracePageMetadataSchema = z
+  .object({
+    order: z.literal("newest_first"),
+    total: z.number().int().nonnegative(),
+    returned: z.number().int().min(0).max(200),
+    truncated: z.boolean(),
+    nextCursor: TraceCursorSchema.optional()
+  })
+  .strict()
+  .superRefine((page, context) => {
+    if (page.truncated !== Boolean(page.nextCursor)) {
+      context.addIssue({ code: "custom", path: ["nextCursor"], message: "A truncated trace page requires a continuation cursor." });
+    }
+  });
+
+export const TracePagesSchema = z
+  .object({
+    llmInvocations: TracePageMetadataSchema,
+    toolDecisions: TracePageMetadataSchema,
+    toolAttempts: TracePageMetadataSchema,
+    codexCliExecutions: TracePageMetadataSchema,
+    outputs: TracePageMetadataSchema,
+    networkAudits: TracePageMetadataSchema
+  })
+  .strict();
+
+export const TraceBudgetSchema = z
+  .object({
+    maxRecords: z.literal(TRACE_MAX_RECORDS),
+    maxSerializedBytes: z.literal(TRACE_MAX_SERIALIZED_BYTES),
+    returned: z.number().int().min(0).max(TRACE_MAX_RECORDS),
+    total: z.number().int().nonnegative(),
+    truncated: z.boolean()
+  })
+  .strict();
+
 export const JobDetailSchema = JobSchema.safeExtend({
   requestHash: z.string().trim().min(1).optional(),
   requestedCapabilities: CapabilitySetSchema.optional(),
@@ -264,14 +338,31 @@ export const JobDetailSchema = JobSchema.safeExtend({
   traceAvailability: z.enum(["available", "legacy_unavailable"]),
   trace: z
     .object({
-      llmInvocations: z.array(LlmInvocationTraceSchema),
-      toolDecisions: z.array(ToolDecisionTraceSchema),
-      toolAttempts: z.array(ToolAttemptTraceSchema),
-      codexCliExecutions: z.array(CodexCliExecutionTraceSchema),
-      outputs: z.array(ToolOutputTraceSchema),
-      networkAudits: z.array(NetworkAuditTraceSchema)
+      llmInvocations: z.array(LlmInvocationTraceSchema).max(200),
+      toolDecisions: z.array(ToolDecisionTraceSchema).max(200),
+      toolAttempts: z.array(ToolAttemptTraceSchema).max(200),
+      codexCliExecutions: z.array(CodexCliExecutionTraceSchema).max(200),
+      outputs: z.array(ToolOutputTraceSchema).max(200),
+      networkAudits: z.array(NetworkAuditTraceSchema).max(200),
+      summary: TraceSummarySchema,
+      pages: TracePagesSchema,
+      budget: TraceBudgetSchema
     })
     .strict()
+    .superRefine((trace, context) => {
+      const returned = TRACE_CATEGORIES_V2.reduce((total, category) => total + trace[category].length, 0);
+      if (returned !== trace.budget.returned) {
+        context.addIssue({ code: "custom", path: ["budget", "returned"], message: "Trace returned count does not match its arrays." });
+      }
+      if (trace.summary.total !== trace.budget.total) {
+        context.addIssue({ code: "custom", path: ["budget", "total"], message: "Trace total does not match its summary." });
+      }
+      for (const category of TRACE_CATEGORIES_V2) {
+        if (trace.pages[category].returned !== trace[category].length) {
+          context.addIssue({ code: "custom", path: ["pages", category, "returned"], message: "Trace page count does not match its array." });
+        }
+      }
+    })
 }).strict();
 
 export type JobDetail = z.infer<typeof JobDetailSchema>;

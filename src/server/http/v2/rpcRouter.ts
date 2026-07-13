@@ -3,6 +3,7 @@ import { API_V2_METHODS, ApiV2RpcRequestSchema, type ApiV2RpcRequest } from "../
 import { RequestIdSchema, RpcRequestV2Schema, type RpcErrorCode } from "../../../contracts/api-v2/common.js";
 import type { JobKind } from "../../../contracts/api-v2/jobs.js";
 import { authorizeJobCapabilities, defaultJobCapabilityPolicy, type CapabilityPolicy } from "../../../core/application/capabilities/index.js";
+import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, IdempotencyConflictError } from "../../runtime/storage/v2/jobErrors.js";
 import type { StorageCapabilityAudit } from "../../runtime/storage/v2/types.js";
 import type { RpcHandlerContext } from "./context.js";
 import { PublicUrlPolicy } from "../../runtime/tools/publicUrlPolicy.js";
@@ -22,7 +23,7 @@ import {
   toSnapshotResponse,
   toToolDiagnosticsResponse
 } from "./common.js";
-import { emitProjectSnapshotChanged, emitRunStatusChanged } from "./eventEmitters.js";
+import { emitProjectSnapshotChanged } from "./eventEmitters.js";
 import { createServerRequestId, internalErrorMessage } from "../errorBoundary.js";
 
 export async function handleRpcV2(body: unknown, context: RpcHandlerContext): Promise<{ requestId: string; result: unknown }> {
@@ -39,6 +40,9 @@ export async function handleRpcV2(body: unknown, context: RpcHandlerContext): Pr
   try {
     return { requestId: parsed.data.requestId, result: await dispatch(parsed.data, context) };
   } catch (error) {
+    if (error instanceof IdempotencyConflictError) {
+      throw new RpcV2Error(409, parsed.data.requestId, "CONFLICT", IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, undefined, error);
+    }
     if (error instanceof RpcConflictError) {
       throw new RpcV2Error(409, parsed.data.requestId, "CONFLICT", error.message, undefined, error);
     }
@@ -134,27 +138,34 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
         request.params.checkpointId
       );
     case "loop.pause": {
-      const before = await jobs.get(request.params.jobId);
+      await assertJobControlTarget(context, request.params.projectId, request.params.jobId, request.params.expectedProjectRevision);
+      const job = await jobs.requestPause(request.params.jobId, request.params.expectedProjectRevision);
       await orchestrator.pause(request.params.projectId);
-      const job = await jobs.requestPause(request.params.jobId);
-      await emitRunStatusChanged(events, job.projectId, job.projectRevision, job.id, job.status, before?.status);
       return toJobResponse(job);
     }
     case "loop.abort": {
-      const before = await jobs.get(request.params.jobId);
+      await assertJobControlTarget(context, request.params.projectId, request.params.jobId, request.params.expectedProjectRevision);
+      const job = await jobs.requestAbort(request.params.jobId, request.params.expectedProjectRevision);
       await orchestrator.abort(request.params.projectId);
-      const job = await jobs.requestAbort(request.params.jobId);
-      await emitRunStatusChanged(events, job.projectId, job.projectRevision, job.id, job.status, before?.status);
       return toJobResponse(job);
     }
     case "jobs.get": {
-      const job = await jobs.getDetail(request.params.jobId);
+      let job;
+      try {
+        job = await jobs.getDetail(request.params.jobId, request.params.tracePage);
+      } catch (error) {
+        if (error instanceof Error && error.name === "InvalidTraceCursorError") throw new RpcValidationError("The trace page cursor is invalid.");
+        throw error;
+      }
       if (!job || job.projectId !== request.params.projectId) throw new RpcNotFoundError("Job not found.");
       return toJobDetailResponse(job);
     }
     case "jobs.list": {
       const result = await jobs.list(request.params.projectId, request.params);
-      return { jobs: result.jobs.map(toJobResponse) };
+      return {
+        jobs: result.jobs.map(toJobResponse),
+        ...(result.nextCursor ? { nextCursor: result.nextCursor } : {})
+      };
     }
     case "engineering.preflight": {
       await assertRequestedCapabilities(context, request.params.projectId, "engineering_run", request.params.requestedCapabilities);
@@ -188,8 +199,12 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
       return toSettingsResponse(await settingsStore.saveSettings(toSettingsSaveInput(request.params, current)));
     }
     case "tools.diagnostics": {
-      const codexStatus = context.llm ? await context.llm.getStatus() : undefined;
-      return toToolDiagnosticsResponse(await settingsStore.getRuntimeSettings(), codexStatus);
+      const [codexStatus, settings, reliability] = await Promise.all([
+        context.llm?.getStatus(),
+        settingsStore.getRuntimeSettings(),
+        context.jobs.operationalDiagnostics()
+      ]);
+      return toToolDiagnosticsResponse(settings, codexStatus, reliability);
     }
     case "auth.codexStatus":
       return toCodexAuthStatusResponse(Boolean(context.llm && (await context.llm.getStatus()).authenticated));
@@ -200,6 +215,12 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
       return toLlmStatusResponse(await settingsStore.getRuntimeSettings(), providerStatus);
     }
   }
+}
+
+async function assertJobControlTarget(context: RpcHandlerContext, projectId: string, jobId: string, expectedRevision: number): Promise<void> {
+  const job = await context.jobs.get(jobId);
+  if (!job || job.projectId !== projectId) throw new RpcNotFoundError("Job not found.");
+  if (job.projectRevision !== expectedRevision) throw new RpcConflictError("Project revision changed.");
 }
 
 async function durableSnapshotResponse(context: RpcHandlerContext, snapshot: Awaited<ReturnType<RpcHandlerContext["orchestrator"]["getSnapshot"]>>) {

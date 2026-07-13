@@ -114,3 +114,35 @@ export interface StorageNetworkAudit {
   auditedAt: string;
   data?: StorageTraceData;
 }
+
+export const STORAGE_TRACE_CATEGORIES = ["llmInvocations", "toolDecisions", "toolAttempts", "codexCliExecutions", "outputs", "networkAudits"] as const;
+
+export type StorageTraceCategory = (typeof STORAGE_TRACE_CATEGORIES)[number];
+
+export interface StorageTraceItemByCategory {
+  llmInvocations: StorageLlmInvocation;
+  toolDecisions: StorageToolDecision;
+  toolAttempts: StorageToolAttempt;
+  codexCliExecutions: StorageCodexCliExecution;
+  outputs: StorageToolOutputLink;
+  networkAudits: StorageNetworkAudit;
+}
+
+export type StorageTraceCategoryCounts = Record<StorageTraceCategory, number>;
+
+export interface StorageTraceSummary {
+  jobId: string;
+  counts: StorageTraceCategoryCounts;
+  total: number;
+}
+
+export interface StorageTracePage<C extends StorageTraceCategory = StorageTraceCategory> {
+  category: C;
+  order: "newest_first";
+  items: Array<StorageTraceItemByCategory[C]>;
+  /** Internal opaque cursor after each item, used for byte-budget page trimming. */
+  itemCursors: string[];
+  total: number;
+  nextCursor?: string;
+  truncated: boolean;
+}

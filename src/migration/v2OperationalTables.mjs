@@ -6,16 +6,24 @@ function copyDirectTable(sourceDb, targetDb, sourceTable, bindRow) {
   const statements = {
     jobs: `
       insert into jobs (
-        id, project_id, operation, status, priority, attempt, idempotency_key, requested_by,
+        id, project_id, operation, status, priority, attempt, lease_generation, idempotency_key, request_hash,
+        requested_capabilities, effective_capabilities, tool_policy, blocked_reason, failure_reason, requested_by,
         lease_owner, lease_expires_at, queued_at, started_at, completed_at, created_at, updated_at, payload, result, error
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(id) do update set
         project_id = excluded.project_id,
         operation = excluded.operation,
         status = excluded.status,
         priority = excluded.priority,
         attempt = excluded.attempt,
+        lease_generation = excluded.lease_generation,
         idempotency_key = excluded.idempotency_key,
+        request_hash = excluded.request_hash,
+        requested_capabilities = excluded.requested_capabilities,
+        effective_capabilities = excluded.effective_capabilities,
+        tool_policy = excluded.tool_policy,
+        blocked_reason = excluded.blocked_reason,
+        failure_reason = excluded.failure_reason,
         requested_by = excluded.requested_by,
         lease_owner = excluded.lease_owner,
         lease_expires_at = excluded.lease_expires_at,
@@ -120,26 +128,36 @@ function copyDirectTable(sourceDb, targetDb, sourceTable, bindRow) {
 }
 
 export function copyJobs(sourceDb, targetDb) {
-  return copyDirectTable(sourceDb, targetDb, "jobs", (row) => [
-    row.id,
-    row.project_id,
-    row.operation,
-    row.status,
-    row.priority,
-    row.attempt,
-    row.idempotency_key ?? null,
-    row.requested_by ?? null,
-    row.lease_owner ?? null,
-    row.lease_expires_at ?? null,
-    row.queued_at,
-    row.started_at ?? null,
-    row.completed_at ?? null,
-    row.created_at,
-    row.updated_at,
-    normalizeJsonText(row.payload),
-    normalizeJsonText(row.result),
-    row.error ?? null
-  ]);
+  return copyDirectTable(sourceDb, targetDb, "jobs", (row) => {
+    const wasActive = ["running", "pause_requested", "cancel_requested"].includes(row.status);
+    return [
+      row.id,
+      row.project_id,
+      row.operation,
+      wasActive ? "interrupted" : row.status,
+      row.priority,
+      row.attempt,
+      Number.isInteger(row.lease_generation) && row.lease_generation >= 0 ? row.lease_generation : 0,
+      row.idempotency_key ?? null,
+      row.request_hash ?? null,
+      normalizeJsonText(row.requested_capabilities),
+      normalizeJsonText(row.effective_capabilities),
+      normalizeJsonText(row.tool_policy),
+      row.blocked_reason ?? null,
+      row.failure_reason ?? null,
+      row.requested_by ?? null,
+      wasActive ? null : (row.lease_owner ?? null),
+      wasActive ? null : (row.lease_expires_at ?? null),
+      row.queued_at,
+      row.started_at ?? null,
+      wasActive ? (row.completed_at ?? row.updated_at ?? row.created_at) : (row.completed_at ?? null),
+      row.created_at,
+      row.updated_at,
+      normalizeJsonText(row.payload),
+      normalizeJsonText(row.result),
+      wasActive ? (row.error ?? "migration_active_job_interrupted") : (row.error ?? null)
+    ];
+  });
 }
 
 export function copyJobEvents(sourceDb, targetDb) {

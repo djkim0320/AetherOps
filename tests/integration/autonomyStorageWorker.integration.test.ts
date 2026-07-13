@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { migrateStorageV2Schema } from "../../src/server/runtime/storage/v2/schema.js";
+import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, IdempotencyConflictError } from "../../src/server/runtime/storage/v2/jobErrors.js";
 import { createStorageWorkerClient, type StorageWorkerClient } from "../../src/server/runtime/storage/worker/typedRuntime.js";
 
 const clients: StorageWorkerClient[] = [];
@@ -36,41 +37,38 @@ describe("autonomy offline storage worker", () => {
 
     await expect(client.request({ name: "ping" })).resolves.toEqual({ ok: true });
     const now = "2026-07-11T00:00:00.000Z";
-    await client.transaction([
-      {
-        name: "job.enqueue",
-        job: {
-          id: "job-offline",
-          projectId: "project-offline",
-          operation: "research",
-          idempotencyKey: "offline-idempotency",
-          requestHash: "sha256:offline",
-          requestedCapabilities: { agent: true, engineering: true, search: false },
-          effectiveCapabilities: { agent: true, engineering: true, search: false },
-          toolPolicy: { allowOpenCode: false, sourceAccess: { mode: "offline" } },
-          createdAt: now
-        }
-      },
-      {
-        name: "event.append",
-        event: {
-          eventId: "event-offline",
-          projectId: "project-offline",
-          jobId: "job-offline",
-          type: "run.status.changed",
-          createdAt: now,
-          payload: { status: "queued" }
-        }
-      }
-    ]);
+    const job = {
+      id: "job-offline",
+      projectId: "project-offline",
+      operation: "research",
+      idempotencyKey: "offline-idempotency",
+      requestHash: "sha256:offline",
+      requestedCapabilities: { agent: true, engineering: true, search: false },
+      effectiveCapabilities: { agent: true, engineering: true, search: false },
+      toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" as const } },
+      createdAt: now,
+      payload: { projectRevision: 1, currentStep: "EXECUTE_TOOLS" }
+    };
+    const enqueued = await client.request<{ job: { id: string }; event: { jobId: string; type: string } }>({
+      name: "job.enqueue",
+      job
+    });
+    expect(enqueued).toMatchObject({ job: { id: "job-offline" }, event: { jobId: "job-offline", type: "run.status.changed" } });
 
     await expect(client.request({ name: "job.get", jobId: "job-offline" })).resolves.toMatchObject({
       id: "job-offline",
       status: "queued",
-      toolPolicy: { allowOpenCode: false, sourceAccess: { mode: "offline" } }
+      toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" } }
     });
     await expect(client.request({ name: "event.after", projectId: "project-offline", lastEventId: 0 })).resolves.toEqual([
-      expect.objectContaining({ eventId: "event-offline", jobId: "job-offline" })
+      expect.objectContaining({ jobId: "job-offline", type: "run.status.changed" })
     ]);
+
+    const conflict = await client
+      .request({ name: "job.enqueue", job: { ...job, id: "job-conflict", requestHash: "sha256:different" } })
+      .catch((error: unknown) => error);
+    expect(conflict).toBeInstanceOf(IdempotencyConflictError);
+    expect(conflict).toMatchObject({ code: "IDEMPOTENCY_CONFLICT", message: IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE });
+    expect((conflict as Error).message).not.toMatch(/project-offline|offline-idempotency|sha256/);
   });
 });

@@ -23,6 +23,7 @@ export interface DurableJobRuntimeOptions {
   timer?: DurableRuntimeTimer;
   storageClient?: StorageWorkerClient;
   sseDiagnostics?: SseRuntimeDiagnostics;
+  dataRoot?: string;
 }
 
 export interface ResolvedDurableRuntimeConfig {

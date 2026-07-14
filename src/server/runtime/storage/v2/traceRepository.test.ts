@@ -8,16 +8,28 @@ import { createStorageV2Repositories } from "./repositories.js";
 import { IdempotencyConflictError } from "./jobErrors.js";
 import { migrateStorageV2Schema, STORAGE_V2_SCHEMA_VERSION } from "./schema.js";
 import { STORAGE_JOB_MIGRATION_CHECKSUM } from "./jobSchema.js";
-import { STORAGE_TRACE_MIGRATION_CHECKSUM } from "./traceSchema.js";
+import { STORAGE_RUN_STATE_BOOTSTRAP_MIGRATION_CHECKSUM } from "./runStateBootstrapSchema.js";
+import { STORAGE_RUN_STATE_MIGRATION_CHECKSUM } from "./runStateSchema.js";
+import { STORAGE_TERMINAL_RECEIPT_MIGRATION_CHECKSUM } from "./terminalReceiptSchema.js";
+import { STORAGE_TERMINAL_ATTESTATION_MIGRATION_CHECKSUM } from "./terminalAttestationSchema.js";
+import { STORAGE_OWNERSHIP_MIGRATION_CHECKSUM } from "./ownershipSchema.js";
+import { STORAGE_TRACE_MIGRATION_CHECKSUM, STORAGE_TRACE_V3_MIGRATION_CHECKSUM } from "./traceSchema.js";
+
+const TRACE_LEASE_NOW_MS = Date.parse("2026-01-01T00:00:00.250Z");
 
 describe("storage operational trace v3", () => {
   it("upgrades an existing jobs table additively and is idempotent", () => {
     const db = new DatabaseSync(":memory:");
     createLegacyJobsTable(db);
+    createLegacyTraceV3Table(db);
     db.prepare(
       `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key, requested_by,
       queued_at, created_at, updated_at, payload) values (?, ?, ?, 'queued', 0, 0, ?, ?, ?, ?, ?, ?)`
     ).run("legacy-job", "project-1", "research_loop", "legacy-key", "user", "2026-01-01", "2026-01-01", "2026-01-01", "{}");
+    db.prepare(
+      `insert into tool_attempts (id, project_id, job_id, decision_id, ordinal, status, input_hash, output_hash,
+       queued_at, completed_at) values (?, ?, ?, ?, 0, 'completed', ?, ?, ?, ?)`
+    ).run("legacy-attempt", "project-1", "legacy-job", "legacy-decision", "legacy-input", "legacy-output", "2026-01-01", "2026-01-01");
 
     migrateStorageV2Schema(db);
     migrateStorageV2Schema(db);
@@ -27,12 +39,44 @@ describe("storage operational trace v3", () => {
       expect.arrayContaining(["request_hash", "requested_capabilities", "effective_capabilities", "tool_policy", "blocked_reason", "failure_reason"])
     );
     expect(db.prepare("select id, requested_by from jobs").get()).toEqual({ id: "legacy-job", requested_by: "user" });
+    expect(createStorageV2Repositories({ appDb: db }).trace.getToolAttempt("legacy-attempt")).toMatchObject({
+      id: "legacy-attempt",
+      inputHash: "legacy-input",
+      outputHash: "legacy-output",
+      traceAvailability: "legacy_unavailable",
+      traceVersion: undefined
+    });
     expect(db.prepare("select value from storage_v2_meta where key='schema_version'").get()).toEqual({ value: String(STORAGE_V2_SCHEMA_VERSION) });
     expect(db.prepare("select version, checksum_sha256 from schema_migrations").all()).toEqual([
       { version: 2, checksum_sha256: "99b17d1e0aebc8bb0a2c29084f2f44a263d6644a551a2116429542a20e24016c" },
-      { version: 3, checksum_sha256: STORAGE_TRACE_MIGRATION_CHECKSUM },
-      { version: 4, checksum_sha256: STORAGE_JOB_MIGRATION_CHECKSUM }
+      { version: 3, checksum_sha256: STORAGE_TRACE_V3_MIGRATION_CHECKSUM },
+      { version: 4, checksum_sha256: STORAGE_JOB_MIGRATION_CHECKSUM },
+      { version: 5, checksum_sha256: STORAGE_RUN_STATE_MIGRATION_CHECKSUM },
+      { version: 6, checksum_sha256: STORAGE_TRACE_MIGRATION_CHECKSUM },
+      { version: 7, checksum_sha256: STORAGE_RUN_STATE_BOOTSTRAP_MIGRATION_CHECKSUM },
+      { version: 8, checksum_sha256: STORAGE_TERMINAL_RECEIPT_MIGRATION_CHECKSUM },
+      { version: 9, checksum_sha256: STORAGE_TERMINAL_ATTESTATION_MIGRATION_CHECKSUM },
+      { version: 10, checksum_sha256: STORAGE_OWNERSHIP_MIGRATION_CHECKSUM }
     ]);
+    const attemptColumns = new Set((db.prepare("pragma table_info(tool_attempts)").all() as Array<{ name: string }>).map((row) => row.name));
+    expect([...attemptColumns]).toEqual(
+      expect.arrayContaining([
+        "trace_version",
+        "descriptor_version",
+        "descriptor_side_effects",
+        "side_effect_key",
+        "idempotency_key",
+        "postcondition_disposition",
+        "postcondition_receipt"
+      ])
+    );
+    db.close();
+  });
+
+  it("fails before applying trace changes when migration v6 has a conflicting checksum", () => {
+    const db = migratedDatabase();
+    db.prepare("update schema_migrations set checksum_sha256='invalid' where version=6").run();
+    expect(() => migrateStorageV2Schema(db)).toThrow(/migration 6.*checksum/i);
     db.close();
   });
 
@@ -96,7 +140,7 @@ describe("storage operational trace v3", () => {
     const databasePath = join(root, "storage.sqlite");
     const db = migratedDatabase(databasePath);
     db.close();
-    const runtime = new StorageWorkerRuntime({ appDbPath: databasePath, vectorDbPath: databasePath, ontologyDbPath: databasePath });
+    const runtime = createTraceWorkerRuntime(databasePath);
     try {
       runtime.handle({
         name: "job.enqueue",
@@ -131,11 +175,42 @@ describe("storage operational trace v3", () => {
           reasoningEffort: "high",
           promptVersion: "planner-v2",
           schemaVersion: "2",
-          promptHash: "prompt-hash",
+          promptHash: "a".repeat(64),
+          repairCount: 0,
+          status: "running",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          data: { provider: "codex-oauth", schemaName: "ProviderHarness" }
+        }
+      });
+      write({
+        name: "trace.llm.save",
+        invocation: {
+          id: "llm-1",
+          projectId: "project-1",
+          jobId: "job-1",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "high",
+          promptVersion: "planner-v2",
+          schemaVersion: "2",
+          promptHash: "a".repeat(64),
+          responseHash: "b".repeat(64),
+          latencyMs: 1_000,
           repairCount: 0,
           status: "completed",
           startedAt: "2026-01-01T00:00:00.000Z",
-          completedAt: "2026-01-01T00:00:01.000Z"
+          completedAt: "2026-01-01T00:00:01.000Z",
+          data: {
+            provider: "codex-oauth",
+            schemaName: "ProviderHarness",
+            accounting: {
+              version: 1,
+              inputUnits: 10,
+              outputUnits: 2,
+              unit: "estimated_token",
+              estimator: "utf8_bytes_div_4_ceil_v1",
+              monetaryCost: { availability: "unavailable", policy: "unmetered_codex_oauth_v1" }
+            }
+          }
         }
       });
       write({
@@ -148,7 +223,7 @@ describe("storage operational trace v3", () => {
           toolName: "WebFetchTool",
           purpose: "Fetch an allowlisted source.",
           expectedOutcome: "A validated source record.",
-          rawSelection: { url: "https://example.com" },
+          rawSelection: { inputHash: "c".repeat(64) },
           userPinned: true,
           policyStatus: "accepted",
           createdAt: "2026-01-01T00:00:01.000Z"
@@ -162,9 +237,53 @@ describe("storage operational trace v3", () => {
           jobId: "job-1",
           decisionId: "decision-1",
           ordinal: 0,
+          status: "queued",
+          inputHash: "f".repeat(64),
+          traceVersion: 1,
+          traceAvailability: "vnext",
+          descriptorVersion: "1",
+          descriptorSideEffects: ["network"],
+          idempotencyKey: "attempt-idempotency-key",
+          dependsOnAttemptIds: [],
+          queuedAt: "2026-01-01T00:00:01.000Z"
+        }
+      });
+      write({
+        name: "trace.attempt.save",
+        attempt: {
+          id: "attempt-1",
+          projectId: "project-1",
+          jobId: "job-1",
+          decisionId: "decision-1",
+          ordinal: 0,
+          status: "running",
+          inputHash: "f".repeat(64),
+          traceVersion: 1,
+          traceAvailability: "vnext",
+          descriptorVersion: "1",
+          descriptorSideEffects: ["network"],
+          idempotencyKey: "attempt-idempotency-key",
+          dependsOnAttemptIds: [],
+          queuedAt: "2026-01-01T00:00:01.000Z",
+          startedAt: "2026-01-01T00:00:01.100Z"
+        }
+      });
+      write({
+        name: "trace.attempt.save",
+        attempt: {
+          id: "attempt-1",
+          projectId: "project-1",
+          jobId: "job-1",
+          decisionId: "decision-1",
+          ordinal: 0,
           status: "completed",
-          inputHash: "input-hash",
-          outputHash: "output-hash",
+          inputHash: "f".repeat(64),
+          outputHash: "0".repeat(64),
+          traceVersion: 1,
+          traceAvailability: "vnext",
+          descriptorVersion: "1",
+          descriptorSideEffects: ["network"],
+          idempotencyKey: "attempt-idempotency-key",
           terminalCause: "completed",
           dependsOnAttemptIds: [],
           queuedAt: "2026-01-01T00:00:01.000Z",
@@ -186,8 +305,8 @@ describe("storage operational trace v3", () => {
           durationMs: 500,
           exitCode: 0,
           eventCount: 4,
-          workspaceManifestHash: "workspace-hash",
-          outputManifestHash: "output-manifest-hash",
+          workspaceManifestHash: "d".repeat(64),
+          outputManifestHash: "e".repeat(64),
           createdAt: "2026-01-01T00:00:01.000Z",
           completedAt: "2026-01-01T00:00:01.500Z"
         }
@@ -199,9 +318,9 @@ describe("storage operational trace v3", () => {
           projectId: "project-1",
           jobId: "job-1",
           attemptId: "attempt-1",
-          url: "https://example.com",
+          url: "https://example.com/",
           redirectChain: [],
-          sourcePolicy: { mode: "allowlist", urls: ["https://example.com"] },
+          sourcePolicy: { mode: "allowlist", urls: ["https://example.com/"] },
           policyDecision: "allowed",
           auditedAt: "2026-01-01T00:00:01.200Z"
         }
@@ -234,7 +353,17 @@ describe("storage operational trace v3", () => {
       expect(runtime.handle({ name: "trace.decision.listJob", jobId: "job-1" })).toEqual([
         expect.objectContaining({ id: "decision-1", policyStatus: "accepted" })
       ]);
-      expect(runtime.handle({ name: "trace.attempt.listJob", jobId: "job-1" })).toEqual([expect.objectContaining({ id: "attempt-1", status: "completed" })]);
+      expect(runtime.handle({ name: "trace.attempt.listJob", jobId: "job-1" })).toEqual([
+        expect.objectContaining({
+          id: "attempt-1",
+          status: "completed",
+          traceVersion: 1,
+          traceAvailability: "vnext",
+          descriptorVersion: "1",
+          descriptorSideEffects: ["network"],
+          idempotencyKey: "attempt-idempotency-key"
+        })
+      ]);
       expect(runtime.handle({ name: "trace.codex.listJob", jobId: "job-1" })).toEqual([
         expect.objectContaining({ id: "codex-1", networkPolicy: "disabled", eventCount: 4 })
       ]);
@@ -255,7 +384,7 @@ describe("storage operational trace v3", () => {
     const root = mkdtempSync(join(tmpdir(), "aetherops-trace-linkage-"));
     const databasePath = join(root, "storage.sqlite");
     migratedDatabase(databasePath).close();
-    const runtime = new StorageWorkerRuntime({ appDbPath: databasePath, vectorDbPath: databasePath, ontologyDbPath: databasePath });
+    const runtime = createTraceWorkerRuntime(databasePath);
     const enqueueAndClaim = (jobId: string, projectId: string) => {
       runtime.handle({ name: "job.enqueue", job: { id: jobId, projectId, operation: "research_loop", payload: { projectRevision: 1 } } });
       return runtime.handle({
@@ -298,10 +427,11 @@ describe("storage operational trace v3", () => {
             reasoningEffort: "high",
             promptVersion: "planner-v2",
             schemaVersion: "2",
-            promptHash: "prompt-b",
+            promptHash: "b".repeat(64),
             repairCount: 0,
-            status: "completed",
-            startedAt: "2026-01-01T00:00:00.000Z"
+            status: "running",
+            startedAt: "2026-01-01T00:00:00.000Z",
+            data: { provider: "codex-oauth", schemaName: "CrossScopeHarness" }
           }
         },
         decision(jobB, "decision-b", "llm-b"),
@@ -323,7 +453,7 @@ describe("storage operational trace v3", () => {
               reasoningEffort: "high",
               promptVersion: "planner-v2",
               schemaVersion: "2",
-              promptHash: "prompt-a",
+              promptHash: "a".repeat(64),
               repairCount: 0,
               status: "completed",
               startedAt: "2026-01-01T00:00:00.000Z"
@@ -342,8 +472,10 @@ describe("storage operational trace v3", () => {
       expect(() => write(jobA, [{ name: "trace.output.record", link: outputLink(jobA, "attempt-b") }])).toThrow(/tool attempt linkage/i);
       expect(() => write(jobA, [{ name: "trace.network.record", audit: networkAudit(jobA, "attempt-b") }])).toThrow(/tool attempt linkage/i);
 
-      expect(write(jobA, [{ name: "trace.attempt.save", attempt: attemptA }])).toEqual([attemptA]);
-      expect(() => write(jobA, [{ name: "trace.attempt.save", attempt: { ...attemptA, outputHash: "mutated-output" } }])).toThrow(/retry must be identical/i);
+      expect(write(jobA, [{ name: "trace.attempt.save", attempt: attemptA }])).toEqual([
+        expect.objectContaining({ ...attemptA, traceAvailability: "legacy_unavailable" })
+      ]);
+      expect(() => write(jobA, [{ name: "trace.attempt.save", attempt: { ...attemptA, outputHash: "f".repeat(64) } }])).toThrow(/retry must be identical/i);
     } finally {
       runtime.close();
       rmSync(root, { recursive: true, force: true });
@@ -359,8 +491,8 @@ function terminalAttempt(claimed: import("./types.js").StorageClaimStartResult, 
     decisionId,
     ordinal: 0,
     status: "completed" as const,
-    inputHash: "input-hash",
-    outputHash: "output-hash",
+    inputHash: "a".repeat(64),
+    outputHash: "b".repeat(64),
     terminalCause: "completed",
     dependsOnAttemptIds: [],
     queuedAt: "2026-01-01T00:00:00.500Z",
@@ -403,12 +535,19 @@ function networkAudit(claimed: import("./types.js").StorageClaimStartResult, att
     projectId: claimed.job.projectId,
     jobId: claimed.job.id,
     attemptId,
-    url: "https://example.com",
+    url: "https://example.com/",
     redirectChain: [],
     sourcePolicy: { mode: "offline" },
     policyDecision: "allowed" as const,
     auditedAt: "2026-01-01T00:00:00.800Z"
   };
+}
+
+function createTraceWorkerRuntime(databasePath: string): StorageWorkerRuntime {
+  return new StorageWorkerRuntime(
+    { appDbPath: databasePath, vectorDbPath: databasePath, ontologyDbPath: databasePath },
+    { leaseClock: () => TRACE_LEASE_NOW_MS }
+  );
 }
 
 function migratedDatabase(path = ":memory:"): DatabaseSync {
@@ -424,6 +563,17 @@ function createLegacyJobsTable(db: DatabaseSync): void {
       priority integer not null default 0, attempt integer not null default 0, idempotency_key text,
       requested_by text, lease_owner text, lease_expires_at text, queued_at text not null, started_at text,
       completed_at text, created_at text not null, updated_at text not null, payload text not null, result text, error text
+    );
+  `);
+}
+
+function createLegacyTraceV3Table(db: DatabaseSync): void {
+  db.exec(`
+    create table tool_attempts (
+      id text primary key, project_id text not null, job_id text not null, decision_id text not null,
+      checkpoint_id text, ordinal integer not null, status text not null, input_hash text not null,
+      output_hash text, terminal_cause text, depends_on_attempt_ids text not null default '[]', staging_ref text,
+      quarantine_ref text, error text, queued_at text not null, started_at text, completed_at text, data text
     );
   `);
 }

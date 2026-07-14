@@ -48,14 +48,19 @@ export abstract class ProjectOrchestrator extends OrchestratorRuntime {
 
   async createProject(input: ResearchProjectInput): Promise<ResearchSnapshot> {
     const createdAt = nowIso();
+    const projectId = createId("project");
+    const shortProjectId = projectId
+      .replace(/^project[_-]/, "")
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .slice(0, 12);
     const project: ResearchProject = {
       ...input,
-      id: createId("project"),
+      id: projectId,
       createdAt,
       updatedAt: createdAt,
       currentStep: ResearchLoopStep.CreateResearchDb,
       status: "idle",
-      projectRoot: `${this.projectRootBase}/${slugify(input.topic)}-${createdAt.slice(0, 10)}`
+      projectRoot: `${this.projectRootBase}/${slugify(input.topic)}-${createdAt.slice(0, 10)}-${shortProjectId}`
     };
     await this.store.saveProject(project);
     await this.record(project.id, ResearchLoopStep.CreateResearchDb, "Main Flow", "연구 프로젝트가 생성되었고 연구 DB 생성을 기다립니다.");
@@ -98,7 +103,7 @@ export abstract class ProjectOrchestrator extends OrchestratorRuntime {
     return this.store.getSnapshot(projectId);
   }
 
-  async sendChatMessage(projectId: string, sessionId: string, content: string): Promise<ResearchSnapshot> {
+  async sendChatMessage(projectId: string, sessionId: string, content: string, execution?: ToolExecutionContext): Promise<ResearchSnapshot> {
     const message = content.trim();
     if (!message) {
       throw new Error("메시지가 비어 있습니다.");
@@ -132,7 +137,7 @@ export abstract class ProjectOrchestrator extends OrchestratorRuntime {
     }
 
     const latest = await this.store.getSnapshot(projectId);
-    const reply = await this.completeChatReply(latest, session, message);
+    const reply = await this.completeChatReply(latest, session, message, execution);
     const assistantArtifact: ResearchArtifact = {
       id: createId("artifact"),
       projectId,
@@ -230,7 +235,9 @@ export abstract class ProjectOrchestrator extends OrchestratorRuntime {
         toolPolicy: execution?.toolPolicy,
         effectiveCapabilities,
         runtimeToolDiagnostics: this.runtimeDiagnostics(settings, activeSnapshot.project),
-        onLlmInvocation: execution?.onLlmInvocation
+        onLlmInvocationRunning: execution?.onLlmInvocationRunning,
+        onLlmInvocation: execution?.onLlmInvocation,
+        compilePlannerContext: execution?.compilePlannerContext
       });
       this.assertPlanToolsAllowed(plan, executableTools);
       await this.store.saveResearchPlan({

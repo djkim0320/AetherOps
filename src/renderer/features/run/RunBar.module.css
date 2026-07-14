@@ -80,12 +80,11 @@
 }
 
 .runReason {
-  margin-top: var(--space-2);
   display: inline-flex;
   min-width: 0;
+  max-width: min(48%, 34rem);
   align-items: center;
   gap: var(--space-1);
-  width: fit-content;
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-danger-border);
   border-radius: var(--radius-pill);
@@ -97,6 +96,13 @@
 .runReason svg {
   width: 15px;
   flex: 0 0 auto;
+}
+
+.reasonText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .policyDialog {

@@ -24,7 +24,9 @@ export function createArtifactWriter(outputRoot) {
       return write(path, `${lines.join("\n")}${lines.length ? "\n" : ""}`);
     },
     text(path, value) {
-      return write(path, value);
+      const sanitized = sanitizeAutonomyArtifact(String(value));
+      assertSanitizedArtifact(sanitized);
+      return write(path, sanitized);
     },
     manifest(metadata = {}) {
       const entries = [...written].sort().map((path) => ({ path, sha256: sha256File(join(root, path)), bytes: readFileSync(join(root, path)).byteLength }));

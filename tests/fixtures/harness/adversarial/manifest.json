@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "classification": "adversarial",
+  "cases": [
+    { "id": "aetherbench.memory-freshness.v1", "suite": "memory-freshness", "caseVersion": "1.0.0" },
+    { "id": "aetherbench.tool-output-injection.v1", "suite": "tool-output-injection", "caseVersion": "1.0.0" },
+    { "id": "aetherbench.multi-agent-conflict.v1", "suite": "multi-agent-conflict", "caseVersion": "1.0.0" }
+  ]
+}

@@ -1,5 +1,6 @@
 import { stableStringify } from "./hash.mjs";
 import { boolInt, normalizeJsonText, parseJsonField, readRows, summarizeTable } from "./v2Support.mjs";
+import { migratedJobPolicyDisposition } from "./v2JobPolicySanitizer.mjs";
 
 function copyDirectTable(sourceDb, targetDb, sourceTable, bindRow) {
   const rows = readRows(sourceDb, sourceTable);
@@ -129,33 +130,34 @@ function copyDirectTable(sourceDb, targetDb, sourceTable, bindRow) {
 
 export function copyJobs(sourceDb, targetDb) {
   return copyDirectTable(sourceDb, targetDb, "jobs", (row) => {
-    const wasActive = ["running", "pause_requested", "cancel_requested"].includes(row.status);
+    const disposition = migratedJobPolicyDisposition(row, { interruptActive: true });
+    const migrated = disposition.row;
     return [
-      row.id,
-      row.project_id,
-      row.operation,
-      wasActive ? "interrupted" : row.status,
-      row.priority,
-      row.attempt,
-      Number.isInteger(row.lease_generation) && row.lease_generation >= 0 ? row.lease_generation : 0,
-      row.idempotency_key ?? null,
-      row.request_hash ?? null,
-      normalizeJsonText(row.requested_capabilities),
-      normalizeJsonText(row.effective_capabilities),
-      normalizeJsonText(row.tool_policy),
-      row.blocked_reason ?? null,
-      row.failure_reason ?? null,
-      row.requested_by ?? null,
-      wasActive ? null : (row.lease_owner ?? null),
-      wasActive ? null : (row.lease_expires_at ?? null),
-      row.queued_at,
-      row.started_at ?? null,
-      wasActive ? (row.completed_at ?? row.updated_at ?? row.created_at) : (row.completed_at ?? null),
-      row.created_at,
-      row.updated_at,
-      normalizeJsonText(row.payload),
-      normalizeJsonText(row.result),
-      wasActive ? (row.error ?? "migration_active_job_interrupted") : (row.error ?? null)
+      migrated.id,
+      migrated.project_id,
+      migrated.operation,
+      migrated.status,
+      migrated.priority,
+      migrated.attempt,
+      Number.isInteger(migrated.lease_generation) && migrated.lease_generation >= 0 ? migrated.lease_generation : 0,
+      migrated.idempotency_key ?? null,
+      migrated.request_hash ?? null,
+      normalizeJsonText(migrated.requested_capabilities),
+      normalizeJsonText(migrated.effective_capabilities),
+      migrated.tool_policy ?? null,
+      disposition.requiresReplan ? "replan_required_unsafe_source_policy_removed" : (migrated.blocked_reason ?? null),
+      migrated.failure_reason ?? null,
+      migrated.requested_by ?? null,
+      migrated.lease_owner ?? null,
+      migrated.lease_expires_at ?? null,
+      migrated.queued_at,
+      migrated.started_at ?? null,
+      migrated.completed_at ?? null,
+      migrated.created_at,
+      migrated.updated_at,
+      migrated.payload,
+      normalizeJsonText(migrated.result),
+      migrated.error ?? null
     ];
   });
 }

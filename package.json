@@ -36,6 +36,9 @@
     "ui:verify": "node scripts/ui-verify.mjs",
     "metadata:verify": "npm run server:build && node scripts/research-metadata-verify.mjs",
     "autonomy:verify": "node scripts/autonomy-verify.mjs",
+    "harness:verify": "npm run server:build && node scripts/verify-m1-server-restart.mjs && node scripts/verify-harness.mjs verify",
+    "harness:eval": "npm run server:build && node scripts/verify-harness.mjs eval",
+    "harness:capture-baseline": "node scripts/capture-harness-baseline.mjs",
     "selftest": "node scripts/selftest.mjs",
     "selftest:blocked": "node scripts/selftest.mjs --mode=blocked --skip-static",
     "selftest:live": "node scripts/selftest.mjs --mode=live"

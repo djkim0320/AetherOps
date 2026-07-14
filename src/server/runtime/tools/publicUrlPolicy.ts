@@ -5,6 +5,7 @@ const BLOCKED_HOST_SUFFIXES = [".local", ".localhost", ".internal"];
 
 export interface PublicUrlPolicyOptions {
   allowLoopback?: boolean;
+  forbidQuery?: boolean;
   resolveHostAddresses?: (hostname: string) => Promise<string[]>;
 }
 
@@ -15,6 +16,7 @@ export class PublicUrlPolicy {
     try {
       const parsed = new URL(value.trim());
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+      if (parsed.username || parsed.password || (this.options.forbidQuery && parsed.search)) return undefined;
       parsed.hash = "";
       parsed.protocol = parsed.protocol.toLowerCase();
       parsed.hostname = parsed.hostname.toLowerCase();
@@ -30,13 +32,13 @@ export class PublicUrlPolicy {
   async assertPublicHttpUrl(value: string): Promise<string> {
     const canonical = this.canonicalizeHttpUrl(value);
     if (!canonical) {
-      throw new Error(`invalid URL: ${value}`);
+      throw new Error("invalid public HTTP URL");
     }
 
     const parsed = new URL(canonical);
     const hostname = normalizeHostname(parsed.hostname);
     if (!hostname) {
-      throw new Error(`invalid URL: ${value}`);
+      throw new Error("invalid public HTTP URL");
     }
 
     if (hostname === "localhost" || hasBlockedHostSuffix(hostname)) {

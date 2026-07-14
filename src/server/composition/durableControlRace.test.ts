@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,8 +49,11 @@ describe("durable control completion races", () => {
     } as unknown as StorageWorkerClient;
     runtime = new DurableJobRuntime(databasePath, { concurrency: 1, storageClient });
     const terminalCommitted = deferred<void>();
+    const unexpectedTerminal = deferred<string>();
     runtime.subscribe((event) => {
-      if (event.type === "run.status.changed" && event.data.status === expectedStatus) terminalCommitted.resolve();
+      if (event.type !== "run.status.changed") return;
+      if (event.data.status === expectedStatus) terminalCommitted.resolve();
+      else if (["blocked", "failed", "interrupted"].includes(event.data.status)) unexpectedTerminal.resolve(event.data.status);
     });
     runtime.registerHandler("research_loop", async (job) => {
       const occurredAt = new Date().toISOString();
@@ -87,8 +91,8 @@ describe("durable control completion races", () => {
           decisionId,
           ordinal: 0,
           status: "completed",
-          inputHash: "input-hash",
-          outputHash: "output-hash",
+          inputHash: sha256(`input-${control}`),
+          outputHash: sha256(`output-${control}`),
           terminalCause: "completed",
           dependsOnAttemptIds: [],
           queuedAt: occurredAt,
@@ -116,7 +120,12 @@ describe("durable control completion races", () => {
         idempotencyKey: `cross-runtime-${control}`,
         payload: {}
       });
-      await transitionEntered.promise;
+      await Promise.race([
+        transitionEntered.promise,
+        unexpectedTerminal.promise.then((status) => {
+          throw new Error(`Durable job reached unexpected terminal status before the completed-step transition gate: ${status}`);
+        })
+      ]);
       if (control === "pause") await other.requestPause(receipt.jobId, 2);
       else await other.requestAbort(receipt.jobId, 2);
       releaseTransition.resolve();
@@ -158,4 +167,8 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }

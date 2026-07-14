@@ -6,21 +6,37 @@ import { normalizeForStableJson, semanticTextHash, sha256Hex, stableJsonHash, st
 const v2SchemaSourceUrl = new URL("../server/runtime/storage/v2/schema.ts", import.meta.url);
 const traceSchemaSourceUrl = new URL("../server/runtime/storage/v2/traceSchema.ts", import.meta.url);
 const jobSchemaSourceUrl = new URL("../server/runtime/storage/v2/jobSchema.ts", import.meta.url);
+const runStateSchemaSourceUrl = new URL("../server/runtime/storage/v2/runStateSchema.ts", import.meta.url);
+const runStateBootstrapSchemaSourceUrl = new URL("../server/runtime/storage/v2/runStateBootstrapSchema.ts", import.meta.url);
+const terminalReceiptSchemaSourceUrl = new URL("../server/runtime/storage/v2/terminalReceiptSchema.ts", import.meta.url);
+const terminalAttestationSchemaSourceUrl = new URL("../server/runtime/storage/v2/terminalAttestationSchema.ts", import.meta.url);
+const ownershipSchemaSourceUrl = new URL("../server/runtime/storage/v2/ownershipSchema.ts", import.meta.url);
 const canonicalEntityTables = new Set([
   "projects_v2",
   "records_v2",
   "memory_items_v2",
+  "task_contracts",
+  "context_packs",
+  "run_state_revisions",
   "ontology_entities_v2",
   "ontology_relations_v2",
   "ontology_constraints_v2"
 ]);
 
-export function checkpointSqliteFile(dbPath) {
+export function checkpointSqliteFile(dbPath, options = {}) {
   if (!existsSync(dbPath)) return { path: dbPath, present: false };
   const db = openDatabase(dbPath);
   try {
-    db.exec("pragma wal_checkpoint(truncate)");
-    return { path: dbPath, present: true };
+    const busyTimeoutMs = Number.isInteger(options.busyTimeoutMs) && options.busyTimeoutMs >= 0 ? options.busyTimeoutMs : 5000;
+    db.exec(`pragma busy_timeout = ${busyTimeoutMs}`);
+    const checkpoint = db.prepare("pragma wal_checkpoint(truncate)").get();
+    const busy = Number(checkpoint?.busy ?? 1);
+    const log = Number(checkpoint?.log ?? -1);
+    const checkpointed = Number(checkpoint?.checkpointed ?? -1);
+    if (busy !== 0 || log !== checkpointed) {
+      throw new Error(`SQLite WAL checkpoint did not complete for ${dbPath}: busy=${busy}, log=${log}, checkpointed=${checkpointed}.`);
+    }
+    return { path: dbPath, present: true, checkpoint: { busy, log, checkpointed } };
   } finally {
     db.close();
   }
@@ -128,7 +144,15 @@ export function createV2Database(dbPath, metadata = {}) {
 }
 
 export function loadV2SchemaSql() {
-  const base = extractTemplateSql(v2SchemaSourceUrl, "export function migrateStorageV2Schema", "${jobStatusCheck}", [
+  const base = loadV2BaseSchemaSql();
+  const { trace, jobFencing, runState, runStateBootstrap, terminalReceipt, terminalAttestation, ownership } = loadV2OperationalMigrationSql();
+  const sideEffectIndex =
+    "create index if not exists idx_tool_attempts_side_effect_key on tool_attempts(project_id, side_effect_key) where side_effect_key is not null;";
+  return `${base}\n${trace}\n${jobFencing}\n${runState}\n${runStateBootstrap}\n${terminalReceipt}\n${terminalAttestation}\n${ownership}\n${sideEffectIndex}`;
+}
+
+export function loadV2BaseSchemaSql() {
+  return extractTemplateSql(v2SchemaSourceUrl, "export function migrateStorageV2Schema", "${jobStatusCheck}", [
     "'queued'",
     "'running'",
     "'pause_requested'",
@@ -140,9 +164,17 @@ export function loadV2SchemaSql() {
     "'failed'",
     "'completed'"
   ]);
+}
+
+export function loadV2OperationalMigrationSql() {
   const trace = extractTemplateSql(traceSchemaSourceUrl, "export function migrateStorageTraceV3Schema");
   const jobFencing = extractTemplateSql(jobSchemaSourceUrl, "function installStorageJobV4Objects");
-  return `${base}\n${trace}\n${jobFencing}`;
+  const runState = extractTemplateSql(runStateSchemaSourceUrl, "function installStorageRunStateV5Objects");
+  const runStateBootstrap = extractTemplateSql(runStateBootstrapSchemaSourceUrl, "function installStorageRunStateBootstrapV7Objects");
+  const terminalReceipt = extractTemplateSql(terminalReceiptSchemaSourceUrl, "function installStorageTerminalReceiptV8Objects");
+  const terminalAttestation = extractTemplateSql(terminalAttestationSchemaSourceUrl, "function installStorageTerminalAttestationV9Objects");
+  const ownership = extractTemplateSql(ownershipSchemaSourceUrl, "function installStorageOwnershipV10Objects");
+  return { trace, jobFencing, runState, runStateBootstrap, terminalReceipt, terminalAttestation, ownership };
 }
 
 export function loadV2FtsSql() {

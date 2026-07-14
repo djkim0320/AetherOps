@@ -1,4 +1,5 @@
-import { redactTraceText, safeTraceUrl, sanitizeTraceValue } from "../runtime/security/traceSanitizer.js";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import { boundedTraceText, redactTraceText, safeTraceUrl, sanitizeTraceValue } from "../runtime/security/traceSanitizer.js";
 import type {
   StorageCodexCliExecution,
   StorageLlmInvocation,
@@ -16,8 +17,8 @@ export function sanitizeLlmInvocation(value: StorageLlmInvocation): StorageLlmIn
     reasoningEffort: requiredText(value.reasoningEffort, "redacted-effort"),
     promptVersion: requiredText(value.promptVersion, "redacted-prompt-version"),
     schemaVersion: requiredText(value.schemaVersion, "redacted-schema-version"),
-    error: optionalText(value.error),
-    data: optionalData(value.data)
+    error: boundedOptionalText(value.error, 1_000),
+    data: optionalData(value.data) as StorageLlmInvocation["data"]
   };
 }
 
@@ -34,15 +35,24 @@ export function sanitizeToolDecision(value: StorageToolDecision): StorageToolDec
   };
 }
 
-export function sanitizeToolAttempt(value: StorageToolAttempt): StorageToolAttempt {
+export function sanitizeToolAttempt(value: StorageToolAttempt, dataRoot?: string): StorageToolAttempt {
   return {
     ...value,
     terminalCause: optionalText(value.terminalCause),
-    stagingRef: optionalText(value.stagingRef),
-    quarantineRef: optionalText(value.quarantineRef),
+    stagingRef: workspaceReference(value.stagingRef, dataRoot),
+    quarantineRef: workspaceReference(value.quarantineRef, dataRoot),
     error: optionalText(value.error),
     data: optionalData(value.data)
   };
+}
+
+function workspaceReference(value: string | undefined, dataRoot: string | undefined): string | undefined {
+  if (!value || !dataRoot) return optionalText(value);
+  const root = resolve(dataRoot);
+  const candidate = isAbsolute(value) ? resolve(value) : resolve(root, value);
+  const path = relative(root, candidate);
+  if (!path || path.startsWith("..") || isAbsolute(path)) throw new Error("Tool workspace reference escapes the configured data root.");
+  return path.split(sep).join("/");
 }
 
 export function sanitizeCodexCliExecution(value: StorageCodexCliExecution): StorageCodexCliExecution {
@@ -78,6 +88,14 @@ function requiredText(value: string, fallback: string): string {
 function optionalText(value: string | undefined): string | undefined {
   return (
     redactTraceText(value)
+      ?.replace(/[\r\n]+/g, " ")
+      .trim() || undefined
+  );
+}
+
+function boundedOptionalText(value: string | undefined, maxLength: number): string | undefined {
+  return (
+    boundedTraceText(value, maxLength)
       ?.replace(/[\r\n]+/g, " ")
       .trim() || undefined
   );

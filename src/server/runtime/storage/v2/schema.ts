@@ -2,6 +2,11 @@ import { DatabaseSync } from "node:sqlite";
 import { STORAGE_JOB_STATUSES } from "./types.js";
 import { assertStorageTraceSchemaReady, migrateStorageTraceV3Schema } from "./traceSchema.js";
 import { assertStorageJobV4SchemaReady, migrateStorageJobV4Schema } from "./jobSchema.js";
+import { assertStorageRunStateV5SchemaReady, migrateStorageRunStateV5Schema } from "./runStateSchema.js";
+import { assertStorageRunStateBootstrapV7SchemaReady, migrateStorageRunStateBootstrapV7Schema } from "./runStateBootstrapSchema.js";
+import { assertStorageTerminalReceiptV8SchemaReady, migrateStorageTerminalReceiptV8Schema } from "./terminalReceiptSchema.js";
+import { assertStorageTerminalAttestationV9SchemaReady, migrateStorageTerminalAttestationV9Schema } from "./terminalAttestationSchema.js";
+import { assertStorageOwnershipV10SchemaReady, migrateStorageOwnershipV10Schema } from "./ownershipSchema.js";
 
 export const STORAGE_V2_SCHEMA_VERSION = 2;
 
@@ -282,6 +287,11 @@ export function migrateStorageV2Schema(db: DatabaseSync, options: StorageV2Migra
 
   migrateStorageTraceV3Schema(db);
   migrateStorageJobV4Schema(db);
+  migrateStorageRunStateV5Schema(db);
+  migrateStorageRunStateBootstrapV7Schema(db);
+  migrateStorageTerminalReceiptV8Schema(db);
+  migrateStorageTerminalAttestationV9Schema(db);
+  migrateStorageOwnershipV10Schema(db);
   blockLegacyResearchJobsRequiringReplan(db);
   createFtsTables(db);
   db.prepare(
@@ -316,6 +326,11 @@ export function assertStorageV2SchemaReady(db: DatabaseSync): void {
   }
   assertStorageTraceSchemaReady(db);
   assertStorageJobV4SchemaReady(db);
+  assertStorageRunStateV5SchemaReady(db);
+  assertStorageRunStateBootstrapV7SchemaReady(db);
+  assertStorageTerminalReceiptV8SchemaReady(db);
+  assertStorageTerminalAttestationV9SchemaReady(db);
+  assertStorageOwnershipV10SchemaReady(db);
 }
 
 function createFtsTables(db: DatabaseSync): void {

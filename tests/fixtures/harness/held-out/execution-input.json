@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "caseVersion": "1.0.0",
+  "id": "aetherbench.research-agent.v1",
+  "suite": "research-agent",
+  "objective": "Acquire a research source and create a provenance-bearing memory candidate.",
+  "inputFixtures": [
+    {
+      "id": "research-source-manifest",
+      "kind": "artifact",
+      "relativePath": "tests/fixtures/harness/held-out/research-source-input.json",
+      "sha256": "bfc3bad9bae63d6bcc0ceaee4f9baecad0c1fa2272ce79d5adb43f50269ebcb4",
+      "bytes": 250,
+      "provenance": {
+        "sourceKind": "immutable_fixture",
+        "sourceId": "aetherbench-held-out-research-input-v1"
+      },
+      "sensitivity": "internal",
+      "projectId": "project-aetherbench"
+    }
+  ],
+  "taskContract": {
+    "id": "task.research-agent.v1",
+    "contentHash": "5cef9f81ba0f44cd54cd7cf93b7cba9c93432b1ddbca76d0f8464f0058e32f13"
+  },
+  "environmentCapabilities": ["tool_catalog", "tool_execution", "network", "memory_write"],
+  "allowedTools": ["research.search", "research.fetch"],
+  "prohibitedTools": [],
+  "budget": {
+    "maxDurationMs": 60000,
+    "maxInputTokens": 4000,
+    "maxOutputTokens": 2000,
+    "maxToolCalls": 8,
+    "maxRetries": 2,
+    "maxEstimatedCostUsd": 0,
+    "maxToolOutputBytes": 1000000,
+    "maxConcurrency": 4
+  },
+  "classification": "held_out",
+  "seed": 108
+}

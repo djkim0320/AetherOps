@@ -1,10 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { createArtifactWriter } from "../../scripts/autonomy/artifacts.mjs";
 import { parseAutonomyArgs } from "../../scripts/autonomy/args.mjs";
 import { selectGoldenCases } from "../../scripts/autonomy/cases.mjs";
 import { assertExactLiveRuntime, getAutonomyProfile, requiredLiveRuntime } from "../../scripts/autonomy/profiles.mjs";
 import { sanitizeAutonomyArtifact } from "../../scripts/autonomy/sanitize.mjs";
 import { scoreLiveCase } from "../../scripts/autonomy/live-score.mjs";
+
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe("autonomy verification surface", () => {
   it("defines the four bounded profiles and all ten golden cases", () => {
@@ -31,20 +41,165 @@ describe("autonomy verification surface", () => {
   });
 
   it("redacts credentials, prompt text, and URL query material from artifacts", () => {
+    const promptHash = "a".repeat(64);
     expect(
       sanitizeAutonomyArtifact({
         apiKey: "sk-example-secret",
         promptRaw: "private instructions",
-        promptHash: "sha256:abc",
+        promptHash,
         url: "https://user:pass@example.com/path?token=secret#fragment",
-        authorization: "Bearer private-token"
+        authorization: "Bearer private-token",
+        authorizationReceipt: { requestedProjectId: "project-1", decision: "allowed", policyHash: promptHash }
       })
     ).toEqual({
       apiKey: "[REDACTED]",
       promptRaw: "[REDACTED]",
-      promptHash: "sha256:abc",
+      promptHash,
       url: "https://example.com/path",
-      authorization: "[REDACTED]"
+      authorization: "[REDACTED]",
+      authorizationReceipt: { requestedProjectId: "project-1", decision: "allowed", policyHash: promptHash }
+    });
+  });
+
+  it("redacts provider streams, reasoning, and local paths from structured and text artifacts", () => {
+    const sanitized = sanitizeAutonomyArtifact({
+      stdout: "provider raw output",
+      stderr: "provider diagnostic",
+      providerResponse: "full response",
+      reasoning: "hidden reasoning",
+      absolutePath: "C:\\Users\\private-user\\workspace\\artifact.json",
+      summary: "read C:\\Users\\private-user\\workspace\\artifact.json",
+      publicUrl: "https://example.com/tmp/reference.json"
+    });
+    expect(sanitized).toEqual({
+      stdout: "[REDACTED]",
+      stderr: "[REDACTED]",
+      providerResponse: "[REDACTED]",
+      reasoning: "[REDACTED]",
+      absolutePath: "[REDACTED]",
+      summary: "read [LOCAL_PATH]",
+      publicUrl: "https://example.com/tmp/reference.json"
+    });
+
+    const root = mkdtempSync(join(tmpdir(), "aetherops-artifact-sanitizer-"));
+    temporaryRoots.push(root);
+    const writer = createArtifactWriter(root);
+    writer.text("report.md", "credential sk-example-secret at C:\\Users\\private-user\\report.md");
+    expect(readFileSync(join(root, "report.md"), "utf8")).toBe("credential [REDACTED] at [LOCAL_PATH]");
+  });
+
+  it("preserves validated telemetry metadata but rejects metadata-key and free-text bypasses", () => {
+    const hash = "a".repeat(64);
+    expect(
+      sanitizeAutonomyArtifact({
+        inputTokens: 12,
+        outputTokens: 4,
+        contextTokens: { value: null, unit: "tokens", unmeasuredReason: "The source trace did not measure context tokens." },
+        totalToolOutputBytes: { value: 1024, unit: "bytes", sampleCount: 2 },
+        reasoningEffort: "high",
+        responseHash: hash,
+        promptVersion: "planner-v1",
+        invalidResponseHash: "raw private response"
+      })
+    ).toEqual({
+      inputTokens: 12,
+      outputTokens: 4,
+      contextTokens: { value: null, unit: "tokens", unmeasuredReason: "The source trace did not measure context tokens." },
+      totalToolOutputBytes: { value: 1024, unit: "bytes", sampleCount: 2 },
+      reasoningEffort: "high",
+      responseHash: hash,
+      promptVersion: "planner-v1",
+      invalidResponseHash: "raw private response"
+    });
+
+    expect(
+      sanitizeAutonomyArtifact({
+        responseHash: "raw private response",
+        promptVersion: "private instructions with spaces"
+      })
+    ).toEqual({ responseHash: "[REDACTED]", promptVersion: "[REDACTED]" });
+
+    expect(
+      sanitizeAutonomyArtifact({
+        contextTokens: { value: 5129, unit: "benchmark_tokens", originReceiptIds: ["receipt-0006", "receipt-0015"] },
+        totalToolOutputBytes: {
+          value: 8294,
+          unit: "bytes",
+          originReceiptIds: ["receipt-0008", "receipt-0009", "receipt-0010"]
+        }
+      })
+    ).toEqual({
+      contextTokens: { value: 5129, unit: "benchmark_tokens", originReceiptIds: ["receipt-0006", "receipt-0015"] },
+      totalToolOutputBytes: {
+        value: 8294,
+        unit: "bytes",
+        originReceiptIds: ["receipt-0008", "receipt-0009", "receipt-0010"]
+      }
+    });
+    expect(
+      sanitizeAutonomyArtifact({
+        contextTokens: { value: 5129, unit: "benchmark_tokens", originReceiptIds: ["receipt-sk-example-private-token"] }
+      })
+    ).toEqual({ contextTokens: "[REDACTED]" });
+    expect(
+      sanitizeAutonomyArtifact({
+        contextTokens: { value: null, unit: "benchmark_tokens", originReceiptIds: ["receipt-0006"] }
+      })
+    ).toEqual({ contextTokens: "[REDACTED]" });
+
+    const root = mkdtempSync(join(tmpdir(), "aetherops-artifact-free-text-"));
+    temporaryRoots.push(root);
+    const writer = createArtifactWriter(root);
+    writer.text(
+      "report.md",
+      [
+        "Authorization: Basic dXNlcjpwYXNz",
+        "query https://user:pass@example.com/path?api_key=plain-secret#fragment",
+        "chain-of-thought: private hidden steps",
+        "reasoning: hidden private steps",
+        "analysis: hidden scratchpad",
+        "- Reasoning: `high`",
+        "AWS_SECRET_ACCESS_KEY=abcd1234secret",
+        "OPENAI_API_KEY=plainvalue123",
+        "ANTHROPIC_API_KEY=anotherplainvalue",
+        "GITHUB_TOKEN=githubplainvalue",
+        "AZURE_CLIENT_SECRET=azureplainvalue",
+        "gitlab glpat-abcdefghijklmnopqrstuvwxyz",
+        "aws access AKIA1234567890ABCDEF",
+        "-----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----",
+        "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcml2YXRlIn0.signature123",
+        "session=private-session",
+        "paths C:/Users/private/work/report.md and \\\\server\\share\\secret.txt"
+      ].join("\n")
+    );
+    const report = readFileSync(join(root, "report.md"), "utf8");
+    expect(report).not.toContain("dXNlcjpwYXNz");
+    expect(report).toContain("https://example.com/path");
+    expect(report).not.toContain("plain-secret");
+    expect(report).not.toContain("private hidden steps");
+    expect(report).not.toContain("hidden private steps");
+    expect(report).not.toContain("hidden scratchpad");
+    expect(report).toContain("- Reasoning: `high`");
+    expect(report).not.toContain("abcd1234secret");
+    expect(report).not.toContain("plainvalue123");
+    expect(report).not.toContain("anotherplainvalue");
+    expect(report).not.toContain("githubplainvalue");
+    expect(report).not.toContain("azureplainvalue");
+    expect(report).not.toContain("glpat-abcdefghijklmnopqrstuvwxyz");
+    expect(report).not.toContain("AKIA1234567890ABCDEF");
+    expect(report).not.toContain("private-key-material");
+    expect(report).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(report).not.toContain("private-session");
+    expect(report).not.toContain("C:/Users/private");
+    expect(report).not.toContain("server\\share");
+
+    writer.json("metrics.json", {
+      contextTokens: { value: null, unit: "tokens", reason: "Not measured by the historical trace." },
+      totalToolOutputBytes: { value: 2048, unit: "bytes" }
+    });
+    expect(JSON.parse(readFileSync(join(root, "metrics.json"), "utf8"))).toEqual({
+      contextTokens: { value: null, unit: "tokens", reason: "Not measured by the historical trace." },
+      totalToolOutputBytes: { value: 2048, unit: "bytes" }
     });
   });
 

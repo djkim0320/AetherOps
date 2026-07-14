@@ -1,4 +1,10 @@
-import type { StorageTraceQueryDiagnosticSnapshot, StorageTransactionDiagnosticSnapshot } from "../runtime/storage/worker/storageRuntimeDiagnostics.js";
+import type { StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
+import type {
+  StorageOperationalDiagnosticSnapshot,
+  StorageTraceQueryDiagnosticSnapshot,
+  StorageTransactionDiagnosticSnapshot
+} from "../runtime/storage/worker/storageRuntimeDiagnostics.js";
+import type { StorageJobQueueDiagnostics } from "../runtime/storage/v2/types.js";
 import type { SseRuntimeDiagnosticSnapshot } from "./sseRuntimeDiagnostics.js";
 
 export interface DurableRuntimeDiagnosticSnapshot {
@@ -83,6 +89,46 @@ export class DurableRuntimeDiagnostics {
   }
 }
 
+interface CollectDurableOperationalDiagnosticsInput {
+  client: StorageWorkerClient;
+  countersSince: string;
+  runtime: DurableRuntimeDiagnosticSnapshot;
+  sse: SseRuntimeDiagnosticSnapshot;
+  sampledAtMs: number;
+  queueProjectLimit: number;
+}
+
+export async function collectDurableOperationalDiagnostics(input: CollectDurableOperationalDiagnosticsInput): Promise<DurableOperationalDiagnosticSnapshot> {
+  const [queue, storage] = await Promise.all([
+    input.client.request<StorageJobQueueDiagnostics>({ name: "job.queueDiagnostics", limit: input.queueProjectLimit }),
+    input.client.request<StorageOperationalDiagnosticSnapshot>({ name: "diagnostics.storage" })
+  ]);
+  return {
+    generatedAt: new Date(input.sampledAtMs).toISOString(),
+    countersSince: input.countersSince,
+    runtime: input.runtime,
+    sse: input.sse,
+    traceQueries: storage.traceQueries,
+    storageTransactions: storage.storageTransactions,
+    queue: {
+      projects: queue.projects.map((project) => ({
+        ...project,
+        oldestQueuedAgeMs: queuedAgeMs(project.oldestQueuedAt, input.sampledAtMs)
+      })),
+      totalDepth: queue.totalDepth,
+      ...(queue.oldestQueuedAt ? { oldestQueuedAt: queue.oldestQueuedAt, oldestQueuedAgeMs: queuedAgeMs(queue.oldestQueuedAt, input.sampledAtMs) } : {}),
+      totalProjects: queue.totalProjects,
+      truncated: queue.truncated
+    }
+  };
+}
+
 function nonnegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function queuedAgeMs(queuedAt: string, sampledAtMs: number): number {
+  const queuedAtMs = Date.parse(queuedAt);
+  if (!Number.isFinite(queuedAtMs)) throw new Error("Durable queue diagnostics returned an invalid queued timestamp.");
+  return Math.max(0, Math.floor(sampledAtMs - queuedAtMs));
 }

@@ -6,6 +6,7 @@ import type { DurableJobRecord } from "./durableJobTypes.js";
 
 export function toDurableJobRecord(job: StorageJob): DurableJobRecord {
   const payload = objectRecord(job.payload);
+  const request = objectRecord(payload.request);
   const result = objectRecord(job.result);
   return {
     id: job.id,
@@ -21,12 +22,14 @@ export function toDurableJobRecord(job: StorageJob): DurableJobRecord {
     toolPolicy: job.toolPolicy,
     resumesJobId: payload.resumesJobId as string | undefined,
     resumeCheckpointId: payload.resumeCheckpointId as string | undefined,
+    canonicalInitializationAnchor: request.canonicalInitializationAnchor,
     blockedReason: job.blockedReason ?? (job.status === "blocked" ? job.error : undefined),
     failureReason: job.failureReason ?? (job.status !== "blocked" ? job.error : undefined),
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     startedAt: job.startedAt,
-    finishedAt: job.completedAt
+    finishedAt: job.completedAt,
+    leaseExpiresAt: job.leaseExpiresAt
   };
 }
 

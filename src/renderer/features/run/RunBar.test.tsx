@@ -58,7 +58,8 @@ describe("RunBar research policy", () => {
     });
   });
 
-  it("shows the persisted blocked reason, including a fail-closed Codex sandbox NOT_READY result", () => {
+  it("shows the persisted blocked reason without removing its keyboard-accessible action", async () => {
+    const user = userEvent.setup();
     const projectId = "project-blocked";
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(shellQueryKeys.projects.detail(projectId), {
@@ -98,5 +99,13 @@ describe("RunBar research policy", () => {
     expect(screen.getByRole("alert").textContent).toContain("실행 차단됨");
     expect(screen.getByRole("alert").textContent).toContain("NOT_READY");
     expect(screen.getByRole("alert").textContent).toContain("permission profile is not enforceable");
+    const alert = screen.getByRole("alert");
+    const runBar = alert.closest('[data-ui="run-bar"]');
+    expect(runBar).not.toBeNull();
+    expect(alert.parentElement).toBe(runBar?.firstElementChild);
+    expect(alert.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    const resume = screen.getByRole("button", { name: "재개" });
+    await user.tab();
+    expect(document.activeElement).toBe(resume);
   });
 });

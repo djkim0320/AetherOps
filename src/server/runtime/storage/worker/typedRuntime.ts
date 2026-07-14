@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { Worker, isMainThread, parentPort, workerData, type MessagePort } from "node:worker_threads";
+import { isMainThread, parentPort, workerData, type MessagePort } from "node:worker_threads";
 import { StorageV2Database, type StorageV2RepositorySet } from "../v2/index.js";
 import {
   claimAndStart,
@@ -10,48 +9,53 @@ import {
   requestControl,
   transitionTerminal
 } from "../v2/jobAtomicOperations.js";
+import { commitCanonicalBudget, commitCanonicalRevisionPlan, commitCanonicalStep, transitionCanonicalTerminal } from "../v2/runStateAtomicOperations.js";
+import { verifyToolPostcondition } from "../v2/toolPostconditionVerifier.js";
+import { verifyCanonicalTerminal } from "../v2/terminalReceiptVerifier.js";
+import { recordCapabilityAuditSet } from "../v2/capabilityAuditAtomic.js";
 import {
   STORAGE_WORKER_READY,
-  STORAGE_WORKER_REQUEST,
   STORAGE_WORKER_RESPONSE,
   type StorageWorkerBaseCommand,
   type StorageWorkerCommand,
   type StorageWorkerInit,
   type StorageWorkerReady,
-  type StorageWorkerRequest,
   type StorageWorkerResponse
 } from "./typedProtocol.js";
-import { sourceAwareWorkerExecArgv, sourceAwareWorkerUrl } from "./sourceWorkerRuntime.js";
 import { assertFencedWriteScope } from "./fencedWriteScope.js";
 import { executeFencedWrite } from "./fencedWriteDispatch.js";
-import { isStorageWorkerReady, isStorageWorkerRequest, isStorageWorkerResponse, serializeWorkerError, workerError } from "./workerMessageSupport.js";
+import { isStorageWorkerRequest, serializeWorkerError } from "./workerMessageSupport.js";
 import { isTraceReadCommand, StorageRuntimeDiagnostics, traceReadResultRows, type StorageRuntimeDiagnosticsOptions } from "./storageRuntimeDiagnostics.js";
 export * from "./typedProtocol.js";
+export { createStorageWorkerClient, StorageWorkerClient, type StorageWorkerClientOptions } from "./typedClient.js";
+export interface StorageWorkerRuntimeOptions extends StorageRuntimeDiagnosticsOptions {
+  leaseClock?: () => number;
+}
 export class StorageWorkerRuntime {
   private readonly storage: StorageV2Database;
   private readonly diagnostics: StorageRuntimeDiagnostics;
   private closed = false;
 
-  constructor(init: StorageWorkerInit, diagnosticsOptions: StorageRuntimeDiagnosticsOptions = {}) {
-    this.storage = new StorageV2Database(init);
-    this.diagnostics = new StorageRuntimeDiagnostics(diagnosticsOptions);
+  constructor(init: StorageWorkerInit, options: StorageWorkerRuntimeOptions = {}) {
+    this.storage = new StorageV2Database(init, options.leaseClock ? { leaseClock: options.leaseClock } : {});
+    this.diagnostics = new StorageRuntimeDiagnostics(options);
   }
 
   handle(command: StorageWorkerCommand): unknown {
-    if (this.closed && command.name !== "close") {
-      throw new Error("Storage worker runtime is closed.");
-    }
+    if (this.closed && command.name !== "close") throw new Error("Storage worker runtime is closed.");
     switch (command.name) {
       case "fencedTransaction":
         return this.transaction((repositories) => {
-          const job = repositories.jobs.assertFence(command.fence, command.now);
+          const job = repositories.jobs.assertFence(command.fence);
           return command.commands.map((entry) => {
             assertFencedWriteScope(entry, job, repositories);
             return executeFencedWrite(entry, repositories);
           });
         });
       case "job.enqueue":
-        return this.transaction((repositories) => enqueueJob(repositories, command.job));
+        return this.transaction((repositories) => enqueueJob(repositories, command.job, command.project, command.capabilityAudits));
+      case "capability.recordSet":
+        return this.transaction((repositories) => recordCapabilityAuditSet(repositories, command.audits, command.project));
       case "job.claimAndStart":
         return this.transaction((repositories) => claimAndStart(repositories, command.options));
       case "job.requestControl":
@@ -64,6 +68,18 @@ export class StorageWorkerRuntime {
         return this.transaction((repositories) => commitStep(repositories, command.input));
       case "job.quarantineStep":
         return this.transaction((repositories) => quarantineStep(repositories, command.input));
+      case "canonical.commitStep":
+        return this.transaction((repositories) => commitCanonicalStep(repositories, command.input));
+      case "canonical.commitBudget":
+        return this.transaction((repositories) => commitCanonicalBudget(repositories, command.input));
+      case "canonical.commitPlan":
+        return this.transaction((repositories) => commitCanonicalRevisionPlan(repositories, command.input));
+      case "canonical.transitionTerminal":
+        return this.transaction((repositories) => transitionCanonicalTerminal(repositories, command.input));
+      case "canonical.verifyTerminal":
+        return this.verifyCanonicalTerminal(command.input);
+      case "toolPostcondition.verify":
+        return this.transaction((repositories) => verifyToolPostcondition(repositories, command.input, this.storage.dataRoot));
       default:
         return this.handleBase(command, this.storage.repositories);
     }
@@ -73,6 +89,12 @@ export class StorageWorkerRuntime {
     if (this.closed) return;
     this.storage.close();
     this.closed = true;
+  }
+
+  private verifyCanonicalTerminal(input: Parameters<typeof verifyCanonicalTerminal>[1]): ReturnType<typeof verifyCanonicalTerminal> {
+    const result = this.transaction((repositories) => verifyCanonicalTerminal(repositories, input));
+    this.storage.repositories.terminalAttestations.finalize(result.attestations);
+    return result;
   }
 
   private handleBase(command: StorageWorkerBaseCommand, repositories: StorageV2RepositorySet): unknown {
@@ -120,8 +142,14 @@ export class StorageWorkerRuntime {
         return repositories.embeddings.getByOwner(command.ownerTable, command.ownerId);
       case "job.get":
         return repositories.jobs.get(command.jobId);
+      case "job.lookupIdempotency":
+        return repositories.jobs.getByIdempotencyRequest(command.projectId, command.idempotencyKey, command.requestHash);
       case "job.listProject":
         return repositories.jobs.listProject(command.projectId, { status: command.status, cursor: command.cursor, limit: command.limit });
+      case "job.latestProjectExecution": {
+        const job = repositories.jobs.latestProjectOperation(command.projectId, command.operation);
+        return job ? { job, checkpoint: repositories.checkpoints.latestCommittedForJob(job.id) } : {};
+      }
       case "job.renewLease":
         return repositories.jobs.renewLease(command.fence, command.leaseExpiresAt, command.now);
       case "job.listRunnableProjects":
@@ -143,6 +171,28 @@ export class StorageWorkerRuntime {
         return repositories.checkpoints.listForJob(command.jobId);
       case "checkpoint.listStepAttempts":
         return repositories.checkpoints.listStepAttempts(command.jobId);
+      case "taskContract.get":
+        return repositories.runState.getTaskContract(command.projectId, command.contractId);
+      case "runState.latest":
+        return repositories.runState.latestRevision(command.owner);
+      case "runState.list":
+        return repositories.runState.listRevisions(command.owner, command.afterRevision, command.limit);
+      case "contextPack.get":
+        return repositories.runState.getContextPack(command.owner, command.contextPackId);
+      case "contextPack.getResumeBound":
+        return repositories.runState.getResumeBoundContextPack(command.owner, command.predecessorJobId, command.contextPackId);
+      case "contextPack.latest":
+        return repositories.runState.latestContextPack(command.owner);
+      case "contextPack.latestForJob":
+        return repositories.runState.latestContextPackForJob(command.owner);
+      case "contextPack.listRevision":
+        return repositories.runState.listContextPacks(command.owner, command.stateRevision);
+      case "terminal.createAttestedLease":
+        return repositories.terminalAttestedReadback.createLease(command.input);
+      case "terminal.readAttestedLease":
+        return repositories.terminalAttestedReadback.readLease(command.input);
+      case "terminal.releaseAttestedLease":
+        return repositories.terminalAttestedReadback.releaseLease(command.input);
       case "capability.record":
         return repositories.capabilities.record(command.audit);
       case "capability.listProject":
@@ -187,126 +237,6 @@ export class StorageWorkerRuntime {
   private transaction<T>(work: (repositories: StorageV2RepositorySet) => T): T {
     return this.diagnostics.measureTransaction(() => this.storage.transaction(work));
   }
-}
-
-export interface StorageWorkerClientOptions {
-  requestTimeoutMs?: number;
-}
-
-interface PendingRequest {
-  resolve: (value: unknown) => void;
-  reject: (reason: unknown) => void;
-  timeout?: ReturnType<typeof setTimeout>;
-}
-
-export class StorageWorkerClient {
-  private readonly pending = new Map<string, PendingRequest>();
-  private readonly requestTimeoutMs: number;
-  private closed = false;
-
-  constructor(
-    private readonly worker: Worker,
-    options: StorageWorkerClientOptions = {}
-  ) {
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 60_000;
-    this.worker.on("message", this.handleMessage);
-    this.worker.on("error", this.rejectAllFromError);
-    this.worker.on("exit", this.handleExit);
-  }
-
-  request<T = unknown>(command: StorageWorkerCommand, clientRequestId?: string): Promise<T> {
-    if (this.closed) {
-      return Promise.reject(new Error("Storage worker client is closed."));
-    }
-    const requestId = randomUUID();
-    const message: StorageWorkerRequest = {
-      type: STORAGE_WORKER_REQUEST,
-      requestId,
-      clientRequestId,
-      command
-    };
-    return new Promise<T>((resolve, reject) => {
-      const timeout =
-        this.requestTimeoutMs > 0
-          ? setTimeout(() => {
-              this.pending.delete(requestId);
-              reject(new Error(`Storage worker request timed out: ${requestId}`));
-            }, this.requestTimeoutMs)
-          : undefined;
-      this.pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject, timeout });
-      this.worker.postMessage(message);
-    });
-  }
-
-  async close(): Promise<void> {
-    if (this.closed) return;
-    try {
-      await this.request({ name: "close" });
-    } finally {
-      this.closed = true;
-      this.worker.off("message", this.handleMessage);
-      this.worker.off("error", this.rejectAllFromError);
-      this.worker.off("exit", this.handleExit);
-      await this.worker.terminate();
-      this.rejectAll(new Error("Storage worker client closed."));
-    }
-  }
-
-  private readonly handleMessage = (message: unknown): void => {
-    if (isStorageWorkerReady(message)) {
-      if (!message.ok) {
-        this.closed = true;
-        this.rejectAll(workerError(message.error));
-      }
-      return;
-    }
-    if (!isStorageWorkerResponse(message)) return;
-    const pending = this.pending.get(message.requestId);
-    if (!pending) return;
-    this.pending.delete(message.requestId);
-    if (pending.timeout) clearTimeout(pending.timeout);
-    if (message.ok) {
-      pending.resolve(message.result);
-    } else {
-      pending.reject(workerError(message.error));
-    }
-  };
-
-  private readonly rejectAllFromError = (error: Error): void => {
-    this.rejectAll(error);
-  };
-
-  private readonly handleExit = (code: number): void => {
-    if (this.closed) return;
-    this.closed = true;
-    this.rejectAll(new Error(`Storage worker exited before shutdown: ${code}`));
-  };
-
-  private rejectAll(error: Error): void {
-    for (const [requestId, pending] of this.pending) {
-      this.pending.delete(requestId);
-      if (pending.timeout) clearTimeout(pending.timeout);
-      pending.reject(error);
-    }
-  }
-}
-
-export function createStorageWorkerClient(
-  init: StorageWorkerInit,
-  options: StorageWorkerClientOptions = {},
-  workerUrl: URL | string = defaultTypedWorkerUrl()
-): StorageWorkerClient {
-  return new StorageWorkerClient(
-    new Worker(workerUrl, {
-      workerData: init,
-      execArgv: sourceAwareWorkerExecArgv()
-    }),
-    options
-  );
-}
-
-function defaultTypedWorkerUrl(): URL {
-  return sourceAwareWorkerUrl("typedRuntime");
 }
 
 if (!isMainThread && parentPort) {

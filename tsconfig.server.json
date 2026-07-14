@@ -16,5 +16,5 @@
     "types": ["node", "vitest/globals"]
   },
   "include": ["src/contracts", "src/core", "src/server", "src/shared", "src/vite-env.d.ts"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/core/testing/**", "src/core/memory/memoryStore.ts"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/core/testing/orchestratorTestHarness.ts", "src/core/memory/memoryStore.ts"]
 }

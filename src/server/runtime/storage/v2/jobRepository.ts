@@ -1,5 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { IdempotencyConflictError } from "./jobErrors.js";
+import { readJobQueueDiagnostics } from "./jobQueueDiagnostics.js";
+import { assertPersistableJobInputPolicies } from "./jobToolPolicyValidation.js";
 import { LeaseLostError } from "./leaseFence.js";
 import type {
   StorageJob,
@@ -19,8 +21,6 @@ import {
   normalizeLimit,
   nowIso,
   requiredJob,
-  requiredNumber,
-  requiredString,
   rowToJob,
   runAtomically,
   terminalJobStatus,
@@ -28,35 +28,20 @@ import {
 } from "./repositorySupport.js";
 
 const activeStatuses = new Set<StorageJob["status"]>(["running", "pause_requested", "cancel_requested"]);
-const DEFAULT_QUEUE_DIAGNOSTIC_LIMIT = 100;
-const MAX_QUEUE_DIAGNOSTIC_LIMIT = 500;
-
-export const JOB_QUEUE_DIAGNOSTICS_SQL = `with queued_by_project as (
-  select project_id, count(*) as depth, min(queued_at) as oldest_queued_at
-  from jobs indexed by idx_jobs_ready where status='queued' group by project_id
-), queue_totals as (
-  select project_id, depth, oldest_queued_at,
-    sum(depth) over () as total_depth,
-    min(oldest_queued_at) over () as global_oldest_queued_at,
-    count(*) over () as total_projects
-  from queued_by_project
-)
-select project_id, depth, oldest_queued_at, total_depth, global_oldest_queued_at, total_projects
-from queue_totals order by project_id limit ?`;
+export { JOB_QUEUE_DIAGNOSTICS_SQL } from "./jobQueueDiagnostics.js";
 
 export class JobRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly leaseClock: () => number = Date.now
+  ) {}
 
   enqueue(input: StorageJobInput): StorageJob {
+    assertPersistableJobInputPolicies(input);
     return runAtomically(this.db, () => {
       if (input.idempotencyKey) {
-        const existing = this.getByIdempotencyKey(input.projectId, input.idempotencyKey);
-        if (existing) {
-          if (input.requestHash !== existing.requestHash) {
-            throw new IdempotencyConflictError();
-          }
-          return existing;
-        }
+        const existing = this.getByIdempotencyRequest(input.projectId, input.idempotencyKey, input.requestHash);
+        if (existing) return existing;
       }
       const createdAt = input.createdAt ?? nowIso();
       this.db
@@ -92,6 +77,18 @@ export class JobRepository {
 
   getByIdempotencyKey(projectId: string, key: string): StorageJob | undefined {
     const row = this.db.prepare("select * from jobs where project_id=? and idempotency_key=?").get(projectId, key) as Row | undefined;
+    return row ? rowToJob(row) : undefined;
+  }
+
+  getByIdempotencyRequest(projectId: string, key: string, requestHash: string | undefined): StorageJob | undefined {
+    const existing = this.getByIdempotencyKey(projectId, key);
+    if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
+    return existing;
+  }
+
+  latestProjectOperation(projectId: string, operation: string): StorageJob | undefined {
+    const row = this.db.prepare("select * from jobs where project_id=? and operation=? order by updated_at desc,id desc limit 1").get(projectId, operation) as
+      Row | undefined;
     return row ? rowToJob(row) : undefined;
   }
 
@@ -135,24 +132,7 @@ export class JobRepository {
   }
 
   queueDiagnostics(limit?: number): StorageJobQueueDiagnostics {
-    const pageSize = normalizeQueueDiagnosticLimit(limit);
-    const rows = this.db.prepare(JOB_QUEUE_DIAGNOSTICS_SQL).all(pageSize) as Row[];
-    if (!rows.length) return { projects: [], totalDepth: 0, totalProjects: 0, truncated: false };
-    const first = queueDiagnosticRow(rows[0] as Row);
-    const projects = rows.map((row) => {
-      const parsed = queueDiagnosticRow(row);
-      if (parsed.totalDepth !== first.totalDepth || parsed.oldestQueuedAt !== first.oldestQueuedAt || parsed.totalProjects !== first.totalProjects) {
-        throw new Error("Inconsistent durable queue diagnostics window result.");
-      }
-      return { projectId: parsed.projectId, depth: parsed.depth, oldestQueuedAt: parsed.projectOldestQueuedAt };
-    });
-    return {
-      projects,
-      totalDepth: first.totalDepth,
-      oldestQueuedAt: first.oldestQueuedAt,
-      totalProjects: first.totalProjects,
-      truncated: projects.length < first.totalProjects
-    };
+    return readJobQueueDiagnostics(this.db, limit);
   }
 
   queuePosition(jobId: string): number | undefined {
@@ -176,8 +156,9 @@ export class JobRepository {
 
   claimNext(options: StorageJobClaimOptions): StorageJob | undefined {
     return runAtomically(this.db, () => {
-      const now = options.now ?? nowIso();
-      assertFutureLease(options.leaseExpiresAt, now);
+      const leaseCheckedAt = this.leaseNowIso();
+      const occurredAt = options.now ?? leaseCheckedAt;
+      assertFutureLease(options.leaseExpiresAt, leaseCheckedAt);
       const row = this.db
         .prepare(
           `select * from jobs candidate where candidate.status='queued'
@@ -196,12 +177,16 @@ export class JobRepository {
            lease_owner=?,lease_expires_at=?,started_at=coalesce(started_at,?),completed_at=null,updated_at=?
            where id=? and status='queued'`
         )
-        .run(options.leaseOwner, options.leaseExpiresAt, now, now, job.id);
+        .run(options.leaseOwner, options.leaseExpiresAt, occurredAt, occurredAt, job.id);
       return Number(changed.changes) === 1 ? this.get(job.id) : undefined;
     });
   }
 
-  assertFence(fence: StorageLeaseFence, now = nowIso(), allowedStatuses: readonly StorageJob["status"][] = [...activeStatuses]): StorageJob {
+  assertFence(fence: StorageLeaseFence, allowedStatuses: readonly StorageJob["status"][] = [...activeStatuses]): StorageJob {
+    return this.assertFenceAt(fence, this.leaseNowIso(), allowedStatuses);
+  }
+
+  private assertFenceAt(fence: StorageLeaseFence, leaseCheckedAt: string, allowedStatuses: readonly StorageJob["status"][]): StorageJob {
     const job = this.get(fence.jobId);
     if (
       !job ||
@@ -209,7 +194,7 @@ export class JobRepository {
       job.leaseGeneration !== fence.leaseGeneration ||
       job.leaseOwner !== fence.leaseOwner ||
       !job.leaseExpiresAt ||
-      job.leaseExpiresAt <= now ||
+      job.leaseExpiresAt <= leaseCheckedAt ||
       !allowedStatuses.includes(job.status)
     ) {
       throw new LeaseLostError(fence.jobId);
@@ -217,11 +202,21 @@ export class JobRepository {
     return job;
   }
 
-  transitionFenced(fence: StorageLeaseFence, patch: StorageJobStatusPatch, now = patch.updatedAt ?? nowIso()): StorageJob {
-    const current = this.assertFence(fence, now, ["running", "pause_requested", "cancel_requested", "paused", "aborted", "blocked", "failed", "completed"]);
+  transitionFenced(fence: StorageLeaseFence, patch: StorageJobStatusPatch): StorageJob {
+    const leaseCheckedAt = this.leaseNowIso();
+    const current = this.assertFenceAt(fence, leaseCheckedAt, [
+      "running",
+      "pause_requested",
+      "cancel_requested",
+      "paused",
+      "aborted",
+      "blocked",
+      "failed",
+      "completed"
+    ]);
     if (current.status === patch.status) return current;
     assertJobTransition(current, patch.status);
-    return this.writeStatus(current, patch, fence, now);
+    return this.writeStatus(current, patch, fence, patch.updatedAt ?? nowIso(), leaseCheckedAt);
   }
 
   updateStatus(jobId: string, patch: StorageJobStatusPatch): StorageJob {
@@ -246,12 +241,13 @@ export class JobRepository {
 
   markInterruptedExpiredLeases(now = nowIso()): StorageJob[] {
     return runAtomically(this.db, () => {
+      const leaseCheckedAt = this.leaseNowIso();
       const rows = this.db
         .prepare(
           `select * from jobs where status in (${activeLaneStatuses})
            and lease_expires_at is not null and lease_expires_at <= ? order by project_id,id`
         )
-        .all(now) as Row[];
+        .all(leaseCheckedAt) as Row[];
       const interrupted: StorageJob[] = [];
       for (const row of rows) {
         const job = rowToJob(row);
@@ -261,27 +257,34 @@ export class JobRepository {
              completed_at=?,updated_at=? where id=? and status in (${activeLaneStatuses})
              and attempt=? and lease_generation=? and lease_owner is ? and lease_expires_at <= ?`
           )
-          .run(now, now, job.id, job.attempt, job.leaseGeneration, job.leaseOwner ?? null, now);
+          .run(now, now, job.id, job.attempt, job.leaseGeneration, job.leaseOwner ?? null, leaseCheckedAt);
         if (Number(changed.changes) === 1) interrupted.push(requiredJob(this.get(job.id), job.id));
       }
       return interrupted;
     });
   }
 
-  renewLease(fence: StorageLeaseFence, leaseExpiresAt: string, now = nowIso()): StorageJob {
-    assertFutureLease(leaseExpiresAt, now);
-    const current = this.assertFence(fence, now);
+  renewLease(fence: StorageLeaseFence, leaseExpiresAt: string, occurredAt = nowIso()): StorageJob {
+    const leaseCheckedAt = this.leaseNowIso();
+    assertFutureLease(leaseExpiresAt, leaseCheckedAt);
+    const current = this.assertFenceAt(fence, leaseCheckedAt, [...activeStatuses]);
     const changed = this.db
       .prepare(
         `update jobs set lease_expires_at=?,updated_at=? where id=? and attempt=? and lease_generation=? and lease_owner=?
          and status in (${activeLaneStatuses}) and lease_expires_at>?`
       )
-      .run(leaseExpiresAt, now, fence.jobId, fence.attempt, fence.leaseGeneration, fence.leaseOwner, now);
+      .run(leaseExpiresAt, occurredAt, fence.jobId, fence.attempt, fence.leaseGeneration, fence.leaseOwner, leaseCheckedAt);
     if (Number(changed.changes) !== 1) throw new LeaseLostError(fence.jobId);
     return requiredJob(this.get(current.id), current.id);
   }
 
-  private writeStatus(current: StorageJob, patch: StorageJobStatusPatch, fence: StorageLeaseFence | undefined, updatedAt: string): StorageJob {
+  private writeStatus(
+    current: StorageJob,
+    patch: StorageJobStatusPatch,
+    fence: StorageLeaseFence | undefined,
+    updatedAt: string,
+    leaseCheckedAt?: string
+  ): StorageJob {
     const completedAt = patch.completedAt ?? (terminalJobStatus(patch.status) ? updatedAt : current.completedAt);
     const startedAt = patch.startedAt ?? (patch.status === "running" ? (current.startedAt ?? updatedAt) : current.startedAt);
     const blockedReason = patch.blockedReason ?? (patch.status === "blocked" ? patch.error : undefined) ?? current.blockedReason;
@@ -304,7 +307,10 @@ export class JobRepository {
       current.id,
       current.status
     ];
-    if (fence) values.push(fence.attempt, fence.leaseGeneration, fence.leaseOwner, updatedAt);
+    if (fence) {
+      if (!leaseCheckedAt) throw new LeaseLostError(current.id);
+      values.push(fence.attempt, fence.leaseGeneration, fence.leaseOwner, leaseCheckedAt);
+    }
     const changed = this.db.prepare(sql).run(...(values as import("node:sqlite").SQLInputValue[]));
     if (Number(changed.changes) !== 1) {
       if (fence) throw new LeaseLostError(current.id);
@@ -312,38 +318,12 @@ export class JobRepository {
     }
     return requiredJob(this.get(current.id), current.id);
   }
-}
 
-interface QueueDiagnosticRow {
-  projectId: string;
-  depth: number;
-  projectOldestQueuedAt: string;
-  totalDepth: number;
-  oldestQueuedAt: string;
-  totalProjects: number;
-}
-
-function queueDiagnosticRow(row: Row): QueueDiagnosticRow {
-  return {
-    projectId: requiredString(row.project_id, "queue diagnostic project_id"),
-    depth: requiredCount(row.depth, "queue diagnostic depth"),
-    projectOldestQueuedAt: requiredString(row.oldest_queued_at, "queue diagnostic oldest_queued_at"),
-    totalDepth: requiredCount(row.total_depth, "queue diagnostic total_depth"),
-    oldestQueuedAt: requiredString(row.global_oldest_queued_at, "queue diagnostic global_oldest_queued_at"),
-    totalProjects: requiredCount(row.total_projects, "queue diagnostic total_projects")
-  };
-}
-
-function requiredCount(value: unknown, label: string): number {
-  const count = requiredNumber(value, label);
-  if (!Number.isSafeInteger(count) || count < 0) throw new Error(`Expected ${label} to be a non-negative safe integer.`);
-  return count;
-}
-
-function normalizeQueueDiagnosticLimit(limit: number | undefined): number {
-  if (limit === undefined) return DEFAULT_QUEUE_DIAGNOSTIC_LIMIT;
-  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("Queue diagnostic limit must be a positive safe integer.");
-  return Math.min(limit, MAX_QUEUE_DIAGNOSTIC_LIMIT);
+  private leaseNowIso(): string {
+    const value = this.leaseClock();
+    if (!Number.isFinite(value)) throw new Error("Storage lease clock returned a non-finite timestamp.");
+    return new Date(value).toISOString();
+  }
 }
 
 function assertFutureLease(leaseExpiresAt: string, now: string): void {

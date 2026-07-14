@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "evidenceClass": "deterministic_instrumented_legacy_runtime",
+  "productVerdict": "NOT_EVALUATED",
+  "productionSuccessEligible": false,
+  "scenarioCount": 2,
+  "receiptCount": 22,
+  "captureStatus": "completed"
+}

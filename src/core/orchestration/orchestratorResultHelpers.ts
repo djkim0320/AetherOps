@@ -1,6 +1,7 @@
 import { LlmTimeoutError } from "../providers/llm.js";
 import { createStableId } from "../shared/ids.js";
 import type { EvidenceBasedResult, EvidenceItem, ResearchLoopStep, ResearchSnapshot, ResearchSource } from "../shared/types.js";
+import { ToolRunnerError } from "../tools/toolRunner.js";
 import { copyItems } from "./executionBundles.js";
 
 export function sourceFromEvidence(evidence: EvidenceItem, sourceId: string): ResearchSource {
@@ -106,6 +107,7 @@ export function slugify(value: string): string {
 }
 
 export function formatError(error: unknown): string {
+  if (error instanceof ToolRunnerError) return "TOOL_EXECUTION_FAILED";
   return error instanceof Error ? error.message : String(error);
 }
 

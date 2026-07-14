@@ -42,7 +42,7 @@ export abstract class LoopControlOrchestrator extends ProjectOrchestrator {
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
         await this.reasonAndValidate(projectId, iteration);
         if ((await this.checkAbortOrPause(projectId)) !== "running") return this.store.getSnapshot(projectId);
-        const result = await this.synthesizeAndEvaluate(projectId, iteration, iteration >= safetyCapIterations);
+        const result = await this.synthesizeAndEvaluate(projectId, iteration, iteration >= safetyCapIterations, execution);
         const decision = await this.decideContinuation(projectId, result, beforeCounts, iteration, safetyCapIterations);
         if (!decision.shouldContinue) {
           break;
@@ -74,10 +74,10 @@ export abstract class LoopControlOrchestrator extends ProjectOrchestrator {
 
   async resume(projectId: string, execution?: ToolExecutionContext): Promise<ResearchSnapshot> {
     const snapshot = await this.store.getSnapshot(projectId);
-    if (snapshot.project.status !== "paused") {
-      return snapshot;
+    if (!isResumableProjectStatus(snapshot.project.status)) {
+      throw new Error(`Research loop cannot resume from project status: ${snapshot.project.status}`);
     }
-    await this.setStatus(projectId, "running");
+    if (snapshot.project.status !== "running") await this.setStatus(projectId, "running");
     await this.record(projectId, snapshot.project.currentStep, "Agent Control", "연구 루프를 재개합니다.");
     return this.startLoop(projectId, execution);
   }
@@ -87,4 +87,8 @@ export abstract class LoopControlOrchestrator extends ProjectOrchestrator {
     await this.record(projectId, (await this.store.getSnapshot(projectId)).project.currentStep, "Agent Control", "연구 루프가 중단되었습니다.");
     return this.store.getSnapshot(projectId);
   }
+}
+
+function isResumableProjectStatus(status: ResearchSnapshot["project"]["status"]): boolean {
+  return status === "paused" || status === "blocked" || status === "failed" || status === "running";
 }

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "classification": "seed",
+  "cases": [
+    { "id": "aetherbench.tool-discovery.v1", "suite": "tool-discovery", "caseVersion": "1.0.0" },
+    { "id": "aetherbench.tool-composition.v1", "suite": "tool-composition", "caseVersion": "1.0.0" },
+    { "id": "aetherbench.memory-scope.v1", "suite": "memory-scope", "caseVersion": "1.0.0" },
+    { "id": "aetherbench.engineering-agent.v1", "suite": "engineering-agent", "caseVersion": "1.0.0" }
+  ]
+}

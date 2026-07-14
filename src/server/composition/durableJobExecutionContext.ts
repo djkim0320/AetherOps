@@ -3,6 +3,7 @@ import type { JobStatus } from "../../contracts/api-v2/jobs.js";
 import type { StorageLeaseFence } from "../runtime/storage/v2/types.js";
 import type { StorageOutputPromotion } from "../runtime/storage/v2/jobAtomicTypes.js";
 import type { DurableJobRecord } from "./durableJobTypes.js";
+import type { DurableCanonicalTerminalTransition } from "./durableCanonicalTerminalTransition.js";
 
 export type DurableTerminalStatus = Extract<JobStatus, "paused" | "aborted" | "interrupted" | "blocked" | "failed" | "completed">;
 
@@ -11,6 +12,7 @@ export interface DurableTerminalOutcome {
   projectRevision: number;
   reason?: string;
   promotions?: StorageOutputPromotion[];
+  canonicalTransition?: DurableCanonicalTerminalTransition;
 }
 
 export interface DurableJobExecutionScope {
@@ -18,6 +20,7 @@ export interface DurableJobExecutionScope {
   fence: StorageLeaseFence;
   controller: AbortController;
   outcome?: DurableTerminalOutcome;
+  canonicalTransition?: DurableCanonicalTerminalTransition;
   leaseLost?: boolean;
 }
 
@@ -42,8 +45,9 @@ export class DurableJobExecutionContext {
 
   settle(jobId: string, outcome: DurableTerminalOutcome): DurableJobRecord {
     const scope = this.require(jobId);
-    if (scope.outcome && !sameOutcome(scope.outcome, outcome)) throw new Error(`Durable job ${jobId} already has a different terminal outcome.`);
-    scope.outcome = outcome;
+    const resolved = outcome.canonicalTransition || !scope.canonicalTransition ? outcome : { ...outcome, canonicalTransition: scope.canonicalTransition };
+    if (scope.outcome && !sameOutcome(scope.outcome, resolved)) throw new Error(`Durable job ${jobId} already has a different terminal outcome.`);
+    scope.outcome = resolved;
     return {
       ...scope.job,
       status: outcome.status,
@@ -51,6 +55,14 @@ export class DurableJobExecutionContext {
       ...(outcome.status === "blocked" && outcome.reason ? { blockedReason: outcome.reason } : {}),
       ...(outcome.status === "failed" && outcome.reason ? { failureReason: outcome.reason } : {})
     };
+  }
+
+  bindCanonicalTransition(jobId: string, transition: DurableCanonicalTerminalTransition): void {
+    const scope = this.require(jobId);
+    if (scope.canonicalTransition && scope.canonicalTransition !== transition) {
+      throw new Error(`Durable job ${jobId} already has a different canonical terminal transition.`);
+    }
+    scope.canonicalTransition = transition;
   }
 
   markLeaseLost(jobId: string, reason: unknown): void {
@@ -66,6 +78,7 @@ function sameOutcome(left: DurableTerminalOutcome, right: DurableTerminalOutcome
     left.status === right.status &&
     left.projectRevision === right.projectRevision &&
     left.reason === right.reason &&
+    left.canonicalTransition === right.canonicalTransition &&
     JSON.stringify(left.promotions ?? []) === JSON.stringify(right.promotions ?? [])
   );
 }

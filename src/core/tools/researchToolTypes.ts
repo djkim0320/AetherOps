@@ -1,7 +1,20 @@
-import type { AppSettings, EvidenceItem, ResearchToolInput, ResearchArtifact, ResearchLoopStep, ResearchSource, ToolRun } from "../shared/types.js";
+import type {
+  AppSettings,
+  ContinuationDecision,
+  EvidenceItem,
+  ResearchArtifact,
+  ResearchLoopStep,
+  ResearchSnapshot,
+  ResearchSource,
+  ResearchSpecification,
+  ResearchToolInput,
+  RuntimeToolDiagnostics,
+  ToolRun
+} from "../shared/types.js";
 import type { ResearchSourceAccessPolicy } from "../shared/adapterTypes.js";
-import type { LlmInvocationMetadata } from "../providers/llm.js";
+import type { LlmInvocationMetadata, LlmInvocationRunningMetadata } from "../providers/llm.js";
 import type { CapabilityKind, CapabilityPolicy } from "../domain/capabilities/types.js";
+import type { ContextPack, ContextProviderIdentity } from "../context/public.js";
 
 export type ToolPhase = "acquisition.discovery" | "acquisition.fetch" | "binding" | "exclusive" | "analysis" | "artifact";
 
@@ -56,6 +69,8 @@ export interface ToolExecutionStatusEvent extends ResearchToolExecutionContext {
   policyReason?: string;
   outputIds?: string[];
   outputHash?: string;
+  /** UTF-8 bytes of the deterministic canonical ResearchToolResult serialization. */
+  outputBytes?: number;
   outputs?: Array<{
     id: string;
     kind: "source" | "evidence" | "artifact";
@@ -90,8 +105,31 @@ export interface ToolExecutionContext {
   };
   signal?: AbortSignal;
   onStatus?: (event: ToolExecutionStatusEvent) => void | Promise<void>;
+  onLlmInvocationRunning?: (metadata: LlmInvocationRunningMetadata) => void | Promise<void>;
   onLlmInvocation?: (metadata: LlmInvocationMetadata) => void | Promise<void>;
   onNetworkAudit?: (audit: NetworkAuditEvent) => void | Promise<void>;
   onCheckpoint?: (step: ResearchLoopStep) => void | Promise<void>;
+  compilePlannerContext?: (input: PlannerContextCompilationInput) => Promise<ContextPack>;
   resumeCheckpointStep?: ResearchLoopStep;
+}
+
+export interface PlannerContextToolDescriptor {
+  name: string;
+  version: string;
+  summary: string;
+  inputContract: string;
+  requiredCapabilities: CapabilityKind[];
+  sideEffects: Array<"network" | "filesystem" | "process">;
+}
+
+export interface PlannerContextCompilationInput {
+  snapshot: ResearchSnapshot;
+  specification: ResearchSpecification;
+  iteration: number;
+  provider?: ContextProviderIdentity;
+  tools: PlannerContextToolDescriptor[];
+  runtimeToolDiagnostics: RuntimeToolDiagnostics;
+  effectiveCapabilities?: CapabilityPolicy;
+  toolPolicy?: ToolExecutionContext["toolPolicy"];
+  continuationDecision?: ContinuationDecision;
 }

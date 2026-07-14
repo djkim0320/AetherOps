@@ -10,6 +10,7 @@ import type { StorageClaimStartResult, StorageJob, StorageStepDispositionInput, 
 
 let root: string | undefined;
 let runtime: StorageWorkerRuntime | undefined;
+let leaseNowMs = Date.parse("2026-07-14T00:00:01.000Z");
 
 afterEach(() => {
   runtime?.close();
@@ -27,7 +28,8 @@ describe("durable job transaction fault injection", () => {
     expect(crashed.job).toMatchObject({ status: "running", attempt: 1, leaseGeneration: 1 });
 
     runtime?.close();
-    runtime = new StorageWorkerRuntime({ appDbPath: path, vectorDbPath: path, ontologyDbPath: path });
+    setLeaseNow("2026-07-14T00:02:00.000Z");
+    runtime = createStorageWorkerRuntime(path);
     expect(runtime.handle({ name: "job.markInterruptedExpiredLeases", now: "2026-07-14T00:02:00.000Z" })).toMatchObject({
       jobs: [{ id: "job-crashed-after-claim", status: "interrupted", attempt: 1, leaseGeneration: 1 }],
       projectIds: ["project-claim-crash"]
@@ -319,6 +321,7 @@ describe("durable job transaction fault injection", () => {
         now: "2026-07-14T00:00:01.000Z"
       }
     }) as StorageClaimStartResult;
+    setLeaseNow("2026-07-14T00:01:00.000Z");
 
     expect(() =>
       runtime?.handle({
@@ -365,9 +368,24 @@ describe("durable job transaction fault injection", () => {
             jobId: claimed.job.id,
             decisionId: "decision-promotion-retry",
             ordinal: 1,
+            status: "running",
+            inputHash: "a".repeat(64),
+            dependsOnAttemptIds: [],
+            queuedAt: "2026-07-14T00:00:01.000Z",
+            startedAt: "2026-07-14T00:00:01.000Z"
+          }
+        },
+        {
+          name: "trace.attempt.save",
+          attempt: {
+            id: "tool-attempt-promotion-retry",
+            projectId: claimed.job.projectId,
+            jobId: claimed.job.id,
+            decisionId: "decision-promotion-retry",
+            ordinal: 1,
             status: "completed",
-            inputHash: "input-hash",
-            outputHash: "output-hash",
+            inputHash: "a".repeat(64),
+            outputHash: "b".repeat(64),
             terminalCause: "completed",
             dependsOnAttemptIds: [],
             queuedAt: "2026-07-14T00:00:01.000Z",
@@ -413,7 +431,7 @@ describe("durable job transaction fault injection", () => {
       })
     ).toThrow(/cancel|completed/i);
     runtime?.close();
-    runtime = new StorageWorkerRuntime({ appDbPath: path, vectorDbPath: path, ontologyDbPath: path });
+    runtime = createStorageWorkerRuntime(path);
     const retry = runtime.handle({ name: "job.transitionTerminal", input }) as { events: Array<{ sequence: number }> };
 
     expect(retry.events.map((event) => event.sequence)).toEqual(first.events.map((event) => event.sequence));
@@ -431,13 +449,22 @@ describe("durable job transaction fault injection", () => {
 });
 
 function createRuntime(): string {
+  setLeaseNow("2026-07-14T00:00:01.000Z");
   root = mkdtempSync(join(tmpdir(), "aetherops-job-atomicity-"));
   const path = join(root, "storage.sqlite");
   const db = new DatabaseSync(path);
   migrateStorageV2Schema(db);
   db.close();
-  runtime = new StorageWorkerRuntime({ appDbPath: path, vectorDbPath: path, ontologyDbPath: path });
+  runtime = createStorageWorkerRuntime(path);
   return path;
+}
+
+function createStorageWorkerRuntime(path: string): StorageWorkerRuntime {
+  return new StorageWorkerRuntime({ appDbPath: path, vectorDbPath: path, ontologyDbPath: path }, { leaseClock: () => leaseNowMs });
+}
+
+function setLeaseNow(value: string): void {
+  leaseNowMs = Date.parse(value);
 }
 
 function jobInput(id: string, projectId: string) {

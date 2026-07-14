@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "baselineAnchorCommit": "a0727f2d5846b53717847ff908c411c24ab29d80",
+  "baselineKind": "offline_anchor_with_historical_scorer_reproduction",
+  "evidenceClass": "recorded_offline_gate_and_historical_scorer_reproduction",
+  "capturedAt": "2026-07-14T05:01:00.000+09:00",
+  "baselineVerdict": "PARTIAL_RECORDED",
+  "measurementCompleteness": false,
+  "missingMetrics": [
+    "invalidArgumentRate",
+    "retries",
+    "duplicateSideEffects",
+    "contextTokens",
+    "totalToolOutputBytes",
+    "latencyMs",
+    "restartRecovery",
+    "humanIntervention"
+  ],
+  "productVerdict": "NOT_EVALUATED",
+  "productionSuccessEligible": false,
+  "executedBaselineCommands": [
+    {
+      "command": "npm test",
+      "status": "PASS",
+      "observation": "108 test files and 569 tests passed."
+    },
+    {
+      "command": "npm run autonomy:verify -- --profile offline",
+      "status": "PASS",
+      "observation": "The offline autonomy profile passed."
+    },
+    {
+      "command": "npm run selftest:blocked",
+      "status": "FAIL",
+      "observation": "Blocked-path verification failed on the known compact run-bar geometry checks; the failure is preserved rather than converted to a pass."
+    }
+  ],
+  "historicalFixture": {
+    "sourceCommit": null,
+    "sourceCommitReason": "The historical fixture was present at a0727f2, but its originating execution commit is not recorded.",
+    "provenanceStatus": "source_report_not_stored",
+    "provenanceReason": "The sanitized historical failure fixture preserves the source report hash, but the source report itself is not present in the repository.",
+    "runtime": {
+      "provider": "codex-oauth",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "syntheticSuccess": false
+    }
+  },
+  "historicalScorerReproduction": {
+    "evaluator": {
+      "id": "autonomy-scorer",
+      "version": "1",
+      "path": "scripts/autonomy/scorer.mjs",
+      "sha256": "e50beccc1e4ea39cf43243ead209f5af241528b38c996568a7e9d98f6845d447",
+      "bytes": 3049
+    },
+    "sourceFixture": {
+      "path": "tests/fixtures/autonomy/gpt-5.6-sol-high-baseline.json",
+      "sha256": "cdf47c6e86993064c6863ca8f2fd7531ff30ae3d15fc6ee98aede59fc876ea72",
+      "bytes": 2794,
+      "sourceReportSha256": "315d14dad06ac2e3e103f6c3cde01f3ebe2194549de7d40f4fc6493045851703"
+    },
+    "observations": {
+      "passedCases": 0,
+      "totalCases": 2,
+      "hardViolations": 7
+    },
+    "metrics": {
+      "successRate": {
+        "value": 0,
+        "unit": "ratio",
+        "reason": null,
+        "numerator": 0,
+        "denominator": 2
+      },
+      "toolSelectionPrecision": {
+        "value": 0.777778,
+        "unit": "allowed_selected_over_selected",
+        "reason": null,
+        "numerator": 7,
+        "denominator": 9
+      },
+      "exactCaseAccuracy": {
+        "value": 0,
+        "unit": "passed_cases_over_cases",
+        "reason": null,
+        "numerator": 0,
+        "denominator": 2
+      },
+      "toolSelectionRecall": {
+        "value": 1,
+        "unit": "required_selected_over_required",
+        "reason": null,
+        "numerator": 7,
+        "denominator": 7
+      },
+      "invalidArguments": {
+        "value": 1,
+        "unit": "observed_cases_lower_bound",
+        "reason": null,
+        "limitation": "The historical fixture supports a case-level lower bound only; a per-call denominator is unavailable."
+      },
+      "retries": {
+        "value": null,
+        "unit": "count",
+        "reason": "The historical fixture contains no retry receipt."
+      },
+      "duplicateSideEffects": {
+        "value": null,
+        "unit": "count",
+        "reason": "The historical fixture contains no idempotency or side-effect receipt."
+      },
+      "contextTokens": {
+        "value": null,
+        "unit": "tokens",
+        "reason": "The historical fixture contains no context-token measurement."
+      },
+      "totalToolOutputBytes": {
+        "value": null,
+        "unit": "bytes",
+        "reason": "The historical fixture contains no tool-output byte measurement."
+      },
+      "latencyMs": {
+        "value": null,
+        "unit": "milliseconds",
+        "reason": "The historical fixture contains no end-to-end latency measurement."
+      },
+      "restartRecovery": {
+        "value": null,
+        "unit": "boolean",
+        "reason": "The historical fixture did not exercise restart recovery."
+      },
+      "humanIntervention": {
+        "value": null,
+        "unit": "boolean",
+        "reason": "The historical fixture does not record human intervention."
+      }
+    }
+  }
+}

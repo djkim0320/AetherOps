@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { API_V2_METHODS, ApiV2RpcRequestSchema, type ApiV2RpcRequest } from "../../../contracts/api-v2/rpc.js";
-import { RequestIdSchema, RpcRequestV2Schema, type RpcErrorCode } from "../../../contracts/api-v2/common.js";
+import { RpcRequestV2Schema } from "../../../contracts/api-v2/common.js";
 import type { JobKind } from "../../../contracts/api-v2/jobs.js";
 import { authorizeJobCapabilities, defaultJobCapabilityPolicy, type CapabilityPolicy } from "../../../core/application/capabilities/index.js";
-import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, IdempotencyConflictError } from "../../runtime/storage/v2/jobErrors.js";
 import type { StorageCapabilityAudit } from "../../runtime/storage/v2/types.js";
+import { canonicalResearchStartPayload } from "../../composition/canonicalResearchEnqueue.js";
+import { durablePublicJobRequestHash } from "../../composition/durableJobRequestHash.js";
+import type { DurableJobReceipt } from "../../composition/durableJobTypes.js";
 import type { RpcHandlerContext } from "./context.js";
-import { PublicUrlPolicy } from "../../runtime/tools/publicUrlPolicy.js";
 import {
   computeProjectRevision,
   projectCapabilities,
@@ -24,7 +25,19 @@ import {
   toToolDiagnosticsResponse
 } from "./common.js";
 import { emitProjectSnapshotChanged } from "./eventEmitters.js";
-import { createServerRequestId, internalErrorMessage } from "../errorBoundary.js";
+import {
+  mapRpcV2Error,
+  requestIdFromBody,
+  RpcCapabilityDeniedError,
+  RpcConflictError,
+  RpcNotFoundError,
+  RpcNotReadyError,
+  RpcV2Error,
+  RpcValidationError
+} from "./rpcErrors.js";
+import { validateSourcePolicy } from "./rpcSourcePolicy.js";
+
+export { RpcCapabilityDeniedError, RpcConflictError, RpcNotFoundError, RpcNotReadyError, RpcV2Error, RpcValidationError } from "./rpcErrors.js";
 
 export async function handleRpcV2(body: unknown, context: RpcHandlerContext): Promise<{ requestId: string; result: unknown }> {
   const envelope = RpcRequestV2Schema.safeParse(body);
@@ -40,39 +53,21 @@ export async function handleRpcV2(body: unknown, context: RpcHandlerContext): Pr
   try {
     return { requestId: parsed.data.requestId, result: await dispatch(parsed.data, context) };
   } catch (error) {
-    if (error instanceof IdempotencyConflictError) {
-      throw new RpcV2Error(409, parsed.data.requestId, "CONFLICT", IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, undefined, error);
-    }
-    if (error instanceof RpcConflictError) {
-      throw new RpcV2Error(409, parsed.data.requestId, "CONFLICT", error.message, undefined, error);
-    }
-    if (error instanceof RpcNotFoundError) {
-      throw new RpcV2Error(404, parsed.data.requestId, "NOT_FOUND", error.message, undefined, error);
-    }
-    if (error instanceof RpcCapabilityDeniedError) {
-      throw new RpcV2Error(403, parsed.data.requestId, "CAPABILITY_DENIED", error.message, error.details, error);
-    }
-    if (error instanceof RpcNotReadyError) {
-      throw new RpcV2Error(503, parsed.data.requestId, "NOT_READY", error.message, error.details, error);
-    }
-    if (error instanceof RpcValidationError) {
-      throw new RpcV2Error(400, parsed.data.requestId, "VALIDATION_ERROR", error.message, error.details, error);
-    }
-    if (error instanceof RpcV2Error) throw error;
-    throw new RpcV2Error(500, parsed.data.requestId, "INTERNAL_ERROR", internalErrorMessage, undefined, error);
+    throw mapRpcV2Error(error, parsed.data.requestId);
   }
 }
 
 async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): Promise<unknown> {
   const { orchestrator, settingsStore, jobs, events } = context;
   switch (request.method) {
-    case "projects.create":
-      return toProjectResponse(
-        await orchestrator.createProject({
-          ...request.params.input,
-          autonomyPolicy: { toolApproval: "suggested", allowAgent: true, allowExternalSearch: false, allowCodeExecution: false, maxLoopIterations: 3 }
-        })
-      );
+    case "projects.create": {
+      const snapshot = await orchestrator.createProject({
+        ...request.params.input,
+        autonomyPolicy: { toolApproval: "suggested", allowAgent: true, allowExternalSearch: false, allowCodeExecution: false, maxLoopIterations: 3 }
+      });
+      await jobs.syncProject(snapshot.project);
+      return toProjectResponse(snapshot);
+    }
     case "projects.get":
       return toProjectResponse(await orchestrator.getSnapshot(request.params.projectId));
     case "projects.list":
@@ -94,6 +89,7 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
         ...request.params.input
       };
       const snapshot = await orchestrator.updateProjectInput(request.params.projectId, input);
+      await jobs.syncProject(snapshot.project);
       await emitProjectSnapshotChanged(events, snapshot, "project_updated");
       return toProjectResponse(snapshot);
     }
@@ -110,33 +106,43 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
       return { deleted: true };
     }
     case "chat.enqueue":
-      return enqueue(context, request.params.projectId, "chat_reply", request.params.idempotencyKey, {
-        sessionId: request.params.sessionId,
-        content: request.params.content,
-        clientMutationId: request.params.clientMutationId
-      });
+      return idempotentEnqueue(context, request, (requestHash) =>
+        enqueue(context, request.params.projectId, "chat_reply", request.params.idempotencyKey, requestHash, {
+          sessionId: request.params.sessionId,
+          content: request.params.content,
+          clientMutationId: request.params.clientMutationId
+        })
+      );
     case "loop.start":
-      await validateSourcePolicy(request.params.toolPolicy.sourceAccess);
-      return enqueue(
-        context,
-        request.params.projectId,
-        "research_loop",
-        request.params.idempotencyKey,
-        { action: "start", requestedCapabilities: request.params.requestedCapabilities, toolPolicy: request.params.toolPolicy },
-        request.params.requestedCapabilities
-      );
+      return idempotentEnqueue(context, request, async (requestHash) => {
+        const sourceAccess = await validateSourcePolicy(request.params.toolPolicy.sourceAccess);
+        const toolPolicy = { ...request.params.toolPolicy, sourceAccess };
+        return enqueue(
+          context,
+          request.params.projectId,
+          "research_loop",
+          request.params.idempotencyKey,
+          requestHash,
+          { action: "start", requestedCapabilities: request.params.requestedCapabilities, toolPolicy },
+          request.params.requestedCapabilities
+        );
+      });
     case "loop.resume":
-      await validateSourcePolicy(request.params.toolPolicy.sourceAccess);
-      return enqueue(
-        context,
-        request.params.projectId,
-        "research_loop",
-        request.params.idempotencyKey,
-        { action: "resume", requestedCapabilities: request.params.requestedCapabilities, toolPolicy: request.params.toolPolicy },
-        request.params.requestedCapabilities,
-        request.params.interruptedJobId,
-        request.params.checkpointId
-      );
+      return idempotentEnqueue(context, request, async (requestHash) => {
+        const sourceAccess = await validateSourcePolicy(request.params.toolPolicy.sourceAccess);
+        const toolPolicy = { ...request.params.toolPolicy, sourceAccess };
+        return enqueue(
+          context,
+          request.params.projectId,
+          "research_loop",
+          request.params.idempotencyKey,
+          requestHash,
+          { action: "resume", requestedCapabilities: request.params.requestedCapabilities, toolPolicy },
+          request.params.requestedCapabilities,
+          request.params.interruptedJobId,
+          request.params.checkpointId
+        );
+      });
     case "loop.pause": {
       await assertJobControlTarget(context, request.params.projectId, request.params.jobId, request.params.expectedProjectRevision);
       const job = await jobs.requestPause(request.params.jobId, request.params.expectedProjectRevision);
@@ -172,24 +178,26 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
       const codexStatus = request.params.targets.includes("codex") && context.llm ? await context.llm.getStatus() : undefined;
       return toEngineeringPreflightResponse(request.params.projectId, request.params.targets, await settingsStore.getRuntimeSettings(), codexStatus?.sandbox);
     }
-    case "engineering.enqueue": {
-      const runtimeSettings = await settingsStore.getRuntimeSettings();
-      const preflight = toEngineeringPreflightResponse(
-        request.params.projectId,
-        request.params.requests.map((item) => item.target),
-        runtimeSettings,
-        request.params.requests.some((item) => item.target === "codex") && context.llm ? (await context.llm.getStatus()).sandbox : undefined
-      );
-      if (!preflight.ready) throw new RpcNotReadyError("One or more engineering adapters are not ready.", { targets: preflight.targets });
-      return enqueue(
-        context,
-        request.params.projectId,
-        "engineering_run",
-        request.params.idempotencyKey,
-        { requests: request.params.requests, requestedCapabilities: request.params.requestedCapabilities },
-        request.params.requestedCapabilities
-      );
-    }
+    case "engineering.enqueue":
+      return idempotentEnqueue(context, request, async (requestHash) => {
+        const runtimeSettings = await settingsStore.getRuntimeSettings();
+        const preflight = toEngineeringPreflightResponse(
+          request.params.projectId,
+          request.params.requests.map((item) => item.target),
+          runtimeSettings,
+          request.params.requests.some((item) => item.target === "codex") && context.llm ? (await context.llm.getStatus()).sandbox : undefined
+        );
+        if (!preflight.ready) throw new RpcNotReadyError("One or more engineering adapters are not ready.", { targets: preflight.targets });
+        return enqueue(
+          context,
+          request.params.projectId,
+          "engineering_run",
+          request.params.idempotencyKey,
+          requestHash,
+          { requests: request.params.requests, requestedCapabilities: request.params.requestedCapabilities },
+          request.params.requestedCapabilities
+        );
+      });
     case "snapshots.get":
       return durableSnapshotResponse(context, await orchestrator.getSnapshot(request.params.projectId));
     case "settings.get":
@@ -224,12 +232,8 @@ async function assertJobControlTarget(context: RpcHandlerContext, projectId: str
 }
 
 async function durableSnapshotResponse(context: RpcHandlerContext, snapshot: Awaited<ReturnType<RpcHandlerContext["orchestrator"]["getSnapshot"]>>) {
-  const listed = await context.jobs.list(snapshot.project.id, { limit: 200 });
-  const job = listed.jobs
-    .filter((candidate) => candidate.kind === "research_loop")
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0];
+  const { job, checkpoint } = await context.jobs.latestProjectExecution(snapshot.project.id, "research_loop");
   if (!job) return toSnapshotResponse(snapshot);
-  const checkpoint = await context.jobs.latestCommittedCheckpoint(job.id);
   return toSnapshotResponse(snapshot, {
     status: job.status,
     activeJobId: job.id,
@@ -243,6 +247,7 @@ async function enqueue(
   projectId: string,
   kind: JobKind,
   idempotencyKey: string,
+  requestHash: string,
   payload: unknown,
   requestedCapabilities?: Partial<CapabilityPolicy>,
   resumesJobId?: string,
@@ -265,31 +270,61 @@ async function enqueue(
     recordedAt: new Date().toISOString()
   });
   if (!authorization.allowed) {
-    await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits));
+    await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits), snapshot.project);
     const denied = authorization.requiredCapabilityKinds.filter((capability) => !authorization.decisions[capability].allowed);
     throw new RpcCapabilityDeniedError(`Required capabilities are denied: ${denied.join(", ")}.`, { denied });
   }
+  const effectiveCapabilities = {
+    agent: authorization.decisions.agent.allowed,
+    engineering: authorization.decisions.engineering.allowed,
+    search: authorization.decisions.search.allowed
+  };
+  const toolPolicy =
+    kind === "research_loop" && payload && typeof payload === "object" && "toolPolicy" in payload
+      ? (payload as { toolPolicy: NonNullable<Parameters<typeof context.jobs.enqueue>[0]["toolPolicy"]> }).toolPolicy
+      : undefined;
+  const persistedPayload =
+    kind === "research_loop" && payload && typeof payload === "object" && (payload as { action?: unknown }).action === "start" && toolPolicy
+      ? canonicalResearchStartPayload({
+          snapshot,
+          payload: payload as Record<string, unknown>,
+          requestedCapabilities: requestedPolicy,
+          effectiveCapabilities,
+          toolPolicy
+        })
+      : payload;
+  const jobId = randomUUID();
+  const capabilityAudits = toStorageAudits(authorization.audits, jobId);
   const receipt = await context.jobs.enqueue({
+    jobId,
     projectId,
+    project: snapshot.project,
     kind,
     projectRevision: computeProjectRevision(snapshot),
     currentStep: snapshot.project.currentStep,
     idempotencyKey,
+    requestHash,
     requestedCapabilities: requestedPolicy,
-    effectiveCapabilities: {
-      agent: authorization.decisions.agent.allowed,
-      engineering: authorization.decisions.engineering.allowed,
-      search: authorization.decisions.search.allowed
-    },
-    ...(kind === "research_loop" && payload && typeof payload === "object" && "toolPolicy" in payload
-      ? { toolPolicy: (payload as { toolPolicy: NonNullable<Parameters<typeof context.jobs.enqueue>[0]["toolPolicy"]> }).toolPolicy }
-      : {}),
+    effectiveCapabilities,
+    capabilityAudits,
+    ...(toolPolicy ? { toolPolicy } : {}),
     resumesJobId,
     resumeCheckpointId,
-    payload
+    payload: persistedPayload
   });
-  await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits, receipt.jobId));
   return receipt;
+}
+
+type EnqueueRpcRequest = Extract<ApiV2RpcRequest, { method: "chat.enqueue" | "loop.start" | "loop.resume" | "engineering.enqueue" }>;
+
+async function idempotentEnqueue(
+  context: RpcHandlerContext,
+  request: EnqueueRpcRequest,
+  create: (requestHash: string) => Promise<DurableJobReceipt>
+): Promise<DurableJobReceipt> {
+  const requestHash = durablePublicJobRequestHash(request);
+  const existing = await context.jobs.findIdempotentReceipt(request.params.projectId, request.params.idempotencyKey, requestHash);
+  return existing ?? create(requestHash);
 }
 
 async function assertRequestedCapabilities(
@@ -308,76 +343,11 @@ async function assertRequestedCapabilities(
     projectId,
     recordedAt: new Date().toISOString()
   });
-  await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits));
+  await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits), snapshot.project);
   if (!authorization.allowed) {
     const denied = authorization.requiredCapabilityKinds.filter((capability) => !authorization.decisions[capability].allowed);
     throw new RpcCapabilityDeniedError(`Required capabilities are denied: ${denied.join(", ")}.`, { denied });
   }
-}
-
-export class RpcConflictError extends Error {}
-export class RpcNotFoundError extends Error {}
-export class RpcCapabilityDeniedError extends Error {
-  constructor(
-    message: string,
-    readonly details?: Record<string, unknown>
-  ) {
-    super(message);
-  }
-}
-export class RpcNotReadyError extends Error {
-  constructor(
-    message: string,
-    readonly details?: Record<string, unknown>
-  ) {
-    super(message);
-  }
-}
-export class RpcValidationError extends Error {
-  constructor(
-    message: string,
-    readonly details?: Record<string, unknown>
-  ) {
-    super(message);
-  }
-}
-
-async function validateSourcePolicy(policy: { mode: string; urls?: string[] }): Promise<void> {
-  if (policy.mode !== "allowlist") return;
-  const validator = new PublicUrlPolicy();
-  for (const [urlIndex, url] of (policy.urls ?? []).entries()) {
-    try {
-      await validator.assertPublicHttpUrl(url);
-    } catch (error) {
-      throw new RpcValidationError("A source allowlist URL is not publicly reachable.", {
-        urlIndex,
-        reason: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-}
-
-export class RpcV2Error extends Error {
-  constructor(
-    readonly status: number,
-    readonly requestId: string,
-    readonly code: RpcErrorCode,
-    message: string,
-    readonly details?: Record<string, unknown>,
-    cause?: unknown
-  ) {
-    super(message, cause === undefined ? undefined : { cause });
-    this.name = "RpcV2Error";
-  }
-}
-
-function requestIdFromBody(body: unknown): string {
-  if (body && typeof body === "object" && "requestId" in body) {
-    const requestId = (body as { requestId?: unknown }).requestId;
-    const parsed = RequestIdSchema.safeParse(requestId);
-    if (parsed.success) return parsed.data;
-  }
-  return createServerRequestId();
 }
 
 function toStorageAudits(audits: ReturnType<typeof authorizeJobCapabilities>["audits"], jobId?: string): StorageCapabilityAudit[] {

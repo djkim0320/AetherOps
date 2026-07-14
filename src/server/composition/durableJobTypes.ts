@@ -1,6 +1,7 @@
 import type { JobKind, JobStatus } from "../../contracts/api-v2/jobs.js";
+import type { ResearchProject } from "../../core/shared/types.js";
 import type { ResearchLoopStep } from "../../shared/kernel/researchLoop.js";
-import type { StorageCapabilitySet, StorageJobToolPolicy } from "../runtime/storage/v2/types.js";
+import type { StorageCapabilityAudit, StorageCapabilitySet, StorageJobToolPolicy } from "../runtime/storage/v2/types.js";
 import type {
   StorageCodexCliExecution,
   StorageLlmInvocation,
@@ -54,12 +55,14 @@ export interface DurableJobRecord {
   toolPolicy?: StorageJobToolPolicy;
   resumesJobId?: string;
   resumeCheckpointId?: string;
+  canonicalInitializationAnchor?: unknown;
   blockedReason?: string;
   failureReason?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
   finishedAt?: string;
+  leaseExpiresAt?: string;
 }
 
 export interface DurableJobReceipt {
@@ -89,7 +92,11 @@ export interface DurableJobDetail extends DurableJobRecord {
 }
 
 export interface EnqueueDurableJob {
+  /** Client-selected before authorization audits are bound to the immutable enqueue transaction. */
+  jobId?: string;
   projectId: string;
+  /** Verified legacy snapshot projection persisted atomically with a new job. */
+  project?: ResearchProject;
   kind: JobKind;
   projectRevision: number;
   currentStep?: ResearchLoopStep;
@@ -97,6 +104,7 @@ export interface EnqueueDurableJob {
   requestHash?: string;
   requestedCapabilities?: StorageCapabilitySet;
   effectiveCapabilities?: StorageCapabilitySet;
+  capabilityAudits?: StorageCapabilityAudit[];
   toolPolicy?: StorageJobToolPolicy;
   resumesJobId?: string;
   resumeCheckpointId?: string;

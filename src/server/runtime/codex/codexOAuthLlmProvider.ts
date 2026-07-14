@@ -3,7 +3,15 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { LlmAccessUnavailableError, LlmTimeoutError, type LlmJsonCompletion, type LlmJsonRequest, type LlmProvider } from "../../../core/providers/llm.js";
+import { STANDARD_CONTEXT_PROVIDER_CAPABILITY_RECEIPT, type ContextProviderIdentity } from "../../../core/context/public.js";
+import {
+  estimateUtf8Tokens,
+  LlmAccessUnavailableError,
+  LlmTimeoutError,
+  type LlmJsonCompletion,
+  type LlmJsonRequest,
+  type LlmProvider
+} from "../../../core/providers/llm.js";
 import type { CodexModelId, CodexReasoningEffort } from "../../../shared/kernel/codexModels.js";
 import { assertCodexSettings, DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT, DEFAULT_CODEX_TIMEOUT_MS } from "../../../shared/kernel/codexModels.js";
 import { resolveBundledCodexCli } from "./bundledCodexCli.js";
@@ -62,6 +70,15 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     }
   }
 
+  async contextIdentity(): Promise<ContextProviderIdentity> {
+    const settings = await this.resolveSettings();
+    return {
+      providerId: this.name,
+      modelId: settings.model,
+      capabilityReceipt: STANDARD_CONTEXT_PROVIDER_CAPABILITY_RECEIPT
+    };
+  }
+
   async getStatus(): Promise<{
     authenticated: boolean;
     cliAvailable: boolean;
@@ -86,26 +103,42 @@ export class CodexOAuthLlmProvider implements LlmProvider {
 
   async completeJsonWithMetadata<T>(request: LlmJsonRequest<T>): Promise<LlmJsonCompletion<T>> {
     const settings = await this.resolveSettings();
+    if (!request.invocationReceipt) {
+      throw new LlmAccessUnavailableError(
+        "NOT_READY: Codex execution requires a durable pre-spawn invocation receipt; unpersisted diagnostic invocations are disabled.",
+        "codex-oauth",
+        settings.model
+      );
+    }
     const startedAt = new Date().toISOString();
     const started = Date.now();
     const prompt = completionPrompt(request);
     let repairCount: 0 | 1 = 0;
+    let inputTokenEstimate = 0;
+    let outputTokenEstimate = 0;
     const validationErrors: string[] = [];
+    const invokeMeasured = async (invocationPrompt: string): Promise<string> => {
+      inputTokenEstimate += estimateUtf8Tokens(invocationPrompt);
+      const response = await this.invoke(request, invocationPrompt, settings);
+      outputTokenEstimate += estimateUtf8Tokens(response);
+      return response;
+    };
     try {
       if (!hasOAuth(this.codexHome)) throw new Error("Codex OAuth is not available. Run `codex login` first.");
-      const first = await this.invoke(request, prompt, settings);
+      await persistRunningReceipt(request, settings, prompt, startedAt);
+      const first = await invokeMeasured(prompt);
       let value: T;
       try {
         value = parseAndValidateResponse(request, first);
       } catch (error) {
         validationErrors.push(safeValidationError(error));
         repairCount = 1;
-        const repaired = await this.invoke(request, repairPrompt(request, first, error), settings);
+        const repaired = await invokeMeasured(repairPrompt(request, first, error));
         try {
           value = parseAndValidateResponse(request, repaired);
         } catch (repairError) {
           validationErrors.push(safeValidationError(repairError));
-          throw new Error(`LLM JSON schema validation failed after one repair: ${formatParseError(error)}; ${formatParseError(repairError)}`, {
+          throw new Error(`LLM JSON schema validation failed after one repair: ${safeValidationError(error)}; ${safeValidationError(repairError)}`, {
             cause: repairError
           });
         }
@@ -121,6 +154,8 @@ export class CodexOAuthLlmProvider implements LlmProvider {
           startedAt,
           completedAt,
           Date.now() - started,
+          inputTokenEstimate,
+          outputTokenEstimate,
           repairCount,
           "completed",
           JSON.stringify(value),
@@ -132,7 +167,20 @@ export class CodexOAuthLlmProvider implements LlmProvider {
       if (mapped instanceof CodexModelUnavailableError) this.access = "unavailable";
       attachInvocationMetadata(
         mapped,
-        metadata(request, settings, prompt, startedAt, new Date().toISOString(), Date.now() - started, repairCount, "failed", undefined, validationErrors)
+        metadata(
+          request,
+          settings,
+          prompt,
+          startedAt,
+          new Date().toISOString(),
+          Date.now() - started,
+          inputTokenEstimate,
+          outputTokenEstimate,
+          repairCount,
+          "failed",
+          undefined,
+          validationErrors
+        )
       );
       throw mapped;
     }
@@ -203,7 +251,7 @@ function repairPrompt(request: LlmJsonRequest, response: string, error: unknown)
   return [
     "Repair the previous JSON response. Return exactly one object matching the supplied output schema.",
     `Schema name: ${request.schemaName}`,
-    `Validation error: ${safeValidationError(error)}`,
+    `Validation error: ${formatParseError(error)}`,
     "",
     request.user.slice(0, 12_000),
     "",
@@ -236,6 +284,8 @@ function metadata(
   startedAt: string,
   completedAt: string,
   durationMs: number,
+  inputTokenEstimate: number,
+  outputTokenEstimate: number,
   repairCount: 0 | 1,
   status: "completed" | "failed",
   response: string | undefined,
@@ -243,6 +293,7 @@ function metadata(
 ): LlmJsonCompletion<unknown>["metadata"] {
   return {
     provider: "codex-oauth",
+    ...(request.invocationReceipt ? { invocationId: request.invocationReceipt.invocationId } : {}),
     model: settings.model,
     reasoningEffort: settings.reasoningEffort,
     schemaName: request.schemaName,
@@ -253,8 +304,28 @@ function metadata(
     startedAt,
     completedAt,
     durationMs,
+    inputTokenEstimate,
+    outputTokenEstimate,
+    tokenEstimator: "utf8_bytes_div_4_ceil_v1",
+    monetaryCostAvailability: "unavailable",
     repairCount,
     status,
     ...(validationErrors.length ? { validationErrors } : {})
   };
+}
+
+async function persistRunningReceipt<T>(request: LlmJsonRequest<T>, settings: CodexExecutionSettings, prompt: string, startedAt: string): Promise<void> {
+  if (!request.invocationReceipt) return;
+  await request.invocationReceipt.onRunning({
+    invocationId: request.invocationReceipt.invocationId,
+    provider: "codex-oauth",
+    model: settings.model,
+    reasoningEffort: settings.reasoningEffort,
+    schemaName: request.schemaName,
+    promptVersion: request.promptVersion ?? "unspecified",
+    schemaVersion: request.schemaVersion ?? request.schemaName,
+    promptHash: sha256(prompt),
+    startedAt,
+    status: "running"
+  });
 }

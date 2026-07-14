@@ -13,7 +13,24 @@ import type {
   StorageToolDecision,
   StorageToolOutputLink
 } from "./traceTypes.js";
-import { assertOutputLinkUpdate, assertToolAttemptUpdate } from "./traceState.js";
+import { assertLlmInvocationUpdate, assertOutputLinkUpdate, assertToolAttemptCreate, assertToolAttemptUpdate } from "./traceState.js";
+import {
+  assertCodexExecutionOwnership,
+  assertLlmInvocationOwnership,
+  assertNetworkAuditOwnership,
+  assertOutputLinkOwnership,
+  assertToolAttemptOwnership,
+  assertToolDecisionOwnership
+} from "./traceOwnership.js";
+import { assertCodexExecutionUpdate, assertToolDecisionUpdate } from "./traceRecordState.js";
+import {
+  assertCodexCliExecutionStorageBoundary,
+  assertNetworkAuditStorageBoundary,
+  assertOutputLinkStorageBoundary,
+  assertToolAttemptStorageBoundary,
+  assertToolDecisionStorageBoundary
+} from "./traceStorageBoundary.js";
+import { assertStorageToolAttemptTrace, assertToolAttemptOutputPromotionAllowed } from "./toolPostcondition.js";
 
 export class TraceRepository {
   private readonly pagination: TracePaginationRepository;
@@ -31,6 +48,8 @@ export class TraceRepository {
   }
 
   saveLlmInvocation(value: StorageLlmInvocation): StorageLlmInvocation {
+    assertLlmInvocationOwnership(this.db, value);
+    assertLlmInvocationUpdate(this.getLlmInvocation(value.id), value);
     this.db
       .prepare(
         `insert into llm_invocations (id, project_id, job_id, model, reasoning_effort, prompt_version, schema_version,
@@ -67,12 +86,19 @@ export class TraceRepository {
     );
   }
 
+  countLlmInvocations(jobId: string): number {
+    return readCount(this.db.prepare("select count(*) count from llm_invocations where job_id=?").get(jobId), "LLM-invocation");
+  }
+
   getLlmInvocation(invocationId: string): StorageLlmInvocation | undefined {
     const row = this.db.prepare("select * from llm_invocations where id=?").get(invocationId) as Row | undefined;
     return row ? rowToLlmInvocation(row) : undefined;
   }
 
   recordToolDecision(value: StorageToolDecision): StorageToolDecision {
+    assertToolDecisionStorageBoundary(value);
+    assertToolDecisionOwnership(this.db, value);
+    assertToolDecisionUpdate(this.getToolDecision(value.id), value);
     this.db
       .prepare(
         `insert into tool_decisions (id, project_id, job_id, invocation_id, tool_name, purpose, expected_outcome,
@@ -97,7 +123,10 @@ export class TraceRepository {
         value.createdAt,
         value.data === undefined ? null : json(value.data)
       );
-    return this.requiredToolDecision(value.id);
+    const stored = this.requiredToolDecision(value.id);
+    assertToolDecisionStorageBoundary(stored);
+    assertToolDecisionUpdate(stored, value);
+    return stored;
   }
 
   listToolDecisions(jobId: string, limit = 100): StorageToolDecision[] {
@@ -112,15 +141,22 @@ export class TraceRepository {
   }
 
   saveToolAttempt(value: StorageToolAttempt): StorageToolAttempt {
+    assertStorageToolAttemptTrace(value);
+    assertToolAttemptStorageBoundary(value);
+    assertToolAttemptOwnership(this.db, value);
     const existing = this.getToolAttempt(value.id);
     if (existing) assertToolAttemptUpdate(existing, value);
+    else assertToolAttemptCreate(value);
     this.db
       .prepare(
         `insert into tool_attempts (id, project_id, job_id, decision_id, checkpoint_id, ordinal, status, input_hash,
-        output_hash, terminal_cause, depends_on_attempt_ids, staging_ref, quarantine_ref, error, queued_at, started_at, completed_at, data)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        output_hash, trace_version, descriptor_version, descriptor_side_effects, side_effect_key, idempotency_key,
+        postcondition_disposition, postcondition_receipt, terminal_cause, depends_on_attempt_ids, staging_ref,
+        quarantine_ref, error, queued_at, started_at, completed_at, data)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         on conflict(id) do update set checkpoint_id=excluded.checkpoint_id, status=excluded.status,
-        output_hash=excluded.output_hash, terminal_cause=excluded.terminal_cause,
+        output_hash=excluded.output_hash, postcondition_disposition=excluded.postcondition_disposition,
+        postcondition_receipt=excluded.postcondition_receipt, terminal_cause=excluded.terminal_cause,
         depends_on_attempt_ids=excluded.depends_on_attempt_ids, staging_ref=excluded.staging_ref, quarantine_ref=excluded.quarantine_ref,
         error=excluded.error, started_at=excluded.started_at, completed_at=excluded.completed_at, data=excluded.data`
       )
@@ -134,6 +170,13 @@ export class TraceRepository {
         value.status,
         value.inputHash,
         value.outputHash ?? null,
+        value.traceVersion ?? null,
+        value.descriptorVersion ?? null,
+        value.descriptorSideEffects === undefined ? null : json(value.descriptorSideEffects),
+        value.sideEffectKey ?? null,
+        value.idempotencyKey ?? null,
+        value.postconditionDisposition ?? null,
+        value.postconditionReceipt === undefined ? null : json(value.postconditionReceipt),
         value.terminalCause ?? null,
         json(value.dependsOnAttemptIds ?? []),
         value.stagingRef ?? null,
@@ -148,6 +191,9 @@ export class TraceRepository {
   }
 
   saveCodexCliExecution(value: StorageCodexCliExecution): StorageCodexCliExecution {
+    assertCodexCliExecutionStorageBoundary(value);
+    assertCodexExecutionOwnership(this.db, value);
+    assertCodexExecutionUpdate(this.getCodexCliExecution(value.id), value);
     this.db
       .prepare(
         `insert into codex_cli_executions (id, project_id, job_id, attempt_id, model, reasoning_effort,
@@ -179,7 +225,10 @@ export class TraceRepository {
         value.data === undefined ? null : json(value.data)
       );
     const row = this.db.prepare("select * from codex_cli_executions where id=?").get(value.id) as Row;
-    return rowToCodexCliExecution(row);
+    const stored = rowToCodexCliExecution(row);
+    assertCodexCliExecutionStorageBoundary(stored);
+    assertCodexExecutionUpdate(stored, value);
+    return stored;
   }
 
   listCodexCliExecutions(jobId: string, limit = 100): StorageCodexCliExecution[] {
@@ -204,6 +253,10 @@ export class TraceRepository {
     ).map(rowToToolAttempt);
   }
 
+  countToolAttempts(jobId: string): number {
+    return readCount(this.db.prepare("select count(*) count from tool_attempts where job_id=?").get(jobId), "Tool-attempt");
+  }
+
   interruptActiveToolAttempts(jobId: string, completedAt: string, error: string): StorageToolAttempt[] {
     this.db
       .prepare(
@@ -215,6 +268,12 @@ export class TraceRepository {
   }
 
   recordOutputLink(value: StorageToolOutputLink): StorageToolOutputLink {
+    assertOutputLinkStorageBoundary(value);
+    assertOutputLinkOwnership(this.db, value);
+    const ownerAttempt = this.getToolAttempt(value.attemptId)!;
+    if (value.promoted) {
+      assertToolAttemptOutputPromotionAllowed(ownerAttempt);
+    }
     const existingRow = this.db
       .prepare("select * from tool_output_links where attempt_id=? and output_kind=? and output_id=?")
       .get(value.attemptId, value.outputKind, value.outputId) as Row | undefined;
@@ -256,7 +315,7 @@ export class TraceRepository {
   }
 
   listOutputLinksForAttempts(attemptIds: string[], limit = 100): StorageToolOutputLink[] {
-    const ids = [...new Set(attemptIds)].slice(0, 1_000);
+    const ids = boundedAttemptIds(attemptIds);
     if (!ids.length) return [];
     const placeholders = ids.map(() => "?").join(",");
     return (
@@ -266,7 +325,16 @@ export class TraceRepository {
     ).map(rowToOutputLink);
   }
 
+  countOutputLinksForAttempts(attemptIds: string[]): number {
+    const ids = boundedAttemptIds(attemptIds);
+    if (!ids.length) return 0;
+    const placeholders = ids.map(() => "?").join(",");
+    return readCount(this.db.prepare(`select count(*) count from tool_output_links where attempt_id in (${placeholders})`).get(...ids), "Tool-output-link");
+  }
+
   recordNetworkAudit(value: StorageNetworkAudit): StorageNetworkAudit {
+    assertNetworkAuditStorageBoundary(value);
+    assertNetworkAuditOwnership(this.db, value);
     this.db
       .prepare(
         `insert into network_audits (id, project_id, job_id, attempt_id, url, redirect_chain, source_policy,
@@ -312,4 +380,16 @@ export class TraceRepository {
     if (!attempt) throw new Error(`Storage tool attempt not found: ${id}`);
     return attempt;
   }
+}
+
+function boundedAttemptIds(attemptIds: string[]): string[] {
+  const ids = [...new Set(attemptIds)];
+  if (ids.length > 1_000) throw new Error("Tool-output-link attempt scope exceeds the bounded readback limit.");
+  return ids;
+}
+
+function readCount(row: unknown, label: string): number {
+  const count = Number((row as { count?: unknown } | undefined)?.count);
+  if (!Number.isSafeInteger(count) || count < 0) throw new Error(`${label} count readback is invalid.`);
+  return count;
 }

@@ -21,13 +21,23 @@ import type {
   StorageRecordPayload,
   StorageSearchOptions,
   StorageStepDispositionInput,
+  StorageToolPostconditionVerifyInput,
   StorageQuarantinedStepInput,
+  StorageCanonicalStepCommitInput,
+  StorageCanonicalBudgetCommitInput,
+  StorageCanonicalRevisionPlanInput,
+  StorageCanonicalTerminalTransitionInput,
+  StorageCanonicalTerminalVerifyInput,
   StorageTerminalTransitionInput,
   StorageToolAttempt,
   StorageToolDecision,
   StorageToolOutputLink,
+  StorageTerminalAttestedReadbackInput,
+  StorageTerminalAttestedLeaseReadInput,
+  StorageTerminalAttestedLeaseReleaseInput,
   StorageV2OpenOptions
 } from "../v2/index.js";
+import type { StorageCommitRunStateRevisionInput, StorageRunOwnership, StorageSaveContextPackInput, StorageTaskContractInput } from "../v2/runStateTypes.js";
 
 export const STORAGE_WORKER_REQUEST = "aetherops.storage.v2.request";
 export const STORAGE_WORKER_RESPONSE = "aetherops.storage.v2.response";
@@ -52,7 +62,9 @@ export type StorageWorkerBaseCommand =
   | { name: "memory.search"; query: string; options?: StorageSearchOptions }
   | { name: "embedding.getByOwner"; ownerTable: string; ownerId: string }
   | { name: "job.get"; jobId: string }
+  | { name: "job.lookupIdempotency"; projectId: string; idempotencyKey: string; requestHash: string }
   | { name: "job.listProject"; projectId: string; status?: StorageJobStatus; cursor?: string; limit?: number }
+  | { name: "job.latestProjectExecution"; projectId: string; operation: string }
   | { name: "job.renewLease"; fence: StorageLeaseFence; leaseExpiresAt: string; now?: string }
   | { name: "job.listRunnableProjects"; cursor?: string; limit?: number }
   | { name: "job.queueDiagnostics"; limit?: number }
@@ -63,6 +75,17 @@ export type StorageWorkerBaseCommand =
   | { name: "checkpoint.latestCommittedForJob"; jobId: string }
   | { name: "checkpoint.listForJob"; jobId: string }
   | { name: "checkpoint.listStepAttempts"; jobId: string }
+  | { name: "taskContract.get"; projectId: string; contractId: string }
+  | { name: "runState.latest"; owner: StorageRunOwnership }
+  | { name: "runState.list"; owner: StorageRunOwnership; afterRevision?: number; limit?: number }
+  | { name: "contextPack.get"; owner: StorageRunOwnership; contextPackId: string }
+  | { name: "contextPack.getResumeBound"; owner: StorageRunOwnership; predecessorJobId: string; contextPackId: string }
+  | { name: "contextPack.latest"; owner: StorageRunOwnership }
+  | { name: "contextPack.latestForJob"; owner: StorageRunOwnership }
+  | { name: "contextPack.listRevision"; owner: StorageRunOwnership; stateRevision: number }
+  | { name: "terminal.createAttestedLease"; input: StorageTerminalAttestedReadbackInput }
+  | { name: "terminal.readAttestedLease"; input: StorageTerminalAttestedLeaseReadInput }
+  | { name: "terminal.releaseAttestedLease"; input: StorageTerminalAttestedLeaseReleaseInput }
   | { name: "capability.record"; audit: StorageCapabilityAudit }
   | { name: "capability.listProject"; projectId: string; limit?: number }
   | { name: "trace.llm.listJob"; jobId: string; limit?: number }
@@ -84,21 +107,31 @@ export type StorageWorkerBaseCommand =
 
 export type StorageFencedWriteCommand =
   | { name: "event.append"; event: StorageJobEventInput }
+  | { name: "taskContract.save"; owner: { projectId: string; jobId: string }; contract: StorageTaskContractInput }
   | { name: "trace.llm.save"; invocation: StorageLlmInvocation }
   | { name: "trace.decision.record"; decision: StorageToolDecision }
   | { name: "trace.attempt.save"; attempt: StorageToolAttempt }
   | { name: "trace.codex.save"; execution: StorageCodexCliExecution }
   | { name: "trace.output.record"; link: StorageToolOutputLink }
-  | { name: "trace.network.record"; audit: StorageNetworkAudit };
+  | { name: "trace.network.record"; audit: StorageNetworkAudit }
+  | { name: "runState.commit"; input: StorageCommitRunStateRevisionInput }
+  | { name: "contextPack.save"; input: StorageSaveContextPackInput };
 
 export type StorageWorkerAtomicCommand =
-  | { name: "job.enqueue"; job: StorageJobInput }
+  | { name: "job.enqueue"; job: StorageJobInput; project?: StorageProjectPayload; capabilityAudits?: StorageCapabilityAudit[] }
+  | { name: "capability.recordSet"; audits: StorageCapabilityAudit[]; project?: StorageProjectPayload }
   | { name: "job.claimAndStart"; options: StorageClaimStartOptions }
   | { name: "job.requestControl"; input: StorageJobControlInput }
   | { name: "job.markInterruptedExpiredLeases"; now?: string }
   | { name: "job.transitionTerminal"; input: StorageTerminalTransitionInput }
   | { name: "job.commitStep"; input: StorageStepDispositionInput }
   | { name: "job.quarantineStep"; input: StorageQuarantinedStepInput }
+  | { name: "canonical.commitStep"; input: StorageCanonicalStepCommitInput }
+  | { name: "canonical.commitBudget"; input: StorageCanonicalBudgetCommitInput }
+  | { name: "canonical.commitPlan"; input: StorageCanonicalRevisionPlanInput }
+  | { name: "canonical.transitionTerminal"; input: StorageCanonicalTerminalTransitionInput }
+  | { name: "canonical.verifyTerminal"; input: StorageCanonicalTerminalVerifyInput }
+  | { name: "toolPostcondition.verify"; input: StorageToolPostconditionVerifyInput }
   | { name: "fencedTransaction"; fence: StorageLeaseFence; now?: string; commands: StorageFencedWriteCommand[] };
 
 export type StorageWorkerCommand = StorageWorkerBaseCommand | StorageWorkerAtomicCommand;
@@ -114,7 +147,7 @@ export interface StorageWorkerErrorPayload {
   name: string;
   message: string;
   stack?: string;
-  code?: "IDEMPOTENCY_CONFLICT";
+  code?: "IDEMPOTENCY_CONFLICT" | "REVISION_CONFLICT" | "OWNERSHIP_CONFLICT" | "IMMUTABLE_CONFLICT" | "LEASE_LOST";
 }
 
 export type StorageWorkerResponse =

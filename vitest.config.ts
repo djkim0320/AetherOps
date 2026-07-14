@@ -1,7 +1,10 @@
+import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
 
+const boundedWorkers = Math.min(4, Math.max(1, availableParallelism() - 1));
 const common = {
   globals: true,
+  maxWorkers: boundedWorkers,
   testTimeout: 30_000,
   hookTimeout: 30_000
 } as const;

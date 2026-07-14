@@ -1,6 +1,6 @@
 import { createId, nowIso } from "../shared/ids.js";
 import { deriveResultWithLlm } from "../planning/llmPlanning.js";
-import { LlmAccessUnavailableError } from "../providers/llm.js";
+import { completeDurableJson, LlmAccessUnavailableError, type DurableLlmInvocationObserver } from "../providers/llm.js";
 import { buildBenchmarkPlan, buildRunAuditOutput, RunAuditWriter } from "../output/runAuditWriter.js";
 import {
   appendBulletSection,
@@ -25,6 +25,7 @@ import {
 } from "../shared/types.js";
 import { OrchestratorPreconditions } from "./orchestratorPreconditions.js";
 import { RuntimeRequirementError } from "../tools/runtimeRequirements.js";
+import type { ToolExecutionContext } from "../tools/researchToolTypes.js";
 import { errorMetadata, formatError, hypothesisUpdateMap, mergeHypothesisUpdates } from "./orchestratorResultHelpers.js";
 
 interface ChatReplyResponse {
@@ -85,11 +86,16 @@ export class AetherOpsOrchestrator extends OrchestratorPreconditions {
     if (this.projectStorage.writeStepError) await this.projectStorage.writeStepError(snapshot.project, stepError);
   }
 
-  protected async tryLlmResult(snapshot: ResearchSnapshot, iteration: number, forceStop: boolean): Promise<EvidenceBasedResult> {
+  protected async tryLlmResult(
+    snapshot: ResearchSnapshot,
+    iteration: number,
+    forceStop: boolean,
+    execution?: ToolExecutionContext
+  ): Promise<EvidenceBasedResult> {
     if (!this.llm || !(await this.llm.isAvailable())) {
       throw new Error("LLM provider is required to synthesize and evaluate results.");
     }
-    const result = await deriveResultWithLlm(this.llm, snapshot, iteration, forceStop);
+    const result = await deriveResultWithLlm(this.llm, snapshot, iteration, forceStop, durableLlmObserver(execution));
     if (!result?.answer) {
       throw new Error("LLM result synthesis did not return an answer.");
     }
@@ -174,12 +180,12 @@ export class AetherOpsOrchestrator extends OrchestratorPreconditions {
     }
   }
 
-  protected async completeChatReply(snapshot: ResearchSnapshot, session: ResearchSession, message: string): Promise<string> {
+  protected async completeChatReply(snapshot: ResearchSnapshot, session: ResearchSession, message: string, execution?: ToolExecutionContext): Promise<string> {
     const latestContext = snapshot.hybridContexts.at(-1)?.contextText ?? snapshot.ragContexts.at(-1)?.contextText ?? snapshot.ragContexts.at(-1)?.summary;
     if (!this.llm) {
       throw new Error("LLM provider is not configured.");
     }
-    const response = await this.llm.completeJson<ChatReplyResponse>({
+    const request = {
       schemaName: "AetherOpsChatReply",
       system: [
         "You are the AetherOps research chat agent inside a project-based research workspace.",
@@ -196,7 +202,11 @@ export class AetherOpsOrchestrator extends OrchestratorPreconditions {
         `User message: ${message}`
       ].join("\n\n"),
       timeoutMs: 180_000
-    });
+    };
+    const observer = durableLlmObserver(execution);
+    const response = observer
+      ? (await completeDurableJson<ChatReplyResponse>(this.llm, request, createId("llm_invocation"), observer)).value
+      : await this.llm.completeJson<ChatReplyResponse>(request);
     const answer = cleanText(response.answer);
     if (!answer) throw new Error("LLM 응답에 answer 필드가 없습니다.");
     const citations = cleanStringArray(response.citations);
@@ -208,4 +218,12 @@ export class AetherOpsOrchestrator extends OrchestratorPreconditions {
     output = appendBulletSection(output, "다음 작업", nextActions);
     return output;
   }
+}
+
+function durableLlmObserver(execution?: ToolExecutionContext): DurableLlmInvocationObserver | undefined {
+  const running = execution?.onLlmInvocationRunning;
+  const terminal = execution?.onLlmInvocation;
+  if (!running && !terminal) return undefined;
+  if (!running || !terminal) throw new Error("Durable LLM execution requires both running and terminal receipt writers.");
+  return { onRunning: running, onTerminal: terminal };
 }

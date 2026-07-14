@@ -64,5 +64,11 @@ export function toJobDetailResponse(job: DurableJobDetail): z.infer<typeof JobDe
 
 function publicToolPolicy(policy: DurableJobRecord["toolPolicy"]): DurableJobRecord["toolPolicy"] {
   if (!policy || policy.sourceAccess.mode !== "allowlist") return policy;
-  return { ...policy, sourceAccess: { mode: "allowlist", urls: policy.sourceAccess.urls.map(safeTraceUrl) } };
+  return { ...policy, sourceAccess: { mode: "allowlist", urls: policy.sourceAccess.urls.map(publicSourceUrl) } };
+}
+
+function publicSourceUrl(value: string): string {
+  const url = new URL(safeTraceUrl(value));
+  url.search = "";
+  return url.toString();
 }

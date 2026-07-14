@@ -40,7 +40,7 @@ export class CheckpointRepository {
   }
   latestCommittedForJob(jobId: string): StorageCheckpoint | undefined {
     const row = this.db
-      .prepare("select * from checkpoints where job_id=? and status='committed' order by committed_at desc, created_at desc limit 1")
+      .prepare("select * from checkpoints where job_id=? and status='committed' order by committed_at desc, created_at desc, id desc limit 1")
       .get(jobId) as Row | undefined;
     return row ? rowToCheckpoint(row) : undefined;
   }

@@ -8,9 +8,9 @@ export function formatParseError(error: unknown): string {
 }
 
 export function safeValidationError(error: unknown): string {
-  return formatParseError(error)
-    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
-    .slice(0, 2_000);
+  const issues = zodIssueCodes(error);
+  if (issues.length) return issues.join("; ").slice(0, 2_000);
+  return error instanceof SyntaxError ? "response:invalid_json" : "response:validation_failed";
 }
 
 export function attachInvocationMetadata(error: unknown, metadata: LlmInvocationMetadata): void {
@@ -30,6 +30,34 @@ export function sha256(value: string): string {
 function zodIssues(error: unknown): string[] {
   if (!error || typeof error !== "object" || !("issues" in error) || !Array.isArray(error.issues)) return [];
   return error.issues.flatMap((issue) => summarizeIssue(issue)).slice(0, 24);
+}
+
+function zodIssueCodes(error: unknown): string[] {
+  if (!error || typeof error !== "object" || !("issues" in error) || !Array.isArray(error.issues)) return [];
+  return error.issues.flatMap((issue) => summarizeIssueCode(issue)).slice(0, 24);
+}
+
+function summarizeIssueCode(issue: unknown, prefix: Array<string | number> = []): string[] {
+  if (!issue || typeof issue !== "object") return [];
+  const value = issue as { code?: unknown; path?: unknown; errors?: unknown };
+  const path = [...prefix, ...(Array.isArray(value.path) ? value.path.filter(isPathPart) : [])];
+  if (value.code === "invalid_union" && Array.isArray(value.errors)) {
+    const branches = value.errors.filter(Array.isArray) as unknown[][];
+    const selected = [...branches].sort((left, right) => left.length - right.length)[0] ?? [];
+    return selected.flatMap((entry) => summarizeIssueCode(entry, path));
+  }
+  const location = safeIssueLocation(path);
+  const code = typeof value.code === "string" && /^[a-z0-9_]{1,64}$/u.test(value.code) ? value.code : "validation_issue";
+  return [`${location}:${code}`];
+}
+
+function isPathPart(value: unknown): value is string | number {
+  return typeof value === "string" || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+}
+
+function safeIssueLocation(path: Array<string | number>): string {
+  if (!path.length) return "response";
+  return `response.${path.map((part) => (typeof part === "number" ? `[${part}]` : "field")).join(".")}`;
 }
 
 function summarizeIssue(issue: unknown, prefix: Array<string | number> = []): string[] {

@@ -162,9 +162,77 @@ describe("ToolRunner core contract", () => {
     expect(terminalByTool.get("ArtifactWriterTool")).toMatchObject({ status: "blocked", terminalCause: "DEPENDENCY_FAILED" });
     expect(events.filter((event) => ["queued", "running"].includes(event.status)).length).toBeGreaterThan(0);
   });
+
+  it("quarantines a provisional completion and terminalizes later queued actions after a downstream failure", async () => {
+    const events: ToolExecutionStatusEvent[] = [];
+    const failingAnalysis: ResearchTool = {
+      name: "DataAnalysisTool",
+      run: async () => {
+        throw new Error("analysis failed");
+      }
+    };
+
+    await expect(
+      new ToolRunner([completedTool("WebFetchTool", []), failingAnalysis, completedTool("ArtifactWriterTool", [])]).execute(
+        input(["WebFetchTool", "DataAnalysisTool", "ArtifactWriterTool"]),
+        settings,
+        {
+          execution: {
+            effectiveCapabilities: { agent: true, engineering: false, search: true },
+            onStatus: (event) => {
+              events.push(event);
+            }
+          }
+        }
+      )
+    ).rejects.toThrow("analysis failed");
+
+    expect(lastTerminalByTool(events, "WebFetchTool")).toMatchObject({ status: "quarantined", terminalCause: "UPSTREAM_FAILURE" });
+    expect(lastTerminalByTool(events, "DataAnalysisTool")?.status).toBe("failed");
+    expect(lastTerminalByTool(events, "ArtifactWriterTool")).toMatchObject({ status: "blocked", terminalCause: "DEPENDENCY_FAILED" });
+  });
+
+  it("attributes a mixed parallel discovery failure to the exact action and terminalizes each remaining action once", async () => {
+    const events: ToolExecutionStatusEvent[] = [];
+    const failingBrowser: ResearchTool = {
+      name: "BackgroundBrowserTool",
+      run: async () => {
+        throw new Error("browser failed");
+      }
+    };
+
+    await expect(
+      new ToolRunner([completedTool("WebSearchTool", []), failingBrowser, completedTool("DataAnalysisTool", [])]).execute(
+        input(["WebSearchTool", "BackgroundBrowserTool", "DataAnalysisTool"]),
+        settings,
+        {
+          execution: {
+            effectiveCapabilities: { agent: true, engineering: false, search: true },
+            onStatus: (event) => {
+              events.push(event);
+            }
+          }
+        }
+      )
+    ).rejects.toThrow("browser failed");
+
+    expect(lastTerminalByTool(events, "WebSearchTool")).toMatchObject({ status: "quarantined", terminalCause: "UPSTREAM_FAILURE" });
+    expect(terminalEvents(events, "BackgroundBrowserTool").map((event) => event.status)).toEqual(["failed"]);
+    expect(terminalEvents(events, "DataAnalysisTool")).toEqual([expect.objectContaining({ status: "blocked", terminalCause: "DEPENDENCY_FAILED" })]);
+  });
 });
 
+function terminalEvents(events: ToolExecutionStatusEvent[], toolName: string): ToolExecutionStatusEvent[] {
+  return events.filter((event) => event.toolName === toolName && !["queued", "running"].includes(event.status));
+}
+
+function lastTerminalByTool(events: ToolExecutionStatusEvent[], toolName: string): ToolExecutionStatusEvent | undefined {
+  return terminalEvents(events, toolName).at(-1);
+}
+
 function toolInputs(toolName: string): Record<string, unknown> {
+  if (toolName === "WebSearchTool") return { query: "deterministic source" };
+  if (toolName === "BackgroundBrowserTool") return { urls: ["https://example.com/source"] };
   if (toolName === "WebFetchTool") return { urls: ["https://example.com/source"] };
   if (toolName === "DataAnalysisTool") return { checks: ["evidence_coverage"] };
   if (toolName === "ArtifactWriterTool") return { artifacts: [{ relativePath: "artifacts/research-note.md", kind: "research_report", format: "markdown" }] };

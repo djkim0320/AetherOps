@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "caseId": "aetherbench.research-agent.v1",
+  "candidates": ["research.search", "research.fetch"],
+  "calls": [
+    {
+      "callId": "call-research-search",
+      "toolName": "research.search",
+      "inputFixtureIds": ["research-source-manifest"],
+      "dependencyCallIds": [],
+      "maxAttempts": 1,
+      "verifier": "postcondition",
+      "verifierChecks": ["schema-valid", "postcondition-satisfied"]
+    },
+    {
+      "callId": "call-research-fetch",
+      "toolName": "research.fetch",
+      "inputFixtureIds": ["research-source-manifest"],
+      "dependencyCallIds": ["call-research-search"],
+      "maxAttempts": 1,
+      "verifier": "postcondition",
+      "verifierChecks": ["schema-valid", "postcondition-satisfied"]
+    }
+  ],
+  "rejections": [],
+  "memory": {
+    "retrievals": [],
+    "revalidations": [],
+    "candidates": [
+      {
+        "candidateId": "candidate-research-source",
+        "sourceArtifactIds": ["research-source"],
+        "scope": "project",
+        "disposition": "accepted",
+        "policyReason": "Verified source provenance is eligible for project memory."
+      }
+    ]
+  },
+  "skills": [],
+  "workOrders": [],
+  "faults": [],
+  "memorySnapshotVersion": "memory-snapshot-v1",
+  "inputTokens": 256,
+  "outputTokens": 96,
+  "contextTokens": 512,
+  "loadedToolSchemaBytes": 256
+}

@@ -14,13 +14,12 @@ import type { StorageClaimStartResult, StorageJob, StorageLeaseFence } from "./t
 
 let root: string | undefined;
 let runtime: StorageWorkerRuntime | undefined;
-
+let leaseNowMs = Date.parse("2026-07-14T00:00:01.000Z");
 afterEach(() => {
   runtime?.close();
   if (root) rmSync(root, { recursive: true, force: true });
   runtime = undefined;
 });
-
 describe("durable job storage fencing", () => {
   it("installs the additive v4 lease generation migration idempotently", () => {
     const path = createDatabase();
@@ -28,7 +27,6 @@ describe("durable job storage fencing", () => {
 
     migrateStorageV2Schema(db);
     migrateStorageV2Schema(db);
-
     expect(db.prepare("pragma table_info(jobs)").all()).toContainEqual(expect.objectContaining({ name: "lease_generation", notnull: 1, dflt_value: "0" }));
     expect(db.prepare("select name, checksum_sha256 from schema_migrations where version=?").get(STORAGE_JOB_SCHEMA_VERSION)).toEqual({
       name: "operational-job-fencing-v4",
@@ -54,7 +52,6 @@ describe("durable job storage fencing", () => {
       job: StorageJob;
       event?: { sequence: number };
     };
-
     expect(first).toMatchObject({ job: { id: "job-enqueue", status: "queued" }, event: { type: "run.status.changed" } });
     expect(retry.job.id).toBe("job-enqueue");
     expect(retry.event?.sequence).toBe((first.event as { sequence: number }).sequence);
@@ -165,6 +162,7 @@ describe("durable job storage fencing", () => {
     const jobA = claimAt("project-race", "2026-07-14T00:00:01.000Z", "2026-07-14T00:01:00.000Z");
     saveFencedToolAttempt(jobA.job, toolAttempt(jobA.job, "attempt-a-output", "completed"));
     saveFencedToolAttempt(jobA.job, toolAttempt(jobA.job, "attempt-a-active", "running"));
+    leaseNowMs = Date.parse("2026-07-14T00:02:00.000Z");
     runtime?.handle({ name: "job.markInterruptedExpiredLeases", now: "2026-07-14T00:02:00.000Z" });
 
     enqueue({ id: "job-b-successor", projectId: "project-race", projectRevision: 2, queuedAt: "2026-07-14T00:02:01.000Z" });
@@ -340,6 +338,7 @@ describe("durable job storage fencing", () => {
     const db = new DatabaseSync(path);
     db.prepare("update jobs set lease_expires_at=? where id=?").run("2026-07-14T00:00:01.000Z", "job-expired");
     db.close();
+    leaseNowMs = Date.parse("2026-07-14T00:02:00.000Z");
 
     const swept = runtime?.handle({ name: "job.markInterruptedExpiredLeases", now: "2026-07-14T00:02:00.000Z" }) as {
       jobs: StorageJob[];
@@ -511,8 +510,9 @@ function createDatabase(): string {
 }
 
 function createRuntime(): string {
+  leaseNowMs = Date.parse("2026-07-14T00:00:01.000Z");
   const path = createDatabase();
-  runtime = new StorageWorkerRuntime({ appDbPath: path, vectorDbPath: path, ontologyDbPath: path });
+  runtime = new StorageWorkerRuntime({ appDbPath: path, vectorDbPath: path, ontologyDbPath: path }, { leaseClock: () => leaseNowMs });
   return path;
 }
 
@@ -566,8 +566,8 @@ function toolAttempt(job: StorageJob, id: string, status: "running" | "completed
     decisionId: `decision-${id}`,
     ordinal: 0,
     status,
-    inputHash: "input-hash",
-    outputHash: status === "completed" ? "output-hash" : undefined,
+    inputHash: "a".repeat(64),
+    outputHash: status === "completed" ? "b".repeat(64) : undefined,
     terminalCause: status === "completed" ? "completed" : undefined,
     dependsOnAttemptIds: [],
     queuedAt: "2026-07-14T00:00:01.000Z",

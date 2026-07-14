@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "description": "Handle-only deterministic inputs for the M0 AetherBench runtime; no provider response, prompt, secret, or user file content is included.",
+  "fixtureIds": [
+    "catalog-manifest",
+    "composition-artifact",
+    "durable-checkpoint",
+    "project-memory-snapshot",
+    "stale-memory-snapshot",
+    "untrusted-tool-output",
+    "repository-manifest",
+    "work-order-manifest",
+    "side-effect-request"
+  ]
+}

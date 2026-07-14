@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -132,6 +133,7 @@ function migratedDatabase(path = ":memory:"): DatabaseSync {
 }
 
 function seedEveryCategory(db: DatabaseSync, jobId: string, count: number): void {
+  seedJob(db, jobId);
   seedLlmInvocations(db, jobId, count);
   seedToolDecisions(db, jobId, count);
   seedToolAttempts(db, jobId, count);
@@ -141,19 +143,34 @@ function seedEveryCategory(db: DatabaseSync, jobId: string, count: number): void
 }
 
 function seedLlmInvocations(db: DatabaseSync, jobId: string, count: number): void {
+  seedJob(db, jobId);
   const insert = db.prepare(
     `insert into llm_invocations
-     (id,project_id,job_id,model,reasoning_effort,prompt_version,schema_version,prompt_hash,repair_count,status,started_at)
-     values (?,?,?,?,?,?,?,?,0,'completed',?)`
+     (id,project_id,job_id,model,reasoning_effort,prompt_version,schema_version,prompt_hash,response_hash,repair_count,status,started_at,completed_at)
+     values (?,?,?,?,?,?,?,?,?,0,'completed',?,?)`
   );
   for (let index = 0; index < count; index += 1) {
-    insert.run(id(jobId, "llm", index), "project-1", jobId, "gpt-5.6-sol", "high", "planner-v2", "2", `prompt-${index}`, time(index));
+    const startedAt = time(index);
+    insert.run(
+      id(jobId, "llm", index),
+      "project-1",
+      jobId,
+      "gpt-5.6-sol",
+      "high",
+      "planner-v2",
+      "2",
+      hash(jobId, "prompt", index),
+      hash(jobId, "response", index),
+      startedAt,
+      startedAt
+    );
   }
 }
 
 function seedToolDecisions(db: DatabaseSync, jobId: string, count: number): void {
+  seedJob(db, jobId);
   const insert = db.prepare(
-    `insert into tool_decisions
+    `insert or ignore into tool_decisions
      (id,project_id,job_id,tool_name,purpose,expected_outcome,raw_selection,user_pinned,policy_status,created_at)
      values (?,?,?,'WebFetchTool','purpose','outcome','{}',0,'accepted',?)`
   );
@@ -161,13 +178,23 @@ function seedToolDecisions(db: DatabaseSync, jobId: string, count: number): void
 }
 
 function seedToolAttempts(db: DatabaseSync, jobId: string, count: number): void {
+  seedJob(db, jobId);
+  seedToolDecisions(db, jobId, count);
   const insert = db.prepare(
     `insert into tool_attempts
-     (id,project_id,job_id,decision_id,ordinal,status,input_hash,depends_on_attempt_ids,queued_at)
-     values (?,?,?,?,?,'completed',?,'[]',?)`
+     (id,project_id,job_id,decision_id,ordinal,status,input_hash,depends_on_attempt_ids,queued_at,started_at)
+     values (?,?,?,?,?,'running',?,'[]',?,?)`
+  );
+  const complete = db.prepare(
+    `update tool_attempts
+     set status='completed',output_hash=?,terminal_cause='completed',completed_at=?
+     where id=? and status='running'`
   );
   for (let index = 0; index < count; index += 1) {
-    insert.run(id(jobId, "attempt", index), "project-1", jobId, id(jobId, "decision", index), index, `input-${index}`, time(index));
+    const attemptId = id(jobId, "attempt", index);
+    const occurredAt = time(index);
+    insert.run(attemptId, "project-1", jobId, id(jobId, "decision", index), index, hash(jobId, "input", index), occurredAt, occurredAt);
+    complete.run(hash(jobId, "output", index), occurredAt, attemptId);
   }
 }
 
@@ -208,4 +235,17 @@ function id(jobId: string, category: string, index: number): string {
 
 function time(index: number): string {
   return `2026-01-01T00:00:${String(Math.floor(index / 2)).padStart(2, "0")}.000Z`;
+}
+
+function hash(jobId: string, category: string, index: number): string {
+  return createHash("sha256").update(`${jobId}\u0000${category}\u0000${index}`).digest("hex");
+}
+
+function seedJob(db: DatabaseSync, jobId: string): void {
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  db.prepare(
+    `insert or ignore into jobs
+     (id,project_id,operation,status,priority,attempt,queued_at,completed_at,created_at,updated_at,payload)
+     values (?,?,'research_loop','completed',0,0,?,?,?,?,?)`
+  ).run(jobId, "project-1", timestamp, timestamp, timestamp, timestamp, "{}");
 }

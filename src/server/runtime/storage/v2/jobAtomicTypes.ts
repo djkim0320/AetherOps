@@ -1,6 +1,7 @@
-import type { StorageToolOutputLink } from "./traceTypes.js";
+import type { StorageToolAttempt, StorageToolOutputLink } from "./traceTypes.js";
 import type {
   StorageCompletedStepInput,
+  StorageCapabilityAudit,
   StorageJob,
   StorageJobEvent,
   StorageLeaseFence,
@@ -11,6 +12,7 @@ import type {
 export interface StorageEnqueueJobResult {
   job: StorageJob;
   event?: StorageJobEvent;
+  capabilityAudits: StorageCapabilityAudit[];
 }
 
 export interface StorageOutputPromotion {
@@ -52,4 +54,16 @@ export interface StorageExpiredLeaseSweepResult {
   jobs: StorageJob[];
   events: StorageJobEvent[];
   projectIds: string[];
+}
+
+export interface StorageToolPostconditionVerifyInput {
+  fence: StorageLeaseFence;
+  attemptId: string;
+  projectRevision: number;
+  verifiedAt: string;
+}
+
+export interface StorageToolPostconditionVerifyResult {
+  attempt: StorageToolAttempt;
+  event?: StorageJobEvent;
 }

@@ -10,6 +10,7 @@ import { INTERNAL_LOOP_SAFETY_CAP, nextIteration } from "./loopStateMachine.js";
 import { ResearchLoopStep, type ContinuationDecision, type EvidenceBasedResult, type ResearchArtifact, type ResearchSnapshot } from "../shared/types.js";
 import { ExecutionOrchestrator } from "./executionOrchestrator.js";
 import { assertCitationPreservingResult, withCitationPreservationLine } from "./orchestratorResultHelpers.js";
+import type { ToolExecutionContext } from "../tools/researchToolTypes.js";
 export abstract class AnalysisOrchestrator extends ExecutionOrchestrator {
   async normalizeData(projectId: string, iteration?: number): Promise<ResearchSnapshot> {
     await this.moveProject(projectId, ResearchLoopStep.NormalizeData);
@@ -163,7 +164,7 @@ export abstract class AnalysisOrchestrator extends ExecutionOrchestrator {
     return this.store.getSnapshot(projectId);
   }
 
-  async synthesizeAndEvaluate(projectId: string, iteration?: number, forceStop = false): Promise<EvidenceBasedResult> {
+  async synthesizeAndEvaluate(projectId: string, iteration?: number, forceStop = false, execution?: ToolExecutionContext): Promise<EvidenceBasedResult> {
     await this.assertStepReady(projectId, ResearchLoopStep.SynthesizeAndEvaluate);
     await this.moveProject(projectId, ResearchLoopStep.SynthesizeAndEvaluate);
     await this.record(projectId, ResearchLoopStep.SynthesizeAndEvaluate, "Agent Control", "ProjectContextSnapshot 기반 결과 합성을 시작합니다.");
@@ -188,7 +189,8 @@ export abstract class AnalysisOrchestrator extends ExecutionOrchestrator {
     const llmResult = await this.tryLlmResult(
       { ...snapshot, hybridContexts: [...snapshot.hybridContexts, hybridContext], validationResults: latestValidations },
       activeIteration,
-      forceStop
+      forceStop,
+      execution
     );
     const mergedResultBase: EvidenceBasedResult = {
       ...draft,

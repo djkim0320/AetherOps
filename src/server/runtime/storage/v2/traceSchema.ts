@@ -1,8 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const STORAGE_TRACE_SCHEMA_VERSION = 3;
-export const STORAGE_TRACE_MIGRATION_NAME = "operational-codex-trace-v3";
-export const STORAGE_TRACE_MIGRATION_CHECKSUM = "a239551be946dd20dfa78120fd3d176a98a936f80c5b4615c0cb01027f39828d";
+export const STORAGE_TRACE_V3_MIGRATION_CHECKSUM = "a239551be946dd20dfa78120fd3d176a98a936f80c5b4615c0cb01027f39828d";
+export const STORAGE_TRACE_SCHEMA_VERSION = 6;
+export const STORAGE_TRACE_MIGRATION_NAME = "operational-tool-postcondition-receipts-v6";
+export const STORAGE_TRACE_MIGRATION_CHECKSUM = "271563c4a547ba1c1d50faef37cc391e5a519d3477d8d9135b4f253e933da1e4";
 
 const JOB_TRACE_COLUMNS = [
   ["request_hash", "text"],
@@ -14,6 +15,8 @@ const JOB_TRACE_COLUMNS = [
 ] as const;
 
 export function migrateStorageTraceV3Schema(db: DatabaseSync): void {
+  assertMigrationIdentityIfPresent(db, 3, "operational-codex-trace-v3", STORAGE_TRACE_V3_MIGRATION_CHECKSUM);
+  assertMigrationIdentityIfPresent(db, STORAGE_TRACE_SCHEMA_VERSION, STORAGE_TRACE_MIGRATION_NAME, STORAGE_TRACE_MIGRATION_CHECKSUM);
   db.exec(`
     create table if not exists schema_migrations (
       version integer primary key,
@@ -72,6 +75,13 @@ export function migrateStorageTraceV3Schema(db: DatabaseSync): void {
       status text not null check(status in ('queued', 'running', 'completed', 'blocked', 'failed', 'interrupted', 'quarantined')),
       input_hash text not null,
       output_hash text,
+      trace_version integer check(trace_version = 1),
+      descriptor_version text,
+      descriptor_side_effects text,
+      side_effect_key text,
+      idempotency_key text,
+      postcondition_disposition text check(postcondition_disposition in ('applied', 'not_applied')),
+      postcondition_receipt text,
       terminal_cause text,
       depends_on_attempt_ids text not null default '[]',
       staging_ref text,
@@ -147,34 +157,72 @@ export function migrateStorageTraceV3Schema(db: DatabaseSync): void {
     insert into schema_migrations (version, name, checksum_sha256, applied_at)
     values (3, 'operational-codex-trace-v3', 'a239551be946dd20dfa78120fd3d176a98a936f80c5b4615c0cb01027f39828d', datetime('now'))
     on conflict(version) do nothing;
+
+    insert into schema_migrations (version, name, checksum_sha256, applied_at)
+    values (6, 'operational-tool-postcondition-receipts-v6', '271563c4a547ba1c1d50faef37cc391e5a519d3477d8d9135b4f253e933da1e4', datetime('now'))
+    on conflict(version) do nothing;
   `);
 
   addMissingJobTraceColumns(db);
-  addMissingToolAttemptV3Columns(db);
+  addMissingToolAttemptColumns(db);
   assertStorageTraceSchemaReady(db);
 }
 
-function addMissingToolAttemptV3Columns(db: DatabaseSync): void {
+function addMissingToolAttemptColumns(db: DatabaseSync): void {
   const columns = tableColumnNames(db, "tool_attempts");
   if (!columns.has("terminal_cause")) db.exec("alter table tool_attempts add column terminal_cause text");
   if (!columns.has("depends_on_attempt_ids")) db.exec("alter table tool_attempts add column depends_on_attempt_ids text not null default '[]'");
+  if (!columns.has("trace_version")) db.exec("alter table tool_attempts add column trace_version integer check(trace_version = 1)");
+  if (!columns.has("descriptor_version")) db.exec("alter table tool_attempts add column descriptor_version text");
+  if (!columns.has("descriptor_side_effects")) db.exec("alter table tool_attempts add column descriptor_side_effects text");
+  if (!columns.has("side_effect_key")) db.exec("alter table tool_attempts add column side_effect_key text");
+  if (!columns.has("idempotency_key")) db.exec("alter table tool_attempts add column idempotency_key text");
+  if (!columns.has("postcondition_disposition")) {
+    db.exec("alter table tool_attempts add column postcondition_disposition text check(postcondition_disposition in ('applied', 'not_applied'))");
+  }
+  if (!columns.has("postcondition_receipt")) db.exec("alter table tool_attempts add column postcondition_receipt text");
+  db.exec("create index if not exists idx_tool_attempts_side_effect_key on tool_attempts(project_id, side_effect_key) where side_effect_key is not null");
 }
 
 export function assertStorageTraceSchemaReady(db: DatabaseSync): void {
-  const migration = db.prepare("select name, checksum_sha256 from schema_migrations where version = ?").get(STORAGE_TRACE_SCHEMA_VERSION) as
-    { name?: unknown; checksum_sha256?: unknown } | undefined;
-  if (migration?.name !== STORAGE_TRACE_MIGRATION_NAME || migration.checksum_sha256 !== STORAGE_TRACE_MIGRATION_CHECKSUM) {
-    throw new Error("Storage trace migration ledger is missing or has an unexpected checksum.");
-  }
+  assertMigrationIdentity(db, 3, "operational-codex-trace-v3", STORAGE_TRACE_V3_MIGRATION_CHECKSUM);
+  assertMigrationIdentity(db, STORAGE_TRACE_SCHEMA_VERSION, STORAGE_TRACE_MIGRATION_NAME, STORAGE_TRACE_MIGRATION_CHECKSUM);
   const columns = tableColumnNames(db, "jobs");
   for (const [name] of JOB_TRACE_COLUMNS) {
     if (!columns.has(name)) throw new Error(`Storage jobs trace column is missing: ${name}`);
   }
   const attemptColumns = tableColumnNames(db, "tool_attempts");
-  for (const name of ["terminal_cause", "depends_on_attempt_ids"]) {
-    if (!attemptColumns.has(name)) throw new Error(`Storage tool attempt v3 column is missing: ${name}`);
+  for (const name of [
+    "terminal_cause",
+    "depends_on_attempt_ids",
+    "trace_version",
+    "descriptor_version",
+    "descriptor_side_effects",
+    "side_effect_key",
+    "idempotency_key",
+    "postcondition_disposition",
+    "postcondition_receipt"
+  ]) {
+    if (!attemptColumns.has(name)) throw new Error(`Storage tool attempt trace column is missing: ${name}`);
   }
   if (!tableExists(db, "codex_cli_executions")) throw new Error("Storage Codex CLI execution trace table is missing.");
+}
+
+function assertMigrationIdentityIfPresent(db: DatabaseSync, version: number, name: string, checksum: string): void {
+  if (!tableExists(db, "schema_migrations")) return;
+  const migration = db.prepare("select name, checksum_sha256 from schema_migrations where version = ?").get(version) as
+    { name?: unknown; checksum_sha256?: unknown } | undefined;
+  if (migration && (migration.name !== name || migration.checksum_sha256 !== checksum)) {
+    throw new Error(`Storage trace migration ${version} has an unexpected identity or checksum.`);
+  }
+}
+
+function assertMigrationIdentity(db: DatabaseSync, version: number, name: string, checksum: string): void {
+  const migration = db.prepare("select name, checksum_sha256 from schema_migrations where version = ?").get(version) as
+    { name?: unknown; checksum_sha256?: unknown } | undefined;
+  if (migration?.name !== name || migration.checksum_sha256 !== checksum) {
+    throw new Error(`Storage trace migration ${version} is missing or has an unexpected identity or checksum.`);
+  }
 }
 
 function addMissingJobTraceColumns(db: DatabaseSync): void {

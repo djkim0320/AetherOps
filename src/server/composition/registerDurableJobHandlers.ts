@@ -6,7 +6,6 @@ import { authorizeJobCapabilities } from "../../core/application/capabilities/in
 import type { CapabilityKind, CapabilityPolicy } from "../../core/domain/capabilities/types.js";
 import { ResearchLoopStep } from "../../core/shared/types.js";
 import { createId, nowIso } from "../../core/shared/ids.js";
-import type { ResearchSnapshot } from "../../core/shared/evaluationTypes.js";
 import type { CodexCliAdapter, EngineeringProgramRequest, ResearchArtifact } from "../../core/shared/types.js";
 import type { AetherOpsOrchestrator } from "../../core/orchestration/orchestrator.js";
 import { LlmAccessUnavailableError } from "../../core/providers/llm.js";
@@ -15,11 +14,16 @@ import { RuntimeRequirementError } from "../../core/tools/runtimeRequirements.js
 import { CodexCliError } from "../runtime/codex/codexCliErrors.js";
 import { runEngineeringProgramDirect } from "../http/directEngineering.js";
 import { computeProjectRevision } from "../http/v2/common.js";
-import { emitChatMessageAppended, emitProjectSnapshotChanged } from "../http/v2/eventEmitters.js";
+import { emitChatMessageAppended } from "../http/v2/eventEmitters.js";
 import type { AppSettingsStore } from "../runtime/storage/settingsStore.js";
+import { CanonicalRunRuntime } from "./canonicalRunRuntime.js";
+import { DurableCanonicalRunGateway } from "./durableCanonicalRunGateway.js";
+import { durableJobRequestHash } from "./durableJobRequestHash.js";
 import type { DurableJobRuntime } from "./durableJobRuntime.js";
 import type { DurableJobRecord } from "./durableJobTypes.js";
-import { DurableToolExecutionAdapter } from "./durableToolExecutionAdapter.js";
+import { createDurableLlmExecution, registerDurableResearchLoopHandler } from "./registerDurableResearchLoopHandler.js";
+
+export { toStorageLlmInvocation, toStorageRunningLlmInvocation } from "./registerDurableResearchLoopHandler.js";
 
 interface HandlerDependencies {
   dataRoot: string;
@@ -28,13 +32,17 @@ interface HandlerDependencies {
   jobs: DurableJobRuntime;
   events: DurableJobRuntime;
   codexCli: CodexCliAdapter;
+  canonicalRuntime?: CanonicalRunRuntime;
 }
 
 export function registerDurableJobHandlers(deps: HandlerDependencies): void {
+  const canonicalHasher = { sha256Canonical: durableJobRequestHash };
+  const canonicalRuntime = deps.canonicalRuntime ?? new CanonicalRunRuntime({ gateway: new DurableCanonicalRunGateway(deps.jobs), hasher: canonicalHasher });
+
   deps.jobs.registerHandler("chat_reply", async (job, request) => {
     const input = request as { sessionId: string; content: string; clientMutationId: string };
     try {
-      const snapshot = await deps.orchestrator.sendChatMessage(job.projectId, input.sessionId, input.content);
+      const snapshot = await deps.orchestrator.sendChatMessage(job.projectId, input.sessionId, input.content, createDurableLlmExecution(job, deps.jobs));
       await emitChatMessageAppended(deps.events, job.projectId, computeProjectRevision(snapshot), input.sessionId, input.content, input.clientMutationId);
       await deps.jobs.finish(job.id, computeProjectRevision(snapshot));
     } catch (error) {
@@ -47,78 +55,7 @@ export function registerDurableJobHandlers(deps: HandlerDependencies): void {
     }
   });
 
-  deps.jobs.registerHandler("research_loop", async (job, request, context) => {
-    const action = (request as { action?: string } | undefined)?.action;
-    const resumeCheckpoint = action === "resume" && job.resumeCheckpointId ? await deps.jobs.getCheckpoint(job.resumeCheckpointId) : undefined;
-    const trace = new DurableToolExecutionAdapter(job, deps.jobs, async () => computeProjectRevision(await deps.orchestrator.getSnapshot(job.projectId)));
-    const execution: ToolExecutionContext = {
-      jobId: job.id,
-      idempotencyKey: job.idempotencyKey,
-      allowCodexCli: job.toolPolicy?.allowCodexCli === true,
-      ...(job.effectiveCapabilities ? { effectiveCapabilities: job.effectiveCapabilities } : {}),
-      authorizeAction: createActionAuthorizer(deps, job),
-      ...(resumeCheckpoint?.step ? { resumeCheckpointStep: resumeCheckpoint.step as ResearchLoopStep } : {}),
-      ...(job.toolPolicy ? { toolPolicy: job.toolPolicy } : {}),
-      signal: context.signal,
-      onStatus: trace.onStatus,
-      onLlmInvocation: async (metadata) => {
-        await deps.jobs.saveLlmInvocation({
-          id: randomUUID(),
-          projectId: job.projectId,
-          jobId: job.id,
-          model: metadata.model ?? metadata.provider,
-          reasoningEffort: metadata.reasoningEffort ?? "unspecified",
-          promptVersion: metadata.promptVersion,
-          schemaVersion: metadata.schemaVersion,
-          promptHash: metadata.promptHash ?? "unavailable",
-          ...(metadata.responseHash ? { responseHash: metadata.responseHash } : {}),
-          latencyMs: metadata.durationMs,
-          repairCount: metadata.repairCount,
-          status: metadata.status ?? "completed",
-          ...(metadata.validationErrors?.length ? { error: metadata.validationErrors.join("; ") } : {}),
-          startedAt: metadata.startedAt,
-          completedAt: metadata.completedAt,
-          data: { provider: metadata.provider, schemaName: metadata.schemaName, validationErrors: metadata.validationErrors }
-        });
-      },
-      onNetworkAudit: async (audit) => {
-        await deps.jobs.recordNetworkAudit({
-          id: randomUUID(),
-          projectId: job.projectId,
-          jobId: job.id,
-          attemptId: audit.attemptId,
-          url: audit.url,
-          redirectChain: audit.redirectChain,
-          sourcePolicy: audit.sourcePolicy,
-          policyDecision: audit.policyDecision,
-          reason: audit.reason,
-          auditedAt: audit.auditedAt
-        });
-      },
-      onCheckpoint: async (step) => {
-        const projectRevision = computeProjectRevision(await deps.orchestrator.getSnapshot(job.projectId));
-        await deps.jobs.commitCheckpoint({
-          projectId: job.projectId,
-          jobId: job.id,
-          step,
-          projectRevision
-        });
-      }
-    };
-    let snapshot = action === "resume" ? await deps.orchestrator.resume(job.projectId, execution) : await deps.orchestrator.startLoop(job.projectId, execution);
-    const requestedControl = context.requestedControl();
-    if (requestedControl) {
-      snapshot = requestedControl === "pause" ? await deps.orchestrator.pause(job.projectId) : await deps.orchestrator.abort(job.projectId);
-    }
-    const revision = computeProjectRevision(snapshot);
-    if (["paused", "aborted", "blocked", "failed"].includes(snapshot.project.status)) {
-      const status = snapshot.project.status as "paused" | "aborted" | "blocked" | "failed";
-      await deps.jobs.settle(job.id, status, revision, terminalReason(snapshot, status));
-    } else {
-      await deps.jobs.finish(job.id, revision, trace.completedOutputPromotions());
-    }
-    await emitProjectSnapshotChanged(deps.events, snapshot, "job_changed");
-  });
+  registerDurableResearchLoopHandler(deps, canonicalRuntime, canonicalHasher, (job) => createActionAuthorizer(deps, job));
 
   deps.jobs.registerHandler("engineering_run", async (job, request, context) => {
     const input = request as { requests: EngineeringRequest[] };
@@ -162,16 +99,6 @@ export function registerDurableJobHandlers(deps: HandlerDependencies): void {
   });
 }
 
-function terminalReason(snapshot: ResearchSnapshot, status: "paused" | "aborted" | "blocked" | "failed") {
-  if (status === "blocked") {
-    return snapshot.runtimeBlockers.at(-1)?.message ?? snapshot.stepErrors.at(-1)?.message ?? "Execution was blocked by an unmet runtime requirement.";
-  }
-  if (status === "failed") {
-    return snapshot.stepErrors.at(-1)?.message ?? snapshot.runtimeBlockers.at(-1)?.message ?? "Execution failed without a recorded step error.";
-  }
-  return undefined;
-}
-
 function createActionAuthorizer(deps: HandlerDependencies, job: DurableJobRecord): NonNullable<ToolExecutionContext["authorizeAction"]> {
   return async (action): Promise<CapabilityPolicy> => {
     const [settings, snapshot] = await Promise.all([deps.settingsStore.getRuntimeSettings(), deps.orchestrator.getSnapshot(job.projectId)]);
@@ -201,7 +128,7 @@ function createActionAuthorizer(deps: HandlerDependencies, job: DurableJobRecord
         operationAllowed: audit.jobAllowed,
         allowed: audit.allowed,
         reason: audit.reason,
-        data: { action: action.name, jobKind: audit.jobKind, blockedBy: audit.blockedBy },
+        data: { jobKind: audit.jobKind, blockedBy: audit.blockedBy },
         auditedAt: audit.recordedAt
       }))
     );

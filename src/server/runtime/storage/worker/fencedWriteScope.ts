@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { StorageJob, StorageV2RepositorySet } from "../v2/index.js";
 import type { StorageFencedWriteCommand } from "./typedProtocol.js";
 
@@ -9,24 +10,16 @@ export function assertFencedWriteScope(
   if (command.name === "trace.output.record" && command.link.promoted) {
     throw new Error("Output promotion must be committed with the terminal completed transition.");
   }
-  const value =
-    command.name === "event.append"
-      ? command.event
-      : command.name === "trace.llm.save"
-        ? command.invocation
-        : command.name === "trace.decision.record"
-          ? command.decision
-          : command.name === "trace.attempt.save"
-            ? command.attempt
-            : command.name === "trace.codex.save"
-              ? command.execution
-              : command.name === "trace.output.record"
-                ? command.link
-                : command.audit;
+  const value = fencedOwner(command);
   if (value.jobId !== job.id || value.projectId !== job.projectId) {
     throw new Error("Fenced storage write does not belong to the leased job.");
   }
+  if (command.name === "taskContract.save" && command.contract.projectId !== job.projectId) {
+    throw new Error("Fenced task contract does not belong to the leased job project.");
+  }
   switch (command.name) {
+    case "taskContract.save":
+      return;
     case "trace.llm.save":
       assertExistingScope(repositories.trace.getLlmInvocation(command.invocation.id), job, "LLM invocation identity");
       return;
@@ -42,9 +35,21 @@ export function assertFencedWriteScope(
         assertParentScope(repositories.trace.getLlmInvocation(command.decision.invocationId), job, "LLM invocation");
       }
       return;
-    case "trace.attempt.save":
+    case "trace.attempt.save": {
+      const existingAttempt = repositories.trace.getToolAttempt(command.attempt.id);
+      if (command.attempt.postconditionDisposition !== undefined || command.attempt.postconditionReceipt !== undefined) {
+        if (
+          !existingAttempt ||
+          command.attempt.postconditionDisposition !== existingAttempt.postconditionDisposition ||
+          !isDeepStrictEqual(command.attempt.postconditionReceipt, existingAttempt.postconditionReceipt)
+        ) {
+          throw new Error("Tool postcondition receipts may be issued only by the storage-worker verifier.");
+        }
+      }
+      assertExistingScope(existingAttempt, job, "tool attempt identity");
       assertParentScope(repositories.trace.getToolDecision(command.attempt.decisionId), job, "tool decision");
       return;
+    }
     case "trace.codex.save":
       assertExistingLink(
         repositories.trace.getCodexCliExecution(command.execution.id),
@@ -61,8 +66,36 @@ export function assertFencedWriteScope(
     case "trace.network.record":
       if (command.audit.attemptId) assertParentScope(repositories.trace.getToolAttempt(command.audit.attemptId), job, "tool attempt");
       return;
+    case "runState.commit":
+    case "contextPack.save":
+      return;
     default:
       return;
+  }
+}
+
+function fencedOwner(command: StorageFencedWriteCommand): { jobId?: string; projectId: string } {
+  switch (command.name) {
+    case "taskContract.save":
+      return command.owner;
+    case "event.append":
+      return command.event;
+    case "trace.llm.save":
+      return command.invocation;
+    case "trace.decision.record":
+      return command.decision;
+    case "trace.attempt.save":
+      return command.attempt;
+    case "trace.codex.save":
+      return command.execution;
+    case "trace.output.record":
+      return command.link;
+    case "trace.network.record":
+      return command.audit;
+    case "runState.commit":
+      return command.input.revision;
+    case "contextPack.save":
+      return command.input.contextPack;
   }
 }
 

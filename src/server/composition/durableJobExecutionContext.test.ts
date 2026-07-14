@@ -22,6 +22,22 @@ describe("durable job execution context", () => {
       expect(() => context.require("job-1")).toThrow(/lease was lost/i);
     });
   });
+
+  it("carries a bound canonical transition into fallback terminal outcomes", async () => {
+    const context = new DurableJobExecutionContext();
+    const controller = new AbortController();
+    const transition = {
+      owner: { projectId: "project-1", runId: "run-1", jobId: "job-1" },
+      prepareRevision: async () => {
+        throw new Error("not invoked by the execution-context projection");
+      }
+    };
+    await context.run({ job: job(), fence: { jobId: "job-1", attempt: 1, leaseOwner: "worker-1", leaseGeneration: 2 }, controller }, async () => {
+      context.bindCanonicalTransition("job-1", transition);
+      context.settle("job-1", { status: "failed", projectRevision: 4, reason: "failed" });
+      expect(context.current("job-1")?.outcome?.canonicalTransition).toBe(transition);
+    });
+  });
 });
 
 function job(): DurableJobRecord {

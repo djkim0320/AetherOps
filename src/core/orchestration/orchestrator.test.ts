@@ -117,6 +117,31 @@ describe("AetherOpsOrchestrator", () => {
     expect(snapshot.project.status).toBe("completed");
   });
 
+  it.each(["blocked", "failed", "running"] as const)("re-enters execution when a durable resume starts from a %s project snapshot", async (status) => {
+    const store = new InMemoryResearchStore();
+    const orchestrator = createStrictTestOrchestrator({ store });
+    const snapshot = await createInputProject(orchestrator, {
+      ...input,
+      autonomyPolicy: { ...input.autonomyPolicy, maxLoopIterations: 1 }
+    });
+    await store.updateProject({ ...snapshot.project, status });
+
+    const resumed = await orchestrator.resume(snapshot.project.id);
+
+    expect(resumed.project.status).toBe("completed");
+    expect(resumed.project.currentStep).toBe(ResearchLoopStep.FinalizeOutputs);
+    expect(resumed.toolRuns.length).toBeGreaterThan(0);
+  });
+
+  it.each(["idle", "completed", "aborted"] as const)("rejects a durable resume from a non-resumable %s project snapshot", async (status) => {
+    const store = new InMemoryResearchStore();
+    const orchestrator = createStrictTestOrchestrator({ store });
+    const snapshot = await createInputProject(orchestrator, input);
+    await store.updateProject({ ...snapshot.project, status });
+
+    await expect(orchestrator.resume(snapshot.project.id)).rejects.toThrow(/cannot resume from project status/);
+  });
+
   it("runs registered research tools without requiring Codex CLI when the plan excludes CodexCliTool", async () => {
     const settings: AppSettings = {
       ...strictTestSettings,
@@ -211,6 +236,22 @@ describe("AetherOpsOrchestrator", () => {
 
     expect(snapshot.sessions).toHaveLength(1);
     expect(snapshot.iterations.at(-1)?.message).toBeTruthy();
+  });
+
+  it("assigns distinct project roots to same-topic projects created on the same day", async () => {
+    const orchestrator = createStrictTestOrchestrator({ store: new InMemoryResearchStore() });
+    const first = await orchestrator.createProject(input);
+    const second = await orchestrator.createProject(input);
+
+    expect(first.project.id).not.toBe(second.project.id);
+    expect(first.project.projectRoot).not.toBe(second.project.projectRoot);
+    for (const project of [first.project, second.project]) {
+      const shortProjectId = project.id
+        .replace(/^project[_-]/, "")
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .slice(0, 12);
+      expect(project.projectRoot).toMatch(new RegExp(`-${shortProjectId}$`));
+    }
   });
 });
 

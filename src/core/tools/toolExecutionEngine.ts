@@ -16,7 +16,7 @@ import { normalizeToolName } from "./toolMerger.js";
 import { validateResearchToolResult } from "./toolResultGuards.js";
 import { assertToolActionAllowed } from "./toolCapabilityGuard.js";
 import { accumulateToolResult, cloneRollingInput, type RollingResearchToolInput } from "./toolRollingInput.js";
-import { sha256CanonicalValue } from "./toolResultHash.js";
+import { canonicalValueByteLength, sha256CanonicalValue } from "./toolResultHash.js";
 import { ActionGroupFailure, actionError, actionFailures, asActionFailure, type ActionFailure } from "./toolActionFailure.js";
 import { codexTraceEvent } from "./toolTraceProjection.js";
 
@@ -129,9 +129,9 @@ export class ToolRunner {
             this.runAction(action, phaseInput, settings, toolMap, executionId, signal, options)
           );
           const phaseFailures: ActionFailure[] = [];
-          for (const item of settled) {
+          for (const [index, item] of settled.entries()) {
             if (item.status === "rejected") {
-              phaseFailures.push(asActionFailure(item.reason, group.actions[phaseFailures.length] ?? group.actions.at(-1)));
+              phaseFailures.push(asActionFailure(item.reason, group.actions[index] ?? group.actions.at(-1)));
               continue;
             }
             completed.push(item.value);
@@ -273,7 +273,7 @@ export class ToolRunner {
       occurredAt: nowIso(),
       ...(failure ? { error: failure.message } : {}),
       ...(policy ? { policyStatus: policy.status, policyReason: policy.reason } : {}),
-      ...(result ? { outputHash, outputIds: outputIds(result), outputs: publicOutputs(result) } : {}),
+      ...(result ? { outputHash, outputBytes: canonicalValueByteLength(result), outputIds: outputIds(result), outputs: publicOutputs(result) } : {}),
       ...(quarantineRef ? { quarantineRef } : {}),
       ...(terminalCause ? { terminalCause } : {}),
       ...(result ? codexTraceEvent(result) : {})

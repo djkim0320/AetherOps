@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { CheckpointRetryConflictError, StepAttemptRetryConflictError } from "./checkpointRepository.js";
+import { CheckpointRepository, CheckpointRetryConflictError, StepAttemptRetryConflictError } from "./checkpointRepository.js";
 import { createStorageV2Repositories } from "./repositories.js";
 import { migrateStorageV2Schema } from "./schema.js";
 import type { StorageCheckpoint, StorageStepAttempt } from "./types.js";
@@ -102,6 +102,34 @@ describe("checkpoint retry immutability", () => {
     db.close();
   });
 });
+
+describe("checkpoint ordering", () => {
+  it("uses the immutable checkpoint id as the deterministic tie-break for equal timestamps", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      migrateStorageV2Schema(db);
+      const repository = new CheckpointRepository(db);
+      repository.saveCheckpoint(checkpoint("checkpoint-a"));
+      repository.saveCheckpoint(checkpoint("checkpoint-z"));
+      expect(repository.latestCommittedForJob("job-checkpoint-order")?.id).toBe("checkpoint-z");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+function checkpoint(id: string) {
+  return {
+    id,
+    projectId: "project-checkpoint-order",
+    jobId: "job-checkpoint-order",
+    step: "EXECUTE_TOOLS",
+    checkpointKey: id,
+    status: "committed" as const,
+    createdAt: "2026-07-14T00:00:00.000Z",
+    committedAt: "2026-07-14T00:00:00.000Z"
+  };
+}
 
 function migratedDatabase(): DatabaseSync {
   const db = new DatabaseSync(":memory:");

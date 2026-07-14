@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, normalize } from "node:path";
 import { createId, nowIso } from "../../../core/shared/ids.js";
 import { dedupeSourcesByIdUrlDoi } from "../../../core/evidence/sourceDedupe.js";
@@ -94,7 +95,17 @@ export class NodeProjectStorage implements ProjectStorage {
         const relativePath = normalizeArtifactPath(artifact.relativePath, iteration, artifact.title);
         const absolutePath = safeJoin(project.projectRoot, relativePath);
         writeTextFileSync(absolutePath, artifact.content ?? artifact.summary, artifact.mimeType === "text/markdown" || /\.md$/i.test(absolutePath));
-        const saved = { ...artifact, relativePath, rawPath: absolutePath };
+        const persistedBytes = readFileSync(absolutePath);
+        const saved = {
+          ...artifact,
+          relativePath,
+          rawPath: absolutePath,
+          metadata: {
+            ...(artifact.metadata ?? {}),
+            sha256: createHash("sha256").update(persistedBytes).digest("hex"),
+            bytes: persistedBytes.byteLength
+          }
+        };
         written.push(saved);
         sqlite.upsert("artifacts", saved.id, project.id, saved.createdAt, saved);
       }

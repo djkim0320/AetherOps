@@ -19,6 +19,20 @@ export function isValidPublicSourceDomain(value: string): boolean {
   return normalizePublicSourceDomain(value) !== undefined;
 }
 
+/**
+ * Allowlist URLs are copied into the immutable job policy, so credential-bearing
+ * userinfo and query strings must use a future encrypted handle instead of
+ * entering operational storage as plaintext.
+ */
+export function isPersistableSourceAllowlistUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value.trim());
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && !parsed.username && !parsed.password && !parsed.search;
+  } catch {
+    return false;
+  }
+}
+
 function isInternalHostname(value: string): boolean {
   return value === "localhost" || value.endsWith(".localhost") || value.endsWith(".local") || value.endsWith(".internal");
 }

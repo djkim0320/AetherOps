@@ -1,5 +1,5 @@
 import { createId, nowIso } from "../shared/ids.js";
-import type { LlmProvider } from "../providers/llm.js";
+import { completeDurableJson, type DurableLlmInvocationObserver, type LlmProvider } from "../providers/llm.js";
 import {
   hybridContextPromptSummary,
   hypothesisPromptRows,
@@ -104,16 +104,17 @@ export async function deriveResultWithLlm(
   llm: LlmProvider,
   snapshot: ResearchSnapshot,
   iteration: number,
-  forceStop: boolean
+  forceStop: boolean,
+  observer?: DurableLlmInvocationObserver
 ): Promise<EvidenceBasedResult | undefined> {
   if (!(await llm.isAvailable())) {
     return undefined;
   }
 
-  let response = await requestResultJson(llm, snapshot, iteration, forceStop);
+  let response = await requestResultJson(llm, snapshot, iteration, forceStop, false, observer);
   let answer = cleanText(response.answer ?? response.finalAnswer ?? response.summary);
   if (!answer) {
-    response = await requestResultJson(llm, snapshot, iteration, forceStop, true);
+    response = await requestResultJson(llm, snapshot, iteration, forceStop, true, observer);
     answer = cleanText(response.answer ?? response.finalAnswer ?? response.summary);
   }
 
@@ -148,7 +149,14 @@ export async function deriveResultWithLlm(
   };
 }
 
-function requestResultJson(llm: LlmProvider, snapshot: ResearchSnapshot, iteration: number, forceStop: boolean, repair = false): Promise<LlmResultResponse> {
+async function requestResultJson(
+  llm: LlmProvider,
+  snapshot: ResearchSnapshot,
+  iteration: number,
+  forceStop: boolean,
+  repair = false,
+  observer?: DurableLlmInvocationObserver
+): Promise<LlmResultResponse> {
   const user = repair
     ? [
         "The previous response omitted a non-empty answer. Produce a concise evidence-based JSON result now.",
@@ -195,10 +203,12 @@ function requestResultJson(llm: LlmProvider, snapshot: ResearchSnapshot, iterati
         `Archived executor runs: ${JSON.stringify(legacyExecutionRunPromptRows(snapshot.legacyAgentRuns))}`,
         `Tool Runs: ${JSON.stringify(toolRunPromptRows(snapshot.toolRuns, 12))}`
       ].join("\n");
-  return llm.completeJson<LlmResultResponse>({
+  const request = {
     schemaName: "AetherOpsEvidenceBasedResult",
     system: "You are AetherOps, a Korean autonomous research agent. Return only valid JSON.",
     user,
     timeoutMs: 180_000
-  });
+  };
+  if (!observer) return llm.completeJson<LlmResultResponse>(request);
+  return (await completeDurableJson<LlmResultResponse>(llm, request, createId("llm_invocation"), observer)).value;
 }

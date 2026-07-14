@@ -31,6 +31,7 @@ interface WorkspaceAction {
   occurredAt: string;
   inputHash: string;
   outputHash?: string;
+  outputBytes?: number;
   outputIds?: string[];
   error?: string;
 }
@@ -69,7 +70,7 @@ export class FileToolExecutionWorkspace implements ToolExecutionJournal {
       status: event.status,
       occurredAt: event.occurredAt,
       inputHash: hashJson(event.inputs),
-      ...(result ? { outputHash: hashJson(result), outputIds: collectOutputIds(result) } : {}),
+      ...(result ? { outputHash: hashJson(result), outputBytes: canonicalByteLength(result), outputIds: collectOutputIds(result) } : {}),
       ...(event.error ? { error: event.error } : {})
     };
     const previous = execution.manifest.actions.findIndex((item) => item.attemptId === event.attemptId);
@@ -157,6 +158,10 @@ function safeSegment(value: string): string {
 
 function hashJson(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+function canonicalByteLength(value: unknown): number {
+  return new TextEncoder().encode(canonicalJson(value)).byteLength;
 }
 
 function canonicalJson(value: unknown): string {

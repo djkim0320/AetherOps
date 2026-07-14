@@ -9,6 +9,11 @@ import { CheckpointRepository } from "./checkpointRepository.js";
 import { CapabilityAuditRepository } from "./capabilityRepository.js";
 import { OntologyRepository } from "./ontologyRepository.js";
 import { TraceRepository } from "./traceRepository.js";
+import { RunStateRepository } from "./runStateRepository.js";
+import { TerminalReceiptRepository } from "./terminalReceiptRepository.js";
+import { TerminalResultReadbackRepository } from "./terminalResultReadbackRepository.js";
+import { TerminalAttestationRepository } from "./terminalAttestationRepository.js";
+import { TerminalAttestedReadbackRepository } from "./terminalAttestedReadbackRepository.js";
 
 export {
   ProjectRepository,
@@ -20,7 +25,12 @@ export {
   CheckpointRepository,
   CapabilityAuditRepository,
   OntologyRepository,
-  TraceRepository
+  TraceRepository,
+  RunStateRepository,
+  TerminalReceiptRepository,
+  TerminalResultReadbackRepository,
+  TerminalAttestationRepository,
+  TerminalAttestedReadbackRepository
 };
 export { runAtomically } from "./repositorySupport.js";
 
@@ -35,26 +45,44 @@ export interface StorageV2RepositorySet {
   capabilities: CapabilityAuditRepository;
   ontology: OntologyRepository;
   trace: TraceRepository;
+  runState: RunStateRepository;
+  terminalReceipts: TerminalReceiptRepository;
+  terminalReadback: TerminalResultReadbackRepository;
+  terminalAttestations: TerminalAttestationRepository;
+  terminalAttestedReadback: TerminalAttestedReadbackRepository;
 }
 export interface StorageV2RepositoryDbs {
   appDb: DatabaseSync;
   vectorDb?: DatabaseSync;
   ontologyDb?: DatabaseSync;
 }
-export function createStorageV2Repositories(dbs: StorageV2RepositoryDbs): StorageV2RepositorySet {
+
+export interface StorageV2RepositoryOptions {
+  leaseClock?: () => number;
+  dataRoot?: string;
+}
+
+export function createStorageV2Repositories(dbs: StorageV2RepositoryDbs, options: StorageV2RepositoryOptions = {}): StorageV2RepositorySet {
   const vectorDb = dbs.vectorDb ?? dbs.appDb;
   const ontologyDb = dbs.ontologyDb ?? dbs.appDb;
   const embeddings = new EmbeddingRepository(vectorDb);
+  const terminalReadback = new TerminalResultReadbackRepository(dbs.appDb, options.dataRoot);
+  const terminalAttestations = new TerminalAttestationRepository(dbs.appDb, options.dataRoot, terminalReadback);
   return {
     projects: new ProjectRepository(dbs.appDb),
     records: new RecordRepository(vectorDb, embeddings),
     memory: new MemoryRepository(vectorDb, embeddings),
     embeddings,
-    jobs: new JobRepository(dbs.appDb),
+    jobs: new JobRepository(dbs.appDb, options.leaseClock),
     checkpoints: new CheckpointRepository(dbs.appDb),
     events: new EventRepository(dbs.appDb),
     capabilities: new CapabilityAuditRepository(dbs.appDb),
     ontology: new OntologyRepository(ontologyDb),
-    trace: new TraceRepository(dbs.appDb)
+    trace: new TraceRepository(dbs.appDb),
+    runState: new RunStateRepository(dbs.appDb),
+    terminalReceipts: new TerminalReceiptRepository(dbs.appDb),
+    terminalReadback,
+    terminalAttestations,
+    terminalAttestedReadback: new TerminalAttestedReadbackRepository(dbs.appDb, options.dataRoot, terminalAttestations)
   };
 }

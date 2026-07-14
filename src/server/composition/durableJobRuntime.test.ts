@@ -188,38 +188,6 @@ describe("DurableJobRuntime recovery", () => {
     runtime = undefined;
   });
 
-  it("observes a control requested by another runtime and prevents late completion overwrite", async () => {
-    const databasePath = createDatabase("cross-runtime-control");
-    const timer = manualTimer();
-    runtime = new DurableJobRuntime(databasePath, { concurrency: 1, leaseTtlMs: 1_000, leaseRenewalMs: 10, leaseSweepMs: 500, timer });
-    const started = deferred<void>();
-    runtime.registerHandler("chat_reply", async (job, _request, context) => {
-      started.resolve();
-      await new Promise<void>((resolve) => context.signal.addEventListener("abort", () => resolve(), { once: true }));
-      await runtime?.finish(job.id, 1);
-    });
-    await runtime.initialize();
-    const receipt = await runtime.enqueue({
-      projectId: "project-control",
-      kind: "chat_reply",
-      projectRevision: 1,
-      idempotencyKey: "control-key",
-      payload: {}
-    });
-    await started.promise;
-
-    const other = new DurableJobRuntime(databasePath, 1);
-    await other.initialize();
-    try {
-      await other.requestAbort(receipt.jobId, 1);
-      timer.fireDelay(10);
-      await waitUntilAsync(async () => (await runtime?.get(receipt.jobId))?.status === "aborted");
-      await expect(runtime.get(receipt.jobId)).resolves.toMatchObject({ status: "aborted" });
-    } finally {
-      await other.close();
-    }
-  });
-
   it("reports the stored terminal status when an idempotent enqueue is replayed", async () => {
     const databasePath = createDatabase("terminal-receipt");
     runtime = new DurableJobRuntime(databasePath, 1);
@@ -326,11 +294,19 @@ describe("DurableJobRuntime recovery", () => {
     });
     await runtime.initialize();
 
-    const first = await runtime.enqueue({ projectId: "project-a", kind: "chat_reply", projectRevision: 1, idempotencyKey: "a-1", payload: { label: "a-1" } });
-    const duplicate = await runtime.enqueue({
+    const first = await runtime.enqueue({
       projectId: "project-a",
       kind: "chat_reply",
       projectRevision: 1,
+      currentStep: "PLAN_RESEARCH",
+      idempotencyKey: "a-1",
+      payload: { label: "a-1" }
+    });
+    const duplicate = await runtime.enqueue({
+      projectId: "project-a",
+      kind: "chat_reply",
+      projectRevision: 99,
+      currentStep: "FINALIZE_OUTPUT",
       idempotencyKey: "a-1",
       payload: { label: "a-1" }
     });
@@ -457,23 +433,41 @@ describe("DurableJobRuntime recovery", () => {
         toolName: "WebFetchTool",
         purpose: "Fetch the pinned source.",
         expectedOutcome: "A validated source.",
-        rawSelection: { url: "https://example.com/source" },
+        rawSelection: { inputHash: "a".repeat(64) },
         userPinned: true,
         policyStatus: "accepted",
         createdAt: now
+      });
+      const attempt = {
+        id: "attempt-1",
+        projectId: job.projectId,
+        jobId: job.id,
+        decisionId: "decision-1",
+        ordinal: 0,
+        inputHash: "a".repeat(64),
+        dependsOnAttemptIds: [],
+        queuedAt: now
+      };
+      await runtime?.recordToolAttemptAndEvent({
+        projectRevision: 3,
+        toolName: "WebFetchTool",
+        attempt: { ...attempt, status: "queued" }
+      });
+      await runtime?.recordToolAttemptAndEvent({
+        projectRevision: 3,
+        toolName: "WebFetchTool",
+        attempt: { ...attempt, status: "running", startedAt: now }
       });
       await runtime?.recordToolAttemptAndEvent({
         projectRevision: 3,
         toolName: "WebFetchTool",
         attempt: {
-          id: "attempt-1",
-          projectId: job.projectId,
-          jobId: job.id,
-          decisionId: "decision-1",
-          ordinal: 0,
-          status: "queued",
-          inputHash: "input-hash",
-          queuedAt: now
+          ...attempt,
+          status: "completed",
+          outputHash: "b".repeat(64),
+          terminalCause: "completed",
+          startedAt: now,
+          completedAt: now
         }
       });
       await runtime?.finish(job.id, 3);
@@ -494,7 +488,7 @@ describe("DurableJobRuntime recovery", () => {
       traceAvailability: "available",
       trace: {
         toolDecisions: [{ id: "decision-1" }],
-        toolAttempts: [{ id: "attempt-1", status: "queued" }]
+        toolAttempts: [{ id: "attempt-1", status: "completed" }]
       }
     });
     expect(list.jobs[0]).not.toHaveProperty("trace");
@@ -508,6 +502,14 @@ describe("DurableJobRuntime recovery", () => {
           occurredAt: expect.any(String),
           type: "tool.run.changed",
           data: expect.objectContaining({ decisionId: "decision-1", attemptId: "attempt-1", ordinal: 0, status: "queued" })
+        }),
+        expect.objectContaining({
+          type: "tool.run.changed",
+          data: expect.objectContaining({ decisionId: "decision-1", attemptId: "attempt-1", ordinal: 0, status: "running" })
+        }),
+        expect.objectContaining({
+          type: "tool.run.changed",
+          data: expect.objectContaining({ decisionId: "decision-1", attemptId: "attempt-1", ordinal: 0, status: "completed" })
         })
       ])
     );

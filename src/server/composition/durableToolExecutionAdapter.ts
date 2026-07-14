@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import type { ToolExecutionStatusEvent } from "../../core/tools/researchToolTypes.js";
+import { getToolDescriptor } from "../../core/tools/toolDescriptors.js";
 import type { StorageOutputPromotion } from "../runtime/storage/v2/jobAtomicTypes.js";
 import type { StorageToolAttempt, StorageToolOutputLink } from "../runtime/storage/v2/traceTypes.js";
+import { assertToolAttemptOutputPromotionAllowed } from "../runtime/storage/v2/toolPostcondition.js";
 import type { DurableJobRuntime } from "./durableJobRuntime.js";
 import type { DurableJobRecord } from "./durableJobTypes.js";
 import { durableJobRequestHash } from "./durableJobRequestHash.js";
-import { redactTraceText, sanitizeTraceRecord } from "../runtime/security/traceSanitizer.js";
+import { redactTraceText } from "../runtime/security/traceSanitizer.js";
 
 interface AttemptState {
   attempt: StorageToolAttempt;
@@ -31,6 +33,31 @@ export class DurableToolExecutionAdapter {
     await this.ensureDecision(event, decisionId);
     const previous = this.attempts.get(attemptId);
     const terminal = !["queued", "running"].includes(event.status);
+    const descriptor = getToolDescriptor(event.toolName);
+    const descriptorSideEffects = descriptor ? [...descriptor.sideEffects].sort() : undefined;
+    const inputHash = durableJobRequestHash(event.inputs);
+    const quarantiningCompletedAttempt = previous?.attempt.status === "completed" && event.status === "quarantined";
+    const idempotencyKey =
+      previous?.attempt.idempotencyKey ??
+      durableJobRequestHash({
+        version: "tool-attempt-idempotency-v1",
+        projectId: this.job.projectId,
+        toolName: descriptor?.name ?? event.toolName,
+        descriptorVersion: descriptor?.version,
+        inputHash
+      });
+    const mutatesExternalState = descriptorSideEffects?.some((effect) => effect === "filesystem" || effect === "process") === true;
+    const sideEffectKey =
+      previous?.attempt.sideEffectKey ??
+      (mutatesExternalState
+        ? durableJobRequestHash({
+            version: "tool-side-effect-key-v1",
+            projectId: this.job.projectId,
+            toolName: descriptor?.name ?? event.toolName,
+            descriptorVersion: descriptor?.version,
+            inputHash
+          })
+        : undefined);
     const attempt: StorageToolAttempt = {
       id: attemptId,
       projectId: this.job.projectId,
@@ -38,23 +65,39 @@ export class DurableToolExecutionAdapter {
       decisionId,
       ordinal: event.ordinal,
       status: event.status,
-      inputHash: durableJobRequestHash(event.inputs),
+      inputHash,
       outputHash: event.outputHash ?? previous?.attempt.outputHash,
+      traceVersion: 1,
+      traceAvailability: "vnext",
+      descriptorVersion: descriptor?.version,
+      descriptorSideEffects,
+      sideEffectKey,
+      idempotencyKey,
+      postconditionDisposition: previous?.attempt.postconditionDisposition,
+      postconditionReceipt: previous?.attempt.postconditionReceipt,
       terminalCause: event.terminalCause,
       dependsOnAttemptIds: event.dependsOnAttemptIds ?? previous?.attempt.dependsOnAttemptIds ?? [],
       stagingRef: event.stagingRef,
       quarantineRef: event.quarantineRef,
-      error: redactTraceText(event.error),
+      error: durableToolErrorCode(event),
       queuedAt: previous?.attempt.queuedAt ?? event.occurredAt,
       startedAt: event.status === "running" ? event.occurredAt : previous?.attempt.startedAt,
       completedAt: terminal ? event.occurredAt : undefined,
-      data: { phase: event.phase }
+      data: quarantiningCompletedAttempt
+        ? previous.attempt.data
+        : {
+            phase: event.phase,
+            ...(event.outputBytes === undefined
+              ? {}
+              : { accounting: { version: 1, canonicalResultBytes: event.outputBytes, source: "canonical_result_utf8_v1" } })
+          }
     };
     const outputs = event.outputs ?? previous?.outputs ?? [];
     const outputLinks =
       event.status === "completed" ? preserveOutputLinks(this.job, attemptId, outputs, event.occurredAt, previous?.outputLinks) : (previous?.outputLinks ?? []);
     this.attempts.set(attemptId, { attempt, toolName: event.toolName, outputs, outputLinks });
-    await this.runtime.recordToolAttemptAndEvent({ attempt, projectRevision: await this.readProjectRevision(), toolName: event.toolName });
+    const projectRevision = await this.readProjectRevision();
+    await this.runtime.recordToolAttemptAndEvent({ attempt, projectRevision, toolName: event.toolName });
     if (event.status === "completed") await this.recordUnpromotedOutputs(outputLinks);
     if (event.status === "completed" && event.codexCliTrace) {
       const trace = event.codexCliTrace;
@@ -77,6 +120,15 @@ export class DurableToolExecutionAdapter {
         completedAt: event.occurredAt
       });
     }
+    if (event.status === "completed" && mutatesExternalState) {
+      const verified = await this.runtime.verifyToolPostcondition({
+        jobId: this.job.id,
+        attemptId,
+        projectRevision,
+        verifiedAt: event.occurredAt
+      });
+      this.attempts.set(attemptId, { attempt: verified, toolName: event.toolName, outputs, outputLinks });
+    }
   };
 
   completedOutputPromotions(promotedAt = new Date().toISOString()): StorageOutputPromotion[] {
@@ -84,7 +136,11 @@ export class DurableToolExecutionAdapter {
     for (const state of [...this.attempts.values()].sort((left, right) => left.attempt.ordinal - right.attempt.ordinal)) {
       if (state.attempt.status !== "completed") continue;
       const outputs = new Map(state.outputs.map((output) => [outputIdentity(output.kind, output.id), output]));
+      if (state.outputLinks.some((link) => link.outputKind !== "source")) assertToolAttemptOutputPromotionAllowed(state.attempt);
       for (const originalLink of state.outputLinks) {
+        // A source is an untrusted observation until a later validation produces evidence.
+        // Keep its durable origin link for audit, but never mark it as a promoted result.
+        if (originalLink.outputKind === "source") continue;
         const output = outputs.get(outputIdentity(originalLink.outputKind, originalLink.outputId));
         if (!output) throw new Error(`Completed output metadata is missing for ${originalLink.id}.`);
         const link = { ...originalLink, promoted: true, promotedAt };
@@ -100,6 +156,7 @@ export class DurableToolExecutionAdapter {
   private async ensureDecision(event: ToolExecutionStatusEvent, decisionId: string): Promise<void> {
     const existing = this.decisions.get(decisionId);
     if (existing && event.policyStatus !== "rejected") return existing;
+    const inputHash = durableJobRequestHash(event.inputs);
     const write = this.runtime
       .recordToolDecision({
         id: decisionId,
@@ -108,11 +165,17 @@ export class DurableToolExecutionAdapter {
         toolName: event.toolName,
         purpose: event.purpose?.trim() || "Legacy untraced tool purpose.",
         expectedOutcome: event.expectedOutcome?.trim() || "Legacy untraced tool outcome.",
-        rawSelection: { inputHash: durableJobRequestHash(event.inputs), inputs: sanitizeTraceRecord(event.inputs) },
+        rawSelection: { inputHash },
         userPinned: false,
         policyStatus: event.policyStatus ?? "accepted",
         policyReason: redactTraceText(event.policyReason),
-        compiledAction: { toolName: event.toolName, ordinal: event.ordinal, phase: event.phase, inputs: sanitizeTraceRecord(event.inputs) },
+        compiledAction: {
+          toolName: event.toolName,
+          ordinal: event.ordinal,
+          phase: event.phase,
+          inputHash,
+          ...(event.toolName === "CodexCliTool" ? { outputDeclarations: event.inputs.outputs } : {})
+        },
         createdAt: event.occurredAt
       })
       .then(() => undefined);
@@ -165,4 +228,13 @@ function traceId(prefix: string, ...parts: string[]): string {
 function executionIdFromAttempt(attemptId: string): string {
   const separator = attemptId.lastIndexOf(":");
   return separator > 0 ? attemptId.slice(0, separator) : attemptId;
+}
+
+function durableToolErrorCode(event: ToolExecutionStatusEvent): string | undefined {
+  if (!event.error) return undefined;
+  if (event.policyStatus === "rejected") return "TOOL_POLICY_REJECTED";
+  if (event.status === "blocked") return "TOOL_ACTION_BLOCKED";
+  if (event.status === "interrupted") return "TOOL_EXECUTION_INTERRUPTED";
+  if (event.status === "quarantined") return "TOOL_OUTPUT_QUARANTINED";
+  return "TOOL_EXECUTION_FAILED";
 }

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "classification": "held_out",
+  "cases": [{ "id": "aetherbench.research-agent.v1", "suite": "research-agent", "caseVersion": "1.0.0" }],
+  "executionInputContainsAcceptanceOracle": false,
+  "providerPlanContainsAcceptanceOracle": false,
+  "executionInput": {
+    "path": "tests/fixtures/harness/held-out/execution-input.json",
+    "sha256": "0b35ba7a89e12da7e952539652ca6945627e6fa2025632fd1833eaae4f214fac",
+    "bytes": 1321
+  },
+  "evaluatorOracle": {
+    "path": "tests/fixtures/harness/held-out/evaluator-oracle.json",
+    "sha256": "6accec2565ed00099a3664f6cc0d90c016e4c1c57889539d1765ab4bdfc4a9ba",
+    "bytes": 1573
+  },
+  "deterministicProviderPlan": {
+    "path": "tests/fixtures/harness/held-out/deterministic-provider-plan.json",
+    "sha256": "c4bcd7e23b67865f0fdd4efa4e5b48890e7f560f71f882207f64af7da4f9f7c2",
+    "bytes": 1347
+  }
+}

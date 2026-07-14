@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { JOB_KINDS, JOB_STATUSES } from "../../shared/kernel/job.js";
 import { RESEARCH_LOOP_STEPS } from "../../shared/kernel/researchLoop.js";
-import { isValidPublicSourceDomain } from "../../shared/kernel/sourceAccessPolicy.js";
+import { isPersistableSourceAllowlistUrl, isValidPublicSourceDomain } from "../../shared/kernel/sourceAccessPolicy.js";
 import { EntityIdSchema, IdempotencyKeySchema, RevisionSchema, TimestampSchema, rpcRequestSchema } from "./common.js";
 import { CapabilitySetSchema } from "./capabilities.js";
 import { CodexModelIdSchema, CodexReasoningEffortSchema } from "./settings.js";
@@ -83,11 +83,26 @@ const EnqueueBaseSchema = z
 
 export const SourceAccessPolicySchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("offline") }).strict(),
-  z.object({ mode: z.literal("allowlist"), urls: z.array(z.string().url()).min(1).max(32) }).strict(),
+  z
+    .object({
+      mode: z.literal("allowlist"),
+      urls: z
+        .array(
+          z
+            .string()
+            .trim()
+            .max(4096)
+            .url()
+            .refine(isPersistableSourceAllowlistUrl, "Allowlist URLs cannot contain credentials or query strings; use a public URL without secrets.")
+        )
+        .min(1)
+        .max(32)
+    })
+    .strict(),
   z
     .object({
       mode: z.literal("discovery"),
-      allowedDomains: z.array(z.string().trim().toLowerCase().refine(isValidPublicSourceDomain, "A public DNS domain is required.")).max(32)
+      allowedDomains: z.array(z.string().trim().toLowerCase().max(253).refine(isValidPublicSourceDomain, "A public DNS domain is required.")).max(32)
     })
     .strict()
 ]);
@@ -113,7 +128,7 @@ export const ChatEnqueueParamsSchema = EnqueueBaseSchema.extend({
 export const LoopStartParamsSchema = ResearchEnqueueBaseSchema;
 export const LoopResumeParamsSchema = ResearchEnqueueBaseSchema.extend({
   interruptedJobId: EntityIdSchema,
-  checkpointId: EntityIdSchema
+  checkpointId: EntityIdSchema.optional()
 }).strict();
 
 const JobControlParamsSchema = z

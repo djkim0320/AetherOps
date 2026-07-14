@@ -200,6 +200,23 @@ describe("job contracts", () => {
       ).toBe(false);
     }
   });
+
+  it("rejects credential-bearing and query-bearing URLs before they can enter a durable job policy", () => {
+    for (const url of ["https://user:password@example.edu/source", "https://example.edu/source?token=secret", "https://example.edu/source?id=public"]) {
+      expect(
+        JobRpcRequestSchema.safeParse({
+          requestId: "r-sensitive-url",
+          method: "loop.start",
+          params: {
+            projectId: "p1",
+            idempotencyKey: "ik-sensitive-url",
+            requestedCapabilities: { agent: true, engineering: false, search: true },
+            toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "allowlist", urls: [url] } }
+          }
+        }).success
+      ).toBe(false);
+    }
+  });
 });
 
 describe("SSE event contracts", () => {

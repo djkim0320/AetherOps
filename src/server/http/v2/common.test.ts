@@ -174,6 +174,7 @@ describe("job detail trace projection", () => {
       nested: { prompt: "[redacted]", stdout: "[redacted]", safe: "visible" }
     });
     expect(projected.trace.networkAudits[0]?.url).not.toContain("password");
+    expect(projected.toolPolicy?.sourceAccess).toEqual({ mode: "allowlist", urls: ["https://example.com/source"] });
     expect(JSON.stringify(projected)).not.toMatch(/secret-token|hidden|compiled-secret|secret-query|secret-redirect|secret-policy/);
 
     detail.trace.toolDecisions[0]!.rawSelection = {

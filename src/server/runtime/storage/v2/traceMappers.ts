@@ -59,6 +59,14 @@ export function rowToToolAttempt(row: Row): StorageToolAttempt {
     status: requiredString(row.status, "tool_attempt.status") as StorageToolAttempt["status"],
     inputHash: requiredString(row.input_hash, "tool_attempt.input_hash"),
     outputHash: optionalString(row.output_hash),
+    traceVersion: optionalTraceVersion(row.trace_version),
+    traceAvailability: row.trace_version === null || row.trace_version === undefined ? "legacy_unavailable" : "vnext",
+    descriptorVersion: optionalString(row.descriptor_version),
+    descriptorSideEffects: parseOptionalJson<StorageToolAttempt["descriptorSideEffects"]>(row.descriptor_side_effects),
+    sideEffectKey: optionalString(row.side_effect_key),
+    idempotencyKey: optionalString(row.idempotency_key),
+    postconditionDisposition: optionalString(row.postcondition_disposition) as StorageToolAttempt["postconditionDisposition"],
+    postconditionReceipt: parseOptionalJson<StorageToolAttempt["postconditionReceipt"]>(row.postcondition_receipt),
     terminalCause: optionalString(row.terminal_cause),
     dependsOnAttemptIds: parseOptionalJson<string[]>(row.depends_on_attempt_ids) ?? [],
     stagingRef: optionalString(row.staging_ref),
@@ -69,6 +77,12 @@ export function rowToToolAttempt(row: Row): StorageToolAttempt {
     completedAt: optionalString(row.completed_at),
     data: parseOptionalJson(row.data)
   };
+}
+
+function optionalTraceVersion(value: unknown): 1 | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (value !== 1) throw new Error(`tool_attempt.trace_version has an unsupported value: ${String(value)}`);
+  return 1;
 }
 
 export function rowToCodexCliExecution(row: Row): StorageCodexCliExecution {

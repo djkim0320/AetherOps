@@ -18,6 +18,7 @@ export interface StorageV2DatabasePaths {
 
 export interface StorageV2OpenOptions extends StorageV2DatabasePaths {
   requireFts5?: boolean;
+  dataRoot?: string;
 }
 
 export type StorageJobStatus =
@@ -250,6 +251,11 @@ export interface StorageStepAttempt {
 
 export type StorageCapabilityOperation = "agent" | "engineering" | "search";
 
+export interface StorageCapabilityAuditData {
+  jobKind: "research_loop" | "chat_reply" | "engineering_run";
+  blockedBy?: "app" | "project" | "job";
+}
+
 export interface StorageCapabilityAudit {
   id: string;
   projectId: string;
@@ -261,7 +267,7 @@ export interface StorageCapabilityAudit {
   operationAllowed: boolean;
   allowed: boolean;
   reason?: string;
-  data?: unknown;
+  data?: StorageCapabilityAuditData;
   auditedAt: string;
 }
 

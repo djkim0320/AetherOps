@@ -49,9 +49,24 @@ describe("autonomy offline storage worker", () => {
       createdAt: now,
       payload: { projectRevision: 1, currentStep: "EXECUTE_TOOLS" }
     };
+    const project = {
+      id: "project-offline",
+      goal: "Verify atomic project ownership.",
+      topic: "Offline storage",
+      scope: "Local fixture only",
+      budget: "One bounded run",
+      autonomyPolicy: { toolApproval: "suggested" as const, allowAgent: true, allowExternalSearch: false, allowCodeExecution: false },
+      createdAt: now,
+      updatedAt: now,
+      currentStep: "EXECUTE_TOOLS" as const,
+      status: "idle" as const,
+      projectRoot: join(root, "projects", "project-offline")
+    };
     const enqueued = await client.request<{ job: { id: string }; event: { jobId: string; type: string } }>({
       name: "job.enqueue",
-      job
+      job,
+      project,
+      capabilityAudits: capabilityAudits(job, now)
     });
     expect(enqueued).toMatchObject({ job: { id: "job-offline" }, event: { jobId: "job-offline", type: "run.status.changed" } });
 
@@ -60,6 +75,7 @@ describe("autonomy offline storage worker", () => {
       status: "queued",
       toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" } }
     });
+    await expect(client.request({ name: "project.get", projectId: "project-offline" })).resolves.toEqual(project);
     await expect(client.request({ name: "event.after", projectId: "project-offline", lastEventId: 0 })).resolves.toEqual([
       expect.objectContaining({ jobId: "job-offline", type: "run.status.changed" })
     ]);
@@ -72,3 +88,30 @@ describe("autonomy offline storage worker", () => {
     expect((conflict as Error).message).not.toMatch(/project-offline|offline-idempotency|sha256/);
   });
 });
+
+function capabilityAudits(
+  job: {
+    id: string;
+    projectId: string;
+    requestedCapabilities: { agent: boolean; engineering: boolean; search: boolean };
+    effectiveCapabilities: { agent: boolean; engineering: boolean; search: boolean };
+  },
+  auditedAt: string
+) {
+  return (["agent", "engineering", "search"] as const).map((capability) => ({
+    id: `capability-${job.id}-${capability}`,
+    projectId: job.projectId,
+    jobId: job.id,
+    operation: capability,
+    capability,
+    appAllowed: true,
+    projectAllowed: true,
+    operationAllowed: job.requestedCapabilities[capability],
+    allowed: job.effectiveCapabilities[capability],
+    data: {
+      jobKind: "research_loop" as const,
+      ...(job.effectiveCapabilities[capability] ? {} : { blockedBy: "job" as const })
+    },
+    auditedAt
+  }));
+}

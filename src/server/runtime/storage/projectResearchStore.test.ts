@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
@@ -289,6 +290,11 @@ describe("NodeProjectStorage", () => {
     expect(source?.rawPath && existsSync(source.rawPath)).toBe(true);
     expect(artifact?.rawPath).toContain(join(snapshot.project.projectRoot, "artifacts"));
     expect(artifact?.rawPath && existsSync(artifact.rawPath)).toBe(true);
+    const persistedArtifact = readFileSync(artifact!.rawPath!);
+    expect(artifact?.metadata).toMatchObject({
+      sha256: createHash("sha256").update(persistedArtifact).digest("hex"),
+      bytes: persistedArtifact.byteLength
+    });
 
     const projectDb = new DatabaseSync(snapshot.database!.sqlitePath);
     try {

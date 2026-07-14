@@ -104,6 +104,9 @@ export async function runBlockedPath(context) {
   const snapshot = (await rpc(context, port, "snapshots.get", { projectId: project.id })).result;
   const runtimeBlockers = Array.isArray(snapshot.data?.runtimeBlockers) ? snapshot.data.runtimeBlockers : [];
   const stepErrors = Array.isArray(snapshot.data?.stepErrors) ? snapshot.data.stepErrors : [];
+  const runAuditOutputs = Array.isArray(snapshot.data?.runAuditOutputs) ? snapshot.data.runAuditOutputs : [];
+  const finalOutputs = Array.isArray(snapshot.data?.finalOutputs) ? snapshot.data.finalOutputs : [];
+  const evidence = Array.isArray(snapshot.data?.evidence) ? snapshot.data.evidence : [];
   context.results.blockedPath = {
     status: terminal.status,
     projectId: project.id,
@@ -115,17 +118,26 @@ export async function runBlockedPath(context) {
     failureReason: detail.failureReason,
     runtimeBlockers: runtimeBlockers.length,
     stepErrors: stepErrors.length,
+    runAuditOutputs: runAuditOutputs.length,
+    finalOutputs: finalOutputs.length,
+    counts: {
+      runtimeBlockers: runtimeBlockers.length,
+      stepErrors: stepErrors.length,
+      runAuditOutputs: runAuditOutputs.length,
+      finalOutputs: finalOutputs.length,
+      evidence: evidence.length
+    },
     latestBlocker: runtimeBlockers.at(-1)
   };
   writeFileSync(join(context.dataRoot, "blocked-path-result.json"), `${JSON.stringify({ snapshot }, null, 2)}\n`, "utf8");
-  if (!["blocked", "failed"].includes(terminal.status)) {
-    context.results.findings.high.push(`Blocked path ended with ${terminal.status}.`);
+  if (terminal.status !== "blocked") {
+    context.results.findings.high.push(`Blocked path ended with ${terminal.status}; expected blocked.`);
   }
-  if (terminal.status === "blocked" && (!detail.blockedReason || runtimeBlockers.length === 0)) {
+  if (!detail.blockedReason || runtimeBlockers.length === 0) {
     context.results.findings.high.push("Blocked job did not persist both blockedReason and a runtime blocker.");
   }
-  if (terminal.status === "failed" && !detail.failureReason) {
-    context.results.findings.high.push("Failed job did not persist failureReason.");
+  if (runAuditOutputs.length === 0) {
+    context.results.findings.high.push("Blocked job did not persist a run audit output.");
   }
 }
 

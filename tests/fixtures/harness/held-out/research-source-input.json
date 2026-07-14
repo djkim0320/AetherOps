@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "description": "Handle-only held-out research input for the deterministic AetherBench runtime; no provider response, prompt, secret, oracle, or user file content is included.",
+  "fixtureIds": ["research-source-manifest"]
+}

@@ -42,12 +42,12 @@ export function RunBar({ projectId }: { projectId: string }): ReactElement {
         return jobApi.pause({ projectId, jobId: activeJob.id, expectedProjectRevision: execution.revision });
       if (command.action === "abort" && activeJob && execution)
         return jobApi.abort({ projectId, jobId: activeJob.id, expectedProjectRevision: execution.revision });
-      if (command.action === "resume" && activeJob && execution?.lastCheckpointId)
+      if (command.action === "resume" && activeJob && execution)
         return jobApi.resume({
           projectId,
           idempotencyKey,
           interruptedJobId: activeJob.id,
-          checkpointId: execution.lastCheckpointId,
+          ...(execution.lastCheckpointId ? { checkpointId: execution.lastCheckpointId } : {}),
           ...command.policy
         });
       throw new Error("현재 프로젝트 상태에서는 이 작업을 사용할 수 없습니다.");
@@ -72,6 +72,14 @@ export function RunBar({ projectId }: { projectId: string }): ReactElement {
           <span className={styles.stale}>
             <AlertTriangle aria-hidden="true" />
             {ko.updatesDisconnected}
+          </span>
+        ) : null}
+        {terminalReason ? (
+          <span role="alert" className={styles.runReason} data-ui="run-reason">
+            <AlertTriangle aria-hidden="true" />
+            <span className={styles.reasonText}>
+              <strong>{activeJob?.blockedReason ? ko.runBlocked : ko.runFailed}:</strong> {localizeCapabilityReason(terminalReason)}
+            </span>
           </span>
         ) : null}
         <div className={styles.actions}>
@@ -112,12 +120,6 @@ export function RunBar({ projectId }: { projectId: string }): ReactElement {
           {localizeError(command.error)}
         </span>
       ) : null}
-      {terminalReason ? (
-        <span role="alert" className={styles.runReason}>
-          <AlertTriangle aria-hidden="true" />
-          <strong>{activeJob?.blockedReason ? ko.runBlocked : ko.runFailed}:</strong> {localizeCapabilityReason(terminalReason)}
-        </span>
-      ) : null}
       {maximum && policyAction ? (
         <RunPolicyDialog
           open
@@ -136,7 +138,7 @@ function canStart(status: string): boolean {
   return ["idle", "completed", "aborted", "failed"].includes(status);
 }
 function canResume(status: string, checkpoint: boolean): boolean {
-  return checkpoint && ["paused", "interrupted", "blocked"].includes(status);
+  return status === "interrupted" || (checkpoint && ["paused", "blocked"].includes(status));
 }
 function canAbort(status: string): boolean {
   return ["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(status);

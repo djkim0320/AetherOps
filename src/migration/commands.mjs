@@ -22,14 +22,21 @@ import { checkpointSqliteFile } from "./sqlite.mjs";
 import { migrateV1AppDbToV2 } from "./v2.mjs";
 import { verifyBackupManifest, verifyManifestDigest, verifyTargetManifest } from "./verification.mjs";
 import { migrateCodexSettingsFile } from "./settings.mjs";
+import { forwardUpgradeAppliedTarget } from "./forwardUpgrade.mjs";
+import { forwardUpgradeJournalPath, recoverPendingForwardUpgrade } from "./forwardUpgradeRecovery.mjs";
+import { inspectOperationalSchema } from "./operationalSchema.mjs";
+import { acquireStorageOwnerLock } from "./storageOwnerLock.mjs";
 
 export function inspectMigration(context) {
   const source = discoverSourceState(context.dataRoot);
   const current = readCurrentPointer(context.migrationRoot);
   const activeTarget = current?.targetRoot ? inspectTargetState(current.targetRoot) : undefined;
+  const operationalSchema = current?.targetDbPath && existsSync(current.targetDbPath) ? inspectOperationalSchemaSafe(current.targetDbPath) : undefined;
   const requiredBytes = estimateRequiredBytes(source);
   const availableBytes = getAvailableBytes(context.dataRoot);
-  const verified = Boolean(current && activeTarget && current.status === "applied" && compareTargetAgainstPointer(current, activeTarget));
+  const verified = Boolean(
+    current && activeTarget && current.status === "applied" && compareTargetAgainstPointer(current, activeTarget) && operationalSchema?.ready
+  );
   const ready = source.errors.length === 0 && availableBytes >= requiredBytes;
   return {
     ok: source.errors.length === 0,
@@ -41,23 +48,47 @@ export function inspectMigration(context) {
     source,
     current,
     activeTarget,
+    operationalSchema,
     freeSpaceBytes: availableBytes,
     requiredSpaceBytes: requiredBytes,
     exitCode: source.errors.length === 0 ? 0 : 1,
-    warnings: buildWarnings(source, availableBytes, requiredBytes, current, activeTarget)
+    warnings: [
+      ...buildWarnings(source, availableBytes, requiredBytes, current, activeTarget),
+      ...(operationalSchema && !operationalSchema.ready ? [...operationalSchema.errors, ...operationalSchema.conflicts] : [])
+    ]
   };
 }
 
 export function applyMigration(context) {
   const release = acquireMigrationLock(context.migrationRoot, "apply");
   try {
-    return applyWhileLocked(context);
+    let releaseStorage;
+    try {
+      releaseStorage = acquireStorageOwnerLock(context.migrationRoot, "migration-apply");
+    } catch (error) {
+      return failure("apply", context, `Storage ownership could not be acquired: ${error instanceof Error ? error.message : String(error)}`, "not-ready");
+    }
+    try {
+      return applyWhileLocked(context);
+    } finally {
+      releaseStorage();
+    }
   } finally {
     release();
   }
 }
 
 function applyWhileLocked(context) {
+  try {
+    recoverPendingForwardUpgrade(context);
+  } catch (error) {
+    return failure(
+      "apply",
+      context,
+      `Pending v2 forward upgrade recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      "repair-required"
+    );
+  }
   const initial = discoverSourceState(context.dataRoot);
   if (initial.errors.length) return failure("apply", context, initial.errors.join("; "));
   for (const database of initial.databases) checkpointSqliteFile(join(context.dataRoot, database.relativePath));
@@ -72,21 +103,42 @@ function applyWhileLocked(context) {
   if (current?.status === "applied") {
     const verification = verifyAppliedTarget(current, { allowDatabaseChanges: true });
     if (verification.ok) {
+      let schemaUpgrade;
+      try {
+        schemaUpgrade = forwardUpgradeAppliedTarget(context, current, verification.baselineChanges);
+      } catch (error) {
+        return failure(
+          "apply",
+          context,
+          `Existing v2 target forward upgrade failed and was not activated: ${error instanceof Error ? error.message : String(error)}`,
+          "repair-required"
+        );
+      }
+      const schemaCurrent = schemaUpgrade.current;
       const settingsMigration = migrateCodexSettingsFile(join(context.dataRoot, "settings.json"), join(context.migrationRoot, "codex-settings-journal.json"));
-      const nextCurrent = settingsMigration.changed ? { ...current, settingsMigration } : current;
-      if (settingsMigration.changed) writeJsonFileAtomic(join(context.migrationRoot, "current.json"), nextCurrent, current.attemptId);
+      const nextCurrent = settingsMigration.changed ? { ...schemaCurrent, settingsMigration } : schemaCurrent;
+      if (settingsMigration.changed)
+        writeJsonFileAtomic(join(context.migrationRoot, "current.json"), nextCurrent, schemaUpgrade.forwardUpgrade?.attemptId ?? current.attemptId);
+      const applied = schemaUpgrade.changed || settingsMigration.changed;
       return {
         ok: true,
         command: "apply",
         dataRoot: context.dataRoot,
         migrationRoot: context.migrationRoot,
-        status: settingsMigration.changed ? "settings-upgraded" : "already-applied",
-        applied: settingsMigration.changed,
+        status: schemaUpgrade.changed
+          ? settingsMigration.changed
+            ? "schema-and-settings-upgraded"
+            : "schema-upgraded"
+          : settingsMigration.changed
+            ? "settings-upgraded"
+            : "already-applied",
+        applied,
         exitCode: 0,
         current: nextCurrent,
         source,
         settingsMigration,
-        activeTarget: inspectTargetState(current.targetRoot)
+        schemaUpgrade,
+        activeTarget: inspectTargetState(schemaCurrent.targetRoot)
       };
     }
     return failure("apply", context, `Existing v2 target failed verification and was not replaced: ${verification.errors.join("; ")}`, "repair-required");
@@ -160,8 +212,16 @@ export function verifyMigration(context) {
   const source = discoverSourceState(context.dataRoot);
   const current = readCurrentPointer(context.migrationRoot);
   if (!current || current.status !== "applied") return failure("verify", context, "Migration has not been applied.", "not-applied");
+  if (existsSync(forwardUpgradeJournalPath(context))) {
+    return failure("verify", context, "A pending forward upgrade requires migrate:apply recovery.", "repair-required");
+  }
   const verification = verifyAppliedTarget(current, { allowDatabaseChanges: true });
   if (!verification.ok) return { ...failure("verify", context, verification.errors.join("; "), "mismatch"), source, current, verification };
+  const operationalSchema = inspectOperationalSchemaSafe(current.targetDbPath);
+  if (!operationalSchema.ready) {
+    const errors = [...operationalSchema.errors, ...operationalSchema.conflicts];
+    return { ...failure("verify", context, errors.join("; "), "mismatch"), source, current, verification, operationalSchema };
+  }
   return {
     ok: true,
     command: "verify",
@@ -172,51 +232,72 @@ export function verifyMigration(context) {
     source,
     current,
     target: inspectTargetState(current.targetRoot),
-    verification
+    verification,
+    operationalSchema
   };
 }
 
 export function rollbackMigration(context, options = {}) {
   const release = acquireMigrationLock(context.migrationRoot, "rollback");
   try {
-    const current = readCurrentPointer(context.migrationRoot);
-    if (!current) return { ok: true, command: "rollback", dataRoot: context.dataRoot, migrationRoot: context.migrationRoot, status: "no-op", exitCode: 0 };
-    const verification = verifyAppliedTarget(current);
-    if (!verification.ok && !options.allowV2DataLoss) {
-      return failure(
-        "rollback",
-        context,
-        `V2 data differs from the migration baseline; rollback requires --allow-v2-data-loss. ${verification.errors.join("; ")}`,
-        "approval-required"
-      );
+    let releaseStorage;
+    try {
+      releaseStorage = acquireStorageOwnerLock(context.migrationRoot, "migration-rollback");
+    } catch (error) {
+      return failure("rollback", context, `Storage ownership could not be acquired: ${error instanceof Error ? error.message : String(error)}`, "not-ready");
     }
-    const settingsPath = join(context.dataRoot, "settings.json");
-    if (current.settingsMigration?.changed && existsSync(settingsPath)) {
-      const currentSettingsSha = sha256Hex(readFileSync(settingsPath));
-      if (currentSettingsSha !== current.settingsMigration.afterSha256 && !options.allowV2DataLoss) {
-        return failure("rollback", context, "Codex settings changed after migration; rollback requires --allow-v2-data-loss.", "approval-required");
+    try {
+      try {
+        recoverPendingForwardUpgrade(context);
+      } catch (error) {
+        return failure(
+          "rollback",
+          context,
+          `Pending v2 forward upgrade recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+          "repair-required"
+        );
       }
+      const current = readCurrentPointer(context.migrationRoot);
+      if (!current) return { ok: true, command: "rollback", dataRoot: context.dataRoot, migrationRoot: context.migrationRoot, status: "no-op", exitCode: 0 };
+      const verification = verifyAppliedTarget(current);
+      if ((!verification.ok || current.rollbackRequiresV2DataLossApproval) && !options.allowV2DataLoss) {
+        return failure(
+          "rollback",
+          context,
+          `V2 data differs from the migration baseline; rollback requires --allow-v2-data-loss. ${verification.errors.join("; ")}`,
+          "approval-required"
+        );
+      }
+      const settingsPath = join(context.dataRoot, "settings.json");
+      if (current.settingsMigration?.changed && existsSync(settingsPath)) {
+        const currentSettingsSha = sha256Hex(readFileSync(settingsPath));
+        if (currentSettingsSha !== current.settingsMigration.afterSha256 && !options.allowV2DataLoss) {
+          return failure("rollback", context, "Codex settings changed after migration; rollback requires --allow-v2-data-loss.", "approval-required");
+        }
+      }
+      const archiveRoot = join(context.migrationRoot, "rollback-archives", `${current.attemptId}-${Date.now().toString(36)}`);
+      mkdirSync(join(context.migrationRoot, "rollback-archives"), { recursive: true });
+      if (existsSync(current.targetRoot)) renameSync(current.targetRoot, archiveRoot);
+      if (current.settingsMigration?.changed) {
+        const backupManifest = readJson(current.backupManifestPath);
+        const originalSettingsPath = backupManifest?.backupRoot ? join(backupManifest.backupRoot, "settings.json") : undefined;
+        if (originalSettingsPath && existsSync(originalSettingsPath)) copyFileSync(originalSettingsPath, settingsPath);
+      }
+      cleanupPath(join(context.migrationRoot, "current.json"));
+      cleanupPath(join(context.migrationRoot, "staging"));
+      return {
+        ok: true,
+        command: "rollback",
+        dataRoot: context.dataRoot,
+        migrationRoot: context.migrationRoot,
+        status: "rolled-back",
+        exitCode: 0,
+        previous: current,
+        archivedTargetRoot: existsSync(archiveRoot) ? archiveRoot : undefined
+      };
+    } finally {
+      releaseStorage();
     }
-    const archiveRoot = join(context.migrationRoot, "rollback-archives", `${current.attemptId}-${Date.now().toString(36)}`);
-    mkdirSync(join(context.migrationRoot, "rollback-archives"), { recursive: true });
-    if (existsSync(current.targetRoot)) renameSync(current.targetRoot, archiveRoot);
-    if (current.settingsMigration?.changed) {
-      const backupManifest = readJson(current.backupManifestPath);
-      const originalSettingsPath = backupManifest?.backupRoot ? join(backupManifest.backupRoot, "settings.json") : undefined;
-      if (originalSettingsPath && existsSync(originalSettingsPath)) copyFileSync(originalSettingsPath, settingsPath);
-    }
-    cleanupPath(join(context.migrationRoot, "current.json"));
-    cleanupPath(join(context.migrationRoot, "staging"));
-    return {
-      ok: true,
-      command: "rollback",
-      dataRoot: context.dataRoot,
-      migrationRoot: context.migrationRoot,
-      status: "rolled-back",
-      exitCode: 0,
-      previous: current,
-      archivedTargetRoot: existsSync(archiveRoot) ? archiveRoot : undefined
-    };
   } finally {
     release();
   }
@@ -272,4 +353,19 @@ function readJson(path) {
 
 function failure(command, context, error, status = "failed") {
   return { ok: false, command, dataRoot: context.dataRoot, migrationRoot: context.migrationRoot, status, exitCode: 1, error };
+}
+
+function inspectOperationalSchemaSafe(path) {
+  try {
+    return inspectOperationalSchema(path);
+  } catch (error) {
+    return {
+      ready: false,
+      currentVersion: 0,
+      installedVersions: [],
+      expectedVersions: [],
+      errors: [error instanceof Error ? error.message : String(error)],
+      conflicts: []
+    };
+  }
 }

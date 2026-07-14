@@ -66,4 +66,45 @@ describe("durable trace sanitizer", () => {
 
     expect(JSON.stringify({ decision, attempt, network })).not.toMatch(/token-secret|session=private|alice|raw prompt/);
   });
+
+  it("stores a data-root-relative workspace locator without exposing its absolute path", () => {
+    const attempt = sanitizeToolAttempt(
+      {
+        id: "attempt-1",
+        projectId: "project-1",
+        jobId: "job-1",
+        decisionId: "decision-1",
+        ordinal: 0,
+        status: "running",
+        inputHash: "hash",
+        dependsOnAttemptIds: [],
+        stagingRef: "C:\\aether-data\\staging\\jobs\\job-1\\execution-1\\actions\\action-1",
+        queuedAt: "2026-07-14T00:00:00.000Z"
+      },
+      "C:\\aether-data"
+    );
+
+    expect(attempt.stagingRef).toBe("staging/jobs/job-1/execution-1/actions/action-1");
+    expect(attempt.stagingRef).not.toContain("C:");
+  });
+
+  it("rejects workspace locators outside the configured data root", () => {
+    expect(() =>
+      sanitizeToolAttempt(
+        {
+          id: "attempt-1",
+          projectId: "project-1",
+          jobId: "job-1",
+          decisionId: "decision-1",
+          ordinal: 0,
+          status: "running",
+          inputHash: "hash",
+          dependsOnAttemptIds: [],
+          stagingRef: "C:\\other-project\\action-1",
+          queuedAt: "2026-07-14T00:00:00.000Z"
+        },
+        "C:\\aether-data"
+      )
+    ).toThrow(/escapes/);
+  });
 });

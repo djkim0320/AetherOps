@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { SseEvent } from "../../contracts/api-v2/events.js";
 import type { StorageFencedWriteCommand } from "../runtime/storage/worker/typedProtocol.js";
 import type { StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
+import type { StorageToolPostconditionVerifyResult } from "../runtime/storage/v2/jobAtomicTypes.js";
 import type {
   StorageCheckpoint,
   StorageCompletedStepInput,
@@ -37,7 +38,8 @@ export class DurableJobTraceRuntime {
   constructor(
     private readonly client: StorageWorkerClient,
     private readonly onPublishFailure: PublishFailureHandler = logPublishFailure,
-    private readonly fenceProvider: FenceProvider = () => undefined
+    private readonly fenceProvider: FenceProvider = () => undefined,
+    private readonly dataRoot?: string
   ) {
     this.emitter.setMaxListeners(0);
   }
@@ -77,7 +79,7 @@ export class DurableJobTraceRuntime {
       name: "fencedTransaction",
       fence,
       commands: [
-        { name: "trace.attempt.save", attempt: sanitizeToolAttempt(input.attempt) },
+        { name: "trace.attempt.save", attempt: sanitizeToolAttempt(input.attempt, this.dataRoot) },
         {
           name: "event.append",
           event: {
@@ -102,6 +104,20 @@ export class DurableJobTraceRuntime {
     });
     this.publishStoredEvent(event);
     return attempt;
+  }
+
+  async verifyToolPostcondition(input: { jobId: string; attemptId: string; projectRevision: number; verifiedAt: string }): Promise<StorageToolAttempt> {
+    const result = await this.client.request<StorageToolPostconditionVerifyResult>({
+      name: "toolPostcondition.verify",
+      input: {
+        fence: this.requireFence(input.jobId),
+        attemptId: input.attemptId,
+        projectRevision: input.projectRevision,
+        verifiedAt: input.verifiedAt
+      }
+    });
+    if (result.event) this.publishStoredEvent(result.event);
+    return result.attempt;
   }
 
   recordToolOutput(link: StorageToolOutputLink): Promise<StorageToolOutputLink> {

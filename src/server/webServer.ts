@@ -81,7 +81,7 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<We
   const store = legacyStorage.researchStore;
   const settingsStore = legacyStorage.settingsStore;
   const sseDiagnostics = new SseRuntimeDiagnostics();
-  const jobs = new DurableJobRuntime(join(dataRoot, "migration", "v2", "storage.sqlite"), { sseDiagnostics });
+  const jobs = new DurableJobRuntime(join(dataRoot, "migration", "v2", "storage.sqlite"), { sseDiagnostics, dataRoot });
   const settings = () => settingsStore.getRuntimeSettings();
   let cachedEmbeddingKey = "";
   let cachedEmbeddingProvider: ApiEmbeddingProvider | undefined;

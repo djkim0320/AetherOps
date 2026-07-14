@@ -10,6 +10,7 @@ import type { DurableJobControl, DurableJobHandler } from "./durableJobTypes.js"
 import { startDurableLeaseRenewal } from "./durableLeaseRenewal.js";
 import { runtimeNow, type ResolvedDurableRuntimeConfig } from "./durableRuntimeConfig.js";
 import { DurableRuntimeDiagnostics } from "./durableRuntimeDiagnostics.js";
+import { transitionDurableCanonicalTerminal } from "./durableCanonicalTerminalTransition.js";
 
 interface DurableJobExecutorDependencies {
   client: StorageWorkerClient;
@@ -69,7 +70,7 @@ export class DurableJobExecutor {
         await this.persistOutcome(scope, scope.outcome);
       });
     } catch (error) {
-      await this.handleExecutionFailure(scope, error);
+      await this.dependencies.execution.run(scope, () => this.handleExecutionFailure(scope, error));
     } finally {
       try {
         await renewal.stop();
@@ -133,6 +134,7 @@ export class DurableJobExecutor {
 
   private async persistOutcome(scope: DurableJobExecutionScope, outcome: DurableTerminalOutcome): Promise<void> {
     if (scope.leaseLost) throw leaseLostError(scope.job.id);
+    const occurredAt = runtimeNow(this.dependencies.config);
     const completedStep =
       scope.job.currentStep && outcome.status === "completed" ? await this.dependencies.trace.completedStep(scope.job.id, scope.job.currentStep) : undefined;
     if (scope.job.currentStep) {
@@ -140,18 +142,25 @@ export class DurableJobExecutor {
         await this.quarantineStep(scope, outcome.projectRevision, outcome.reason ?? terminalMessage(outcome.status));
       }
     }
-    const result = await this.dependencies.client.request<StorageTerminalTransitionResult>({
-      name: "job.transitionTerminal",
-      input: {
-        fence: scope.fence,
-        status: outcome.status,
-        projectRevision: outcome.projectRevision,
-        reason: outcome.reason,
-        occurredAt: runtimeNow(this.dependencies.config),
-        promotions: outcome.promotions,
-        completedStep
-      }
-    });
+    const terminalInput = {
+      status: outcome.status,
+      projectRevision: outcome.projectRevision,
+      ...(outcome.reason ? { reason: outcome.reason } : {}),
+      ...(outcome.promotions ? { promotions: outcome.promotions } : {}),
+      ...(completedStep ? { completedStep } : {})
+    };
+    const result = outcome.canonicalTransition
+      ? await transitionDurableCanonicalTerminal(
+          this.dependencies.client,
+          () => this.dependencies.execution.require(scope.job.id),
+          outcome.canonicalTransition,
+          terminalInput,
+          occurredAt
+        )
+      : await this.dependencies.client.request<StorageTerminalTransitionResult>({
+          name: "job.transitionTerminal",
+          input: { fence: scope.fence, ...terminalInput, occurredAt }
+        });
     this.publishEvents(result.events);
   }
 
@@ -165,8 +174,18 @@ export class DurableJobExecutor {
     const failure = durableFailureFrom(error);
     this.dependencies.logFailure(error, scope.job.id, scope.job.projectId, failure.internalDiagnosticId);
     const outcome: DurableTerminalOutcome = control
-      ? { status: control === "pause" ? "paused" : "aborted", projectRevision: scope.job.projectRevision, reason: terminalMessage(control) }
-      : { status: "failed", projectRevision: scope.job.projectRevision, reason: failure.publicMessage };
+      ? {
+          status: control === "pause" ? "paused" : "aborted",
+          projectRevision: scope.job.projectRevision,
+          reason: terminalMessage(control),
+          ...(scope.canonicalTransition ? { canonicalTransition: scope.canonicalTransition } : {})
+        }
+      : {
+          status: "failed",
+          projectRevision: scope.job.projectRevision,
+          reason: failure.publicMessage,
+          ...(scope.canonicalTransition ? { canonicalTransition: scope.canonicalTransition } : {})
+        };
     try {
       await this.persistOutcome(scope, outcome);
     } catch (settleError) {
@@ -218,7 +237,8 @@ export class DurableJobExecutor {
     scope.outcome = {
       status: control === "pause" ? "paused" : "aborted",
       projectRevision: scope.job.projectRevision,
-      reason: terminalMessage(control)
+      reason: terminalMessage(control),
+      ...(scope.canonicalTransition ? { canonicalTransition: scope.canonicalTransition } : {})
     };
   }
 

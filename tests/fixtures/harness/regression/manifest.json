@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "classification": "regression",
+  "cases": [
+    { "id": "aetherbench.long-horizon-resume.v1", "suite": "long-horizon-resume", "caseVersion": "1.0.0" },
+    { "id": "aetherbench.idempotent-side-effects.v1", "suite": "idempotent-side-effects", "caseVersion": "1.0.0" }
+  ]
+}

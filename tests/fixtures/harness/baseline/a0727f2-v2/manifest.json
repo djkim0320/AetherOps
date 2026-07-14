@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 2,
+  "baselineAnchorCommit": "a0727f2d5846b53717847ff908c411c24ab29d80",
+  "baseTree": "f30864f7fae5fd91bb3d0f9daf1f11d38cba35aa",
+  "packageLockSha256": "560af8aebd6ae79d3e2f77cc79192553773d10a431e201908a0d553f7b17ca13",
+  "baselineKind": "exact_base_deterministic_instrumented_legacy_runtime",
+  "evidenceClass": "deterministic_instrumented_legacy_runtime",
+  "capturedAt": "2026-07-14T03:30:28.973Z",
+  "measurementCompleteness": true,
+  "missingMetrics": [],
+  "productVerdict": "NOT_EVALUATED",
+  "productionSuccessEligible": false,
+  "runtime": {
+    "nodeVersion": "v22.16.0",
+    "nodeExecutableSha256": "c5ff4c736112dd483c750fd4149d30c8a116db1a49b8b3ec88be4b65e6c86c19",
+    "nodeDistributionSha256": "21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd",
+    "npmVersion": "10.9.2"
+  },
+  "runnerBundleSha256": "a0c4b44141efe9f4eea4c365a3a2d30203fdb7d22e6f1c72b451cd8d66235ee2",
+  "files": {
+    "receipts": {
+      "file": "receipts.jsonl",
+      "sha256": "ae035611de83c05b82db862eb41f2557f79fa2ccaa30b8bde2b03192e15b53f6",
+      "bytes": 8608
+    },
+    "captureRun": {
+      "file": "capture-run.json",
+      "sha256": "53f6e9e4385441b16b6e5fc6d3c253227f0f6074599846f0c41850b88ce5a0ea",
+      "bytes": 240
+    }
+  },
+  "historicalLiveFailure": {
+    "evidenceClass": "historical_live_failure_unknown_source",
+    "file": "tests/fixtures/autonomy/gpt-5.6-sol-high-baseline.json",
+    "sha256": "cdf47c6e86993064c6863ca8f2fd7531ff30ae3d15fc6ee98aede59fc876ea72",
+    "productionSuccessEligible": false
+  },
+  "metrics": {
+    "successRate": {
+      "value": 0.5,
+      "unit": "ratio",
+      "numerator": 1,
+      "denominator": 2,
+      "originReceiptIds": ["receipt-0012", "receipt-0017"]
+    },
+    "toolSelectionAccuracy": {
+      "value": 0.428571,
+      "unit": "jaccard_ratio",
+      "numerator": 3,
+      "denominator": 7,
+      "originReceiptIds": ["receipt-0012", "receipt-0017"]
+    },
+    "invalidArgumentRate": {
+      "value": 0.2,
+      "unit": "validated_arguments",
+      "numerator": 1,
+      "denominator": 5,
+      "originReceiptIds": ["receipt-0007", "receipt-0008", "receipt-0009", "receipt-0010", "receipt-0016"]
+    },
+    "retries": {
+      "value": 0,
+      "unit": "retries",
+      "originReceiptIds": ["receipt-0006", "receipt-0008", "receipt-0009", "receipt-0010", "receipt-0015"]
+    },
+    "duplicateSideEffects": {
+      "value": 0,
+      "unit": "effects",
+      "originReceiptIds": ["receipt-0011", "receipt-0020"]
+    },
+    "contextTokens": {
+      "value": 5129,
+      "unit": "benchmark_tokens",
+      "originReceiptIds": ["receipt-0006", "receipt-0015"]
+    },
+    "totalToolOutputBytes": {
+      "value": 8294,
+      "unit": "bytes",
+      "originReceiptIds": ["receipt-0008", "receipt-0009", "receipt-0010"]
+    },
+    "latencyMs": {
+      "value": 29,
+      "unit": "logical_ms",
+      "originReceiptIds": ["receipt-0012", "receipt-0017"]
+    },
+    "restartRecovery": {
+      "value": true,
+      "unit": "boolean",
+      "originReceiptIds": ["receipt-0014", "receipt-0019", "receipt-0021"]
+    },
+    "humanIntervention": {
+      "value": 0,
+      "unit": "events",
+      "originReceiptIds": ["receipt-0013", "receipt-0018"]
+    }
+  }
+}

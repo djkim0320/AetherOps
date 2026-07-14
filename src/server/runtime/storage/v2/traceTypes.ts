@@ -3,6 +3,23 @@ import type { StorageJsonObject } from "./types.js";
 export type StorageTraceData = StorageJsonObject | unknown[];
 export type StorageLlmInvocationStatus = "running" | "completed" | "failed";
 
+export interface StorageLlmInvocationData extends StorageJsonObject {
+  provider: string;
+  schemaName: string;
+  accounting?: {
+    version: 1;
+    inputUnits: number;
+    outputUnits: number;
+    unit: "estimated_token";
+    estimator: "utf8_bytes_div_4_ceil_v1";
+    monetaryCost: { availability: "unavailable"; policy: "unmetered_codex_oauth_v1" };
+  };
+  validationErrors?: string[];
+  contextPackId?: string;
+  canonicalHash?: string;
+  finalInputHash?: string;
+}
+
 export interface StorageLlmInvocation {
   id: string;
   projectId: string;
@@ -19,7 +36,7 @@ export interface StorageLlmInvocation {
   error?: string;
   startedAt: string;
   completedAt?: string;
-  data?: StorageTraceData;
+  data?: StorageLlmInvocationData;
 }
 
 export type StorageToolDecisionPolicyStatus = "accepted" | "rejected";
@@ -42,6 +59,17 @@ export interface StorageToolDecision {
 }
 
 export type StorageToolAttemptStatus = "queued" | "running" | "completed" | "blocked" | "failed" | "interrupted" | "quarantined";
+export type StorageToolAttemptTraceAvailability = "vnext" | "legacy_unavailable";
+export type StorageToolSideEffect = "network" | "filesystem" | "process";
+export type StorageToolPostconditionDisposition = "applied" | "not_applied";
+
+export interface StorageToolPostconditionReceipt {
+  receiptId: string;
+  evidenceHash: string;
+  receiptHash: string;
+  verifier: string;
+  verifiedAt: string;
+}
 
 export interface StorageToolAttempt {
   id: string;
@@ -53,6 +81,14 @@ export interface StorageToolAttempt {
   status: StorageToolAttemptStatus;
   inputHash: string;
   outputHash?: string;
+  traceVersion?: 1;
+  traceAvailability?: StorageToolAttemptTraceAvailability;
+  descriptorVersion?: string;
+  descriptorSideEffects?: StorageToolSideEffect[];
+  sideEffectKey?: string;
+  idempotencyKey?: string;
+  postconditionDisposition?: StorageToolPostconditionDisposition;
+  postconditionReceipt?: StorageToolPostconditionReceipt;
   terminalCause?: string;
   dependsOnAttemptIds: string[];
   stagingRef?: string;

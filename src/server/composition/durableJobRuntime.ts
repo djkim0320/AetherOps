@@ -1,16 +1,13 @@
-import { randomUUID } from "node:crypto";
 import type { JobKind, JobStatus } from "../../contracts/api-v2/jobs.js";
 import type { SseEvent } from "../../contracts/api-v2/events.js";
 import { createStorageWorkerClient, type StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
-import type { StorageOperationalDiagnosticSnapshot } from "../runtime/storage/worker/storageRuntimeDiagnostics.js";
-import type { StorageExpiredLeaseSweepResult, StorageJobControlResult, StorageOutputPromotion } from "../runtime/storage/v2/jobAtomicTypes.js";
+import type { StorageJobControlResult, StorageOutputPromotion } from "../runtime/storage/v2/jobAtomicTypes.js";
 import type {
   StorageCapabilityAudit,
   StorageCheckpoint,
   StorageClaimStartResult,
   StorageJobEvent,
-  StorageJobQueueDiagnostics,
-  StorageRunnableProjectPage
+  StorageProjectPayload
 } from "../runtime/storage/v2/types.js";
 import type {
   StorageLlmInvocation,
@@ -19,10 +16,27 @@ import type {
   StorageToolDecision,
   StorageToolOutputLink
 } from "../runtime/storage/v2/traceTypes.js";
-import { durableFailureFrom } from "./durableFailure.js";
+import type * as CS from "../runtime/storage/v2/runStateTypes.js";
+import type { StorageCanonicalTerminalVerifyInput, StorageCanonicalTerminalVerifyResult } from "../runtime/storage/v2/terminalReceiptTypes.js";
+import { fencedCanonicalStorageWrite, fencedCanonicalTaskContractWrite } from "./durableCanonicalStorageWrite.js";
+import { commitDurableCanonicalRevisionPlan } from "./durableCanonicalRevisionCommit.js";
+import { commitDurableCanonicalCheckpoint, type DurableCanonicalCheckpointCommitInput } from "./durableCanonicalCheckpointCommit.js";
+import { commitDurableCanonicalBudget } from "./durableCanonicalBudgetCommit.js";
+import type { DurableCanonicalTerminalTransition } from "./durableCanonicalTerminalTransition.js";
+import type { CanonicalRevisionPlan } from "./canonicalRunTypes.js";
+import type { RunStateRevision } from "../../core/orchestration/runStateCapsule.js";
 import { DurableJobExecutionContext, type DurableTerminalOutcome } from "./durableJobExecutionContext.js";
 import { DurableJobExecutor, publicTerminalReason } from "./durableJobExecutor.js";
-import { enqueueDurableJob, getDurableJob, getDurableJobDetail, listDurableJobs, recordDurableCapabilityAudits } from "./durableJobStore.js";
+import {
+  enqueueDurableJob,
+  findIdempotentDurableReceipt,
+  getDurableJob,
+  getDurableJobDetail,
+  latestDurableProjectExecution,
+  listDurableJobs,
+  recordDurableCapabilityAudits,
+  syncDurableProject
+} from "./durableJobStore.js";
 import { toDurableJobRecord } from "./durableJobMappers.js";
 import { DurableJobTraceRuntime } from "./durableJobTraceRuntime.js";
 import type {
@@ -36,12 +50,18 @@ import type {
 } from "./durableJobTypes.js";
 import { DurableProjectLaneScheduler } from "./durableProjectLaneScheduler.js";
 import { resolveDurableRuntimeConfig, runtimeNow, type DurableJobRuntimeOptions, type ResolvedDurableRuntimeConfig } from "./durableRuntimeConfig.js";
-import { DurableRuntimeDiagnostics, type DurableOperationalDiagnosticSnapshot, type DurableRuntimeDiagnosticSnapshot } from "./durableRuntimeDiagnostics.js";
+import {
+  collectDurableOperationalDiagnostics,
+  DurableRuntimeDiagnostics,
+  type DurableOperationalDiagnosticSnapshot,
+  type DurableRuntimeDiagnosticSnapshot
+} from "./durableRuntimeDiagnostics.js";
 import { SseRuntimeDiagnostics } from "./sseRuntimeDiagnostics.js";
 import { waitForActiveRuns } from "./durableRuntimeShutdown.js";
-
+import { logDurableRuntimeFailure } from "./durableRuntimeFailureLogger.js";
+import { discoverDurableRunnableProjects, sweepDurableExpiredLeases } from "./durableJobRecovery.js";
+import { DurableTerminalAttestedLeaseRuntime } from "./durableTerminalAttestedLeaseRuntime.js";
 type RuntimeState = "new" | "running" | "draining" | "aborting" | "closing_storage" | "closed";
-
 export class DurableJobRuntime {
   private readonly client: StorageWorkerClient;
   private readonly config: ResolvedDurableRuntimeConfig;
@@ -52,11 +72,11 @@ export class DurableJobRuntime {
   private readonly trace: DurableJobTraceRuntime;
   private readonly executor: DurableJobExecutor;
   private readonly lanes: DurableProjectLaneScheduler;
+  readonly terminalOutputs: DurableTerminalAttestedLeaseRuntime;
   private readonly diagnosticCountersSince: string;
   private state: RuntimeState = "new";
   private leaseSweepTimer?: ReturnType<typeof setTimeout>;
   private closePromise?: Promise<void>;
-
   constructor(databasePath: string, options: number | DurableJobRuntimeOptions = 4) {
     const resolvedOptions = typeof options === "number" ? { concurrency: options } : options;
     this.config = resolveDurableRuntimeConfig(resolvedOptions);
@@ -64,8 +84,15 @@ export class DurableJobRuntime {
     this.sseDiagnostics = resolvedOptions.sseDiagnostics ?? new SseRuntimeDiagnostics();
     this.client =
       resolvedOptions.storageClient ??
-      createStorageWorkerClient({ appDbPath: databasePath, vectorDbPath: databasePath, ontologyDbPath: databasePath, requireFts5: true });
-    this.trace = new DurableJobTraceRuntime(this.client, undefined, () => this.execution.current()?.fence);
+      createStorageWorkerClient({
+        appDbPath: databasePath,
+        vectorDbPath: databasePath,
+        ontologyDbPath: databasePath,
+        requireFts5: true,
+        ...(resolvedOptions.dataRoot ? { dataRoot: resolvedOptions.dataRoot } : {})
+      });
+    this.trace = new DurableJobTraceRuntime(this.client, undefined, () => this.execution.current()?.fence, resolvedOptions.dataRoot);
+    this.terminalOutputs = new DurableTerminalAttestedLeaseRuntime(this.client);
     this.executor = new DurableJobExecutor({
       client: this.client,
       config: this.config,
@@ -84,22 +111,19 @@ export class DurableJobRuntime {
       onActiveChanged: (count) => this.diagnostics.setActiveProjects(count)
     });
   }
-
   async initialize(): Promise<void> {
     if (this.state !== "new") throw new Error("Durable job runtime has already been initialized.");
     const sweep = await this.sweepExpiredLeases();
-    const recovered = await this.discoverRunnableProjects();
+    const recovered = await discoverDurableRunnableProjects(this.client);
     this.diagnostics.recordRecoveryProjects(new Set([...sweep.projectIds, ...recovered]).size);
     this.state = "running";
     for (const projectId of [...sweep.projectIds, ...recovered]) this.schedule(projectId);
     this.scheduleLeaseSweep();
   }
-
   registerHandler(kind: JobKind, handler: DurableJobHandler): void {
     if (this.handlers.has(kind)) throw new Error(`Durable job handler is already registered: ${kind}`);
     this.handlers.set(kind, handler);
   }
-
   async enqueue(input: EnqueueDurableJob): Promise<DurableJobReceipt> {
     return enqueueDurableJob(
       {
@@ -113,54 +137,61 @@ export class DurableJobRuntime {
       input
     );
   }
-
+  findIdempotentReceipt(projectId: string, idempotencyKey: string, requestHash: string): Promise<DurableJobReceipt | undefined> {
+    return findIdempotentDurableReceipt(this.client, projectId, idempotencyKey, requestHash);
+  }
   get(jobId: string): Promise<DurableJobRecord | undefined> {
     return getDurableJob(this.client, jobId);
   }
-
   getDetail(jobId: string, tracePage?: DurableTracePageRequest): Promise<DurableJobDetail | undefined> {
     return getDurableJobDetail(this.client, jobId, tracePage);
   }
-
   async list(
     projectId: string,
     options: { status?: JobStatus; limit?: number; cursor?: string } = {}
   ): Promise<{ jobs: DurableJobRecord[]; nextCursor?: string }> {
     return listDurableJobs(this.client, projectId, options);
   }
-
+  latestProjectExecution(projectId: string, kind: JobKind): Promise<{ job?: DurableJobRecord; checkpoint?: StorageCheckpoint }> {
+    return latestDurableProjectExecution(this.client, projectId, kind);
+  }
   async requestPause(jobId: string, projectRevision?: number): Promise<DurableJobRecord> {
     return this.requestControl(jobId, "pause", projectRevision);
   }
-
   async requestAbort(jobId: string, projectRevision?: number): Promise<DurableJobRecord> {
     return this.requestControl(jobId, "abort", projectRevision);
   }
-
-  finish(jobId: string, projectRevision: number, promotions?: StorageOutputPromotion[]): Promise<DurableJobRecord> {
-    return this.settle(jobId, "completed", projectRevision, undefined, promotions);
+  finish(
+    jobId: string,
+    projectRevision: number,
+    promotions?: StorageOutputPromotion[],
+    canonicalTransition?: DurableCanonicalTerminalTransition
+  ): Promise<DurableJobRecord> {
+    return this.settle(jobId, "completed", projectRevision, undefined, promotions, canonicalTransition);
   }
-
+  bindCanonicalTransition(jobId: string, transition: DurableCanonicalTerminalTransition): void {
+    this.execution.bindCanonicalTransition(jobId, transition);
+  }
   async settle(
     jobId: string,
     status: Extract<JobStatus, "paused" | "aborted" | "blocked" | "failed" | "completed">,
     projectRevision: number,
     reason?: string,
-    promotions?: StorageOutputPromotion[]
+    promotions?: StorageOutputPromotion[],
+    canonicalTransition?: DurableCanonicalTerminalTransition
   ): Promise<DurableJobRecord> {
     const outcome: DurableTerminalOutcome = {
       status,
       projectRevision,
       ...(reason ? { reason: publicTerminalReason(status, reason) } : {}),
-      ...(promotions?.length ? { promotions } : {})
+      ...(promotions?.length ? { promotions } : {}),
+      ...(canonicalTransition ? { canonicalTransition } : {})
     };
     return this.execution.settle(jobId, outcome);
   }
-
   async appendEvent(event: Omit<SseEvent, "id">): Promise<SseEvent> {
     return this.trace.appendEvent(event);
   }
-
   saveLlmInvocation(value: StorageLlmInvocation): Promise<StorageLlmInvocation> {
     return this.trace.saveLlmInvocation(value);
   }
@@ -169,6 +200,13 @@ export class DurableJobRuntime {
   }
   recordToolAttemptAndEvent(input: { attempt: StorageToolAttempt; projectRevision: number; toolName: string }): Promise<StorageToolAttempt> {
     return this.trace.recordToolAttemptAndEvent(input);
+  }
+  verifyToolPostcondition(input: { jobId: string; attemptId: string; projectRevision: number; verifiedAt: string }): Promise<StorageToolAttempt> {
+    return this.trace.verifyToolPostcondition(input);
+  }
+  verifyCanonicalTerminal(input: Omit<StorageCanonicalTerminalVerifyInput, "fence">): Promise<StorageCanonicalTerminalVerifyResult> {
+    const active = this.execution.require(input.owner.jobId);
+    return this.client.request({ name: "canonical.verifyTerminal", input: { ...input, fence: active.fence } });
   }
   recordToolOutput(value: StorageToolOutputLink): Promise<StorageToolOutputLink> {
     return this.trace.recordToolOutput(value);
@@ -188,8 +226,53 @@ export class DurableJobRuntime {
   getCheckpoint(checkpointId: string): Promise<StorageCheckpoint | undefined> {
     return this.client.request({ name: "checkpoint.get", checkpointId });
   }
-  async recordCapabilityAudits(audits: StorageCapabilityAudit[]): Promise<void> {
-    await recordDurableCapabilityAudits(this.client, audits);
+  saveCanonicalTaskContract(owner: CS.StorageRunOwnership, contract: CS.StorageTaskContractInput): Promise<CS.StorageTaskContract> {
+    const active = this.execution.require(owner.jobId);
+    return fencedCanonicalTaskContractWrite(this.client, active.fence, active.job.projectId, owner, contract);
+  }
+  getCanonicalTaskContract(projectId: string, contractId: string): Promise<CS.StorageTaskContract | undefined> {
+    return this.client.request({ name: "taskContract.get", projectId, contractId });
+  }
+  latestCanonicalRunState(owner: CS.StorageRunOwnership): Promise<CS.StorageRunStateRevision | undefined> {
+    return this.client.request({ name: "runState.latest", owner });
+  }
+  commitCanonicalRunState(input: CS.StorageCommitRunStateRevisionInput): Promise<CS.StorageRunStateRevision> {
+    const active = this.execution.require(input.revision.jobId);
+    return fencedCanonicalStorageWrite(this.client, active.fence, input.revision.jobId, { name: "runState.commit", input });
+  }
+  commitCanonicalRevisionPlan(owner: CS.StorageRunOwnership, preparePlan: () => Promise<CanonicalRevisionPlan>): Promise<RunStateRevision> {
+    return commitDurableCanonicalRevisionPlan(this.client, () => this.execution.require(owner.jobId), owner, preparePlan);
+  }
+  async commitCanonicalBudget(owner: CS.StorageRunOwnership, preparePlan: (recordedAt: string) => Promise<CanonicalRevisionPlan>): Promise<void> {
+    await commitDurableCanonicalBudget(this.client, () => this.execution.require(owner.jobId), owner, preparePlan, runtimeNow(this.config));
+  }
+  async commitCanonicalCheckpoint(input: DurableCanonicalCheckpointCommitInput): Promise<StorageCheckpoint> {
+    const requireActive = () => this.execution.require(input.owner.jobId);
+    requireActive();
+    const completedStep = await this.trace.completedStep(input.owner.jobId, input.step);
+    requireActive();
+    const result = await commitDurableCanonicalCheckpoint(this.client, requireActive, input, runtimeNow(this.config), completedStep);
+    this.trace.publishStoredEvent(result.step.event);
+    return result.step.checkpoint;
+  }
+  saveCanonicalContextPack(input: CS.StorageSaveContextPackInput): Promise<CS.StorageContextPack> {
+    const active = this.execution.require(input.contextPack.jobId);
+    return fencedCanonicalStorageWrite(this.client, active.fence, input.contextPack.jobId, { name: "contextPack.save", input });
+  }
+  getCanonicalResumeContextPack(owner: CS.StorageRunOwnership, predecessorJobId: string, contextPackId: string): Promise<CS.StorageContextPack | undefined> {
+    return this.client.request({ name: "contextPack.getResumeBound", owner, predecessorJobId, contextPackId });
+  }
+  listCanonicalToolAttempts(jobId: string, limit = 1_000): Promise<StorageToolAttempt[]> {
+    return this.client.request({ name: "trace.attempt.listJob", jobId, limit });
+  }
+  listCanonicalLlmInvocations(jobId: string, limit = 1_000): Promise<StorageLlmInvocation[]> {
+    return this.client.request({ name: "trace.llm.listJob", jobId, limit });
+  }
+  async recordCapabilityAudits(audits: StorageCapabilityAudit[], project?: StorageProjectPayload): Promise<void> {
+    await recordDurableCapabilityAudits(this.client, audits, project);
+  }
+  async syncProject(project: StorageProjectPayload): Promise<void> {
+    await syncDurableProject(this.client, project);
   }
   async eventsAfter(projectId: string, lastEventId?: string | number, limit = 200, signal?: AbortSignal): Promise<SseEvent[]> {
     signal?.throwIfAborted();
@@ -203,43 +286,24 @@ export class DurableJobRuntime {
   diagnosticSnapshot(): DurableRuntimeDiagnosticSnapshot {
     return this.diagnostics.snapshot();
   }
-
   async operationalDiagnostics(queueProjectLimit = 100): Promise<DurableOperationalDiagnosticSnapshot> {
     const sampledAtMs = this.config.clock.now();
-    const generatedAt = new Date(sampledAtMs).toISOString();
-    const [queue, storage] = await Promise.all([
-      this.client.request<StorageJobQueueDiagnostics>({ name: "job.queueDiagnostics", limit: queueProjectLimit }),
-      this.client.request<StorageOperationalDiagnosticSnapshot>({ name: "diagnostics.storage" })
-    ]);
-    return {
-      generatedAt,
+    return collectDurableOperationalDiagnostics({
+      client: this.client,
       countersSince: this.diagnosticCountersSince,
       runtime: this.diagnostics.snapshot(),
       sse: this.sseDiagnostics.snapshot(),
-      traceQueries: storage.traceQueries,
-      storageTransactions: storage.storageTransactions,
-      queue: {
-        projects: queue.projects.map((project) => ({
-          ...project,
-          oldestQueuedAgeMs: queuedAgeMs(project.oldestQueuedAt, sampledAtMs)
-        })),
-        totalDepth: queue.totalDepth,
-        ...(queue.oldestQueuedAt ? { oldestQueuedAt: queue.oldestQueuedAt, oldestQueuedAgeMs: queuedAgeMs(queue.oldestQueuedAt, sampledAtMs) } : {}),
-        totalProjects: queue.totalProjects,
-        truncated: queue.truncated
-      }
-    };
+      sampledAtMs,
+      queueProjectLimit
+    });
   }
-
   close(): Promise<void> {
     this.closePromise ??= this.performClose();
     return this.closePromise;
   }
-
   private schedule(projectId: string): void {
     this.lanes.schedule(projectId);
   }
-
   private async drainProject(projectId: string): Promise<boolean> {
     if (this.state !== "running") return false;
     const now = runtimeNow(this.config);
@@ -261,7 +325,6 @@ export class DurableJobRuntime {
     await this.executor.run(claimed);
     return true;
   }
-
   private async requestControl(jobId: string, control: DurableJobControl, projectRevision?: number): Promise<DurableJobRecord> {
     const current = await this.get(jobId);
     if (!current) throw new Error(`Durable job not found: ${jobId}`);
@@ -279,25 +342,9 @@ export class DurableJobRuntime {
     else this.schedule(result.job.projectId);
     return toDurableJobRecord(result.job);
   }
-
-  private async discoverRunnableProjects(): Promise<string[]> {
-    const projectIds: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await this.client.request<StorageRunnableProjectPage>({ name: "job.listRunnableProjects", cursor, limit: 250 });
-      projectIds.push(...page.projectIds);
-      if (page.nextCursor && page.nextCursor === cursor) throw new Error("Runnable project recovery cursor made no progress.");
-      cursor = page.nextCursor;
-    } while (cursor);
-    return projectIds;
+  private sweepExpiredLeases() {
+    return sweepDurableExpiredLeases(this.client, runtimeNow(this.config), (events) => this.publishEvents(events));
   }
-
-  private async sweepExpiredLeases(): Promise<StorageExpiredLeaseSweepResult> {
-    const result = await this.client.request<StorageExpiredLeaseSweepResult>({ name: "job.markInterruptedExpiredLeases", now: runtimeNow(this.config) });
-    this.publishEvents(result.events);
-    return result;
-  }
-
   private scheduleLeaseSweep(): void {
     if (this.state !== "running") return;
     this.leaseSweepTimer = this.config.timer.setTimeout(() => {
@@ -309,7 +356,6 @@ export class DurableJobRuntime {
     }, this.config.leaseSweepMs);
     this.leaseSweepTimer.unref?.();
   }
-
   private async performClose(): Promise<void> {
     if (this.state === "closed") return;
     this.state = "draining";
@@ -330,7 +376,6 @@ export class DurableJobRuntime {
       this.state = "closed";
     }
   }
-
   private publishEvents(events: StorageJobEvent[]): void {
     const seen = new Set<number>();
     for (const event of events)
@@ -339,32 +384,10 @@ export class DurableJobRuntime {
         this.trace.publishStoredEvent(event);
       }
   }
-
   private assertRunning(): void {
     if (this.state !== "running") throw new Error(`Durable job runtime is not accepting work (${this.state}).`);
   }
-
   private logFailure(error: unknown, jobId?: string, projectId?: string, diagnosticId?: string): void {
-    const failure = durableFailureFrom(error, { diagnosticId: () => diagnosticId ?? `job-${randomUUID()}` });
-    console.error(
-      JSON.stringify({
-        level: "error",
-        operation: "durable_job_runtime",
-        diagnosticId: failure.internalDiagnosticId,
-        errorCode: isLeaseLost(error) ? "LEASE_LOST" : failure.code,
-        ...(jobId ? { jobId } : {}),
-        ...(projectId ? { projectId } : {})
-      })
-    );
+    logDurableRuntimeFailure(error, { jobId, projectId, diagnosticId });
   }
-}
-
-function isLeaseLost(error: unknown): boolean {
-  return error instanceof Error && error.name === "LeaseLostError";
-}
-
-function queuedAgeMs(queuedAt: string, sampledAtMs: number): number {
-  const queuedAtMs = Date.parse(queuedAt);
-  if (!Number.isFinite(queuedAtMs)) throw new Error("Durable queue diagnostics returned an invalid queued timestamp.");
-  return Math.max(0, Math.floor(sampledAtMs - queuedAtMs));
 }

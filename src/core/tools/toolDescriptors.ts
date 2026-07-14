@@ -1,8 +1,10 @@
 import { z, type ZodType } from "zod";
 import type { CapabilityKind } from "../domain/capabilities/types.js";
+import type { AerospaceToolMetadata } from "./aerospaceToolMetadata.js";
 import { normalizeToolName, orderToolNames } from "./toolMerger.js";
 import type { ToolPhase } from "./researchToolTypes.js";
 
+export type { AerospaceToolMetadata } from "./aerospaceToolMetadata.js";
 export type { ToolPhase } from "./researchToolTypes.js";
 export type ToolSideEffect = "network" | "filesystem" | "process";
 
@@ -17,6 +19,7 @@ export interface ToolDescriptor {
   exclusiveKey?: string;
   repeatable: boolean;
   description: string;
+  aerospace?: AerospaceToolMetadata;
 }
 
 const urlSchema = z
@@ -138,6 +141,19 @@ const engineeringProgramRequestSchema = z
     alphaStart: z.number().finite().optional(),
     alphaEnd: z.number().finite().optional(),
     alphaStep: z.number().positive().finite().optional(),
+    transition: z
+      .discriminatedUnion("mode", [
+        z.object({ mode: z.literal("free") }).strict(),
+        z
+          .object({
+            mode: z.literal("forced"),
+            upperXOverC: z.number().min(0).max(1).finite(),
+            lowerXOverC: z.number().min(0).max(1).finite(),
+            sourceEvidenceId: z.string().trim().min(1).max(300)
+          })
+          .strict()
+      ])
+      .optional(),
     reason: shortText.optional()
   })
   .strict()
@@ -217,7 +233,29 @@ const builtinDescriptors: ToolDescriptor[] = [
     ["filesystem", "process"],
     "project-engineering",
     false,
-    "Execute validated engineering program requests using an explicitly selected target."
+    "Execute validated engineering program requests using an explicitly selected target.",
+    {
+      discipline: "aerodynamics",
+      fidelity: 2,
+      intendedUses: ["airfoil polar", "public aerodynamic validation", "research mesh inspection"],
+      validInputEnvelope: "Explicit solver-specific envelope and configuration baseline are required.",
+      quantityKinds: ["Mach", "Reynolds", "angle", "force coefficient"],
+      frameKinds: ["wind", "body"],
+      deterministic: true,
+      solverRequirements: ["explicit installed or bundled adapter"],
+      licenseRequirement: "user_supplied",
+      resourceBudget: { cpuSeconds: 600, memoryBytes: 2_147_483_648, diskBytes: 1_073_741_824, wallClockMs: 900_000 },
+      inputArtifactTypes: ["airfoil_coordinates", "mesh", "solver_case"],
+      outputArtifactTypes: ["polar", "mesh_report", "solver_result"],
+      preconditions: ["units_valid", "frames_valid", "baseline_current", "model_use_accepted"],
+      postconditions: ["output_hash_verified", "solver_status_terminal", "convergence_assessed"],
+      verificationStrategy: "Adapter-specific parser, postcondition and reproducibility receipt.",
+      supportsUncertainty: false,
+      supportsSensitivity: false,
+      qualificationStatus: "unqualified_research",
+      externalSideEffectRisk: "bounded_compute",
+      schemaByteEstimate: 9_000
+    }
   ),
   descriptor(
     "CodexCliTool",
@@ -323,7 +361,8 @@ function descriptor(
   sideEffects: ToolSideEffect[],
   repeatableOrExclusive: boolean | string,
   repeatableOrDescription: boolean | string,
-  description?: string
+  description?: string,
+  aerospace?: AerospaceToolMetadata
 ): ToolDescriptor {
   const exclusiveKey = typeof repeatableOrExclusive === "string" ? repeatableOrExclusive : undefined;
   const repeatable = typeof repeatableOrExclusive === "boolean" ? repeatableOrExclusive : (repeatableOrDescription as boolean);
@@ -338,7 +377,8 @@ function descriptor(
     sideEffects,
     ...(exclusiveKey ? { exclusiveKey } : {}),
     repeatable,
-    description: resolvedDescription
+    description: resolvedDescription,
+    ...(aerospace ? { aerospace } : {})
   };
 }
 

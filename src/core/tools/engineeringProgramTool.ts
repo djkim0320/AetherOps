@@ -62,7 +62,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       "xfoil",
       ready.xfoil,
       ["kind", "naca or artifactPath"],
-      ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "reason"],
+      ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "transition", "reason"],
       "Run the embedded native XFOIL executable.",
       "Embedded XFOIL is not configured."
     ),

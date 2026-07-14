@@ -29,4 +29,25 @@ describe("engineering program request validation", () => {
     expect(() => normalizeEngineeringProgramRequests([{ kind: "toolchain-check", target: "automatic" }])).toThrow(/Unsupported.*target/);
     expect(() => normalizeEngineeringProgramRequests([{ kind: "xfoil-wasm-polar", target: "xfoil-wasm", cfdRunSpec: {} }])).toThrow(/invalid cfdRunSpec/);
   });
+
+  it("normalizes source-bound forced transition and rejects ambiguous locations", () => {
+    expect(
+      normalizeEngineeringProgramRequests([
+        {
+          kind: "xfoil-wasm-polar",
+          target: "xfoil-wasm",
+          transition: { mode: "forced", upperXOverC: 0.05, lowerXOverC: 0.05, sourceEvidenceId: "NASA-TM-4074" }
+        }
+      ])[0]?.transition
+    ).toEqual({ mode: "forced", upperXOverC: 0.05, lowerXOverC: 0.05, sourceEvidenceId: "NASA-TM-4074" });
+    expect(() =>
+      normalizeEngineeringProgramRequests([
+        {
+          kind: "xfoil-wasm-polar",
+          target: "xfoil-wasm",
+          transition: { mode: "forced", upperXOverC: 1.1, lowerXOverC: 0.05, sourceEvidenceId: "" }
+        }
+      ])
+    ).toThrow(/source-bound.*between 0 and 1/);
+  });
 });

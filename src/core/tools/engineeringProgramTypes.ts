@@ -59,6 +59,8 @@ export interface XfoilWasmPolarSummary {
   alphaStart: number;
   alphaEnd: number;
   alphaStep: number;
+  transition: "free" | "forced";
+  transitionLocations?: { upperXOverC: number; lowerXOverC: number; sourceEvidenceId: string };
   rowCount: number;
   rows: XfoilPolarRow[];
   stdoutExcerpt: string;

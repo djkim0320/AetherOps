@@ -182,6 +182,15 @@ function mergeWithReadyProgramTemplate(
   if (request.alphaStart !== undefined) safeRequest.alphaStart = request.alphaStart;
   if (request.alphaEnd !== undefined) safeRequest.alphaEnd = request.alphaEnd;
   if (request.alphaStep !== undefined) safeRequest.alphaStep = request.alphaStep;
+  if (request.transition?.mode === "free") safeRequest.transition = { mode: "free" };
+  if (request.transition?.mode === "forced") {
+    safeRequest.transition = {
+      mode: "forced",
+      upperXOverC: request.transition.upperXOverC,
+      lowerXOverC: request.transition.lowerXOverC,
+      sourceEvidenceId: request.transition.sourceEvidenceId
+    };
+  }
   if (request.cfdRunSpec) {
     const safeSpec = mergeCfdRunSpecWithReadyArtifacts(safeRequest, request.cfdRunSpec, readyArtifacts, readyArtifactsByFormat);
     if (!safeSpec) return undefined;

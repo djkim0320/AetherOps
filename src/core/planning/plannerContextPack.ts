@@ -67,7 +67,7 @@ export function plannerToolInputContract(toolName: string): string {
     ResearchMetadataTool: "{ query: non-empty string }",
     PdfIngestionTool: "{ urls: 1-8 HTTP(S) URLs }",
     EngineeringProgramTool:
-      '{ programRequests: 1-4 objects }; each requires kind and a matching target; WebXFOIL uses kind="xfoil-wasm-polar", target="xfoil-wasm", coordinateBindingId after fetch, and numeric reynolds/mach/alphaStart/alphaEnd/alphaStep',
+      '{ programRequests: 1-4 objects }; each requires kind and a matching target; WebXFOIL uses kind="xfoil-wasm-polar", target="xfoil-wasm", coordinateBindingId after fetch, numeric reynolds/mach/alphaStart/alphaEnd/alphaStep, and an explicit free or source-bound forced transition policy',
     CodexCliTool:
       '{ task: non-empty string, inputArtifactIds: 0-32 promoted artifact IDs, outputs: 1-8 { relativePath, kind } }; kind must be exactly "code", "report", or "data"',
     DataAnalysisTool:

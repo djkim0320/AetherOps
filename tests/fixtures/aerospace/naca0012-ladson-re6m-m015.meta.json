@@ -1,0 +1,23 @@
+{
+  "fixtureVersion": 1,
+  "title": "Ladson NACA 0012 force data at Re=6 million and M=0.15",
+  "sourceUrl": "https://tmbwg.github.io/turbmodels/NACA0012_validation/CLCD_Ladson_expdata.dat",
+  "caseUrl": "https://tmbwg.github.io/turbmodels/naca0012_val.html",
+  "reportUrl": "https://ntrs.nasa.gov/citations/19880019495",
+  "reportNumber": "NASA-TM-4074",
+  "organization": "NASA Langley Research Center",
+  "accessedAt": "2026-07-15",
+  "license": "Work of the US Government; public use permitted",
+  "contentSha256": "78cd2f6aa4968e80f44cbf6c96f699bd9c6e45681d958ec528a10cf72ed23357",
+  "conditions": {
+    "reynoldsNumber": 6000000,
+    "mach": 0.15,
+    "transition": "tripped",
+    "preferredZone": "120 grit"
+  },
+  "limitations": [
+    "The fixture does not state a pointwise experimental uncertainty.",
+    "The NASA TMR warns that two-dimensional wind-tunnel data become less representative near stall.",
+    "Validation is limited to the recorded geometry, flow conditions, coefficient conventions, and angle range."
+  ]
+}

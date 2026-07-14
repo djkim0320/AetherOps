@@ -91,7 +91,7 @@ export function xfoilWasmPolarArtifact(input: ResearchToolInput, summary: XfoilW
     title: `XFOIL-WASM polar: ${summary.airfoil}`,
     relativePath: `artifacts/iteration-${input.iteration}/engineering-program/xfoil-wasm-polar-${safeName}.json`,
     mimeType: "application/json",
-    summary: `WebXFOIL polar for ${summary.airfoil}: ${summary.rowCount} alpha rows at Re=${summary.reynolds}, Mach=${summary.mach}.`,
+    summary: `WebXFOIL polar for ${summary.airfoil}: ${summary.rowCount} alpha rows at Re=${summary.reynolds}, Mach=${summary.mach}, transition=${summary.transition}.`,
     content: `${JSON.stringify(summary, null, 2)}\n`,
     metadata: {
       traceabilityKind: "tool_observation",
@@ -121,7 +121,8 @@ export function xfoilWasmPolarEvidence(input: ResearchToolInput, summary: XfoilW
     limitations: [
       "WebXFOIL runs the open-source XFOIL solver compiled to WebAssembly; results still depend on XFOIL convergence, Reynolds/Mach assumptions, and input airfoil geometry.",
       "This is a 2D airfoil solver, not an SU2 field CFD solve.",
-      `Runtime license recorded by AetherOps: ${summary.runtimeLicense}.`
+      `Runtime license recorded by AetherOps: ${summary.runtimeLicense}.`,
+      `Boundary-layer transition policy: ${summary.transition}${summary.transitionLocations ? ` at upper/lower x/c=${summary.transitionLocations.upperXOverC}/${summary.transitionLocations.lowerXOverC}, source=${summary.transitionLocations.sourceEvidenceId}` : " (solver default free transition)"}.`
     ],
     metadata: {
       traceabilityKind: "tool_observation",
@@ -136,6 +137,8 @@ export function xfoilWasmPolarEvidence(input: ResearchToolInput, summary: XfoilW
       sourceArtifactPath: summary.sourceArtifactPath,
       reynolds: summary.reynolds,
       mach: summary.mach,
+      transition: summary.transition,
+      transitionLocations: summary.transitionLocations,
       rowCount: summary.rowCount,
       canSupportHypothesis: true,
       sourceQualityTier: "tool_observation"

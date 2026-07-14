@@ -64,6 +64,7 @@ export interface EngineeringProgramRequest {
   alphaStart?: number;
   alphaEnd?: number;
   alphaStep?: number;
+  transition?: { mode: "free" } | { mode: "forced"; upperXOverC: number; lowerXOverC: number; sourceEvidenceId: string };
   reason?: string;
 }
 

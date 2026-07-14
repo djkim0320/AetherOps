@@ -38,6 +38,8 @@
     "autonomy:verify": "node scripts/autonomy-verify.mjs",
     "harness:verify": "npm run server:build && node scripts/verify-m1-server-restart.mjs && node scripts/verify-harness.mjs verify",
     "harness:eval": "npm run server:build && node scripts/verify-harness.mjs eval",
+    "aerospace:verify": "node scripts/verify-aerospace.mjs",
+    "aerospace:eval": "node scripts/verify-aerospace.mjs --eval",
     "harness:capture-baseline": "node scripts/capture-harness-baseline.mjs",
     "selftest": "node scripts/selftest.mjs",
     "selftest:blocked": "node scripts/selftest.mjs --mode=blocked --skip-static",

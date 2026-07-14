@@ -25,6 +25,7 @@ export async function runXfoilWasmPolar(
   const alphaStart = boundedNumber(executionRequest.alphaStart, -30, 30, -4, "alphaStart");
   const alphaEnd = boundedNumber(executionRequest.alphaEnd, -30, 30, 12, "alphaEnd");
   const alphaStep = boundedPositiveNumber(executionRequest.alphaStep, 0.1, 10, 2, "alphaStep");
+  const transition = executionRequest.transition ?? { mode: "free" as const };
   if (alphaEnd < alphaStart) {
     throw new Error("XFOIL WebAssembly polar request requires alphaEnd >= alphaStart.");
   }
@@ -52,19 +53,11 @@ export async function runXfoilWasmPolar(
     }
 
     const polarPath = "xfoil-wasm-polar.txt";
-    session
-      .add("PANE")
-      .oper()
-      .add("ITER 160")
-      .add(`VISC ${reynolds}`)
-      .add(`MACH ${mach}`)
-      .add("PACC")
-      .add(polarPath)
-      .blank()
-      .add(`ASEQ ${alphaStart} ${alphaEnd} ${alphaStep}`)
-      .add("PACC")
-      .blank()
-      .quit();
+    session.add("PANE").oper().add("ITER 160").add(`VISC ${reynolds}`).add(`MACH ${mach}`);
+    if (transition.mode === "forced") {
+      session.add("VPAR").add(`XTR ${transition.upperXOverC} ${transition.lowerXOverC}`).blank();
+    }
+    session.add("PACC").add(polarPath).blank().add(`ASEQ ${alphaStart} ${alphaEnd} ${alphaStep}`).add("PACC").blank().quit();
 
     const result = xfoil.run(session.toString(), { workDir: "/work", files: session.files, scalarKeys: ["CL", "CD", "Cm", "a"] });
     const polarText = String(xfoil.readFile(`/work/${polarPath}`, "utf8"));
@@ -87,6 +80,16 @@ export async function runXfoilWasmPolar(
       alphaStart,
       alphaEnd,
       alphaStep,
+      transition: transition.mode,
+      ...(transition.mode === "forced"
+        ? {
+            transitionLocations: {
+              upperXOverC: transition.upperXOverC,
+              lowerXOverC: transition.lowerXOverC,
+              sourceEvidenceId: transition.sourceEvidenceId
+            }
+          }
+        : {}),
       rowCount: rows.length,
       rows,
       stdoutExcerpt: excerpt(result.raw.stdout),

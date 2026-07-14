@@ -49,10 +49,34 @@ export function normalizeEngineeringProgramRequests(value: unknown): Engineering
       alphaStart: finiteNumber(request.alphaStart),
       alphaEnd: finiteNumber(request.alphaEnd),
       alphaStep: finiteNumber(request.alphaStep),
+      transition: normalizeTransition(request.transition),
       reason: typeof request.reason === "string" ? request.reason : undefined
     });
   }
   return requests;
+}
+
+function normalizeTransition(value: EngineeringProgramRequest["transition"]): EngineeringProgramRequest["transition"] {
+  if (value === undefined) return undefined;
+  if (value.mode === "free") return { mode: "free" };
+  if (
+    value.mode !== "forced" ||
+    !Number.isFinite(value.upperXOverC) ||
+    !Number.isFinite(value.lowerXOverC) ||
+    value.upperXOverC < 0 ||
+    value.upperXOverC > 1 ||
+    value.lowerXOverC < 0 ||
+    value.lowerXOverC > 1 ||
+    !value.sourceEvidenceId.trim()
+  ) {
+    throw new Error("Forced transition requires source-bound upper and lower x/c locations between 0 and 1.");
+  }
+  return {
+    mode: "forced",
+    upperXOverC: value.upperXOverC,
+    lowerXOverC: value.lowerXOverC,
+    sourceEvidenceId: value.sourceEvidenceId.trim()
+  };
 }
 
 function normalizeEngineeringCfdRunSpec(value: unknown): CfdRunSpec | undefined {

@@ -1,5 +1,6 @@
 import { PublicUrlPolicy } from "./publicUrlPolicy.js";
 import { BoundedHttpError, cancelResponseBody, parseJsonBytes, readLimitedBytes } from "./boundedHttpBody.js";
+import { createVerifiedHttpFetch } from "./pinnedHttpTransport.js";
 export { BoundedHttpError, type BoundedHttpErrorCode } from "./boundedHttpBody.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -37,6 +38,7 @@ export interface BoundedNetworkAuditEvent {
 
 export interface PublicHttpUrlPolicy {
   assertPublicHttpUrl(value: string): Promise<string>;
+  resolvePublicHostAddresses?(hostname: string): Promise<string[]>;
 }
 
 export interface BoundedHttpRequestOptions {
@@ -63,11 +65,11 @@ export class BoundedHttpClient {
 
   constructor(options: BoundedHttpClientOptions = {}) {
     this.policy = options.publicUrlPolicy ?? new PublicUrlPolicy();
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = normalizeTimeout(options.timeoutMs, DEFAULT_TIMEOUT_MS);
     this.maxBytes = normalizeMaxBytes(options.maxBytes, DEFAULT_MAX_BYTES);
     this.maxRedirects = normalizeMaxRedirects(options.maxRedirects, DEFAULT_MAX_REDIRECTS);
     this.onNetworkAudit = options.onNetworkAudit;
+    this.fetchImpl = options.fetchImpl ?? createDefaultFetch(this.policy, this.timeoutMs);
   }
 
   async request(url: string, init: RequestInit = {}, options: BoundedHttpRequestOptions = {}): Promise<BoundedHttpResponse> {
@@ -162,14 +164,14 @@ export class BoundedHttpClient {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     const requestSignal = init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
     const redirectChain: string[] = [];
-    let currentUrl = await this.assertAuditedUrl(url, redirectChain);
+    let currentUrl = await this.assertAuditedUrl(url, redirectChain, deadline, requestSignal, init.signal);
     let requestInit = normalizeRequestInit(init, options.accept, requestSignal);
     const visited = new Set([currentUrl]);
     let completed = false;
 
     try {
       for (let redirectCount = 0; ; redirectCount += 1) {
-        const response = await this.fetchOnce(currentUrl, requestInit, controller, deadline);
+        const response = await this.fetchOnce(currentUrl, requestInit, requestSignal, deadline, init.signal);
         if (isRedirectStatus(response.status)) {
           let nextUrl: string;
           let nextRequestInit: RequestInit;
@@ -181,7 +183,7 @@ export class BoundedHttpClient {
             if (redirectCount >= this.maxRedirects) {
               throw new BoundedHttpError("TOO_MANY_REDIRECTS", `too many redirects for ${redactAuditUrl(url)}`);
             }
-            nextUrl = await this.assertAuditedUrl(new URL(location, currentUrl).toString(), redirectChain);
+            nextUrl = await this.assertAuditedUrl(new URL(location, currentUrl).toString(), redirectChain, deadline, requestSignal, init.signal);
             if (visited.has(nextUrl)) {
               throw new BoundedHttpError("REDIRECT_LOOP", `redirect loop detected for ${redactAuditUrl(nextUrl)}`);
             }
@@ -205,42 +207,77 @@ export class BoundedHttpClient {
     }
   }
 
-  private async assertAuditedUrl(value: string, redirectChain: string[]): Promise<string> {
+  private async assertAuditedUrl(
+    value: string,
+    redirectChain: string[],
+    deadline: number,
+    signal: AbortSignal,
+    externalSignal?: AbortSignal | null
+  ): Promise<string> {
+    let allowed: string;
     try {
-      const allowed = await this.policy.assertPublicHttpUrl(value);
-      redirectChain.push(redactAuditUrl(allowed));
-      await this.onNetworkAudit?.({
-        url: redactAuditUrl(allowed),
-        redirectChain: [...redirectChain],
-        policyDecision: "allowed",
-        auditedAt: new Date().toISOString()
-      });
-      return allowed;
+      allowed = await withRequestBoundary(this.policy.assertPublicHttpUrl(value), deadline, signal, externalSignal, this.timeoutMs);
     } catch (error) {
+      if (error instanceof BoundedHttpError && (error.code === "REQUEST_ABORTED" || error.code === "REQUEST_TIMEOUT")) throw error;
       const redacted = redactAuditUrl(value);
       if (redirectChain.at(-1) !== redacted) redirectChain.push(redacted);
-      await this.onNetworkAudit?.({
-        url: redacted,
-        redirectChain: [...redirectChain],
-        policyDecision: "denied",
-        reason: formatError(error),
-        auditedAt: new Date().toISOString()
-      });
+      await withRequestBoundary(
+        Promise.resolve().then(() =>
+          this.onNetworkAudit?.({
+            url: redacted,
+            redirectChain: [...redirectChain],
+            policyDecision: "denied",
+            reason: formatError(error),
+            auditedAt: new Date().toISOString()
+          })
+        ),
+        deadline,
+        signal,
+        externalSignal,
+        this.timeoutMs
+      );
       throw error;
     }
+    redirectChain.push(redactAuditUrl(allowed));
+    await withRequestBoundary(
+      Promise.resolve().then(() =>
+        this.onNetworkAudit?.({
+          url: redactAuditUrl(allowed),
+          redirectChain: [...redirectChain],
+          policyDecision: "allowed",
+          auditedAt: new Date().toISOString()
+        })
+      ),
+      deadline,
+      signal,
+      externalSignal,
+      this.timeoutMs
+    );
+    return allowed;
   }
 
-  private async fetchOnce(currentUrl: string, requestInit: RequestInit, controller: AbortController, deadline: number): Promise<Response> {
-    const fetchPromise = this.fetchImpl(currentUrl, { ...requestInit, redirect: "manual", signal: controller.signal });
+  private async fetchOnce(
+    currentUrl: string,
+    requestInit: RequestInit,
+    signal: AbortSignal,
+    deadline: number,
+    externalSignal?: AbortSignal | null
+  ): Promise<Response> {
+    const fetchPromise = this.fetchImpl(currentUrl, { ...requestInit, redirect: "manual", signal });
     try {
-      return await withDeadline(fetchPromise, deadline, `request timeout after ${this.timeoutMs}ms`);
+      return await withRequestBoundary(fetchPromise, deadline, signal, externalSignal, this.timeoutMs);
     } catch (error) {
-      if (isAbortOrTimeout(error, deadline)) {
-        throw new Error(`request timeout after ${this.timeoutMs}ms`, { cause: error });
-      }
+      if (signal.aborted || Date.now() >= deadline) throw requestBoundaryError(externalSignal, this.timeoutMs);
       throw error;
     }
   }
+}
+
+function createDefaultFetch(policy: PublicHttpUrlPolicy, timeoutMs: number): typeof fetch {
+  if (!policy.resolvePublicHostAddresses) {
+    throw new Error("Public URL policy does not support connect-time address verification.");
+  }
+  return createVerifiedHttpFetch({ resolvePublicHostAddresses: (hostname) => policy.resolvePublicHostAddresses!(hostname) }, timeoutMs);
 }
 
 function normalizeRequestInit(init: RequestInit, accept: string | undefined, signal: AbortSignal): RequestInit {
@@ -288,20 +325,38 @@ function normalizeMaxRedirects(value: number | undefined, fallback: number): num
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }
 
-function withDeadline<T>(promise: Promise<T>, deadline: number, message: string): Promise<T> {
+function withRequestBoundary<T>(
+  promise: Promise<T>,
+  deadline: number,
+  signal: AbortSignal,
+  externalSignal: AbortSignal | null | undefined,
+  timeoutMs: number
+): Promise<T> {
   const remaining = deadline - Date.now();
-  if (remaining <= 0) return Promise.reject(new Error(message));
+  if (remaining <= 0) return Promise.reject(requestBoundaryError(externalSignal, timeoutMs));
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let removeAbortListener: (() => void) | undefined;
   const timer = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), remaining);
+    timeout = setTimeout(() => reject(new BoundedHttpError("REQUEST_TIMEOUT", `request timeout after ${timeoutMs}ms`)), remaining);
   });
-  return Promise.race([promise, timer]).finally(() => {
+  const aborted = new Promise<never>((_, reject) => {
+    const abort = () => reject(requestBoundaryError(externalSignal, timeoutMs));
+    if (signal.aborted) abort();
+    else {
+      signal.addEventListener("abort", abort, { once: true });
+      removeAbortListener = () => signal.removeEventListener("abort", abort);
+    }
+  });
+  return Promise.race([promise, timer, aborted]).finally(() => {
     if (timeout) clearTimeout(timeout);
+    removeAbortListener?.();
   });
 }
 
-function isAbortOrTimeout(error: unknown, deadline: number): boolean {
-  return Date.now() >= deadline || (error instanceof Error && (error.name === "AbortError" || /abort|timeout/i.test(error.message)));
+function requestBoundaryError(externalSignal: AbortSignal | null | undefined, timeoutMs: number): BoundedHttpError {
+  return externalSignal?.aborted
+    ? new BoundedHttpError("REQUEST_ABORTED", "request aborted by caller")
+    : new BoundedHttpError("REQUEST_TIMEOUT", `request timeout after ${timeoutMs}ms`);
 }
 
 function formatError(error: unknown): string {

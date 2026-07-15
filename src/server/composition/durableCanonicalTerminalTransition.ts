@@ -4,7 +4,7 @@ import { storageStepCheckpointId } from "../runtime/storage/v2/jobAtomicOperatio
 import { LeaseLostError } from "../runtime/storage/v2/leaseFence.js";
 import type { StorageRunOwnership } from "../runtime/storage/v2/runStateTypes.js";
 import type { StorageCompletedStepInput } from "../runtime/storage/v2/types.js";
-import type { StorageOutputPromotion, StorageTerminalTransitionResult } from "../runtime/storage/v2/jobAtomicTypes.js";
+import type { StorageOutputPromotion, StorageTerminalQuarantinedStepInput, StorageTerminalTransitionResult } from "../runtime/storage/v2/jobAtomicTypes.js";
 import type { StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
 import type { CanonicalRevisionPlan } from "./canonicalRunTypes.js";
 import { storageCanonicalRevisionPlan } from "./durableCanonicalRunGateway.js";
@@ -37,6 +37,7 @@ export interface DurableCanonicalTerminalInput {
   reason?: string;
   promotions?: StorageOutputPromotion[];
   completedStep?: StorageCompletedStepInput;
+  quarantinedStep?: StorageTerminalQuarantinedStepInput;
 }
 
 export async function transitionDurableCanonicalTerminal(

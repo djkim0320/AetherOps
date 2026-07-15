@@ -112,7 +112,7 @@ export async function replayThenSubscribe(
           if (deliveredEvents >= limits.maxReplayEvents || deliveredBytes + bytes > limits.maxReplayBytes) {
             throw new SseDeliveryBudgetError("SSE replay budget exceeded.");
           }
-          await emit(event);
+          await emitWithinReplayBudget(emit, event, signal, now, startedAt, limits.maxReplayDurationMs);
           deliveredEvents++;
           deliveredBytes += bytes;
           lastSequence = event.id;
@@ -225,6 +225,30 @@ function assertEvent(event: ProjectEvent, projectId: string, previousId: number)
 
 function assertReplayDuration(now: () => number, startedAt: number, maxDurationMs: number): void {
   if (now() - startedAt > maxDurationMs) throw new SseDeliveryBudgetError("SSE replay duration budget exceeded.");
+}
+
+function emitWithinReplayBudget(
+  emit: (event: ProjectEvent) => void | Promise<void>,
+  event: ProjectEvent,
+  signal: AbortSignal,
+  now: () => number,
+  startedAt: number,
+  maxDurationMs: number
+): Promise<void> {
+  const remaining = maxDurationMs - (now() - startedAt);
+  if (remaining <= 0) return Promise.reject(new SseDeliveryBudgetError("SSE replay duration budget exceeded."));
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new SseDeliveryBudgetError("SSE replay duration budget exceeded.")), remaining);
+    timeout.unref();
+  });
+  const delivery = abortable(
+    Promise.resolve().then(() => emit(event)),
+    signal
+  );
+  return Promise.race([delivery, expired]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 function assertActive(signal: AbortSignal, terminalError: Error | undefined): void {

@@ -14,8 +14,11 @@ export function executeFencedWrite(command: StorageFencedWriteCommand, repositor
       return repositories.trace.saveLlmInvocation(command.invocation);
     case "trace.decision.record":
       return repositories.trace.recordToolDecision(command.decision);
-    case "trace.attempt.save":
-      return repositories.trace.saveToolAttempt(command.attempt);
+    case "trace.attempt.save": {
+      const attempt = repositories.trace.saveToolAttempt(command.attempt);
+      repositories.toolSideEffects.observeAttempt(attempt);
+      return attempt;
+    }
     case "trace.codex.save":
       return repositories.trace.saveCodexCliExecution(command.execution);
     case "trace.output.record":

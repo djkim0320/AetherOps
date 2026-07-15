@@ -1,6 +1,7 @@
 import { RequestIdSchema, type RpcErrorCode } from "../../../contracts/api-v2/common.js";
 import { CanonicalRunRuntimeError } from "../../composition/canonicalRunTypes.js";
 import { DurableResumeValidationError } from "../../composition/durableResumeValidator.js";
+import { DurableRuntimeAdmissionError } from "../../composition/durableRuntimeAdmission.js";
 import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, IdempotencyConflictError } from "../../runtime/storage/v2/jobErrors.js";
 import { createServerRequestId, internalErrorMessage } from "../errorBoundary.js";
 
@@ -15,6 +16,9 @@ export function mapRpcV2Error(error: unknown, requestId: string): RpcV2Error {
     return new RpcV2Error(403, requestId, "CAPABILITY_DENIED", error.message, error.details, error);
   }
   if (error instanceof RpcNotReadyError) return new RpcV2Error(503, requestId, "NOT_READY", error.message, error.details, error);
+  if (error instanceof DurableRuntimeAdmissionError) {
+    return new RpcV2Error(503, requestId, "NOT_READY", error.message, { runtimeState: error.state }, error);
+  }
   if (error instanceof RpcValidationError) return new RpcV2Error(400, requestId, "VALIDATION_ERROR", error.message, error.details, error);
   if (error instanceof DurableResumeValidationError) {
     return new RpcV2Error(statusForResumeError(error.code), requestId, error.code, error.message, { resumeCode: error.code }, error);

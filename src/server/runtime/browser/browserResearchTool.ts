@@ -31,6 +31,7 @@ export class BrowserResearchTool implements ResearchTool {
         urls,
         settings: settings.browserUse,
         sourceAccess,
+        ...(context?.signal ? { signal: context.signal } : {}),
         ...(context?.onNetworkAudit ? { onNetworkAudit: (audit) => context.onNetworkAudit?.({ ...audit, sourcePolicy: sourceAccess }) } : {})
       });
       for (const page of pages) assertSourceAccess(sourceAccess, page.url);

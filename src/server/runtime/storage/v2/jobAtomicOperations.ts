@@ -1,6 +1,8 @@
-import { createHash } from "node:crypto";
 import { storageLeaseFence } from "./leaseFence.js";
-import { controlTerminalReason, resolveDurableTerminal, type CompletedStepDisposition } from "./jobTerminalResolution.js";
+import { resolveDurableTerminal } from "./jobTerminalResolution.js";
+import { jobAtomicId as stableId } from "./jobAtomicIds.js";
+import { hasTerminalStep, readTerminalStepTransitionRetry, recordTerminalStepTransition } from "./jobStepOperations.js";
+import { assertNoActiveToolAttempts, interruptTerminalToolAttempts } from "./jobToolAttemptSettlement.js";
 import type { StorageV2RepositorySet } from "./repositories.js";
 import type {
   StorageExpiredLeaseSweepResult,
@@ -10,19 +12,10 @@ import type {
   StorageTerminalTransitionInput,
   StorageTerminalTransitionResult
 } from "./jobAtomicTypes.js";
-import type {
-  StorageClaimStartOptions,
-  StorageClaimStartResult,
-  StorageJobEvent,
-  StorageJob,
-  StorageLeaseFence,
-  StorageQuarantinedStepInput,
-  StorageStepAttempt,
-  StorageStepDispositionInput,
-  StorageStepDispositionResult
-} from "./types.js";
+import type { StorageClaimStartOptions, StorageClaimStartResult, StorageJobEvent, StorageJob, StorageLeaseFence, StorageStepAttempt } from "./types.js";
 import type { StorageToolOutputLink } from "./traceTypes.js";
 export { enqueueJob } from "./jobEnqueueAtomic.js";
+export { commitStep, quarantineStep, storageStepCheckpointId } from "./jobStepOperations.js";
 export function claimAndStart(repositories: StorageV2RepositorySet, options: StorageClaimStartOptions): StorageClaimStartResult | undefined {
   const job = repositories.jobs.claimNext(options);
   if (!job) return undefined;
@@ -44,8 +37,14 @@ export function claimAndStart(repositories: StorageV2RepositorySet, options: Sto
 
 export function transitionTerminal(repositories: StorageV2RepositorySet, input: StorageTerminalTransitionInput): StorageTerminalTransitionResult {
   const occurredAt = input.occurredAt ?? new Date().toISOString();
+  if (input.completedStep && input.quarantinedStep) {
+    throw new Error("A terminal transition cannot commit and quarantine a step at the same time.");
+  }
   if (input.completedStep && input.status !== "completed") {
     throw new Error("A completed step can be committed only with a completed terminal request.");
+  }
+  if (input.quarantinedStep && input.status === "completed") {
+    throw new Error("A quarantined step cannot accompany a completed terminal request.");
   }
   if (input.promotions?.length && input.status !== "completed") {
     throw new Error("Output promotions are allowed only when completing a job.");
@@ -69,19 +68,34 @@ export function transitionTerminal(repositories: StorageV2RepositorySet, input: 
     promotions: resolution.status === "completed" ? input.promotions : undefined
   };
   if (before.status === resolution.status) {
+    assertNoActiveToolAttempts(repositories, before.id);
     const terminal = readTerminalRetry(repositories, before, resolvedInput);
-    const stepDisposition = input.completedStep ? readCompletedStepTransitionRetry(repositories, before, resolvedInput, resolution.stepDisposition) : undefined;
+    const stepDisposition = hasTerminalStep(input)
+      ? readTerminalStepTransitionRetry(repositories, before, resolvedInput, resolution.stepDisposition)
+      : undefined;
     return {
       ...terminal,
       events: [...(stepDisposition ? [stepDisposition.event] : []), ...terminal.events],
       ...(stepDisposition ? { stepDisposition } : {})
     };
   }
-  const stepDisposition = input.completedStep ? recordCompletedStepTransition(repositories, before, resolvedInput, resolution.stepDisposition) : undefined;
+  let toolSettlementEvents: StorageJobEvent[] = [];
+  if (resolution.status !== "completed") {
+    toolSettlementEvents = interruptTerminalToolAttempts(
+      repositories,
+      before,
+      input.projectRevision,
+      occurredAt,
+      resolution.reason ?? `Durable job settled as ${resolution.status}.`,
+      `job_${resolution.status}`
+    ).events;
+  }
+  const stepDisposition = hasTerminalStep(input) ? recordTerminalStepTransition(repositories, before, resolvedInput, resolution.stepDisposition) : undefined;
   const promoted =
     resolution.status === "completed"
       ? (input.promotions ?? []).map((promotion) => promoteTerminalOutput(repositories, input.fence, promotion, input.projectRevision, occurredAt))
       : [];
+  if (resolution.status === "completed") assertNoActiveToolAttempts(repositories, before.id);
   const job = repositories.jobs.transitionFenced(input.fence, {
     status: resolution.status,
     result: { projectRevision: input.projectRevision },
@@ -104,7 +118,12 @@ export function transitionTerminal(repositories: StorageV2RepositorySet, input: 
   return {
     job,
     event,
-    events: [...(stepDisposition ? [stepDisposition.event] : []), ...promoted.flatMap((entry) => (entry.event ? [entry.event] : [])), event],
+    events: [
+      ...toolSettlementEvents,
+      ...(stepDisposition ? [stepDisposition.event] : []),
+      ...promoted.flatMap((entry) => (entry.event ? [entry.event] : [])),
+      event
+    ],
     links: promoted.map((entry) => entry.link),
     ...(stepDisposition ? { stepDisposition } : {})
   };
@@ -156,28 +175,24 @@ export function requestControl(repositories: StorageV2RepositorySet, input: Stor
 
 export function interruptExpiredLeases(repositories: StorageV2RepositorySet, now = new Date().toISOString()): StorageExpiredLeaseSweepResult {
   const jobs = repositories.jobs.markInterruptedExpiredLeases(now);
-  const events = jobs.map((job) => {
+  const events = jobs.flatMap((job) => {
     repositories.checkpoints.interruptRunningStepAttempts(job.id, now, "Worker lease expired.");
-    repositories.trace.interruptActiveToolAttempts(job.id, now, "Worker lease expired.");
-    return repositories.events.append({
+    const projectRevision = requiredProjectRevision(job);
+    const settlement = interruptTerminalToolAttempts(repositories, job, projectRevision, now, "Worker lease expired.", "lease_expired");
+    const event = repositories.events.append({
       eventId: stableId("event", job.id, String(job.attempt), String(job.leaseGeneration), "lease-expired"),
       projectId: job.projectId,
       jobId: job.id,
       type: "run.status.changed",
       createdAt: now,
       payload: {
-        projectRevision: requiredProjectRevision(job),
+        projectRevision,
         data: { jobId: job.id, status: "interrupted", reason: "Worker lease expired." }
       }
     });
+    return [...settlement.events, event];
   });
   return { jobs, events, projectIds: [...new Set(jobs.map((job) => job.projectId))].sort() };
-}
-export function commitStep(repositories: StorageV2RepositorySet, input: StorageStepDispositionInput): StorageStepDispositionResult {
-  return recordStepDisposition(repositories, input, "committed");
-}
-export function quarantineStep(repositories: StorageV2RepositorySet, input: StorageQuarantinedStepInput): StorageStepDispositionResult {
-  return recordStepDisposition(repositories, input, "quarantined");
 }
 function promoteTerminalOutput(
   repositories: StorageV2RepositorySet,
@@ -208,123 +223,6 @@ function promoteTerminalOutput(
     }
   });
   return { link, event };
-}
-
-function recordStepDisposition(
-  repositories: StorageV2RepositorySet,
-  input: StorageStepDispositionInput | StorageQuarantinedStepInput,
-  disposition: "committed" | "quarantined"
-): StorageStepDispositionResult {
-  const occurredAt = input.occurredAt ?? new Date().toISOString();
-  const allowed =
-    disposition === "committed"
-      ? (["running", "completed"] as const)
-      : (["running", "pause_requested", "cancel_requested", "paused", "aborted", "blocked", "failed"] as const);
-  const job = repositories.jobs.assertFence(input.fence, allowed);
-  const checkpointId = storageStepCheckpointId(input.fence, input.step, disposition);
-  const attemptId = stableId("step-attempt", job.id, String(input.fence.attempt), input.step);
-  const error = "error" in input ? input.error : undefined;
-  const checkpoint = repositories.checkpoints.saveCheckpoint({
-    id: checkpointId,
-    projectId: job.projectId,
-    jobId: job.id,
-    attemptId,
-    step: input.step,
-    checkpointKey: `attempt-${input.fence.attempt}-${input.step}-${disposition}`,
-    status: disposition,
-    ...(input.outputRef ? { outputRef: input.outputRef } : {}),
-    ...(error ? { error } : {}),
-    data: input.checkpointData ?? { phase: disposition === "committed" ? "step_completed" : "step_failed" },
-    createdAt: occurredAt,
-    ...(disposition === "committed" ? { committedAt: occurredAt } : {})
-  });
-  const stepAttempt = repositories.checkpoints.recordStepAttempt({
-    id: attemptId,
-    projectId: job.projectId,
-    jobId: job.id,
-    step: input.step,
-    attemptIndex: input.fence.attempt,
-    status: disposition === "committed" ? "completed" : "quarantined",
-    workerId: input.fence.leaseOwner,
-    checkpointId,
-    ...(input.outputHash !== undefined ? { outputHash: input.outputHash } : {}),
-    ...(disposition === "quarantined" && "quarantineRef" in input && input.quarantineRef ? { quarantineRef: input.quarantineRef } : {}),
-    ...(error ? { error } : {}),
-    startedAt: job.startedAt ?? occurredAt,
-    completedAt: occurredAt
-  });
-  const event = repositories.events.append({
-    eventId: stableId("event", job.id, String(input.fence.attempt), input.step, disposition),
-    projectId: job.projectId,
-    jobId: job.id,
-    type: "run.step.changed",
-    createdAt: occurredAt,
-    payload: { projectRevision: input.projectRevision, data: { jobId: job.id, step: input.step, checkpointId } }
-  });
-  return { job, checkpoint, stepAttempt, event };
-}
-
-function recordCompletedStepTransition(
-  repositories: StorageV2RepositorySet,
-  job: StorageJob,
-  input: StorageTerminalTransitionInput,
-  disposition: CompletedStepDisposition
-): StorageStepDispositionResult {
-  const step = requiredCompletedStep(input);
-  const occurredAt = input.occurredAt as string;
-  if (disposition === "committed") {
-    return recordStepDisposition(
-      repositories,
-      {
-        fence: input.fence,
-        step: step.step,
-        projectRevision: input.projectRevision,
-        occurredAt,
-        checkpointData: step.checkpointData,
-        outputRef: step.outputRef,
-        outputHash: step.outputHash
-      },
-      "committed"
-    );
-  }
-  return recordStepDisposition(
-    repositories,
-    {
-      fence: input.fence,
-      step: step.step,
-      projectRevision: input.projectRevision,
-      occurredAt,
-      checkpointData: { phase: "control_requested_before_completion_commit", intendedStatus: "completed" },
-      outputRef: step.outputRef,
-      outputHash: step.outputHash,
-      error: input.reason ?? controlTerminalReason(job.status === "cancel_requested" || job.status === "aborted" ? "aborted" : "paused")
-    },
-    "quarantined"
-  );
-}
-
-function readCompletedStepTransitionRetry(
-  repositories: StorageV2RepositorySet,
-  job: StorageJob,
-  input: StorageTerminalTransitionInput,
-  disposition: CompletedStepDisposition
-): StorageStepDispositionResult {
-  const step = requiredCompletedStep(input);
-  const checkpointId = storageStepCheckpointId(input.fence, step.step, disposition);
-  const attemptId = stableId("step-attempt", job.id, String(input.fence.attempt), step.step);
-  const eventId = stableId("event", job.id, String(input.fence.attempt), step.step, disposition);
-  const checkpoint = repositories.checkpoints.get(checkpointId);
-  const attempt = repositories.checkpoints.listStepAttempts(job.id).find((candidate) => candidate.id === attemptId);
-  const event = repositories.events.get(eventId);
-  if (!checkpoint || !attempt || !event) {
-    throw new Error(`Completed step terminal retry is missing its durable ${disposition} disposition.`);
-  }
-  return recordCompletedStepTransition(repositories, job, input, disposition);
-}
-
-function requiredCompletedStep(input: StorageTerminalTransitionInput): NonNullable<StorageTerminalTransitionInput["completedStep"]> {
-  if (!input.completedStep) throw new Error("Completed step metadata is required.");
-  return input.completedStep;
 }
 
 function runningStepAttempt(job: StorageJob, step: string, startedAt: string): StorageStepAttempt {
@@ -364,12 +262,4 @@ function requiredClaimMetadata(job: StorageJob): { projectRevision: number; step
     throw new Error(`Durable job has an invalid current step: ${job.id}`);
   }
   return { projectRevision, step: payload.currentStep };
-}
-
-function stableId(prefix: string, ...parts: string[]): string {
-  return `${prefix}-${createHash("sha256").update(parts.join("\u0000")).digest("hex")}`;
-}
-
-export function storageStepCheckpointId(fence: StorageLeaseFence, step: string, disposition: "committed" | "quarantined" = "committed"): string {
-  return stableId("checkpoint", fence.jobId, String(fence.attempt), step, disposition);
 }

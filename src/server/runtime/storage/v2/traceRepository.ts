@@ -31,6 +31,7 @@ import {
   assertToolDecisionStorageBoundary
 } from "./traceStorageBoundary.js";
 import { assertStorageToolAttemptTrace, assertToolAttemptOutputPromotionAllowed } from "./toolPostcondition.js";
+import { countActiveToolAttempts, interruptActiveToolAttempts } from "./traceAttemptRecovery.js";
 
 export class TraceRepository {
   private readonly pagination: TracePaginationRepository;
@@ -257,14 +258,12 @@ export class TraceRepository {
     return readCount(this.db.prepare("select count(*) count from tool_attempts where job_id=?").get(jobId), "Tool-attempt");
   }
 
-  interruptActiveToolAttempts(jobId: string, completedAt: string, error: string): StorageToolAttempt[] {
-    this.db
-      .prepare(
-        `update tool_attempts set status='interrupted',terminal_cause='lease_expired',error=?,completed_at=?
-         where job_id=? and status in ('queued','running')`
-      )
-      .run(error, completedAt, jobId);
-    return this.listToolAttempts(jobId, 1_000).filter((attempt) => attempt.status === "interrupted" && attempt.completedAt === completedAt);
+  countActiveToolAttempts(jobId: string): number {
+    return countActiveToolAttempts(this.db, jobId);
+  }
+
+  interruptActiveToolAttempts(jobId: string, completedAt: string, error: string, terminalCause: string): StorageToolAttempt[] {
+    return interruptActiveToolAttempts(this.db, jobId, completedAt, error, terminalCause);
   }
 
   recordOutputLink(value: StorageToolOutputLink): StorageToolOutputLink {

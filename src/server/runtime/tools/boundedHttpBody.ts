@@ -1,4 +1,6 @@
 export type BoundedHttpErrorCode =
+  | "REQUEST_TIMEOUT"
+  | "REQUEST_ABORTED"
   | "RESPONSE_TOO_LARGE"
   | "RESPONSE_BODY_TIMEOUT"
   | "RESPONSE_ABORTED"

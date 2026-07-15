@@ -342,7 +342,7 @@ describe("M1 long-horizon durable resume", () => {
     message: RegExp;
     capabilityExpansion?: boolean;
   }>([
-    { label: "pending external effect", blocker: "pending-effect", expectedCode: "NOT_READY", message: /no durable terminal receipt/i },
+    { label: "pending external effect", blocker: "pending-effect", expectedCode: "NOT_READY", message: /ambiguous external side effect/i },
     { label: "stale tool descriptor", blocker: "stale-tool", expectedCode: "NOT_READY", message: /changed schema version/i },
     { label: "unavailable tool", blocker: "unavailable-tool", expectedCode: "NOT_READY", message: /no longer available/i },
     { label: "stale memory", blocker: "stale-memory", expectedCode: "NOT_READY", message: /stale selected memory/i },

@@ -43,6 +43,21 @@ describe("BrowserResearchTool", () => {
     expect(result.artifacts.some((artifact) => artifact.relativePath.includes("screenshot"))).toBe(true);
   });
 
+  it("forwards the durable job cancellation signal to browser collection", async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const collector: BrowserPageCollector = {
+      collect: async (value) => {
+        observedSignal = value.signal;
+        return [{ url: "https://example.test/research", title: "Collected", text: "bounded evidence" }];
+      }
+    };
+
+    await new BrowserResearchTool(collector).run(input(), settings, { signal: controller.signal });
+
+    expect(observedSignal).toBe(controller.signal);
+  });
+
   it("prioritizes public scholarly discovery terms in the browser query", async () => {
     let capturedQuery = "";
     const collector: BrowserPageCollector = {

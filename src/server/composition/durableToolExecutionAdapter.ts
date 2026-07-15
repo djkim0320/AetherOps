@@ -7,6 +7,7 @@ import { assertToolAttemptOutputPromotionAllowed } from "../runtime/storage/v2/t
 import type { DurableJobRuntime } from "./durableJobRuntime.js";
 import type { DurableJobRecord } from "./durableJobTypes.js";
 import { durableJobRequestHash } from "./durableJobRequestHash.js";
+import { durableToolAttemptIdentity } from "./durableToolAttemptIdentity.js";
 import { redactTraceText } from "../runtime/security/traceSanitizer.js";
 
 interface AttemptState {
@@ -37,27 +38,18 @@ export class DurableToolExecutionAdapter {
     const descriptorSideEffects = descriptor ? [...descriptor.sideEffects].sort() : undefined;
     const inputHash = durableJobRequestHash(event.inputs);
     const quarantiningCompletedAttempt = previous?.attempt.status === "completed" && event.status === "quarantined";
-    const idempotencyKey =
-      previous?.attempt.idempotencyKey ??
-      durableJobRequestHash({
-        version: "tool-attempt-idempotency-v1",
-        projectId: this.job.projectId,
-        toolName: descriptor?.name ?? event.toolName,
-        descriptorVersion: descriptor?.version,
-        inputHash
-      });
     const mutatesExternalState = descriptorSideEffects?.some((effect) => effect === "filesystem" || effect === "process") === true;
-    const sideEffectKey =
-      previous?.attempt.sideEffectKey ??
-      (mutatesExternalState
-        ? durableJobRequestHash({
-            version: "tool-side-effect-key-v1",
-            projectId: this.job.projectId,
-            toolName: descriptor?.name ?? event.toolName,
-            descriptorVersion: descriptor?.version,
-            inputHash
-          })
-        : undefined);
+    const identity = durableToolAttemptIdentity({
+      projectId: this.job.projectId,
+      jobId: this.job.id,
+      toolName: descriptor?.name ?? event.toolName,
+      descriptorVersion: descriptor?.version,
+      repeatable: descriptor?.repeatable ?? false,
+      mutatesExternalState,
+      inputHash
+    });
+    const idempotencyKey = previous?.attempt.idempotencyKey ?? identity.idempotencyKey;
+    const sideEffectKey = previous?.attempt.sideEffectKey ?? identity.sideEffectKey;
     const attempt: StorageToolAttempt = {
       id: attemptId,
       projectId: this.job.projectId,

@@ -41,4 +41,14 @@ describe("tool descriptors", () => {
       }).success
     ).toBe(false);
   });
+
+  it.each(["0012", "NACA0012", "NACA 0012"])("normalizes %s to the solver's canonical NACA series", (naca) => {
+    const descriptor = getToolDescriptor("EngineeringProgramTool");
+    const parsed = descriptor?.inputSchema.safeParse({
+      programRequests: [{ kind: "xfoil-wasm-polar", target: "xfoil-wasm", naca }]
+    });
+
+    expect(parsed?.success).toBe(true);
+    if (parsed?.success) expect(parsed.data).toMatchObject({ programRequests: [{ naca: "0012" }] });
+  });
 });

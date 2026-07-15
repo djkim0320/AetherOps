@@ -10,6 +10,7 @@ import type { StorageToolPostconditionVerifyResult } from "./jobAtomicTypes.js";
 import { migrateStorageV2Schema } from "./schema.js";
 import { computeToolPostconditionReceiptHash } from "./toolPostcondition.js";
 import type { StorageToolAttempt, StorageToolOutputLink } from "./traceTypes.js";
+import type { StorageToolSideEffectReservation } from "./toolSideEffectReservationTypes.js";
 import type { StorageJobEvent, StorageLeaseFence } from "./types.js";
 
 const roots: string[] = [];
@@ -41,6 +42,9 @@ describe("storage-worker tool postcondition authority boundary", () => {
     });
     expect(second.event).toBeUndefined();
     expect(second.attempt.postconditionReceipt).toEqual(first.attempt.postconditionReceipt);
+    await expect(
+      harness.client.request<StorageToolSideEffectReservation | undefined>({ name: "trace.sideEffect.getAttempt", attemptId: harness.attempt.id })
+    ).resolves.toMatchObject({ status: "applied", generation: 1, attemptId: harness.attempt.id });
     await expect(
       fenced(harness, [
         {

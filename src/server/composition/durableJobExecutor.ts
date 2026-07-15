@@ -1,13 +1,13 @@
 import type { JobKind, JobStatus } from "../../contracts/api-v2/jobs.js";
 import type { StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
 import type { StorageTerminalTransitionResult } from "../runtime/storage/v2/jobAtomicTypes.js";
-import type { StorageClaimStartResult, StorageJob, StorageJobEvent, StorageStepDispositionResult } from "../runtime/storage/v2/types.js";
+import type { StorageClaimStartResult, StorageJob, StorageJobEvent } from "../runtime/storage/v2/types.js";
 import { durableFailureFrom } from "./durableFailure.js";
 import { DurableJobExecutionContext, type DurableJobExecutionScope, type DurableTerminalOutcome } from "./durableJobExecutionContext.js";
 import { toDurableJobRecord } from "./durableJobMappers.js";
 import { DurableJobTraceRuntime } from "./durableJobTraceRuntime.js";
 import type { DurableJobControl, DurableJobHandler } from "./durableJobTypes.js";
-import { startDurableLeaseRenewal } from "./durableLeaseRenewal.js";
+import { startDurableLeaseRenewal, type DurableLeaseRenewal } from "./durableLeaseRenewal.js";
 import { runtimeNow, type ResolvedDurableRuntimeConfig } from "./durableRuntimeConfig.js";
 import { DurableRuntimeDiagnostics } from "./durableRuntimeDiagnostics.js";
 import { transitionDurableCanonicalTerminal } from "./durableCanonicalTerminalTransition.js";
@@ -27,6 +27,7 @@ export class DurableJobExecutor {
   private readonly scopes = new Map<string, DurableJobExecutionScope>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly requestedControls = new Map<string, DurableJobControl>();
+  private readonly renewals = new Map<string, DurableLeaseRenewal>();
 
   constructor(private readonly dependencies: DurableJobExecutorDependencies) {}
 
@@ -56,6 +57,7 @@ export class DurableJobExecutor {
       renew: () => this.renewLease(scope),
       onFailure: (error) => this.handleLeaseLoss(scope, error, "renewal")
     });
+    this.renewals.set(job.id, renewal);
     let renewalStopFailure: unknown;
     try {
       await this.dependencies.execution.run(scope, async () => {
@@ -77,6 +79,7 @@ export class DurableJobExecutor {
       } catch (error) {
         renewalStopFailure = error;
       }
+      if (this.renewals.get(job.id) === renewal) this.renewals.delete(job.id);
       this.controllers.delete(job.id);
       this.scopes.delete(job.id);
       this.requestedControls.delete(job.id);
@@ -86,14 +89,17 @@ export class DurableJobExecutor {
   }
 
   async revokeLingeringLeases(): Promise<void> {
+    await this.stopLeaseRenewals();
     for (const scope of this.scopes.values()) {
       const leaseWasAlreadyLost = Boolean(scope.leaseLost);
+      const interruptedStep = scope.job.currentStep ? { quarantinedStep: { step: scope.job.currentStep, error: terminalMessage("interrupted") } } : {};
       scope.leaseLost = true;
       scope.controller.abort(new Error("Durable runtime shutdown grace expired."));
       try {
         const result = await this.dependencies.client.request<StorageTerminalTransitionResult>({
           name: "job.transitionTerminal",
           input: {
+            ...interruptedStep,
             fence: scope.fence,
             status: "interrupted",
             projectRevision: scope.job.projectRevision,
@@ -111,14 +117,29 @@ export class DurableJobExecutor {
     }
   }
 
+  private async stopLeaseRenewals(): Promise<void> {
+    const renewals = [...this.renewals.entries()];
+    const results = await Promise.allSettled(renewals.map(([, renewal]) => renewal.stop()));
+    results.forEach((result, index) => {
+      const [jobId, renewal] = renewals[index];
+      if (this.renewals.get(jobId) === renewal) this.renewals.delete(jobId);
+      if (result.status === "rejected") {
+        this.dependencies.logFailure(result.reason, jobId, this.scopes.get(jobId)?.job.projectId);
+      }
+    });
+  }
+
   async interruptClaimedBeforeExecution(claimed: StorageClaimStartResult): Promise<void> {
+    const job = toDurableJobRecord(claimed.job);
+    const interruptedStep = job.currentStep ? { quarantinedStep: { step: job.currentStep, error: terminalMessage("interrupted") } } : {};
     try {
       const result = await this.dependencies.client.request<StorageTerminalTransitionResult>({
         name: "job.transitionTerminal",
         input: {
+          ...interruptedStep,
           fence: claimed.fence,
           status: "interrupted",
-          projectRevision: toDurableJobRecord(claimed.job).projectRevision,
+          projectRevision: job.projectRevision,
           reason: "서버 종료로 작업이 시작되기 전에 중단되었습니다.",
           occurredAt: runtimeNow(this.dependencies.config)
         }
@@ -137,17 +158,17 @@ export class DurableJobExecutor {
     const occurredAt = runtimeNow(this.dependencies.config);
     const completedStep =
       scope.job.currentStep && outcome.status === "completed" ? await this.dependencies.trace.completedStep(scope.job.id, scope.job.currentStep) : undefined;
-    if (scope.job.currentStep) {
-      if (outcome.status !== "completed") {
-        await this.quarantineStep(scope, outcome.projectRevision, outcome.reason ?? terminalMessage(outcome.status));
-      }
-    }
+    const quarantinedStep =
+      scope.job.currentStep && outcome.status !== "completed"
+        ? { step: scope.job.currentStep, error: outcome.reason ?? terminalMessage(outcome.status) }
+        : undefined;
     const terminalInput = {
       status: outcome.status,
       projectRevision: outcome.projectRevision,
       ...(outcome.reason ? { reason: outcome.reason } : {}),
       ...(outcome.promotions ? { promotions: outcome.promotions } : {}),
-      ...(completedStep ? { completedStep } : {})
+      ...(completedStep ? { completedStep } : {}),
+      ...(quarantinedStep ? { quarantinedStep } : {})
     };
     const result = outcome.canonicalTransition
       ? await transitionDurableCanonicalTerminal(
@@ -192,20 +213,6 @@ export class DurableJobExecutor {
       if (isLeaseLost(settleError)) this.handleLeaseLoss(scope, settleError);
       else this.dependencies.logFailure(settleError, scope.job.id, scope.job.projectId);
     }
-  }
-
-  private async quarantineStep(scope: DurableJobExecutionScope, projectRevision: number, error: string): Promise<void> {
-    const result = await this.dependencies.client.request<StorageStepDispositionResult>({
-      name: "job.quarantineStep",
-      input: {
-        fence: scope.fence,
-        step: scope.job.currentStep as string,
-        projectRevision,
-        error,
-        occurredAt: runtimeNow(this.dependencies.config)
-      }
-    });
-    this.dependencies.trace.publishStoredEvent(result.event);
   }
 
   private async renewLease(scope: DurableJobExecutionScope): Promise<void> {

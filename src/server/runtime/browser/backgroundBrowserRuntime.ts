@@ -9,6 +9,8 @@ import { PublicUrlPolicy } from "../tools/publicUrlPolicy.js";
 import { assertPublicNavigationUrl, installBrowserNetworkPolicy } from "./browserNetworkPolicy.js";
 import { redactAuditUrl, type BoundedNetworkAuditEvent } from "../tools/boundedHttpClient.js";
 import { BrowserResourceLimitError, collectBoundedPageText, DEFAULT_BROWSER_RESOURCE_BUDGET, enforceCaptureBudget } from "./browserResourceBudget.js";
+import { fetchBingRssLinks } from "./browserRssDiscovery.js";
+import { VerifiedBrowserProxy } from "./verifiedBrowserProxy.js";
 
 export interface BrowserCollectInput {
   project: ResearchProject;
@@ -16,6 +18,7 @@ export interface BrowserCollectInput {
   urls?: string[];
   settings: BrowserUseSettings;
   sourceAccess: ResearchSourceAccessPolicy;
+  signal?: AbortSignal;
   onNetworkAudit?: (audit: BoundedNetworkAuditEvent) => void | Promise<void>;
 }
 
@@ -32,36 +35,63 @@ export interface BrowserPageCollector {
 }
 
 export class BackgroundBrowserRuntime implements BrowserPageCollector {
+  private readonly lifecycleController = new AbortController();
+  private readonly activeContexts = new Set<BrowserContext>();
+  private readonly activeProxies = new Set<VerifiedBrowserProxy>();
+  private disposePromise?: Promise<void>;
+
   constructor(
     private readonly dataRoot: string,
     private readonly publicUrlPolicy = new PublicUrlPolicy()
   ) {}
 
   async collect(input: BrowserCollectInput): Promise<BrowserCollectedPage[]> {
+    if (this.disposePromise) throw new Error("Background browser runtime is disposed.");
     if (!input.settings.enabled) {
       throw new Error("Background browser use is disabled.");
     }
+    const signal = input.signal ? AbortSignal.any([input.signal, this.lifecycleController.signal]) : this.lifecycleController.signal;
+    signal.throwIfAborted();
 
     const userDataDir = join(this.dataRoot, "browser-profiles", input.project.id);
     mkdirSync(userDataDir, { recursive: true });
 
-    const { chromium } = await import("playwright");
-    const context = await chromium.launchPersistentContext(userDataDir, {
-      acceptDownloads: false,
-      headless: input.settings.mode !== "visible",
-      locale: "ko-KR",
-      viewport: { width: 1366, height: 900 }
+    const proxy = await VerifiedBrowserProxy.start({
+      policy: this.publicUrlPolicy,
+      sourceAccess: input.sourceAccess,
+      timeoutMs: input.settings.timeoutMs,
+      signal
     });
+    this.activeProxies.add(proxy);
+    let context: BrowserContext | undefined;
+    const closeOnAbort = (): void => {
+      void context?.close().catch(() => undefined);
+    };
+    signal.addEventListener("abort", closeOnAbort, { once: true });
 
     try {
+      const { chromium } = await import("playwright");
+      context = await chromium.launchPersistentContext(userDataDir, {
+        acceptDownloads: false,
+        args: ["--disable-quic", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"],
+        headless: input.settings.mode !== "visible",
+        locale: "ko-KR",
+        proxy: { server: proxy.url() },
+        serviceWorkers: "block",
+        timeout: input.settings.timeoutMs,
+        viewport: { width: 1366, height: 900 }
+      });
+      this.activeContexts.add(context);
+      signal.throwIfAborted();
       await installBrowserNetworkPolicy(context, this.publicUrlPolicy, input.sourceAccess, input.onNetworkAudit);
-      const urls = await this.resolveUrls(input, context);
+      const urls = await this.resolveUrls(input, context, signal);
       const pages: BrowserCollectedPage[] = [];
       const failures: string[] = [];
       let capturedBytes = 0;
 
       const pageLimit = Math.min(urls.length, input.settings.maxPages);
       for (let index = 0; index < pageLimit; index += 1) {
+        signal.throwIfAborted();
         const url = urls[index];
         if (!url) continue;
         const page = await context.newPage();
@@ -105,6 +135,7 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
             });
           }
         } catch (error) {
+          signal.throwIfAborted();
           failures.push(`${url}: ${formatError(error)}`);
         } finally {
           await page.close().catch(() => undefined);
@@ -117,11 +148,34 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
 
       return pages;
     } finally {
-      await context.close();
+      signal.removeEventListener("abort", closeOnAbort);
+      if (context) {
+        this.activeContexts.delete(context);
+        await context.close().catch((error: unknown) => {
+          if (!signal.aborted) throw error;
+        });
+      }
+      this.activeProxies.delete(proxy);
+      await proxy.close();
     }
   }
 
-  private async resolveUrls(input: BrowserCollectInput, context: BrowserContext): Promise<string[]> {
+  async dispose(): Promise<void> {
+    this.disposePromise ??= this.performDispose();
+    return this.disposePromise;
+  }
+
+  private async performDispose(): Promise<void> {
+    this.lifecycleController.abort(new Error("Background browser runtime disposed."));
+    const results = await Promise.allSettled([
+      ...[...this.activeContexts].map((context) => context.close()),
+      ...[...this.activeProxies].map((proxy) => proxy.close())
+    ]);
+    const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+    if (failures.length) throw new AggregateError(failures, "Failed to close background browser contexts.");
+  }
+
+  private async resolveUrls(input: BrowserCollectInput, context: BrowserContext, signal: AbortSignal): Promise<string[]> {
     const directUrls = rankResearchUrls(uniqueHttpUrls(input.urls ?? []).map((url) => assertSourceAccess(input.sourceAccess, url)));
     if (directUrls.length) {
       return directUrls;
@@ -150,12 +204,14 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
         `https://search.brave.com/search?q=${encodeURIComponent(query)}`
       ];
       for (const searchUrl of searchUrls) {
-        const publicSearchUrl = await assertPublicNavigationUrl(this.publicUrlPolicy, searchUrl);
+        signal.throwIfAborted();
+        const publicSearchUrl = await withAbort(assertPublicNavigationUrl(this.publicUrlPolicy, searchUrl), signal);
         await searchPage.goto(publicSearchUrl, {
           waitUntil: "domcontentloaded",
           timeout: input.settings.timeoutMs
         });
         await searchPage.waitForLoadState("networkidle", { timeout: Math.min(input.settings.timeoutMs, 8_000) }).catch(() => undefined);
+        signal.throwIfAborted();
         const links = await searchPage.$$eval("a[href]", (anchors) =>
           anchors
             .map((anchor) => (anchor as HTMLAnchorElement).href)
@@ -167,9 +223,13 @@ export class BackgroundBrowserRuntime implements BrowserPageCollector {
           return urls;
         }
       }
-      return rankResearchUrls(
-        (await resolveBingRssUrls(publicResearchQuery(query), input.settings.timeoutMs)).filter((url) => sourceUrlAllowed(input.sourceAccess, url))
-      );
+      const rssLinks = await fetchBingRssLinks(publicResearchQuery(query), {
+        publicUrlPolicy: this.publicUrlPolicy,
+        timeoutMs: input.settings.timeoutMs,
+        signal,
+        ...(input.onNetworkAudit ? { onNetworkAudit: input.onNetworkAudit } : {})
+      });
+      return rankResearchUrls(publicNonSearchUrls(rssLinks).filter((url) => sourceUrlAllowed(input.sourceAccess, url)));
     } finally {
       await searchPage.close().catch(() => undefined);
     }
@@ -238,31 +298,6 @@ function publicResearchQuery(query: string): string {
   ].join(" ");
 }
 
-async function resolveBingRssUrls(query: string, timeoutMs: number): Promise<string[]> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, 15_000));
-  try {
-    const response = await fetch(`https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`, {
-      signal: controller.signal,
-      headers: { accept: "application/rss+xml,application/xml,text/xml" }
-    });
-    if (!response.ok) {
-      return [];
-    }
-    const xml = await response.text();
-    const links: string[] = [];
-    for (const match of xml.matchAll(/<link>([\s\S]*?)<\/link>/gi)) {
-      const link = decodeXmlEntities(match[1] ?? "").trim();
-      if (link) links.push(link);
-    }
-    return publicNonSearchUrls(links);
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function publicNonSearchUrls(rawUrls: string[]): string[] {
   const seen = new Set<string>();
   const urls: string[] = [];
@@ -278,19 +313,21 @@ function publicNonSearchUrls(rawUrls: string[]): string[] {
   return urls;
 }
 
-function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-}
-
 function normalizePageText(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 20_000);
 }
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let removeAbortListener: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", abort);
+  });
+  return Promise.race([promise, aborted]).finally(() => removeAbortListener?.());
 }

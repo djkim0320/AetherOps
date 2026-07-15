@@ -6,6 +6,7 @@ import { boundedNumber, boundedPositiveNumber, requestWithCfdSpecDefaults } from
 import { resolveConfiguredModelingRoot, resolveInsideRoot } from "./engineeringProgramMeshAdapter.js";
 import { runCommandWithInput } from "./engineeringProgramCommands.js";
 import type { AppSettings, EngineeringProgramRequest } from "../../../core/shared/types.js";
+import { normalizeNacaSeries } from "../../../core/tools/airfoilIdentity.js";
 import type { XfoilPolarRow, XfoilPolarSummary } from "../../../core/tools/engineeringProgramTypes.js";
 
 export function hasConfiguredXfoil(settings: AppSettings): boolean {
@@ -22,7 +23,8 @@ export function resolveXfoilCommand(settings: AppSettings): string {
   return resolveEngineeringToolCommand(settings.engineeringTools, "xfoil", settings.engineeringTools.xfoil.command).command;
 }
 
-export async function runXfoilPolar(request: EngineeringProgramRequest, settings: AppSettings): Promise<XfoilPolarSummary> {
+export async function runXfoilPolar(request: EngineeringProgramRequest, settings: AppSettings, signal?: AbortSignal): Promise<XfoilPolarSummary> {
+  signal?.throwIfAborted();
   if (!hasConfiguredXfoil(settings)) {
     throw new Error("XFOIL polar execution requires an embedded XFOIL executable or explicit executable path.");
   }
@@ -56,7 +58,8 @@ export async function runXfoilPolar(request: EngineeringProgramRequest, settings
   ].join("\n");
 
   try {
-    const probe = await runCommandWithInput(resolveXfoilCommand(settings), commandInput, settings.engineeringTools.xfoil.timeoutMs);
+    const probe = await runCommandWithInput(resolveXfoilCommand(settings), commandInput, settings.engineeringTools.xfoil.timeoutMs, signal);
+    signal?.throwIfAborted();
     if (!existsSync(polarPath)) {
       throw new Error(`XFOIL did not produce a polar file. stdout=${probe.stdoutExcerpt} stderr=${probe.stderrExcerpt}`);
     }
@@ -105,10 +108,8 @@ export function parseXfoilPolarRows(text: string): XfoilPolarRow[] {
 function xfoilAirfoilInput(request: EngineeringProgramRequest, settings: AppSettings): { command: string; label: string } {
   const naca = request.naca?.trim();
   if (naca) {
-    if (!/^\d{4,5}$/.test(naca)) {
-      throw new Error("XFOIL NACA request must be a 4 or 5 digit series code.");
-    }
-    return { command: `NACA ${naca}`, label: `NACA ${naca}` };
+    const series = normalizeNacaSeries(naca);
+    return { command: `NACA ${series}`, label: `NACA ${series}` };
   }
   if (!request.artifactPath?.trim()) {
     throw new Error("XFOIL polar execution requires either naca or artifactPath.");

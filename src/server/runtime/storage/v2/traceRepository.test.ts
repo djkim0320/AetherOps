@@ -13,6 +13,7 @@ import { STORAGE_RUN_STATE_MIGRATION_CHECKSUM } from "./runStateSchema.js";
 import { STORAGE_TERMINAL_RECEIPT_MIGRATION_CHECKSUM } from "./terminalReceiptSchema.js";
 import { STORAGE_TERMINAL_ATTESTATION_MIGRATION_CHECKSUM } from "./terminalAttestationSchema.js";
 import { STORAGE_OWNERSHIP_MIGRATION_CHECKSUM } from "./ownershipSchema.js";
+import { STORAGE_TOOL_SIDE_EFFECT_MIGRATION_CHECKSUM } from "./toolSideEffectReservationSchema.js";
 import { STORAGE_TRACE_MIGRATION_CHECKSUM, STORAGE_TRACE_V3_MIGRATION_CHECKSUM } from "./traceSchema.js";
 
 const TRACE_LEASE_NOW_MS = Date.parse("2026-01-01T00:00:00.250Z");
@@ -56,7 +57,8 @@ describe("storage operational trace v3", () => {
       { version: 7, checksum_sha256: STORAGE_RUN_STATE_BOOTSTRAP_MIGRATION_CHECKSUM },
       { version: 8, checksum_sha256: STORAGE_TERMINAL_RECEIPT_MIGRATION_CHECKSUM },
       { version: 9, checksum_sha256: STORAGE_TERMINAL_ATTESTATION_MIGRATION_CHECKSUM },
-      { version: 10, checksum_sha256: STORAGE_OWNERSHIP_MIGRATION_CHECKSUM }
+      { version: 10, checksum_sha256: STORAGE_OWNERSHIP_MIGRATION_CHECKSUM },
+      { version: 11, checksum_sha256: STORAGE_TOOL_SIDE_EFFECT_MIGRATION_CHECKSUM }
     ]);
     const attemptColumns = new Set((db.prepare("pragma table_info(tool_attempts)").all() as Array<{ name: string }>).map((row) => row.name));
     expect([...attemptColumns]).toEqual(

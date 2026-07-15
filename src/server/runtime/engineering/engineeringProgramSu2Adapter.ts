@@ -26,7 +26,8 @@ export function su2Config(settings: AppSettings): Su2Config {
   };
 }
 
-export async function runSu2Case(request: EngineeringProgramRequest, settings: AppSettings): Promise<Su2CaseRunSummary> {
+export async function runSu2Case(request: EngineeringProgramRequest, settings: AppSettings, signal?: AbortSignal): Promise<Su2CaseRunSummary> {
+  signal?.throwIfAborted();
   if (request.target !== "su2") {
     throw new Error("su2-case-run requires target su2.");
   }
@@ -57,7 +58,8 @@ export async function runSu2Case(request: EngineeringProgramRequest, settings: A
   const cwd = normalizeWorkingDirectory(config.workingDirectory) ?? su2Case.caseRoot;
 
   try {
-    const result = await runCommandWithArgs(config.command as string, args, config.timeoutMs, cwd);
+    const result = await runCommandWithArgs(config.command as string, args, config.timeoutMs, cwd, signal);
+    signal?.throwIfAborted();
     if (result.exitCode !== 0 || result.timedOut) {
       throw new Error(`SU2 command exited unsuccessfully: exitCode=${result.exitCode}, timedOut=${result.timedOut}, stderr=${result.stderrExcerpt}`);
     }

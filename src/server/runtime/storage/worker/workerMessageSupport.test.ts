@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IdempotencyConflictError } from "../v2/jobErrors.js";
+import { SideEffectReservationConflictError } from "../v2/toolSideEffectReservationTypes.js";
 import { serializeWorkerError, workerError } from "./workerMessageSupport.js";
 
 describe("storage Worker error boundary", () => {
@@ -30,5 +31,9 @@ describe("storage Worker error boundary", () => {
     const payload = serializeWorkerError(new IdempotencyConflictError());
     expect(payload).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
     expect(workerError(payload)).toBeInstanceOf(IdempotencyConflictError);
+
+    const sideEffect = serializeWorkerError(new SideEffectReservationConflictError());
+    expect(sideEffect).toMatchObject({ code: "SIDE_EFFECT_RESERVATION_CONFLICT" });
+    expect(workerError(sideEffect)).toBeInstanceOf(SideEffectReservationConflictError);
   });
 });

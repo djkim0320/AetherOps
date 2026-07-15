@@ -92,6 +92,8 @@ export type StorageWorkerBaseCommand =
   | { name: "trace.decision.listJob"; jobId: string; limit?: number }
   | { name: "trace.attempt.get"; attemptId: string }
   | { name: "trace.attempt.listJob"; jobId: string; limit?: number }
+  | { name: "trace.sideEffect.get"; projectId: string; sideEffectKey: string }
+  | { name: "trace.sideEffect.getAttempt"; attemptId: string }
   | { name: "trace.codex.listJob"; jobId: string; limit?: number }
   | { name: "trace.output.listAttempt"; attemptId: string; limit?: number }
   | { name: "trace.output.listAttempts"; attemptIds: string[]; limit?: number }
@@ -147,7 +149,7 @@ export interface StorageWorkerErrorPayload {
   name: string;
   message: string;
   stack?: string;
-  code?: "IDEMPOTENCY_CONFLICT" | "REVISION_CONFLICT" | "OWNERSHIP_CONFLICT" | "IMMUTABLE_CONFLICT" | "LEASE_LOST";
+  code?: "IDEMPOTENCY_CONFLICT" | "SIDE_EFFECT_RESERVATION_CONFLICT" | "REVISION_CONFLICT" | "OWNERSHIP_CONFLICT" | "IMMUTABLE_CONFLICT" | "LEASE_LOST";
 }
 
 export type StorageWorkerResponse =

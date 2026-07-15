@@ -158,8 +158,10 @@ export class DurableJobTraceRuntime {
     };
   }
 
-  async eventsAfter(projectId: string, lastEventId?: string | number, limit = 200): Promise<SseEvent[]> {
+  async eventsAfter(projectId: string, lastEventId?: string | number, limit = 200, signal?: AbortSignal): Promise<SseEvent[]> {
+    signal?.throwIfAborted();
     const rows = await this.client.request<StorageJobEvent[]>({ name: "event.after", projectId, lastEventId, limit });
+    signal?.throwIfAborted();
     return rows.map(eventFromStorage);
   }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CanonicalRunRuntimeError } from "../../composition/canonicalRunTypes.js";
 import { DurableResumeValidationError } from "../../composition/durableResumeValidator.js";
+import { DurableRuntimeAdmissionError } from "../../composition/durableRuntimeAdmission.js";
 import { defaultSettings } from "../../runtime/storage/settingsStore.js";
 import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, IdempotencyConflictError } from "../../runtime/storage/v2/jobErrors.js";
 import type { RpcHandlerContext } from "./context.js";
@@ -55,6 +56,27 @@ describe("RPC v2 error mapping", () => {
       message: "The selected value is invalid.",
       details: { field: "model" }
     });
+  });
+
+  it("maps a draining durable runtime to an explicit NOT_READY response", async () => {
+    const context = researchEnqueueContext(vi.fn().mockRejectedValue(new DurableRuntimeAdmissionError("draining")));
+
+    const error = await handleRpcV2(
+      {
+        requestId: "request-runtime-draining",
+        method: "chat.enqueue",
+        params: {
+          projectId: "project-1",
+          sessionId: "session-1",
+          content: "continue",
+          clientMutationId: "mutation-runtime-draining",
+          idempotencyKey: "runtime-draining"
+        }
+      },
+      context
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ status: 503, code: "NOT_READY", details: { runtimeState: "draining" } });
   });
 
   it.each([

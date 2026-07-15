@@ -10,13 +10,16 @@ import type {
   ResearchArtifact
 } from "../../core/shared/types.js";
 import { EngineeringProgramTool } from "../../core/tools/engineeringProgramTool.js";
+import type { ResearchToolExecutionContext } from "../../core/tools/researchToolTypes.js";
 import { runEngineeringProgram } from "../runtime/engineering/engineeringProgramRegistry.js";
 
 export async function runEngineeringProgramDirect(
   payload: EngineeringProgramDirectRunInput,
   settings: AppSettings,
-  orchestrator: AetherOpsOrchestrator
+  orchestrator: AetherOpsOrchestrator,
+  context?: Pick<ResearchToolExecutionContext, "signal">
 ): Promise<EngineeringProgramDirectRunResult> {
+  context?.signal.throwIfAborted();
   const startedAt = nowIso();
   const programRequests = normalizeDirectProgramRequests(payload?.programRequests, settings);
   const title = payload?.title?.trim() || "Direct engineering program run";
@@ -63,7 +66,7 @@ export async function runEngineeringProgramDirect(
   };
 
   try {
-    const result = await new EngineeringProgramTool(runEngineeringProgram).run(input, executionSettings);
+    const result = await new EngineeringProgramTool(runEngineeringProgram).run(input, executionSettings, context);
     const completedAt = nowIso();
     const programRuns = programRunsFromOutput(result.toolRun.output);
     const reportMarkdown = engineeringDirectReport(title, result.toolRun.status, programRuns, result.artifacts, result.evidence, result.toolRun.error);
@@ -98,6 +101,7 @@ export async function runEngineeringProgramDirect(
       error: result.toolRun.error ?? persistenceError
     };
   } catch (error) {
+    context?.signal.throwIfAborted();
     const completedAt = nowIso();
     const message = error instanceof Error ? error.message : String(error);
     const toolRun = {

@@ -61,7 +61,9 @@ import { waitForActiveRuns } from "./durableRuntimeShutdown.js";
 import { logDurableRuntimeFailure } from "./durableRuntimeFailureLogger.js";
 import { discoverDurableRunnableProjects, sweepDurableExpiredLeases } from "./durableJobRecovery.js";
 import { DurableTerminalAttestedLeaseRuntime } from "./durableTerminalAttestedLeaseRuntime.js";
-type RuntimeState = "new" | "running" | "draining" | "aborting" | "closing_storage" | "closed";
+import { DurableRuntimeAdmissionError, type DurableRuntimeAdmissionState } from "./durableRuntimeAdmission.js";
+
+type RuntimeState = DurableRuntimeAdmissionState;
 export class DurableJobRuntime {
   private readonly client: StorageWorkerClient;
   private readonly config: ResolvedDurableRuntimeConfig;
@@ -274,11 +276,8 @@ export class DurableJobRuntime {
   async syncProject(project: StorageProjectPayload): Promise<void> {
     await syncDurableProject(this.client, project);
   }
-  async eventsAfter(projectId: string, lastEventId?: string | number, limit = 200, signal?: AbortSignal): Promise<SseEvent[]> {
-    signal?.throwIfAborted();
-    const events = await this.trace.eventsAfter(projectId, lastEventId, limit);
-    signal?.throwIfAborted();
-    return events;
+  eventsAfter(projectId: string, lastEventId?: string | number, limit = 200, signal?: AbortSignal): Promise<SseEvent[]> {
+    return this.trace.eventsAfter(projectId, lastEventId, limit, signal);
   }
   subscribe(listener: (event: SseEvent) => void): () => void {
     return this.trace.subscribe(listener);
@@ -300,6 +299,15 @@ export class DurableJobRuntime {
   close(): Promise<void> {
     this.closePromise ??= this.performClose();
     return this.closePromise;
+  }
+  beginDrain(): void {
+    if (this.state !== "new" && this.state !== "running") return;
+    this.state = "draining";
+    this.lanes.clearScheduled();
+    if (this.leaseSweepTimer) {
+      this.config.timer.clearTimeout(this.leaseSweepTimer);
+      this.leaseSweepTimer = undefined;
+    }
   }
   private schedule(projectId: string): void {
     this.lanes.schedule(projectId);
@@ -358,9 +366,7 @@ export class DurableJobRuntime {
   }
   private async performClose(): Promise<void> {
     if (this.state === "closed") return;
-    this.state = "draining";
-    this.lanes.clearScheduled();
-    if (this.leaseSweepTimer) this.config.timer.clearTimeout(this.leaseSweepTimer);
+    this.beginDrain();
     const drained = await waitForActiveRuns(this.lanes.activePromises(), this.config.shutdownGraceMs, this.config.timer);
     if (!drained) {
       this.state = "aborting";
@@ -385,7 +391,7 @@ export class DurableJobRuntime {
       }
   }
   private assertRunning(): void {
-    if (this.state !== "running") throw new Error(`Durable job runtime is not accepting work (${this.state}).`);
+    if (this.state !== "running") throw new DurableRuntimeAdmissionError(this.state);
   }
   private logFailure(error: unknown, jobId?: string, projectId?: string, diagnosticId?: string): void {
     logDurableRuntimeFailure(error, { jobId, projectId, diagnosticId });

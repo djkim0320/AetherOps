@@ -1,5 +1,6 @@
 import { z, type ZodType } from "zod";
 import type { CapabilityKind } from "../domain/capabilities/types.js";
+import { isNacaSeries, normalizeNacaSeries } from "./airfoilIdentity.js";
 import type { AerospaceToolMetadata } from "./aerospaceToolMetadata.js";
 import { normalizeToolName, orderToolNames } from "./toolMerger.js";
 import type { ToolPhase } from "./researchToolTypes.js";
@@ -43,6 +44,7 @@ const projectRelativePath = z
   .max(500)
   .refine((value) => !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(value), "Path must be project-relative.")
   .refine((value) => !value.split(/[\\/]+/).includes(".."), "Parent path traversal is not allowed.");
+const nacaSeriesSchema = z.string().trim().max(40).refine(isNacaSeries, "A 4 or 5 digit NACA series is required.").transform(normalizeNacaSeries);
 
 const cfdRunSpecSchema = z
   .object({
@@ -52,7 +54,7 @@ const cfdRunSpecSchema = z
         source: z.enum(["artifact", "sourceUrl", "naca", "configuredCase"]),
         artifactPath: z.string().trim().min(1).max(1_000).optional(),
         sourceUrl: urlSchema.optional(),
-        naca: z.string().trim().min(1).max(40).optional(),
+        naca: nacaSeriesSchema.optional(),
         configuredCaseId: z.string().trim().min(1).max(200).optional(),
         coordinateBindingId: z.string().trim().min(1).max(300).optional(),
         description: shortText.optional()
@@ -131,11 +133,7 @@ const engineeringProgramRequestSchema = z
     sourceUrl: urlSchema.optional(),
     coordinateBindingId: z.string().trim().min(1).max(300).optional(),
     outputFileName: z.string().trim().min(1).max(240).optional(),
-    naca: z
-      .string()
-      .trim()
-      .regex(/^NACA\s*\d{4,5}$/i)
-      .optional(),
+    naca: nacaSeriesSchema.optional(),
     reynolds: z.number().positive().finite().optional(),
     mach: z.number().min(0).max(5).finite().optional(),
     alphaStart: z.number().finite().optional(),

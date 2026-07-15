@@ -14,6 +14,7 @@ import { TerminalReceiptRepository } from "./terminalReceiptRepository.js";
 import { TerminalResultReadbackRepository } from "./terminalResultReadbackRepository.js";
 import { TerminalAttestationRepository } from "./terminalAttestationRepository.js";
 import { TerminalAttestedReadbackRepository } from "./terminalAttestedReadbackRepository.js";
+import { ToolSideEffectReservationRepository } from "./toolSideEffectReservationRepository.js";
 
 export {
   ProjectRepository,
@@ -30,7 +31,8 @@ export {
   TerminalReceiptRepository,
   TerminalResultReadbackRepository,
   TerminalAttestationRepository,
-  TerminalAttestedReadbackRepository
+  TerminalAttestedReadbackRepository,
+  ToolSideEffectReservationRepository
 };
 export { runAtomically } from "./repositorySupport.js";
 
@@ -50,6 +52,7 @@ export interface StorageV2RepositorySet {
   terminalReadback: TerminalResultReadbackRepository;
   terminalAttestations: TerminalAttestationRepository;
   terminalAttestedReadback: TerminalAttestedReadbackRepository;
+  toolSideEffects: ToolSideEffectReservationRepository;
 }
 export interface StorageV2RepositoryDbs {
   appDb: DatabaseSync;
@@ -83,6 +86,7 @@ export function createStorageV2Repositories(dbs: StorageV2RepositoryDbs, options
     terminalReceipts: new TerminalReceiptRepository(dbs.appDb),
     terminalReadback,
     terminalAttestations,
-    terminalAttestedReadback: new TerminalAttestedReadbackRepository(dbs.appDb, options.dataRoot, terminalAttestations)
+    terminalAttestedReadback: new TerminalAttestedReadbackRepository(dbs.appDb, options.dataRoot, terminalAttestations),
+    toolSideEffects: new ToolSideEffectReservationRepository(dbs.appDb)
   };
 }

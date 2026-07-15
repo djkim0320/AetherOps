@@ -6,20 +6,24 @@ import type {
   EngineeringProgramTarget,
   ResearchToolInput
 } from "../shared/types.js";
-import type { ResearchTool, ResearchToolResult } from "./researchToolTypes.js";
+import type { ResearchTool, ResearchToolExecutionContext, ResearchToolResult } from "./researchToolTypes.js";
 export type { MeshSummary } from "./engineeringProgramTypes.js";
 
-export type EngineeringProgramExecutor = (input: ResearchToolInput, settings: AppSettings) => Promise<ResearchToolResult>;
+export type EngineeringProgramExecutor = (
+  input: ResearchToolInput,
+  settings: AppSettings,
+  context?: Pick<ResearchToolExecutionContext, "signal">
+) => Promise<ResearchToolResult>;
 
 export class EngineeringProgramTool implements ResearchTool {
   readonly name = "EngineeringProgramTool";
   constructor(private readonly execute?: EngineeringProgramExecutor) {}
-  async run(input: ResearchToolInput, settings: AppSettings): Promise<ResearchToolResult> {
+  async run(input: ResearchToolInput, settings: AppSettings, context?: Pick<ResearchToolExecutionContext, "signal">): Promise<ResearchToolResult> {
     if (!input.project.autonomyPolicy.allowCodeExecution || !settings.allowCodeExecution) {
       throw new Error("EngineeringProgramTool requires engineering permission from project and app settings.");
     }
     if (!this.execute) throw new Error("EngineeringProgramTool runtime adapter is not configured.");
-    return this.execute(input, settings);
+    return this.execute(input, settings, context);
   }
 }
 

@@ -33,12 +33,36 @@ describe("browser public URL boundary", () => {
     const continueRequest = vi.fn(async () => undefined);
     const abortRequest = vi.fn(async () => undefined);
     await handler?.({
-      request: () => ({ url: () => "http://10.0.0.9/private" }),
+      request: () => ({ url: () => "http://10.0.0.9/private", method: () => "GET" }),
       continue: continueRequest,
       abort: abortRequest
     } as unknown as Route);
     expect(abortRequest).toHaveBeenCalledWith("blockedbyclient");
     expect(continueRequest).not.toHaveBeenCalled();
+  });
+
+  it("continues a read-only request only after public DNS validation", async () => {
+    let handler: ((route: Route) => Promise<void>) | undefined;
+    const resolver = vi.fn(async () => ["93.184.216.34"]);
+    await installBrowserNetworkPolicy(
+      {
+        async route(_pattern, next) {
+          handler = next;
+        }
+      },
+      new PublicUrlPolicy({ resolveHostAddresses: resolver })
+    );
+    const continueRequest = vi.fn(async () => undefined);
+    const abortRequest = vi.fn(async () => undefined);
+    await handler?.({
+      request: () => ({ url: () => "https://example.com/paper", method: () => "GET" }),
+      continue: continueRequest,
+      abort: abortRequest
+    } as unknown as Route);
+
+    expect(continueRequest).toHaveBeenCalledOnce();
+    expect(abortRequest).not.toHaveBeenCalled();
+    expect(resolver).toHaveBeenCalledOnce();
   });
 
   it("applies an allowlist source policy to third-party subresources", async () => {
@@ -56,10 +80,32 @@ describe("browser public URL boundary", () => {
     const continueRequest = vi.fn(async () => undefined);
     const abortRequest = vi.fn(async () => undefined);
     await handler?.({
-      request: () => ({ url: () => "https://tracker.example/pixel", isNavigationRequest: () => false }),
+      request: () => ({ url: () => "https://tracker.example/pixel", method: () => "GET", isNavigationRequest: () => false }),
       continue: continueRequest,
       abort: abortRequest
     } as unknown as Route);
+    expect(abortRequest).toHaveBeenCalledWith("blockedbyclient");
+    expect(continueRequest).not.toHaveBeenCalled();
+  });
+
+  it("blocks browser-side mutations before the request reaches the proxy", async () => {
+    let handler: ((route: Route) => Promise<void>) | undefined;
+    await installBrowserNetworkPolicy(
+      {
+        async route(_pattern, next) {
+          handler = next;
+        }
+      },
+      new PublicUrlPolicy({ resolveHostAddresses: async () => ["93.184.216.34"] })
+    );
+    const continueRequest = vi.fn(async () => undefined);
+    const abortRequest = vi.fn(async () => undefined);
+    await handler?.({
+      request: () => ({ url: () => "https://example.com/submit", method: () => "POST" }),
+      continue: continueRequest,
+      abort: abortRequest
+    } as unknown as Route);
+
     expect(abortRequest).toHaveBeenCalledWith("blockedbyclient");
     expect(continueRequest).not.toHaveBeenCalled();
   });

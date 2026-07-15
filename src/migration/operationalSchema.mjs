@@ -1,6 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
 import { loadV2FtsSql, loadV2OperationalMigrationSql } from "./sqlite.mjs";
 import { sanitizeLegacyJobPolicies } from "./v2JobPolicySanitizer.mjs";
+import {
+  TOOL_SIDE_EFFECT_COLUMNS,
+  TOOL_SIDE_EFFECT_FOREIGN_KEYS,
+  TOOL_SIDE_EFFECT_INDEXES,
+  TOOL_SIDE_EFFECT_TABLE,
+  TOOL_SIDE_EFFECT_TRIGGERS
+} from "./operationalToolSideEffectSchema.mjs";
 
 const BASE_TABLES = ["storage_v2_meta", "projects_v2", "jobs", "checkpoints"];
 const TRACE_TABLES = ["llm_invocations", "tool_decisions", "tool_attempts", "tool_output_links", "network_audits", "codex_cli_executions"];
@@ -178,6 +185,7 @@ export function upgradeOperationalSchema(dbPath) {
       if (!before.installedVersions.includes(8)) db.exec(sql.terminalReceipt);
       if (!before.installedVersions.includes(9)) db.exec(sql.terminalAttestation);
       if (!before.installedVersions.includes(10)) db.exec(sql.ownership);
+      if (!before.installedVersions.includes(11)) db.exec(sql.toolSideEffects);
       db.exec(loadV2FtsSql());
       assertMigrationLedger(db, expected);
       const foreignKeys = db.prepare("pragma foreign_key_check").all();
@@ -216,7 +224,7 @@ function inspectOperationalSchemaDatabase(db) {
   }
   const installedVersions = ledger.map((row) => row.version).sort((left, right) => left - right);
   for (const version of expected.keys()) if (!installedVersions.includes(version)) errors.push(`Operational migration ${version} is missing.`);
-  for (const table of [...TRACE_TABLES, ...RUN_STATE_TABLES, TERMINAL_RECEIPT_TABLE, TERMINAL_ATTESTATION_TABLE])
+  for (const table of [...TRACE_TABLES, ...RUN_STATE_TABLES, TERMINAL_RECEIPT_TABLE, TERMINAL_ATTESTATION_TABLE, TOOL_SIDE_EFFECT_TABLE])
     if (!tableExists(db, table)) errors.push(`Operational table is missing: ${table}`);
   assertColumnsForInspection(db, "jobs", JOB_COLUMNS, errors);
   assertColumnsForInspection(db, "tool_attempts", ATTEMPT_COLUMNS, errors);
@@ -244,6 +252,10 @@ function inspectOperationalSchemaDatabase(db) {
   );
   assertTriggersForInspection(db, TERMINAL_ATTESTATION_TRIGGERS, errors);
   assertTriggersForInspection(db, OWNERSHIP_TRIGGERS, errors);
+  assertColumnsForInspection(db, TOOL_SIDE_EFFECT_TABLE, TOOL_SIDE_EFFECT_COLUMNS, errors);
+  assertIndexesForInspection(db, TOOL_SIDE_EFFECT_TABLE, TOOL_SIDE_EFFECT_INDEXES, errors);
+  assertForeignKeysForInspection(db, TOOL_SIDE_EFFECT_TABLE, TOOL_SIDE_EFFECT_FOREIGN_KEYS, errors);
+  assertTriggersForInspection(db, TOOL_SIDE_EFFECT_TRIGGERS, errors);
   const lineageSql = tableSql(db, "run_job_links");
   if (!lineageSql?.includes("link_kind") || !lineageSql.includes("'bootstrap'")) errors.push("Run-state bootstrap lineage constraint is missing.");
   return {
@@ -264,7 +276,7 @@ function expectedMigrations(sql) {
       migrations.set(Number(match[1]), { name: match[2], checksum: match[3] });
     }
   }
-  for (const version of [2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+  for (const version of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
     if (!migrations.has(version)) throw new Error(`Could not extract operational migration ${version} from the runtime schema.`);
   }
   return new Map([...migrations].sort(([left], [right]) => left - right));

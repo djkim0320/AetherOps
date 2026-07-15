@@ -13,4 +13,11 @@ export class JobSourceAccessPolicy implements PublicHttpUrlPolicy {
     const publicUrl = await this.publicUrlPolicy.assertPublicHttpUrl(value);
     return assertSourceAccess(this.sourceAccess, publicUrl);
   }
+
+  async resolvePublicHostAddresses(hostname: string): Promise<string[]> {
+    if (!this.publicUrlPolicy.resolvePublicHostAddresses) {
+      throw new Error("Public URL policy does not support connect-time address verification.");
+    }
+    return this.publicUrlPolicy.resolvePublicHostAddresses(hostname);
+  }
 }

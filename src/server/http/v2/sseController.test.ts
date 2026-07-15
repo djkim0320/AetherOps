@@ -19,6 +19,8 @@ function event(id: number): Event {
   } as Event;
 }
 
+afterEach(() => vi.useRealTimers());
+
 describe("SSE replay/live handoff", () => {
   it("buffers committed events appended while replay is being read", async () => {
     let listener: ((value: Event) => void) | undefined;
@@ -211,6 +213,17 @@ describe("SSE replay/live handoff", () => {
     );
   });
 
+  it("rejects a replay whose emitter remains blocked past the duration budget", async () => {
+    vi.useFakeTimers();
+    const source = eventSource({ eventsAfter: async () => [event(1)] });
+    const replay = replayThenSubscribe(source, "project-1", undefined, () => new Promise<void>(() => undefined), { maxReplayDurationMs: 1_000 });
+    const observed = replay.catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(observed).resolves.toMatchObject({ message: expect.stringMatching(/duration/i) });
+  });
+
   it("records replay count, rows, and injected-clock duration without retaining labels", async () => {
     let clock = 100;
     const diagnostics = new SseRuntimeDiagnostics();
@@ -233,8 +246,6 @@ describe("SSE replay/live handoff", () => {
 });
 
 describe("SSE connection lifecycle", () => {
-  afterEach(() => vi.useRealTimers());
-
   it.each(["NaN", "Infinity", "1.5", "-1", "1e3", "9007199254740992", "+1", " 1 "])(
     "rejects invalid Last-Event-ID %j before subscribing or querying",
     async (lastEventId) => {
@@ -344,6 +355,29 @@ describe("SSE connection lifecycle", () => {
     expect(unsubscribed).toBe(1);
     expect(diagnostics.snapshot()).toMatchObject({ activeConnectionCount: 0, bufferedEventCount: 0, bufferedBytes: 0, slowConsumerDisconnectCount: 1 });
     expect(diagnostics.snapshot().peakBufferedEventCount).toBeGreaterThan(0);
+    close();
+  });
+
+  it("closes a connection when socket backpressure never emits drain", async () => {
+    vi.useFakeTimers();
+    let unsubscribed = 0;
+    const source = eventSource({ eventsAfter: async () => [event(1)], onUnsubscribe: () => unsubscribed++ });
+    const request = new FakeRequest();
+    const response = new FakeResponse([false]);
+    const diagnostics = new SseRuntimeDiagnostics();
+    const close = await serveProjectEvents(request.asIncoming(), response.asServer(), projectUrl(), source, {
+      limiter: new SseConnectionLimiter(2, 2),
+      maxDrainDurationMs: 1_000,
+      diagnostics
+    });
+    await flushMicrotasks();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushMicrotasks();
+
+    expect(response.writableEnded).toBe(true);
+    expect(unsubscribed).toBe(1);
+    expect(diagnostics.snapshot()).toMatchObject({ activeConnectionCount: 0, slowConsumerDisconnectCount: 1 });
     close();
   });
 

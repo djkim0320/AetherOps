@@ -36,33 +36,41 @@ export class PublicUrlPolicy {
     }
 
     const parsed = new URL(canonical);
-    const hostname = normalizeHostname(parsed.hostname);
+    await this.resolvePublicHostAddresses(parsed.hostname);
+    return canonical;
+  }
+
+  async resolvePublicHostAddresses(value: string): Promise<string[]> {
+    const hostname = normalizeHostname(value);
     if (!hostname) {
       throw new Error("invalid public HTTP URL");
     }
 
     if (hostname === "localhost" || hasBlockedHostSuffix(hostname)) {
       if (!this.options.allowLoopback || !isLoopbackHostname(hostname)) {
-        throw new Error(`blocked internal hostname: ${parsed.hostname}`);
+        throw new Error(`blocked internal hostname: ${value}`);
       }
     }
 
     if (isIpLiteral(hostname)) {
       if (isPrivateOrInternalIp(hostname) && !(this.options.allowLoopback && isLoopbackIp(hostname))) {
-        throw new Error(`blocked internal IP address: ${parsed.hostname}`);
+        throw new Error(`blocked internal IP address: ${value}`);
       }
-      return canonical;
+      return [hostname];
     }
 
-    const addresses = await this.resolveHostAddresses(hostname);
+    const addresses = [...new Set((await this.resolveConfiguredHostAddresses(hostname)).map(normalizeHostname))];
+    if (!addresses.length) throw new Error(`DNS resolution returned no addresses for ${hostname}`);
+    const invalid = addresses.find((address) => isIP(address) === 0);
+    if (invalid) throw new Error(`DNS returned an invalid IP address for ${hostname}`);
     const blocked = firstBlockedAddress(addresses, this.options.allowLoopback ?? false);
     if (blocked) {
       throw new Error(`DNS resolved ${hostname} to blocked internal IP address: ${blocked}`);
     }
-    return canonical;
+    return addresses;
   }
 
-  private async resolveHostAddresses(hostname: string): Promise<string[]> {
+  private async resolveConfiguredHostAddresses(hostname: string): Promise<string[]> {
     try {
       const resolver = this.options.resolveHostAddresses ?? defaultResolveHostAddresses;
       return await resolver(hostname);

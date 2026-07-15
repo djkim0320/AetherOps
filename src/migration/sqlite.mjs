@@ -11,6 +11,7 @@ const runStateBootstrapSchemaSourceUrl = new URL("../server/runtime/storage/v2/r
 const terminalReceiptSchemaSourceUrl = new URL("../server/runtime/storage/v2/terminalReceiptSchema.ts", import.meta.url);
 const terminalAttestationSchemaSourceUrl = new URL("../server/runtime/storage/v2/terminalAttestationSchema.ts", import.meta.url);
 const ownershipSchemaSourceUrl = new URL("../server/runtime/storage/v2/ownershipSchema.ts", import.meta.url);
+const toolSideEffectSchemaSourceUrl = new URL("../server/runtime/storage/v2/toolSideEffectReservationSchema.ts", import.meta.url);
 const canonicalEntityTables = new Set([
   "projects_v2",
   "records_v2",
@@ -145,10 +146,10 @@ export function createV2Database(dbPath, metadata = {}) {
 
 export function loadV2SchemaSql() {
   const base = loadV2BaseSchemaSql();
-  const { trace, jobFencing, runState, runStateBootstrap, terminalReceipt, terminalAttestation, ownership } = loadV2OperationalMigrationSql();
+  const { trace, jobFencing, runState, runStateBootstrap, terminalReceipt, terminalAttestation, ownership, toolSideEffects } = loadV2OperationalMigrationSql();
   const sideEffectIndex =
     "create index if not exists idx_tool_attempts_side_effect_key on tool_attempts(project_id, side_effect_key) where side_effect_key is not null;";
-  return `${base}\n${trace}\n${jobFencing}\n${runState}\n${runStateBootstrap}\n${terminalReceipt}\n${terminalAttestation}\n${ownership}\n${sideEffectIndex}`;
+  return `${base}\n${trace}\n${jobFencing}\n${runState}\n${runStateBootstrap}\n${terminalReceipt}\n${terminalAttestation}\n${ownership}\n${toolSideEffects}\n${sideEffectIndex}`;
 }
 
 export function loadV2BaseSchemaSql() {
@@ -174,7 +175,8 @@ export function loadV2OperationalMigrationSql() {
   const terminalReceipt = extractTemplateSql(terminalReceiptSchemaSourceUrl, "function installStorageTerminalReceiptV8Objects");
   const terminalAttestation = extractTemplateSql(terminalAttestationSchemaSourceUrl, "function installStorageTerminalAttestationV9Objects");
   const ownership = extractTemplateSql(ownershipSchemaSourceUrl, "function installStorageOwnershipV10Objects");
-  return { trace, jobFencing, runState, runStateBootstrap, terminalReceipt, terminalAttestation, ownership };
+  const toolSideEffects = extractTemplateSql(toolSideEffectSchemaSourceUrl, "function installStorageToolSideEffectV11Objects");
+  return { trace, jobFencing, runState, runStateBootstrap, terminalReceipt, terminalAttestation, ownership, toolSideEffects };
 }
 
 export function loadV2FtsSql() {

@@ -102,8 +102,10 @@ export function validateBuiltinScriptedCfdAdapterPath(target: Extract<Engineerin
 export async function runScriptedCfdAnalysis(
   request: EngineeringProgramRequest,
   settings: AppSettings,
-  target: Extract<EngineeringProgramTarget, "openvsp" | "xflr5">
+  target: Extract<EngineeringProgramTarget, "openvsp" | "xflr5">,
+  signal?: AbortSignal
 ): Promise<ScriptedCfdRunSummary> {
+  signal?.throwIfAborted();
   if (request.target !== target) {
     throw new Error(`${target} analysis requires target ${target}.`);
   }
@@ -124,7 +126,8 @@ export async function runScriptedCfdAnalysis(
   const runPlan = createScriptedCfdRunPlan(config, cfdRunSpec, settings, cfdSpecPath, outputPath, cwd);
 
   try {
-    const result = await runCommandWithArgs(runPlan.launcherCommand, runPlan.args, config.timeoutMs, cwd);
+    const result = await runCommandWithArgs(runPlan.launcherCommand, runPlan.args, config.timeoutMs, cwd, signal);
+    signal?.throwIfAborted();
     if (result.exitCode !== 0 || result.timedOut) {
       throw new Error(
         `${config.label} adapter exited unsuccessfully: exitCode=${result.exitCode}, timedOut=${result.timedOut}, stderr=${result.stderrExcerpt}`

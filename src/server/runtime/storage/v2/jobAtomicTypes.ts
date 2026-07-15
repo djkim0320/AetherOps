@@ -20,6 +20,15 @@ export interface StorageOutputPromotion {
   artifact?: { name: string; kind: string };
 }
 
+export interface StorageTerminalQuarantinedStepInput {
+  step: string;
+  checkpointData?: unknown;
+  outputRef?: string;
+  outputHash?: string;
+  quarantineRef?: string;
+  error: string;
+}
+
 export interface StorageTerminalTransitionInput {
   fence: StorageLeaseFence;
   status: StorageSettledJobStatus;
@@ -28,6 +37,7 @@ export interface StorageTerminalTransitionInput {
   occurredAt?: string;
   promotions?: StorageOutputPromotion[];
   completedStep?: StorageCompletedStepInput;
+  quarantinedStep?: StorageTerminalQuarantinedStepInput;
 }
 
 export interface StorageTerminalTransitionResult {

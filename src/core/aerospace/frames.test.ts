@@ -69,6 +69,20 @@ describe("aerospace coordinate frames", () => {
     expect(valid.vector.components).toEqual([2, -3, 4]);
   });
 
+  it("requires transform determinant sign to match frame handedness", () => {
+    const reflection: Matrix3 = [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, -1]
+    ];
+    expect(() => transformVector({ vector: vector("body"), from: frame("body"), to: frame("wind"), matrix: reflection })).toThrow(/handedness/i);
+
+    const leftHanded = { ...frame("sensor"), handedness: "left" as const };
+    const crossHanded = transformVector({ vector: vector("body"), from: frame("body"), to: leftHanded, matrix: reflection });
+    expect(crossHanded.receipt.determinant).toBe(-1);
+    expect(() => transformVector({ vector: vector("body"), from: frame("body"), to: leftHanded, matrix: identity })).toThrow(/handedness/i);
+  });
+
   it("honors explicit quaternion ordering", () => {
     const wxyz = quaternionToDcm([Math.SQRT1_2, 0, 0, Math.SQRT1_2], "wxyz");
     const xyzw = quaternionToDcm([0, 0, Math.SQRT1_2, Math.SQRT1_2], "xyzw");

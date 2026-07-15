@@ -1,4 +1,5 @@
 import type { CfdRunSpec, EngineeringProgramRequest, RuntimeToolDiagnostics } from "../shared/types.js";
+import { normalizeNacaSeries } from "../tools/airfoilIdentity.js";
 import { normalizeToolName } from "../tools/toolRunner.js";
 import { clean } from "./plannerToolSelection.js";
 
@@ -42,7 +43,7 @@ export function normalizeProgramRequests(value: unknown, defaultValue: Engineeri
       normalized.outputFileName = request.outputFileName.trim();
     }
     if (typeof request.naca === "string" && request.naca.trim()) {
-      normalized.naca = request.naca.trim();
+      normalized.naca = normalizeNacaSeries(request.naca);
     }
     if (typeof request.reynolds === "number" && Number.isFinite(request.reynolds)) normalized.reynolds = request.reynolds;
     if (typeof request.mach === "number" && Number.isFinite(request.mach)) normalized.mach = request.mach;

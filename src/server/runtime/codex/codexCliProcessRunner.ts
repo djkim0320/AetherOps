@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { decodeStrictUtf8Chunks, readStrictUtf8File } from "../support/strictUtf8.js";
+import { terminateProcessTree } from "../process/processTree.js";
 import { resolveBundledCodexCli } from "./bundledCodexCli.js";
 import { CodexCliError } from "./codexCliErrors.js";
 import { assertCodexCliReadiness } from "./codexCliReadiness.js";
@@ -72,7 +73,8 @@ export class CodexCliProcessRunner {
         terminationReason: "completed"
       };
     } finally {
-      this.children.delete(child);
+      if (child.exitCode !== null || child.signalCode !== null) this.children.delete(child);
+      else child.once("close", () => this.children.delete(child));
     }
   }
 
@@ -137,6 +139,8 @@ function awaitProcess(child: ChildProcessWithoutNullStreams, request: CodexCliRu
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let terminalError: CodexCliError | undefined;
+    let terminationFailure: CodexCliError | undefined;
+    let termination: Promise<void> | undefined;
     let settled = false;
     const finish = (action: () => void) => {
       if (settled) return;
@@ -146,8 +150,23 @@ function awaitProcess(child: ChildProcessWithoutNullStreams, request: CodexCliRu
       action();
     };
     const stop = (error: CodexCliError) => {
+      if (terminalError) return;
       terminalError = error;
-      void terminateProcessTree(child);
+      termination = terminateProcessTree(child).catch((cause: unknown) => {
+        const failure = new CodexCliError(
+          "PROCESS_FAILED",
+          "Codex CLI process tree termination could not be verified.",
+          { interruptedBy: error.kind },
+          { cause }
+        );
+        terminationFailure = failure;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // The common process-tree terminator already provides the authoritative failure.
+        }
+        finish(() => reject(failure));
+      });
     };
     const abort = () => stop(interruptedError(request.signal));
     const timeout = setTimeout(
@@ -159,34 +178,18 @@ function awaitProcess(child: ChildProcessWithoutNullStreams, request: CodexCliRu
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("error", (error) => finish(() => reject(new CodexCliError("PROCESS_FAILED", "Codex CLI process could not be started.", {}, { cause: error }))));
-    child.on("close", (code) => finish(() => (terminalError ? reject(terminalError) : resolve({ exitCode: code ?? -1, stdout, stderr }))));
+    child.on("close", (code) => {
+      void (async () => {
+        await termination;
+        finish(() => {
+          const error = terminationFailure ?? terminalError;
+          if (error) reject(error);
+          else resolve({ exitCode: code ?? -1, stdout, stderr });
+        });
+      })();
+    });
     child.stdin.end(request.prompt, "utf8");
   });
-}
-
-async function terminateProcessTree(child: ChildProcessWithoutNullStreams): Promise<void> {
-  if (!child.pid || child.exitCode !== null) return;
-  if (process.platform === "win32") {
-    await new Promise<void>((resolve) => {
-      const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
-      killer.once("error", () => resolve());
-      killer.once("close", () => resolve());
-    });
-    return;
-  }
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch {
-    child.kill("SIGTERM");
-  }
-  const force = setTimeout(() => {
-    try {
-      process.kill(-child.pid!, "SIGKILL");
-    } catch {
-      child.kill("SIGKILL");
-    }
-  }, 5_000);
-  force.unref();
 }
 
 function safeCodexEnvironment(codexHome: string | undefined, runtimeTemp: string): NodeJS.ProcessEnv {

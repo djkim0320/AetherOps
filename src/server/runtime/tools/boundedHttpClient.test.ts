@@ -62,14 +62,79 @@ describe("BoundedHttpClient JSON boundaries", () => {
 
   it("cancels an in-progress JSON body when the caller aborts", async () => {
     const cancelled = vi.fn();
+    const reading = deferred<void>();
     const controller = new AbortController();
-    const client = clientFor(() => new Response(pendingStream(cancelled)), 1024);
+    const body = new ReadableStream<Uint8Array>({
+      pull() {
+        reading.resolve();
+      },
+      cancel: cancelled
+    });
+    const client = clientFor(() => new Response(body), 1024);
     const request = client.json("https://api.example/data", { signal: controller.signal });
+    await reading.promise;
+    await flushMicrotasks(8);
 
     controller.abort();
 
     await expect(request).rejects.toThrow("response body aborted");
     expect(cancelled).toHaveBeenCalledOnce();
+  });
+});
+
+describe("BoundedHttpClient request cancellation", () => {
+  it("propagates a caller abort to the initial fetch instead of waiting for the client timeout", async () => {
+    const started = deferred<void>();
+    const observedAbort = vi.fn();
+    const fetchImpl = ((_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return reject(new Error("Missing request signal."));
+        const abort = () => {
+          observedAbort();
+          reject(signal.reason);
+        };
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+        started.resolve();
+      })) as typeof fetch;
+    const client = new BoundedHttpClient({ fetchImpl, publicUrlPolicy: publicPolicy, timeoutMs: 1_000 });
+    const controller = new AbortController();
+    const request = client.request("https://api.example/data", { signal: controller.signal });
+    await started.promise;
+
+    controller.abort(new Error("caller cancelled"));
+
+    await expect(request).rejects.toMatchObject({ code: "REQUEST_ABORTED", message: "request aborted by caller" });
+    expect(observedAbort).toHaveBeenCalledOnce();
+  });
+
+  it("bounds URL policy resolution with the same request deadline", async () => {
+    const fetchImpl = vi.fn();
+    const client = new BoundedHttpClient({
+      fetchImpl,
+      publicUrlPolicy: { assertPublicHttpUrl: () => new Promise<string>(() => undefined) },
+      timeoutMs: 20
+    });
+
+    await expect(client.request("https://api.example/data")).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("aborts URL policy resolution before any network request is issued", async () => {
+    const fetchImpl = vi.fn();
+    const client = new BoundedHttpClient({
+      fetchImpl,
+      publicUrlPolicy: { assertPublicHttpUrl: () => new Promise<string>(() => undefined) },
+      timeoutMs: 1_000
+    });
+    const controller = new AbortController();
+    const request = client.request("https://api.example/data", { signal: controller.signal });
+
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ code: "REQUEST_ABORTED" });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -226,4 +291,16 @@ function pendingStream(cancelled: () => void): ReadableStream<Uint8Array> {
     },
     cancel: cancelled
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function flushMicrotasks(count: number): Promise<void> {
+  for (let index = 0; index < count; index += 1) await Promise.resolve();
 }

@@ -65,11 +65,18 @@ export function assessModelUse(input: {
   if (!normalizedUse) throw new Error("Proposed model use is required.");
   if (input.card.prohibitedUses.includes(normalizedUse)) return assessment(input, "prohibited_use", ["proposed use is prohibited"]);
   if (!input.card.permissibleUses.includes(normalizedUse)) return assessment(input, "insufficient_evidence", ["proposed use is not permissible"]);
+  if (input.card.reviewStatus === "draft" || input.card.reviewStatus === "rejected") {
+    return assessment(input, "insufficient_evidence", [`model card review status is ${input.card.reviewStatus}`]);
+  }
   const verification = domainViolations(input.card.verificationDomain, input.variables, input.configurationBaselineId);
   const validation = domainViolations(input.card.validationDomain, input.variables, input.configurationBaselineId);
   if (verification.length) return assessment(input, "outside_verified_domain", verification);
   if (validation.length) return assessment(input, "outside_validated_domain", validation);
-  if (!input.card.validationEvidenceIds.length) return assessment(input, "accepted_with_limits", ["validation evidence is unavailable"]);
+  const limitations = [
+    ...(!input.card.validationEvidenceIds.length ? ["validation evidence is unavailable"] : []),
+    ...input.card.knownDefects.map((defect) => `known defect: ${defect}`)
+  ];
+  if (limitations.length) return assessment(input, "accepted_with_limits", limitations);
   return assessment(input, "accepted_use", []);
 }
 
@@ -86,6 +93,7 @@ export function validateModelCard(card: AerospaceModelCard): void {
   if (!card.intendedUses.length || !card.permissibleUses.length) throw new Error("Model card intended and permissible uses are required.");
   if (!card.verificationDomain.length) throw new Error("Model card verification domain is required.");
   if (!card.verificationEvidenceIds.length) throw new Error("Model card verification evidence is required.");
+  if (card.knownDefects.some((defect) => !defect.trim())) throw new Error("Model card known defects must be non-empty descriptions.");
 }
 
 function domainViolations(

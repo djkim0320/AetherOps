@@ -3,6 +3,7 @@ import { API_V2_METHODS, ApiV2RpcRequestSchema, type ApiV2RpcRequest } from "../
 import { RpcRequestV2Schema } from "../../../contracts/api-v2/common.js";
 import type { JobKind } from "../../../contracts/api-v2/jobs.js";
 import { authorizeJobCapabilities, defaultJobCapabilityPolicy, type CapabilityPolicy } from "../../../core/application/capabilities/index.js";
+import { ResearchLoopStep } from "../../../core/shared/types.js";
 import type { StorageCapabilityAudit } from "../../runtime/storage/v2/types.js";
 import { canonicalResearchStartPayload } from "../../composition/canonicalResearchEnqueue.js";
 import { durablePublicJobRequestHash } from "../../composition/durableJobRequestHash.js";
@@ -301,7 +302,7 @@ async function enqueue(
     project: snapshot.project,
     kind,
     projectRevision: computeProjectRevision(snapshot),
-    currentStep: snapshot.project.currentStep,
+    currentStep: kind === "engineering_run" ? ResearchLoopStep.ExecuteTools : snapshot.project.currentStep,
     idempotencyKey,
     requestHash,
     requestedCapabilities: requestedPolicy,

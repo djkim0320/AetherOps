@@ -257,12 +257,14 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<We
   const closeResources = () =>
     closeResourcesInOrder([
       { name: "jobs", close: () => jobs.close() },
+      { name: "browser", close: () => browserRuntime.dispose() },
       { name: "codex-cli", close: () => codexCli.dispose() },
       { name: "llm", close: () => llm.dispose() },
       { name: "storage", close: () => legacyStorage.close() }
     ]);
   const close = (): Promise<void> => {
     removeSignalHandlers();
+    jobs.beginDrain();
     return drain.shutdown(server, closeResources);
   };
   if (options.installSignalHandlers !== false) {

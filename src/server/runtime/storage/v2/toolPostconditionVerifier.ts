@@ -21,6 +21,7 @@ export function verifyToolPostcondition(
     throw new Error("Tool postcondition attempt does not belong to the fenced job.");
   if (attempt.postconditionReceipt) {
     assertVerifiedToolPostcondition(attempt);
+    repositories.toolSideEffects.observeAttempt(attempt);
     return { attempt };
   }
   if (attempt.status !== "completed" || !attempt.outputHash || !attempt.completedAt) {
@@ -75,6 +76,7 @@ export function verifyToolPostcondition(
     postconditionDisposition: "applied",
     postconditionReceipt: { receiptId, evidenceHash, receiptHash, verifier, verifiedAt: input.verifiedAt }
   });
+  repositories.toolSideEffects.observeAttempt(verified);
   const event = repositories.events.append({
     projectId: job.projectId,
     jobId: job.id,

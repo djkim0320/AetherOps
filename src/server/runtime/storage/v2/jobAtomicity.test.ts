@@ -126,6 +126,47 @@ describe("durable job transaction fault injection", () => {
     expectAtomicStepRollback(path, claimed.job.id);
   });
 
+  it("rolls a quarantined checkpoint, attempt, and failed status back when the terminal event insert aborts", () => {
+    const path = createRuntime();
+    runtime?.handle({ name: "job.enqueue", job: jobInput("job-failed-terminal-fault", "project-failed-terminal-fault") });
+    const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions("project-failed-terminal-fault") }) as StorageClaimStartResult;
+    const setup = new DatabaseSync(path);
+    setup.exec(`
+      create trigger fail_failed_terminal_event before insert on job_events
+      when new.payload like '%"status":"failed"%'
+      begin select raise(abort, 'injected failed terminal event failure'); end;
+    `);
+    setup.close();
+
+    expect(() =>
+      runtime?.handle({
+        name: "job.transitionTerminal",
+        input: {
+          fence: claimed.fence,
+          status: "failed",
+          projectRevision: 1,
+          reason: "safe failure",
+          occurredAt: "2026-07-14T00:00:02.000Z",
+          quarantinedStep: { step: "EXECUTE_TOOLS", error: "safe failure", quarantineRef: "quarantine/job-failed-terminal-fault" }
+        }
+      })
+    ).toThrow("injected failed terminal event failure");
+
+    const readback = new DatabaseSync(path, { readOnly: true });
+    expect(readback.prepare("select status,result,error,completed_at from jobs where id=?").get(claimed.job.id)).toEqual({
+      status: "running",
+      result: null,
+      error: null,
+      completed_at: null
+    });
+    expect(readback.prepare("select status from step_attempts where job_id=?").all(claimed.job.id)).toEqual([{ status: "running" }]);
+    expect(readback.prepare("select count(*) as count from checkpoints where job_id=?").get(claimed.job.id)).toEqual({ count: 0 });
+    expect(readback.prepare(`select count(*) as count from job_events where job_id=? and payload like '%"status":"failed"%'`).get(claimed.job.id)).toEqual({
+      count: 0
+    });
+    readback.close();
+  });
+
   it("rolls a completed checkpoint and attempt back when the attempt update aborts", () => {
     const path = createRuntime();
     runtime?.handle({ name: "job.enqueue", job: jobInput("job-checkpoint-fault", "project-checkpoint-fault") });

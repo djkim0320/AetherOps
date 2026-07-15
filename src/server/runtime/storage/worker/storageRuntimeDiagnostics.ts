@@ -102,6 +102,8 @@ export function isTraceReadCommand(name: string): boolean {
     name === "trace.decision.listJob" ||
     name === "trace.attempt.get" ||
     name === "trace.attempt.listJob" ||
+    name === "trace.sideEffect.get" ||
+    name === "trace.sideEffect.getAttempt" ||
     name === "trace.codex.listJob" ||
     name === "trace.output.listAttempt" ||
     name === "trace.output.listAttempts" ||
@@ -113,7 +115,7 @@ export function isTraceReadCommand(name: string): boolean {
 
 export function traceReadResultRows(name: string, result: unknown): number {
   if (name === "trace.summaryJob") return 1;
-  if (name === "trace.attempt.get") return result === undefined ? 0 : 1;
+  if (name === "trace.attempt.get" || name === "trace.sideEffect.get" || name === "trace.sideEffect.getAttempt") return result === undefined ? 0 : 1;
   if (name === "trace.pageJob" && isRecord(result) && Array.isArray(result.items)) return result.items.length;
   return Array.isArray(result) ? result.length : 0;
 }

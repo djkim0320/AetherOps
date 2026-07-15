@@ -205,6 +205,10 @@ export class StorageWorkerRuntime {
         return repositories.trace.getToolAttempt(command.attemptId);
       case "trace.attempt.listJob":
         return repositories.trace.listToolAttempts(command.jobId, command.limit);
+      case "trace.sideEffect.get":
+        return repositories.toolSideEffects.get(command.projectId, command.sideEffectKey);
+      case "trace.sideEffect.getAttempt":
+        return repositories.toolSideEffects.getByAttempt(command.attemptId);
       case "trace.codex.listJob":
         return repositories.trace.listCodexCliExecutions(command.jobId, command.limit);
       case "trace.output.listAttempt":

@@ -8,6 +8,7 @@ import {
   type StorageWorkerResponse
 } from "./typedProtocol.js";
 import { IDEMPOTENCY_CONFLICT_CODE, IdempotencyConflictError } from "../v2/jobErrors.js";
+import { SIDE_EFFECT_RESERVATION_CONFLICT_CODE, SideEffectReservationConflictError } from "../v2/toolSideEffectReservationTypes.js";
 import { LeaseLostError } from "../v2/leaseFence.js";
 import {
   STORAGE_IMMUTABLE_CONFLICT_CODE,
@@ -40,6 +41,9 @@ export function serializeWorkerError(error: unknown): StorageWorkerErrorPayload 
   if (error instanceof IdempotencyConflictError) {
     return { name: error.name, message: error.message, code: error.code };
   }
+  if (error instanceof SideEffectReservationConflictError) {
+    return { name: error.name, message: error.message, code: error.code };
+  }
   if (error instanceof StorageRevisionConflictError || error instanceof StorageOwnershipConflictError || error instanceof StorageImmutableConflictError) {
     return { name: error.name, message: error.message, code: error.code };
   }
@@ -50,6 +54,7 @@ export function serializeWorkerError(error: unknown): StorageWorkerErrorPayload 
 
 export function workerError(error: StorageWorkerErrorPayload): Error {
   if (error.code === IDEMPOTENCY_CONFLICT_CODE) return new IdempotencyConflictError();
+  if (error.code === SIDE_EFFECT_RESERVATION_CONFLICT_CODE) return new SideEffectReservationConflictError();
   if (error.code === STORAGE_REVISION_CONFLICT_CODE) return new StorageRevisionConflictError(null, null);
   if (error.code === STORAGE_OWNERSHIP_CONFLICT_CODE) return new StorageOwnershipConflictError();
   if (error.code === STORAGE_IMMUTABLE_CONFLICT_CODE) return new StorageImmutableConflictError();

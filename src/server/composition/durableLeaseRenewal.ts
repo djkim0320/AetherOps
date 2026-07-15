@@ -17,6 +17,7 @@ export function startDurableLeaseRenewal(options: DurableLeaseRenewalOptions): D
   let handle: ReturnType<typeof setTimeout> | undefined;
   let inFlight: Promise<void> | undefined;
   let observerFailure: unknown;
+  let stopPromise: Promise<void> | undefined;
 
   const schedule = (): void => {
     if (!running) return;
@@ -44,15 +45,17 @@ export function startDurableLeaseRenewal(options: DurableLeaseRenewalOptions): D
   };
   schedule();
 
-  return {
-    stop: async () => {
-      running = false;
-      if (handle) {
-        options.timer.clearTimeout(handle);
-        handle = undefined;
-      }
-      await inFlight;
-      if (observerFailure !== undefined) throw observerFailure;
+  const stop = async (): Promise<void> => {
+    running = false;
+    if (handle) {
+      options.timer.clearTimeout(handle);
+      handle = undefined;
     }
+    await inFlight;
+    if (observerFailure !== undefined) throw observerFailure;
+  };
+
+  return {
+    stop: () => (stopPromise ??= stop())
   };
 }

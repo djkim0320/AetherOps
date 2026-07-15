@@ -3,7 +3,9 @@ import { parseXfoilPolarRows } from "./engineeringProgramXfoilAdapter.js";
 import { resolveWasmAirfoilInput } from "./engineeringProgramCoordinateResolver.js";
 import type { AirfoilCoordinateResolutionPorts } from "../../../core/tools/engineeringProgramTypes.js";
 import type { AppSettings, EngineeringProgramRequest, ResearchToolInput } from "../../../core/shared/types.js";
+import { normalizeNacaSeries } from "../../../core/tools/airfoilIdentity.js";
 import type { XfoilWasmPolarSummary } from "../../../core/tools/engineeringProgramTypes.js";
+import { assertValidWebXfoilResult } from "./webXfoilResultValidation.js";
 
 export function hasConfiguredXfoilWasm(settings: AppSettings): boolean {
   return settings.allowCodeExecution;
@@ -13,8 +15,10 @@ export async function runXfoilWasmPolar(
   request: EngineeringProgramRequest,
   settings: AppSettings,
   input: ResearchToolInput,
+  signal?: AbortSignal,
   ports: Partial<AirfoilCoordinateResolutionPorts> = {}
 ): Promise<XfoilWasmPolarSummary> {
+  signal?.throwIfAborted();
   if (!hasConfiguredXfoilWasm(settings)) {
     throw new Error("XFOIL WebAssembly polar execution requires Engineering capability to be enabled.");
   }
@@ -33,6 +37,7 @@ export async function runXfoilWasmPolar(
   const { WebXFOIL } = await import("webxfoil-wasm");
   const xfoil = await WebXFOIL.load();
   try {
+    signal?.throwIfAborted();
     const session = WebXFOIL.input();
     let airfoil = coordinateInput.label;
     let coordinateFormat: string | undefined;
@@ -45,11 +50,10 @@ export async function runXfoilWasmPolar(
       coordinateFormat = loaded.format;
     } else {
       const naca = request.naca?.trim();
-      if (!naca || !/^\d{4,5}$/.test(naca)) {
-        throw new Error("XFOIL WebAssembly NACA request must be a 4 or 5 digit series code.");
-      }
-      session.naca(naca);
-      airfoil = `NACA ${naca}`;
+      if (!naca) throw new Error("XFOIL WebAssembly NACA request must be a 4 or 5 digit series code.");
+      const series = normalizeNacaSeries(naca);
+      session.naca(series);
+      airfoil = `NACA ${series}`;
     }
 
     const polarPath = "xfoil-wasm-polar.txt";
@@ -59,12 +63,20 @@ export async function runXfoilWasmPolar(
     }
     session.add("PACC").add(polarPath).blank().add(`ASEQ ${alphaStart} ${alphaEnd} ${alphaStep}`).add("PACC").blank().quit();
 
+    signal?.throwIfAborted();
     const result = xfoil.run(session.toString(), { workDir: "/work", files: session.files, scalarKeys: ["CL", "CD", "Cm", "a"] });
+    signal?.throwIfAborted();
     const polarText = String(xfoil.readFile(`/work/${polarPath}`, "utf8"));
     const rows = parseXfoilPolarRows(polarText);
     if (!rows.length) {
       throw new Error(`XFOIL WebAssembly produced no polar rows. stdout=${excerpt(result.raw.stdout)} stderr=${excerpt(result.raw.stderr)}`);
     }
+    const convergence = {
+      hasNaN: Boolean(result.output.hasNaN),
+      hasFortranError: Boolean(result.output.hasFortranError),
+      hasConvergenceFail: Boolean(result.output.hasConvergenceFail)
+    };
+    assertValidWebXfoilResult({ alphaStart, alphaEnd, alphaStep, rows, convergence });
     return {
       airfoil,
       runtime: "webxfoil-wasm",
@@ -94,11 +106,7 @@ export async function runXfoilWasmPolar(
       rows,
       stdoutExcerpt: excerpt(result.raw.stdout),
       stderrExcerpt: excerpt(result.raw.stderr),
-      convergence: {
-        hasNaN: Boolean(result.output.hasNaN),
-        hasFortranError: Boolean(result.output.hasFortranError),
-        hasConvergenceFail: Boolean(result.output.hasConvergenceFail)
-      }
+      convergence
     };
   } finally {
     xfoil.destroy();

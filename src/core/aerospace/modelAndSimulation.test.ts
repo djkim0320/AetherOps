@@ -41,6 +41,29 @@ describe("model use and simulation evidence", () => {
     ).toBe("prohibited_use");
   });
 
+  it("does not accept unapproved model cards or silently ignore known defects", () => {
+    const variables = { mach: createQuantity({ value: 0.4, unit: "Mach", provenance }) };
+    const rejected = assessModelUse({
+      card: { ...modelCard(), reviewStatus: "rejected", knownDefects: ["lift bias above Mach 0.35"] },
+      proposedUse: "conceptual lift estimate",
+      configurationBaselineId: "baseline-1",
+      variables
+    });
+    expect(rejected.status).toBe("insufficient_evidence");
+    expect(rejected.violatedLimits.join(" ")).toMatch(/review status/i);
+    expect(() => assertModelResultPromotable(rejected)).toThrow(/cannot be promoted/i);
+
+    const defectLimited = assessModelUse({
+      card: { ...modelCard(), knownDefects: ["lift bias above Mach 0.35"] },
+      proposedUse: "conceptual lift estimate",
+      configurationBaselineId: "baseline-1",
+      variables
+    });
+    expect(defectLimited.status).toBe("accepted_with_limits");
+    expect(defectLimited.violatedLimits).toContain("known defect: lift bias above Mach 0.35");
+    expect(defectLimited.placard?.requiredAdditionalVerification).toContain("human technical review");
+  });
+
   it("blocks non-converged and outside-domain runs from completed promotion", () => {
     const accepted = assessModelUse({
       card: modelCard(),
@@ -75,6 +98,35 @@ describe("model use and simulation evidence", () => {
       convergenceReceiptCount: 2,
       postconditionReceiptCount: 1
     });
+  });
+
+  it("rejects malformed convergence, optional hashes, fatal errors and output bindings", () => {
+    const accepted = assessModelUse({
+      card: modelCard(),
+      proposedUse: "conceptual lift estimate",
+      configurationBaselineId: "baseline-1",
+      variables: { mach: createQuantity({ value: 0.4, unit: "Mach", provenance }) }
+    });
+    const receipt = runReceipt(accepted);
+    expect(() =>
+      validateSimulationRunReceipt({
+        ...receipt,
+        convergenceEvidence: [{ ...receipt.convergenceEvidence[0], finalValue: Number.NaN }]
+      })
+    ).toThrow(/convergence/i);
+    expect(() =>
+      validateSimulationRunReceipt({
+        ...receipt,
+        convergenceEvidence: [{ ...receipt.convergenceEvidence[0], tolerance: -1 }]
+      })
+    ).toThrow(/convergence/i);
+    expect(() => validateSimulationRunReceipt({ ...receipt, executableHash: "not-a-sha" })).toThrow(/hash/i);
+    expect(() => validateSimulationRunReceipt({ ...receipt, geometryHash: "not-a-sha" })).toThrow(/hash/i);
+    expect(() =>
+      validateSimulationRunReceipt({ ...receipt, errorMessages: [{ code: "FATAL_SOLVER", message: "Solver crashed after writing output." }] })
+    ).toThrow(/error diagnostics/i);
+    expect(() => validateSimulationRunReceipt({ ...receipt, outputArtifactIds: ["artifact-result", "artifact-result"] })).toThrow(/output artifacts/i);
+    expect(() => validateSimulationRunReceipt({ ...receipt, postconditionResults: [{ id: "", passed: true, detail: "matched" }] })).toThrow(/postcondition/i);
   });
 
   it("requires sourced uncertainty and deterministic sampling metadata", () => {

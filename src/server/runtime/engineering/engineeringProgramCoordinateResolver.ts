@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, extname } from "node:path";
 import type { AppSettings, EngineeringProgramRequest, ResearchToolInput } from "../../../core/shared/types.js";
+import { normalizeNacaSeries } from "../../../core/tools/airfoilIdentity.js";
 import type { AirfoilCoordinateInput, AirfoilCoordinateResolutionPorts } from "../../../core/tools/engineeringProgramTypes.js";
 import { createDefaultPublicUrlPolicy } from "./publicUrlPolicy.js";
 import { resolveConfiguredModelingRoot, resolveInsideRoot } from "./engineeringProgramMeshAdapter.js";
@@ -53,11 +54,9 @@ export async function resolveWasmAirfoilInput(
 
   const naca = request.naca?.trim();
   if (naca) {
-    if (!/^\d{4,5}$/.test(naca)) {
-      throw new Error("XFOIL WebAssembly NACA request must be a 4 or 5 digit series code.");
-    }
+    const series = normalizeNacaSeries(naca);
     return {
-      label: `NACA ${naca}`,
+      label: `NACA ${series}`,
       sourceKind: "naca"
     };
   }

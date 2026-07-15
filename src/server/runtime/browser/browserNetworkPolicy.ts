@@ -19,6 +19,8 @@ export async function installBrowserNetworkPolicy(
   await context.route("**/*", async (route) => {
     const requestUrl = route.request().url();
     try {
+      const method = route.request().method();
+      if (method !== "GET" && method !== "HEAD") throw new Error(`Browser network method ${method} is not permitted.`);
       const protocol = new URL(requestUrl).protocol;
       if (LOCAL_SCHEMES.has(protocol)) {
         await route.continue();

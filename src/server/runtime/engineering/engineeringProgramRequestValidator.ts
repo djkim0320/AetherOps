@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { extname } from "node:path";
+import { normalizeNacaSeries } from "../../../core/tools/airfoilIdentity.js";
 import { resolveConfiguredModelingRoot, resolveInsideRoot } from "./engineeringProgramMeshAdapter.js";
 import type { AppSettings, CfdRunSpec, EngineeringProgramRequest, EngineeringProgramTarget } from "../../../core/shared/types.js";
 
@@ -43,7 +44,7 @@ export function normalizeEngineeringProgramRequests(value: unknown): Engineering
       sourceUrl: typeof request.sourceUrl === "string" ? request.sourceUrl : undefined,
       coordinateBindingId: typeof request.coordinateBindingId === "string" ? request.coordinateBindingId : undefined,
       outputFileName: typeof request.outputFileName === "string" ? request.outputFileName : undefined,
-      naca: typeof request.naca === "string" ? request.naca : undefined,
+      naca: typeof request.naca === "string" ? normalizeNacaSeries(request.naca) : undefined,
       reynolds: finiteNumber(request.reynolds),
       mach: finiteNumber(request.mach),
       alphaStart: finiteNumber(request.alphaStart),
@@ -167,7 +168,7 @@ export function normalizeCfdRunSpec(value: unknown): CfdRunSpec | undefined {
       source: geometrySource,
       artifactPath: stringValue(geometryRecord.artifactPath),
       sourceUrl: stringValue(geometryRecord.sourceUrl),
-      naca: stringValue(geometryRecord.naca),
+      naca: normalizedNacaValue(geometryRecord.naca),
       configuredCaseId: stringValue(geometryRecord.configuredCaseId),
       coordinateBindingId: stringValue(geometryRecord.coordinateBindingId),
       description: stringValue(geometryRecord.description)
@@ -383,4 +384,9 @@ function normalizeConfigOverrides(value: unknown): Record<string, string | numbe
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizedNacaValue(value: unknown): string | undefined {
+  const text = stringValue(value);
+  return text ? normalizeNacaSeries(text) : undefined;
 }

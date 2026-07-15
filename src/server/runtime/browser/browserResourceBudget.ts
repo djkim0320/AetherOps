@@ -1,7 +1,11 @@
 export const DEFAULT_BROWSER_RESOURCE_BUDGET = Object.freeze({
   maxTextCharacters: 20_000,
   maxScreenshotBytes: 4 * 1024 * 1024,
-  maxAggregateCaptureBytes: 8 * 1024 * 1024
+  maxAggregateCaptureBytes: 8 * 1024 * 1024,
+  maxNetworkRequests: 256,
+  maxConcurrentConnections: 32,
+  maxNetworkResponseBytes: 16 * 1024 * 1024,
+  maxAggregateNetworkBytes: 64 * 1024 * 1024
 });
 
 export class BrowserResourceLimitError extends Error {

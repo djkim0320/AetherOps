@@ -121,12 +121,14 @@ describe("DurableJobRuntime recovery", () => {
       payload: {}
     });
     await started.promise;
+    expect(timer.hasDelay(20_000)).toBe(true);
 
     const closing = runtime.close();
     timer.fireDelay(1);
     await flushTurns(2);
     timer.fireDelay(1);
     await closing;
+    expect(timer.hasDelay(20_000)).toBe(false);
     const verify = new DatabaseSync(databasePath, { readOnly: true });
     const row = verify.prepare("select status from jobs where id=?").get(receipt.jobId) as { status: string };
     verify.close();
@@ -570,7 +572,7 @@ async function flushTurns(count: number): Promise<void> {
   }
 }
 
-function manualTimer(): DurableRuntimeTimer & { fireDelay(delayMs: number): void } {
+function manualTimer(): DurableRuntimeTimer & { fireDelay(delayMs: number): void; hasDelay(delayMs: number): boolean } {
   const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
   return {
     setTimeout(callback, delayMs) {
@@ -586,6 +588,9 @@ function manualTimer(): DurableRuntimeTimer & { fireDelay(delayMs: number): void
       if (!entry) throw new Error(`No ${delayMs}ms timer is pending.`);
       scheduled.delete(entry[0]);
       entry[1].callback();
+    },
+    hasDelay(delayMs) {
+      return [...scheduled.values()].some((entry) => entry.delayMs === delayMs);
     }
   };
 }

@@ -9,6 +9,7 @@ export interface SseDeliveryLimits {
   maxReplayEvents: number;
   maxReplayBytes: number;
   maxReplayDurationMs: number;
+  maxDrainDurationMs: number;
 }
 
 export const DEFAULT_SSE_LIMITS: SseDeliveryLimits = Object.freeze({
@@ -18,7 +19,8 @@ export const DEFAULT_SSE_LIMITS: SseDeliveryLimits = Object.freeze({
   maxBufferedBytes: 2 * 1024 * 1024,
   maxReplayEvents: 10_000,
   maxReplayBytes: 32 * 1024 * 1024,
-  maxReplayDurationMs: 30_000
+  maxReplayDurationMs: 30_000,
+  maxDrainDurationMs: 15_000
 });
 
 export class SseDeliveryBudgetError extends Error {
@@ -98,7 +100,7 @@ export class SerializedSseWriter {
 
   constructor(
     private readonly response: ServerResponse,
-    private readonly limits: Pick<SseDeliveryLimits, "maxBufferedEvents" | "maxBufferedBytes">,
+    private readonly limits: Pick<SseDeliveryLimits, "maxBufferedEvents" | "maxBufferedBytes" | "maxDrainDurationMs">,
     private readonly observer?: SseBufferObserver
   ) {}
 
@@ -167,12 +169,15 @@ export class SerializedSseWriter {
       const finish = (error?: unknown): void => {
         if (settled) return;
         settled = true;
+        clearTimeout(timeout);
         this.response.off("drain", onDrain);
         this.cancelDrain = undefined;
         if (error === undefined) resolve();
         else reject(error);
       };
       const onDrain = (): void => finish();
+      const timeout = setTimeout(() => finish(new SseSlowConsumerError("SSE socket drain deadline exceeded.")), this.limits.maxDrainDurationMs);
+      timeout.unref();
       this.cancelDrain = (reason) => finish(reason);
       this.response.once("drain", onDrain);
     });
@@ -211,7 +216,8 @@ export function resolveSseLimits(input: Partial<SseDeliveryLimits> = {}): SseDel
     maxBufferedBytes: input.maxBufferedBytes ?? DEFAULT_SSE_LIMITS.maxBufferedBytes,
     maxReplayEvents: input.maxReplayEvents ?? DEFAULT_SSE_LIMITS.maxReplayEvents,
     maxReplayBytes: input.maxReplayBytes ?? DEFAULT_SSE_LIMITS.maxReplayBytes,
-    maxReplayDurationMs: input.maxReplayDurationMs ?? DEFAULT_SSE_LIMITS.maxReplayDurationMs
+    maxReplayDurationMs: input.maxReplayDurationMs ?? DEFAULT_SSE_LIMITS.maxReplayDurationMs,
+    maxDrainDurationMs: input.maxDrainDurationMs ?? DEFAULT_SSE_LIMITS.maxDrainDurationMs
   };
   for (const [name, value] of Object.entries(resolved)) {
     if (!Number.isFinite(value) || value < 1 || !Number.isInteger(value)) throw new Error(`Invalid SSE limit ${name}.`);

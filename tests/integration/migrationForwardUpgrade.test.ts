@@ -43,10 +43,14 @@ describe("applied v2 target forward migration", () => {
       status: "schema-upgraded",
       schemaUpgrade: {
         changed: true,
-        databaseUpgrade: { appliedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10] }
+        databaseUpgrade: { appliedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
       }
     });
-    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, currentVersion: 10, installedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10] });
+    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({
+      ready: true,
+      currentVersion: 11,
+      installedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    });
     const readback = new DatabaseSync(fixture.targetDbPath, { readOnly: true });
     try {
       expect(readback.prepare("select id,topic from projects_v2 where id=?").get(fixture.projectId)).toEqual({
@@ -245,7 +249,7 @@ describe("applied v2 target forward migration", () => {
     expect(applyMigration(fixture.context)).toMatchObject({ ok: true, status: "schema-upgraded" });
   });
 
-  it("continues a representative populated v4 target through v5, v6, v7, v8, v9, and v10", () => {
+  it("continues a representative populated v4 target through v5-v11", () => {
     const fixture = createAppliedOldV2Target("partial-v4");
     const db = new DatabaseSync(fixture.targetDbPath);
     try {
@@ -272,12 +276,12 @@ describe("applied v2 target forward migration", () => {
     expect(applyMigration(fixture.context)).toMatchObject({
       ok: true,
       status: "schema-upgraded",
-      schemaUpgrade: { databaseUpgrade: { appliedVersions: [5, 6, 7, 8, 9, 10] } }
+      schemaUpgrade: { databaseUpgrade: { appliedVersions: [5, 6, 7, 8, 9, 10, 11] } }
     });
-    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, installedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10] });
+    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, installedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11] });
   });
 
-  it("upgrades an otherwise current v8 target through immutable attestation and ownership ledgers", () => {
+  it("upgrades an otherwise current v8 target through attestation, ownership, and side-effect ledgers", () => {
     const fixture = createAppliedOldV2Target("partial-v8");
     expect(applyMigration(fixture.context)).toMatchObject({ ok: true, status: "schema-upgraded" });
     const db = new DatabaseSync(fixture.targetDbPath);
@@ -291,8 +295,11 @@ describe("applied v2 target forward migration", () => {
         drop trigger trg_tool_attempts_owner_update;
         drop trigger trg_tool_output_links_owner_insert;
         drop trigger trg_tool_output_links_owner_update;
+        drop trigger trg_tool_side_effect_reservations_owner_insert;
+        drop trigger trg_tool_side_effect_reservations_owner_update;
+        drop table tool_side_effect_reservations;
         drop table canonical_terminal_result_attestations;
-        delete from schema_migrations where version in (9,10);
+        delete from schema_migrations where version in (9,10,11);
       `);
     } finally {
       db.close();
@@ -304,9 +311,9 @@ describe("applied v2 target forward migration", () => {
     expect(applyMigration(fixture.context)).toMatchObject({
       ok: true,
       status: "schema-upgraded",
-      schemaUpgrade: { databaseUpgrade: { appliedVersions: [9, 10] } }
+      schemaUpgrade: { databaseUpgrade: { appliedVersions: [9, 10, 11] } }
     });
-    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, currentVersion: 10 });
+    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, currentVersion: 11 });
   });
 
   it("leaves the active target and pointer byte-identical when a staged partial migration fails", () => {

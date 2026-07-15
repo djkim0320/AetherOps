@@ -85,8 +85,12 @@ export function transformVector(input: { vector: FramedVector; from: CoordinateF
   const orthonormalError = matrixOrthonormalError(input.matrix);
   if (orthonormalError > tolerance) throw new Error(`Frame transform matrix is not orthonormal; error=${orthonormalError}.`);
   const determinant = determinant3(input.matrix);
-  const expectedMagnitude = 1;
-  if (Math.abs(Math.abs(determinant) - expectedMagnitude) > tolerance) throw new Error(`Frame transform determinant is invalid: ${determinant}.`);
+  const expectedDeterminant = input.from.handedness === input.to.handedness ? 1 : -1;
+  if (Math.abs(determinant - expectedDeterminant) > tolerance) {
+    throw new Error(
+      `Frame transform determinant ${determinant} is inconsistent with ${input.from.handedness}- to ${input.to.handedness}-handedness conversion.`
+    );
+  }
   const applied = convention === "active" ? input.matrix : transpose3(input.matrix);
   const output = multiplyMatrixVector(applied, input.vector.components);
   const recovered = multiplyMatrixVector(transpose3(applied), output);

@@ -39,11 +39,17 @@ import type {
   ResearchArtifact,
   ToolRun
 } from "../../../core/shared/types.js";
-import type { ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import type { ResearchToolExecutionContext, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
 import { bindFetchedAirfoilCoordinates } from "./airfoilCoordinateBinder.js";
 
-export async function runEngineeringProgram(input: ResearchToolInput, settings: AppSettings): Promise<ResearchToolResult> {
+export async function runEngineeringProgram(
+  input: ResearchToolInput,
+  settings: AppSettings,
+  context?: Pick<ResearchToolExecutionContext, "signal">
+): Promise<ResearchToolResult> {
   input = bindFetchedAirfoilCoordinates(input);
+  const signal = context?.signal;
+  signal?.throwIfAborted();
   const startedAt = nowIso();
   const requests = normalizeEngineeringProgramRequests(input.researchPlan?.programRequests);
   const completedAt = nowIso();
@@ -69,8 +75,9 @@ export async function runEngineeringProgram(input: ResearchToolInput, settings: 
   const evidence: EvidenceItem[] = [];
   try {
     for (const request of requests.slice(0, 4)) {
+      signal?.throwIfAborted();
       if (request.kind === "toolchain-check") {
-        outputs.push(await runToolchainCheck(request.target ?? "all", settings));
+        outputs.push(await runToolchainCheck(request.target ?? "all", settings, signal));
         continue;
       }
       if (request.kind === "mesh-inspect") {
@@ -80,35 +87,35 @@ export async function runEngineeringProgram(input: ResearchToolInput, settings: 
         continue;
       }
       if (request.kind === "xfoil-polar") {
-        const summary = await runXfoilPolar(request, settings);
+        const summary = await runXfoilPolar(request, settings, signal);
         outputs.push({ kind: request.kind, target: "xfoil", summary: { ...summary, rows: summary.rows.slice(0, 12) } });
         artifacts.push(xfoilPolarArtifact(input, summary, nowIso()));
         evidence.push(xfoilPolarEvidence(input, summary, nowIso()));
         continue;
       }
       if (request.kind === "xfoil-wasm-polar") {
-        const summary = await runXfoilWasmPolar(request, settings, input);
+        const summary = await runXfoilWasmPolar(request, settings, input, signal);
         outputs.push({ kind: request.kind, target: "xfoil-wasm", summary: { ...summary, rows: summary.rows.slice(0, 12) } });
         artifacts.push(xfoilWasmPolarArtifact(input, summary, nowIso()));
         evidence.push(xfoilWasmPolarEvidence(input, summary, nowIso()));
         continue;
       }
       if (request.kind === "su2-case-run") {
-        const summary = await runSu2Case(request, settings);
+        const summary = await runSu2Case(request, settings, signal);
         outputs.push({ kind: request.kind, target: "su2", summary });
         artifacts.push(su2CaseRunArtifact(input, summary, nowIso()));
         evidence.push(su2CaseRunEvidence(input, summary, nowIso()));
         continue;
       }
       if (request.kind === "openvsp-analysis-run") {
-        const summary = await runScriptedCfdAnalysis(request, settings, "openvsp");
+        const summary = await runScriptedCfdAnalysis(request, settings, "openvsp", signal);
         outputs.push({ kind: request.kind, target: "openvsp", summary });
         artifacts.push(scriptedCfdRunArtifact(input, summary, nowIso()));
         evidence.push(scriptedCfdRunEvidence(input, summary, nowIso()));
         continue;
       }
       if (request.kind === "xflr5-analysis-run") {
-        const summary = await runScriptedCfdAnalysis(request, settings, "xflr5");
+        const summary = await runScriptedCfdAnalysis(request, settings, "xflr5", signal);
         outputs.push({ kind: request.kind, target: "xflr5", summary });
         artifacts.push(scriptedCfdRunArtifact(input, summary, nowIso()));
         evidence.push(scriptedCfdRunEvidence(input, summary, nowIso()));
@@ -117,6 +124,7 @@ export async function runEngineeringProgram(input: ResearchToolInput, settings: 
       throw new Error(`Unsupported EngineeringProgramTool request kind: ${request.kind}`);
     }
   } catch (error) {
+    signal?.throwIfAborted();
     const message = error instanceof Error ? error.message : String(error);
     return {
       toolRun: failedToolRun(input, "EngineeringProgramTool", startedAt, nowIso(), { requests }, { outputs, failureMessage: message }, message),
@@ -181,7 +189,8 @@ export async function runEngineeringProgramPreflight(
 
 export { supportedEngineeringProgramKinds } from "./engineeringProgramRequestValidator.js";
 
-async function runToolchainCheck(target: EngineeringProgramTarget, settings: AppSettings): Promise<unknown> {
+async function runToolchainCheck(target: EngineeringProgramTarget, settings: AppSettings, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted();
   const wantsXfoil = target === "all" || target === "xfoil";
   const wantsXfoilWasm = target === "all" || target === "xfoil-wasm";
   const wantsModeling = target === "all" || target === "modeling";
@@ -195,7 +204,7 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
   if (wantsXfoil) {
     if (hasConfiguredXfoil(settings)) {
       checked.push("xfoil");
-      output.xfoil = assertCommandSucceeded("XFOIL probe", await probeXfoil(resolveXfoilCommand(settings), settings.engineeringTools.xfoil.timeoutMs));
+      output.xfoil = assertCommandSucceeded("XFOIL probe", await probeXfoil(resolveXfoilCommand(settings), settings.engineeringTools.xfoil.timeoutMs, signal));
     } else {
       unavailable.push({ target: "xfoil", reason: "Embedded XFOIL executable is not available under the AetherOps engineering toolchain." });
       if (target === "xfoil") throw new Error("Embedded XFOIL executable is not available.");
@@ -229,7 +238,7 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
       checked.push("su2");
       const config = su2Config(settings);
       const su2Case = validateSu2CaseConfig(config.caseRoot, config.configFile);
-      output.su2 = { caseRoot: su2Case.caseRoot, configPath: su2Case.configPath, probe: assertCommandSucceeded("SU2 probe", await probeSu2(config)) };
+      output.su2 = { caseRoot: su2Case.caseRoot, configPath: su2Case.configPath, probe: assertCommandSucceeded("SU2 probe", await probeSu2(config, signal)) };
     } else {
       unavailable.push({ target: "su2", reason: "SU2 requires an embedded executable and a case root containing the configured .cfg file." });
       if (target === "su2") throw new Error("Embedded SU2 executable or case config is not configured.");
@@ -245,7 +254,7 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
         adapterMode: customScriptPath ? "custom" : "builtin",
         scriptPath: customScriptPath,
         builtinAdapterPath: customScriptPath ? undefined : validateBuiltinScriptedCfdAdapterPath("openvsp"),
-        probe: await probeScriptedCfd(config)
+        probe: await probeScriptedCfd(config, signal)
       };
     } else {
       unavailable.push({
@@ -265,7 +274,7 @@ async function runToolchainCheck(target: EngineeringProgramTarget, settings: App
         adapterMode: customScriptPath ? "custom" : "builtin",
         scriptPath: customScriptPath,
         builtinAdapterPath: customScriptPath ? undefined : validateBuiltinScriptedCfdAdapterPath("xflr5"),
-        probe: await probeScriptedCfd(config)
+        probe: await probeScriptedCfd(config, signal)
       };
     } else {
       unavailable.push({ target: "xflr5", reason: "XFLR5 requires an embedded executable and either the built-in adapter or a valid custom script contract." });

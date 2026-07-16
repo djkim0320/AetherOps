@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ChatMessageSchema, JobDetailSchema, JobReceiptSchema, JobSchema, type ChatMessage } from "../../../contracts/api-v2/jobs.js";
+import { JobDetailSchema, JobReceiptSchema, JobSchema } from "../../../contracts/api-v2/jobs.js";
 import { ProjectSchema, ProjectSummarySchema, SessionSchema } from "../../../contracts/api-v2/projects.js";
 import { ProjectSnapshotSchema } from "../../../contracts/api-v2/snapshots.js";
 import { CapabilityGrantSchema, SettingsResponseSchema, SettingsSaveParamsSchema } from "../../../contracts/api-v2/settings.js";
@@ -11,10 +11,9 @@ import {
 } from "../../../contracts/api-v2/diagnostics.js";
 import { EngineeringPreflightResponseSchema, EngineeringTargetSchema } from "../../../contracts/api-v2/engineering.js";
 import { nowIso } from "../../../core/shared/ids.js";
-import type { AetherOpsOrchestrator } from "../../../core/orchestration/orchestrator.js";
-import type { AppSettings, EngineeringProgramTarget, ResearchProject, ResearchSession, ResearchSnapshot } from "../../../core/shared/types.js";
+import type { AppSettings, EngineeringProgramTarget } from "../../../core/shared/types.js";
 import { buildServerRuntimeToolDiagnostics as buildRuntimeToolDiagnostics } from "../../runtime/engineering/runtimeEngineeringDiagnostics.js";
-import { defaultSettings as runtimeDefaultSettings, type AppSettingsStore } from "../../runtime/storage/settingsStore.js";
+import { defaultSettings as runtimeDefaultSettings } from "../../runtime/storage/settingsStore.js";
 import type { DurableJobRuntime } from "../../composition/durableJobRuntime.js";
 import type { CodexCliReadiness } from "../../runtime/codex/codexCliReadiness.js";
 export { mapJobStatusFromProjectStatus, toJobDetailResponse, toJobReceipt, toJobResponse } from "./jobResponses.js";
@@ -37,126 +36,6 @@ export {
   EngineeringPreflightResponseSchema,
   EngineeringTargetSchema
 };
-export interface RpcHandlerContext {
-  appRoot: string;
-  dataRoot: string;
-  host: string;
-  port: number;
-  startedAt: string;
-  version: string;
-  env: NodeJS.ProcessEnv;
-  llm:
-    | {
-        name: string;
-        isAvailable(): Promise<boolean>;
-        getStatus(): Promise<{
-          authenticated: boolean;
-          cliAvailable: boolean;
-          catalog: "supported" | "unsupported";
-          access: "not_checked" | "available" | "unavailable";
-          sandbox?: CodexCliReadiness;
-          message?: string;
-        }>;
-      }
-    | undefined;
-  orchestrator: AetherOpsOrchestrator;
-  settingsStore: AppSettingsStore;
-  events: DurableJobRuntime;
-  jobs: DurableJobRuntime;
-}
-
-export function computeProjectRevision(snapshot: ResearchSnapshot): number {
-  return Math.max(1, snapshot.iterations.length);
-}
-
-export function projectCapabilities(project: ResearchProject): z.infer<typeof CapabilityGrantSchema> {
-  return {
-    agent: project.autonomyPolicy.allowAgent ?? true,
-    engineering: Boolean(project.autonomyPolicy.allowCodeExecution),
-    search: Boolean(project.autonomyPolicy.allowExternalSearch)
-  };
-}
-
-export function toProjectSummary(snapshot: ResearchSnapshot): z.infer<typeof ProjectSummarySchema> {
-  return ProjectSummarySchema.parse({
-    id: snapshot.project.id,
-    input: {
-      goal: snapshot.project.goal,
-      topic: snapshot.project.topic,
-      scope: snapshot.project.scope,
-      budget: snapshot.project.budget
-    },
-    capabilities: projectCapabilities(snapshot.project),
-    execution: {
-      status: snapshot.project.status,
-      currentStep: snapshot.project.currentStep,
-      revision: computeProjectRevision(snapshot)
-    },
-    createdAt: snapshot.project.createdAt,
-    updatedAt: snapshot.project.updatedAt
-  });
-}
-
-export function toProjectResponse(snapshot: ResearchSnapshot): z.infer<typeof ProjectSchema> {
-  return ProjectSchema.parse(toProjectSummary(snapshot));
-}
-
-export function toSessionResponse(session: ResearchSession): z.infer<typeof SessionSchema> {
-  return SessionSchema.parse({
-    id: session.id,
-    projectId: session.projectId,
-    title: session.title,
-    focus: session.focus,
-    createdAt: session.createdAt,
-    updatedAt: session.createdAt
-  });
-}
-
-export function toSnapshotResponse(
-  snapshot: ResearchSnapshot,
-  executionPatch: Partial<z.input<typeof ProjectSnapshotSchema>["execution"]> = {}
-): z.infer<typeof ProjectSnapshotSchema> {
-  const data = {
-    ...snapshot,
-    messages: chatMessagesFromSnapshot(snapshot)
-  } as unknown as Record<string, unknown>;
-  return ProjectSnapshotSchema.parse({
-    projectId: snapshot.project.id,
-    revision: computeProjectRevision(snapshot),
-    execution: {
-      status: snapshot.project.status,
-      currentStep: snapshot.project.currentStep,
-      revision: computeProjectRevision(snapshot),
-      ...executionPatch
-    },
-    updatedAt: snapshot.project.updatedAt,
-    data
-  });
-}
-
-export function chatMessagesFromSnapshot(snapshot: Pick<ResearchSnapshot, "artifacts" | "sessions">): ChatMessage[] {
-  const messages: ChatMessage[] = [];
-  for (const artifact of snapshot.artifacts) {
-    if (artifact.category !== "conversation_memo") continue;
-    const path = artifact.relativePath.replace(/\\/g, "/");
-    const session = snapshot.sessions.find((candidate) => path.includes(`/chat/${candidate.id}-`));
-    if (!session) continue;
-    const content = artifact.content?.trim() || artifact.summary.trim();
-    if (!content) continue;
-    messages.push(
-      ChatMessageSchema.parse({
-        id: artifact.id,
-        projectId: artifact.projectId,
-        sessionId: session.id,
-        role: path.endsWith("-assistant.md") ? "assistant" : "user",
-        content,
-        createdAt: artifact.createdAt
-      })
-    );
-  }
-  return messages.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
-}
-
 export function toSettingsResponse(settings: AppSettings): z.infer<typeof SettingsResponseSchema> {
   return SettingsResponseSchema.parse({
     codex: {

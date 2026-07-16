@@ -3,6 +3,8 @@ import type { SseEvent } from "../../contracts/api-v2/events.js";
 import type { StorageFencedWriteCommand } from "../runtime/storage/worker/typedProtocol.js";
 import type { StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
 import type { StorageToolPostconditionVerifyResult } from "../runtime/storage/v2/jobAtomicTypes.js";
+import type { StorageProjectRevisionHead } from "../runtime/storage/v2/projectRevisionRepository.js";
+import type { StorageProjectSnapshotCommitInput, StorageProjectSnapshotCommitResult } from "../runtime/storage/v2/projectSnapshotAtomic.js";
 import type {
   StorageCheckpoint,
   StorageCompletedStepInput,
@@ -20,6 +22,7 @@ import type {
 } from "../runtime/storage/v2/traceTypes.js";
 import { eventFromStorage } from "./durableJobMappers.js";
 import { durableFailureFrom } from "./durableFailure.js";
+import { durableToolRunEventId } from "./durableSseEventIdentity.js";
 import {
   sanitizeCodexCliExecution,
   sanitizeLlmInvocation,
@@ -31,6 +34,7 @@ import {
 
 type PublishFailureHandler = (error: unknown, event: SseEvent) => void;
 type FenceProvider = () => StorageLeaseFence | undefined;
+export type DurableProjectSnapshotCommitResult = Omit<StorageProjectSnapshotCommitResult, "event"> & { event: SseEvent };
 
 export class DurableJobTraceRuntime {
   private readonly emitter = new EventEmitter();
@@ -44,20 +48,39 @@ export class DurableJobTraceRuntime {
     this.emitter.setMaxListeners(0);
   }
 
-  async appendEvent(event: Omit<SseEvent, "id">): Promise<SseEvent> {
+  async appendEvent(event: Omit<SseEvent, "id">, internalEventId?: string, internalMutationHash?: string): Promise<SseEvent> {
     const fence = this.fenceProvider();
     const command = {
       name: "event.append",
       event: {
+        ...(internalEventId === undefined ? {} : { eventId: internalEventId }),
         projectId: event.projectId,
         jobId: eventJobId(event) ?? fence?.jobId,
         type: event.type,
         createdAt: event.occurredAt,
-        payload: { projectRevision: event.projectRevision, data: event.data }
+        payload: {
+          projectRevision: event.projectRevision,
+          data: event.data,
+          ...(internalMutationHash === undefined ? {} : { mutationHash: internalMutationHash })
+        }
       }
     } as const;
     const stored = fence ? await this.fencedWrite<StorageJobEvent>(fence, command) : await this.client.request<StorageJobEvent>(command);
     return this.publishStoredEvent(stored);
+  }
+
+  async getProjectRevision(projectId: string): Promise<number | undefined> {
+    const head = await this.getProjectRevisionHead(projectId);
+    return head?.revision;
+  }
+
+  getProjectRevisionHead(projectId: string): Promise<StorageProjectRevisionHead | undefined> {
+    return this.client.request({ name: "project.revision.get", projectId });
+  }
+
+  async commitProjectSnapshot(input: StorageProjectSnapshotCommitInput): Promise<DurableProjectSnapshotCommitResult> {
+    const stored = await this.client.request<StorageProjectSnapshotCommitResult>({ name: "project.snapshot.commit", input });
+    return { ...stored, event: this.publishStoredEvent(stored.event) };
   }
 
   saveLlmInvocation(invocation: StorageLlmInvocation): Promise<StorageLlmInvocation> {
@@ -83,6 +106,11 @@ export class DurableJobTraceRuntime {
         {
           name: "event.append",
           event: {
+            eventId: durableToolRunEventId({
+              projectId: input.attempt.projectId,
+              attemptId: input.attempt.id,
+              status: input.attempt.status
+            }),
             projectId: input.attempt.projectId,
             jobId: input.attempt.jobId,
             type: "tool.run.changed",
@@ -180,6 +208,15 @@ export class DurableJobTraceRuntime {
       }
     }
     return event;
+  }
+
+  publishStoredEvents(events: StorageJobEvent[]): void {
+    const seen = new Set<number>();
+    for (const event of events)
+      if (!seen.has(event.sequence)) {
+        seen.add(event.sequence);
+        this.publishStoredEvent(event);
+      }
   }
 
   close(): void {

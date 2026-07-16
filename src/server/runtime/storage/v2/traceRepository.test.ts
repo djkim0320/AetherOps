@@ -14,6 +14,10 @@ import { STORAGE_TERMINAL_RECEIPT_MIGRATION_CHECKSUM } from "./terminalReceiptSc
 import { STORAGE_TERMINAL_ATTESTATION_MIGRATION_CHECKSUM } from "./terminalAttestationSchema.js";
 import { STORAGE_OWNERSHIP_MIGRATION_CHECKSUM } from "./ownershipSchema.js";
 import { STORAGE_TOOL_SIDE_EFFECT_MIGRATION_CHECKSUM } from "./toolSideEffectReservationSchema.js";
+import { STORAGE_ENGINEERING_BASELINE_MIGRATION_CHECKSUM } from "./engineeringBaselineSchema.js";
+import { STORAGE_PROJECT_REVISION_MIGRATION_CHECKSUM } from "./projectRevisionSchema.js";
+import { STORAGE_PROJECT_MUTATION_MIGRATION_CHECKSUM } from "./projectMutationSchema.js";
+import { storageTestProjectRevision, upsertStorageTestProject } from "./storageWorkerTestSupport.js";
 import { STORAGE_TRACE_MIGRATION_CHECKSUM, STORAGE_TRACE_V3_MIGRATION_CHECKSUM } from "./traceSchema.js";
 
 const TRACE_LEASE_NOW_MS = Date.parse("2026-01-01T00:00:00.250Z");
@@ -58,7 +62,10 @@ describe("storage operational trace v3", () => {
       { version: 8, checksum_sha256: STORAGE_TERMINAL_RECEIPT_MIGRATION_CHECKSUM },
       { version: 9, checksum_sha256: STORAGE_TERMINAL_ATTESTATION_MIGRATION_CHECKSUM },
       { version: 10, checksum_sha256: STORAGE_OWNERSHIP_MIGRATION_CHECKSUM },
-      { version: 11, checksum_sha256: STORAGE_TOOL_SIDE_EFFECT_MIGRATION_CHECKSUM }
+      { version: 11, checksum_sha256: STORAGE_TOOL_SIDE_EFFECT_MIGRATION_CHECKSUM },
+      { version: 12, checksum_sha256: STORAGE_ENGINEERING_BASELINE_MIGRATION_CHECKSUM },
+      { version: 13, checksum_sha256: STORAGE_PROJECT_REVISION_MIGRATION_CHECKSUM },
+      { version: 14, checksum_sha256: STORAGE_PROJECT_MUTATION_MIGRATION_CHECKSUM }
     ]);
     const attemptColumns = new Set((db.prepare("pragma table_info(tool_attempts)").all() as Array<{ name: string }>).map((row) => row.name));
     expect([...attemptColumns]).toEqual(
@@ -144,12 +151,14 @@ describe("storage operational trace v3", () => {
     db.close();
     const runtime = createTraceWorkerRuntime(databasePath);
     try {
+      upsertStorageTestProject(runtime, root, "project-1", "2026-01-01T00:00:00.000Z");
       runtime.handle({
         name: "job.enqueue",
         job: {
           id: "job-1",
           projectId: "project-1",
           operation: "research_loop",
+          expectedProjectRevision: 0,
           createdAt: "2026-01-01T00:00:00.000Z",
           queuedAt: "2026-01-01T00:00:00.000Z",
           payload: { projectRevision: 1, currentStep: "EXECUTE_TOOLS" }
@@ -332,7 +341,7 @@ describe("storage operational trace v3", () => {
         input: {
           fence: claimed.fence,
           status: "completed",
-          projectRevision: 1,
+          projectRevision: storageTestProjectRevision(runtime, "project-1"),
           occurredAt: "2026-01-01T00:00:02.100Z",
           promotions: [
             {
@@ -388,7 +397,11 @@ describe("storage operational trace v3", () => {
     migratedDatabase(databasePath).close();
     const runtime = createTraceWorkerRuntime(databasePath);
     const enqueueAndClaim = (jobId: string, projectId: string) => {
-      runtime.handle({ name: "job.enqueue", job: { id: jobId, projectId, operation: "research_loop", payload: { projectRevision: 1 } } });
+      upsertStorageTestProject(runtime, root, projectId, "2026-01-01T00:00:00.000Z");
+      runtime.handle({
+        name: "job.enqueue",
+        job: { id: jobId, projectId, operation: "research_loop", expectedProjectRevision: 0, payload: { projectRevision: 1 } }
+      });
       return runtime.handle({
         name: "job.claimAndStart",
         options: { projectId, leaseOwner: `worker-${jobId}`, leaseExpiresAt: "2026-01-01T01:00:00.000Z", now: "2026-01-01T00:00:00.000Z" }

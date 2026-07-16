@@ -186,8 +186,8 @@ export class CodexOAuthLlmProvider implements LlmProvider {
     }
   }
 
-  dispose(): void {
-    void this.runner.dispose();
+  dispose(): Promise<void> {
+    return this.runner.dispose();
   }
 
   private async resolveSettings(): Promise<CodexExecutionSettings> {

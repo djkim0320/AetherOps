@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { invocationMetadataFromError } from "../../../core/providers/llm.js";
 import { CodexCliProcessRunner } from "./codexCliProcessRunner.js";
 import { CodexModelUnavailableError, CodexOAuthLlmProvider, type CodexExecutionSettings } from "./codexOAuthLlmProvider.js";
@@ -57,7 +57,7 @@ describe("CodexOAuthLlmProvider", () => {
     expect(calls[0]).toContain("gpt-5.6-sol");
     expect(calls[1]).toContain("gpt-5.6-terra");
     expect(calls[0]).toContain('default_permissions="aetherops-readonly"');
-    provider.dispose();
+    await provider.dispose();
   });
 
   it("classifies entitlement rejection without a model fallback", async () => {
@@ -78,7 +78,7 @@ describe("CodexOAuthLlmProvider", () => {
       })
     ).rejects.toBeInstanceOf(CodexModelUnavailableError);
     await expect(provider.getStatus()).resolves.toMatchObject({ access: "unavailable" });
-    provider.dispose();
+    await provider.dispose();
   });
 
   it("commits the safe running receipt before spawning Codex and keeps one invocation identity", async () => {
@@ -117,7 +117,7 @@ describe("CodexOAuthLlmProvider", () => {
     ]);
     expect(completion.metadata).toMatchObject({ invocationId: "invocation-stable-1", status: "completed" });
     expect(JSON.stringify(running)).not.toMatch(/PRIVATE_(SYSTEM|USER)_SENTINEL/);
-    provider.dispose();
+    await provider.dispose();
   });
 
   it("does not spawn Codex when the durable running receipt cannot be committed", async () => {
@@ -144,7 +144,7 @@ describe("CodexOAuthLlmProvider", () => {
       })
     ).rejects.toThrow(/durable receipt write failed/i);
     expect(existsSync(fixture.capturePath)).toBe(false);
-    provider.dispose();
+    await provider.dispose();
   });
 
   it("blocks an unpersisted diagnostic invocation before spawning Codex", async () => {
@@ -165,7 +165,7 @@ describe("CodexOAuthLlmProvider", () => {
       })
     ).rejects.toThrow(/NOT_READY.*durable pre-spawn invocation receipt/i);
     expect(existsSync(fixture.capturePath)).toBe(false);
-    provider.dispose();
+    await provider.dispose();
   });
 
   it("keeps malformed provider response fragments out of thrown and durable validation summaries", async () => {
@@ -197,7 +197,40 @@ describe("CodexOAuthLlmProvider", () => {
     const metadata = invocationMetadataFromError(observed);
     expect(metadata).toMatchObject({ status: "failed", repairCount: 1, validationErrors: ["response:invalid_json", "response:invalid_json"] });
     expect(JSON.stringify({ error: observed instanceof Error ? observed.message : observed, metadata })).not.toContain("PROVIDER_RESPONSE_CANARY");
-    provider.dispose();
+    await provider.dispose();
+  });
+
+  it("waits for runner disposal before resolving", async () => {
+    const runner = new CodexCliProcessRunner();
+    let release: (() => void) | undefined;
+    vi.spyOn(runner, "dispose").mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+    const provider = new CodexOAuthLlmProvider({ runner });
+    let settled = false;
+
+    const disposal = provider.dispose().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(release).toBeTypeOf("function");
+    release?.();
+    await expect(disposal).resolves.toBeUndefined();
+    expect(settled).toBe(true);
+  });
+
+  it("propagates runner disposal failures", async () => {
+    const runner = new CodexCliProcessRunner();
+    const failure = new Error("runner disposal failed");
+    vi.spyOn(runner, "dispose").mockRejectedValue(failure);
+    const provider = new CodexOAuthLlmProvider({ runner });
+
+    await expect(provider.dispose()).rejects.toBe(failure);
   });
 });
 

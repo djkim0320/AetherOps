@@ -62,7 +62,7 @@ describe("M1 long-horizon durable resume", () => {
         const first = await session.compilePlannerContext(m1PlannerInput(snapshot, provider));
         const replay = await session.compilePlannerContext(m1PlannerInput(snapshot, provider));
         const optimisticError = await attemptOptimisticConflict(runtime, session.owner);
-        await runtime.settle(job.id, "blocked", job.projectRevision, "M1 verification stops without claiming product completion.");
+        await runtime.settle(job.id, "blocked", await requiredProjectRevision(runtime), "M1 verification stops without claiming product completion.");
         resumed.resolve({ first, replay, optimisticError });
       } catch (error) {
         resumed.reject(error);
@@ -71,7 +71,7 @@ describe("M1 long-horizon durable resume", () => {
     });
     await runtime.initialize();
     const response = await handleRpcV2(
-      resumeRequest(source.jobId, source.checkpointId, "m1-resume-provider-swap"),
+      resumeRequest(source.jobId, source.checkpointId, "m1-resume-provider-swap", await requiredProjectRevision(runtime)),
       m1RpcContext(fixture, runtime, m1Snapshot(false))
     );
     const receipt = response.result as { jobId: string };
@@ -139,7 +139,7 @@ describe("M1 long-horizon durable resume", () => {
           (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
         );
         const pack = await session.compilePlannerContext(plannerInput);
-        await runtime.settle(job.id, "blocked", job.projectRevision, "M1 response-loss verification completed without product completion.");
+        await runtime.settle(job.id, "blocked", await requiredProjectRevision(runtime), "M1 response-loss verification completed without product completion.");
         observed.resolve({ pack, firstError });
       } catch (error) {
         observed.reject(error);
@@ -202,7 +202,7 @@ describe("M1 long-horizon durable resume", () => {
         );
         const rowsBeforeRetry = contextPackCount(fixture.databasePath);
         const pack = await session.compilePlannerContext(input);
-        await runtime.settle(job.id, "blocked", job.projectRevision, "M1 compile-crash retry verified without claiming product completion.");
+        await runtime.settle(job.id, "blocked", await requiredProjectRevision(runtime), "M1 compile-crash retry verified without claiming product completion.");
         observed.resolve({ pack, error, rowsBeforeRetry });
       } catch (error) {
         observed.reject(error);
@@ -246,7 +246,12 @@ describe("M1 long-horizon durable resume", () => {
     const handlerReached = deferred<void>();
     runtime.registerHandler("research_loop", async (job) => {
       try {
-        await runtime.settle(job.id, "blocked", job.projectRevision, "Exact ContextPack binding was verified without claiming product completion.");
+        await runtime.settle(
+          job.id,
+          "blocked",
+          await requiredProjectRevision(runtime),
+          "Exact ContextPack binding was verified without claiming product completion."
+        );
         handlerReached.resolve();
       } catch (error) {
         handlerReached.reject(error);
@@ -255,7 +260,7 @@ describe("M1 long-horizon durable resume", () => {
     });
     await runtime.initialize();
     const response = await handleRpcV2(
-      resumeRequest(source.jobId, source.checkpointId, "m1-checkpoint-context-binding-resume"),
+      resumeRequest(source.jobId, source.checkpointId, "m1-checkpoint-context-binding-resume", await requiredProjectRevision(runtime)),
       m1RpcContext(fixture, runtime, m1Snapshot(false))
     );
     await withTimeout(handlerReached.promise, "checkpoint-bound ContextPack resume");
@@ -307,7 +312,7 @@ describe("M1 long-horizon durable resume", () => {
           return resumedPack;
         });
         if (!resumedPack) throw new Error("Provider B did not compile a durable ContextPack.");
-        await runtime.settle(job.id, "blocked", job.projectRevision, "M1 adapter-swap verification completed without product completion.");
+        await runtime.settle(job.id, "blocked", await requiredProjectRevision(runtime), "M1 adapter-swap verification completed without product completion.");
         observed.resolve({ pack: resumedPack, requiredTools: plan.requiredTools });
       } catch (error) {
         observed.reject(error);
@@ -316,7 +321,7 @@ describe("M1 long-horizon durable resume", () => {
     });
     await runtime.initialize();
     const response = await handleRpcV2(
-      resumeRequest(source.jobId, source.checkpointId, "m1-provider-adapter-b"),
+      resumeRequest(source.jobId, source.checkpointId, "m1-provider-adapter-b", await requiredProjectRevision(runtime)),
       m1RpcContext(fixture, runtime, m1Snapshot(false))
     );
     const receipt = response.result as { jobId: string };
@@ -364,13 +369,13 @@ describe("M1 long-horizon durable resume", () => {
     let handlerRan = false;
     runtime.registerHandler("research_loop", async (job) => {
       handlerRan = true;
-      await runtime.settle(job.id, "failed", job.projectRevision, "A blocked resume unexpectedly reached execution.");
+      await runtime.settle(job.id, "failed", await requiredProjectRevision(runtime), "A blocked resume unexpectedly reached execution.");
     });
     await runtime.initialize();
     const requestedCapabilities = capabilityExpansion ? { ...M1_CAPABILITIES, search: true } : M1_CAPABILITIES;
 
     const error = await handleRpcV2(
-      resumeRequest(source.jobId, source.checkpointId, `m1-block-${blocker}`, requestedCapabilities),
+      resumeRequest(source.jobId, source.checkpointId, `m1-block-${blocker}`, await requiredProjectRevision(runtime), requestedCapabilities),
       m1RpcContext(fixture, runtime, snapshot)
     ).catch((caught: unknown) => caught);
 
@@ -388,6 +393,7 @@ function resumeRequest(
   interruptedJobId: string,
   checkpointId: string,
   idempotencyKey: string,
+  expectedProjectRevision: number,
   requestedCapabilities: typeof M1_CAPABILITIES = M1_CAPABILITIES
 ) {
   return {
@@ -397,11 +403,18 @@ function resumeRequest(
       projectId: M1_PROJECT_ID,
       interruptedJobId,
       checkpointId,
+      expectedProjectRevision,
       idempotencyKey,
       requestedCapabilities,
       toolPolicy: M1_TOOL_POLICY
     }
   };
+}
+
+async function requiredProjectRevision(runtime: { getProjectRevision(projectId: string): Promise<number | undefined> }): Promise<number> {
+  const revision = await runtime.getProjectRevision(M1_PROJECT_ID);
+  if (revision === undefined) throw new Error("The M1 durable project revision is unavailable.");
+  return revision;
 }
 
 async function enableSearch(fixture: ReturnType<typeof createM1Fixture>): Promise<void> {

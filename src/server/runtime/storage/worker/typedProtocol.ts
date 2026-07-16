@@ -29,14 +29,21 @@ import type {
   StorageCanonicalTerminalTransitionInput,
   StorageCanonicalTerminalVerifyInput,
   StorageTerminalTransitionInput,
+  StorageTerminalCasClaim,
   StorageToolAttempt,
   StorageToolDecision,
   StorageToolOutputLink,
   StorageTerminalAttestedReadbackInput,
   StorageTerminalAttestedLeaseReadInput,
   StorageTerminalAttestedLeaseReleaseInput,
+  StorageProjectSnapshotCommitInput,
+  StorageProjectMutationPrepareInput,
+  StorageProjectMutationMarkLegacyAppliedInput,
+  StorageProjectMutationFinalizeInput,
+  StorageProjectMutationMethod,
   StorageV2OpenOptions
 } from "../v2/index.js";
+import type { StorageActivateEngineeringBaselineInput, StorageEngineeringArtifactReadInput } from "../v2/engineeringBaselineTypes.js";
 import type { StorageCommitRunStateRevisionInput, StorageRunOwnership, StorageSaveContextPackInput, StorageTaskContractInput } from "../v2/runStateTypes.js";
 
 export const STORAGE_WORKER_REQUEST = "aetherops.storage.v2.request";
@@ -52,6 +59,7 @@ export type StorageWorkerBaseCommand =
   | { name: "project.upsert"; project: StorageProjectPayload }
   | { name: "project.get"; projectId: string }
   | { name: "project.list" }
+  | { name: "project.revision.get"; projectId: string }
   | { name: "record.upsert"; record: StorageRecordPayload; embedding?: Omit<StorageEmbeddingInput, "id" | "projectId" | "ownerTable" | "ownerId"> }
   | { name: "record.get"; recordId: string }
   | { name: "record.listByProject"; projectId: string; options?: Pick<StorageSearchOptions, "includeGlobal" | "limit"> }
@@ -61,8 +69,14 @@ export type StorageWorkerBaseCommand =
   | { name: "memory.get"; memoryId: string }
   | { name: "memory.search"; query: string; options?: StorageSearchOptions }
   | { name: "embedding.getByOwner"; ownerTable: string; ownerId: string }
+  | { name: "engineering.baseline.get"; projectId: string; baselineId: string }
+  | { name: "engineering.baseline.active"; projectId: string }
+  | { name: "engineering.baseline.list"; projectId: string; limit?: number }
+  | { name: "engineering.promotion.get"; projectId: string; promotionId: string }
+  | { name: "engineering.promotion.listJob"; jobId: string; limit?: number }
   | { name: "job.get"; jobId: string }
   | { name: "job.lookupIdempotency"; projectId: string; idempotencyKey: string; requestHash: string }
+  | { name: "job.lookupEnqueueReceipt"; projectId: string; idempotencyKey: string; requestHash: string }
   | { name: "job.listProject"; projectId: string; status?: StorageJobStatus; cursor?: string; limit?: number }
   | { name: "job.latestProjectExecution"; projectId: string; operation: string }
   | { name: "job.renewLease"; fence: StorageLeaseFence; leaseExpiresAt: string; now?: string }
@@ -70,6 +84,7 @@ export type StorageWorkerBaseCommand =
   | { name: "job.queueDiagnostics"; limit?: number }
   | { name: "job.queuePosition"; jobId: string }
   | { name: "event.append"; event: StorageJobEventInput }
+  | { name: "event.get"; eventId: string }
   | { name: "event.after"; projectId: string; lastEventId?: string | number; limit?: number }
   | { name: "checkpoint.get"; checkpointId: string }
   | { name: "checkpoint.latestCommittedForJob"; jobId: string }
@@ -121,6 +136,16 @@ export type StorageFencedWriteCommand =
 
 export type StorageWorkerAtomicCommand =
   | { name: "job.enqueue"; job: StorageJobInput; project?: StorageProjectPayload; capabilityAudits?: StorageCapabilityAudit[] }
+  | { name: "project.snapshot.commit"; input: StorageProjectSnapshotCommitInput }
+  | {
+      name: "engineering.baseline.activate";
+      input: StorageActivateEngineeringBaselineInput;
+      expectedProjectRevision: number;
+      capabilityAudits: StorageCapabilityAudit[];
+      event: StorageJobEventInput;
+    }
+  | { name: "engineering.artifact.read"; input: StorageEngineeringArtifactReadInput }
+  | { name: "engineering.cas.abort"; fence: StorageLeaseFence; claims: StorageTerminalCasClaim[] }
   | { name: "capability.recordSet"; audits: StorageCapabilityAudit[]; project?: StorageProjectPayload }
   | { name: "job.claimAndStart"; options: StorageClaimStartOptions }
   | { name: "job.requestControl"; input: StorageJobControlInput }
@@ -136,7 +161,14 @@ export type StorageWorkerAtomicCommand =
   | { name: "toolPostcondition.verify"; input: StorageToolPostconditionVerifyInput }
   | { name: "fencedTransaction"; fence: StorageLeaseFence; now?: string; commands: StorageFencedWriteCommand[] };
 
-export type StorageWorkerCommand = StorageWorkerBaseCommand | StorageWorkerAtomicCommand;
+export type StorageProjectMutationCommand =
+  | { name: "projectMutation.prepare"; input: StorageProjectMutationPrepareInput }
+  | { name: "projectMutation.lookup"; method: StorageProjectMutationMethod; requestId: string; requestHash: string }
+  | { name: "projectMutation.markLegacyApplied"; input: StorageProjectMutationMarkLegacyAppliedInput }
+  | { name: "projectMutation.finalize"; input: StorageProjectMutationFinalizeInput }
+  | { name: "projectMutation.listPending"; cursor?: string; limit?: number };
+
+export type StorageWorkerCommand = StorageWorkerBaseCommand | StorageWorkerAtomicCommand | StorageProjectMutationCommand;
 
 export interface StorageWorkerRequest {
   type: typeof STORAGE_WORKER_REQUEST;
@@ -149,7 +181,15 @@ export interface StorageWorkerErrorPayload {
   name: string;
   message: string;
   stack?: string;
-  code?: "IDEMPOTENCY_CONFLICT" | "SIDE_EFFECT_RESERVATION_CONFLICT" | "REVISION_CONFLICT" | "OWNERSHIP_CONFLICT" | "IMMUTABLE_CONFLICT" | "LEASE_LOST";
+  code?:
+    | "IDEMPOTENCY_CONFLICT"
+    | "SIDE_EFFECT_RESERVATION_CONFLICT"
+    | "PROJECT_MUTATION_RESERVED"
+    | "REVISION_CONFLICT"
+    | "OWNERSHIP_CONFLICT"
+    | "IMMUTABLE_CONFLICT"
+    | "ENGINEERING_ARTIFACT_NOT_CURRENT"
+    | "LEASE_LOST";
 }
 
 export type StorageWorkerResponse =

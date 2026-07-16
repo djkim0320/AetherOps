@@ -95,7 +95,7 @@ describe("canonical budget failure settlement", () => {
       jobId,
       projectId: snapshot.project.id,
       kind: "research_loop",
-      projectRevision: 1,
+      projectRevision: 0,
       idempotencyKey: "failure-accounting-job",
       requestedCapabilities: capabilities,
       effectiveCapabilities: capabilities,
@@ -172,6 +172,9 @@ function persistProject(databasePath: string, project: { id: string; topic: stri
       project.updatedAt,
       JSON.stringify({ ...project, projectRoot })
     );
+  database
+    .prepare("insert into project_revision_heads (project_id,revision,last_receipt_id,updated_at) values (?,0,null,?)")
+    .run(project.id, project.updatedAt);
   database.close();
 }
 

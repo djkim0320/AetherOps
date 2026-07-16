@@ -1,4 +1,6 @@
 import type { StorageToolAttempt, StorageToolOutputLink } from "./traceTypes.js";
+import type { StorageEngineeringResultPromotion } from "./engineeringBaselineTypes.js";
+import type { StorageTerminalCasObject } from "./terminalCasStore.js";
 import type {
   StorageCompletedStepInput,
   StorageCapabilityAudit,
@@ -18,6 +20,8 @@ export interface StorageEnqueueJobResult {
 export interface StorageOutputPromotion {
   link: StorageToolOutputLink;
   artifact?: { name: string; kind: string };
+  engineering?: StorageEngineeringResultPromotion;
+  pendingCasObject?: StorageTerminalCasObject;
 }
 
 export interface StorageTerminalQuarantinedStepInput {
@@ -38,6 +42,20 @@ export interface StorageTerminalTransitionInput {
   promotions?: StorageOutputPromotion[];
   completedStep?: StorageCompletedStepInput;
   quarantinedStep?: StorageTerminalQuarantinedStepInput;
+  snapshotChange?: StorageProjectSnapshotChange;
+}
+
+export interface StorageProjectSnapshotChange {
+  snapshotVersion: number;
+  reason: "project_updated" | "job_changed" | "resync_required";
+}
+
+export interface StoragePostCommitReconciliationWarning {
+  code: "ENGINEERING_CAS_FINALIZE_DEFERRED" | "ENGINEERING_CAS_INTEGRITY_RECONCILIATION_REQUIRED" | "ENGINEERING_CAS_ABORT_DEFERRED";
+  operation: "engineering_cas_finalize" | "engineering_cas_integrity" | "engineering_cas_abort";
+  severity: "warning" | "error";
+  message: string;
+  affectedObjectCount: number;
 }
 
 export interface StorageTerminalTransitionResult {
@@ -46,6 +64,7 @@ export interface StorageTerminalTransitionResult {
   events: StorageJobEvent[];
   links: StorageToolOutputLink[];
   stepDisposition?: StorageStepDispositionResult;
+  postCommitWarnings?: StoragePostCommitReconciliationWarning[];
 }
 
 export interface StorageJobControlInput {

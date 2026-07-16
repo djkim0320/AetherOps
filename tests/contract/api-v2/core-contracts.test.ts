@@ -26,6 +26,10 @@ describe("API v2 common envelope", () => {
       "jobs.list",
       "engineering.enqueue",
       "engineering.preflight",
+      "engineering.baseline.activate",
+      "engineering.baseline.get",
+      "engineering.baseline.list",
+      "engineering.artifact.read",
       "snapshots.get",
       "settings.get",
       "settings.save",
@@ -35,6 +39,88 @@ describe("API v2 common envelope", () => {
     ]);
     expect(API_V2_METHODS).not.toContain("opencode.run");
     expect(ApiV2RpcRequestSchema.parse({ requestId: "r-list", method: "projects.list", params: {} }).method).toBe("projects.list");
+  });
+
+  it("validates strict engineering baseline and artifact read contracts", () => {
+    const geometryHash = "a".repeat(64);
+    const quantity = (value: number, length: number, unit: string) => ({
+      kind: "scalar",
+      valueSI: value,
+      dimension: { mass: 0, length, time: 0, temperature: 0, current: 0, amount: 0, luminousIntensity: 0, angle: 0 },
+      semantic: "generic",
+      originalValue: value,
+      originalUnit: unit,
+      displayUnit: unit,
+      provenance: { sourceType: "user", sourceId: "contract-test" },
+      serializationVersion: 1
+    });
+    const activate = {
+      requestId: "engineering-baseline-activate",
+      method: "engineering.baseline.activate",
+      params: {
+        projectId: "project-1",
+        expectedRevision: 0,
+        changeReason: "Pin reference geometry before execution.",
+        baseline: {
+          geometryHash,
+          aerodynamicReference: {
+            area: quantity(1, 2, "m^2"),
+            chord: quantity(1, 1, "m"),
+            momentReferencePointId: "quarter-chord",
+            axisConventionId: "wind-axes-v1",
+            dynamicPressureDefinition: "q=0.5*rho*V^2"
+          },
+          unitConventionId: "si-v1",
+          coordinateConventionId: "wind-axes-v1",
+          solverVersions: { "xfoil-wasm": "0.1.1" },
+          materialRevisionIds: [],
+          sourceRevisionIds: ["fixture:naca0012"],
+          equationVersionIds: ["aero-coefficients-v1"],
+          createdBy: "contract-test",
+          provenance: [{ id: "fixture:naca0012", contentHash: geometryHash }]
+        }
+      }
+    } as const;
+    expect(ApiV2RpcRequestSchema.parse(activate).method).toBe("engineering.baseline.activate");
+    expect(
+      ApiV2RpcRequestSchema.parse({
+        requestId: "engineering-artifact-read",
+        method: "engineering.artifact.read",
+        params: { projectId: "project-1", promotionId: "promotion-1", maximumBytes: 65_536 }
+      }).method
+    ).toBe("engineering.artifact.read");
+    expect(ApiV2RpcRequestSchema.safeParse({ ...activate, params: { ...activate.params, extra: true } }).success).toBe(false);
+    expect(
+      ApiV2RpcRequestSchema.safeParse({
+        ...activate,
+        params: {
+          ...activate.params,
+          baseline: { ...activate.params.baseline, sourceRevisionIds: ["fixture:naca0012", "fixture:naca0012"] }
+        }
+      }).success
+    ).toBe(false);
+    expect(
+      ApiV2RpcRequestSchema.safeParse({
+        ...activate,
+        params: {
+          ...activate.params,
+          baseline: {
+            ...activate.params.baseline,
+            provenance: [
+              { id: "fixture:naca0012", contentHash: geometryHash },
+              { id: "fixture:naca0012", contentHash: "b".repeat(64) }
+            ]
+          }
+        }
+      }).success
+    ).toBe(false);
+    expect(
+      ApiV2RpcRequestSchema.safeParse({
+        requestId: "engineering-artifact-oversized",
+        method: "engineering.artifact.read",
+        params: { projectId: "project-1", promotionId: "promotion-1", maximumBytes: 65_537 }
+      }).success
+    ).toBe(false);
   });
 
   it("exposes one canonical receipt and execution-state schema from the public index", () => {
@@ -144,7 +230,7 @@ describe("job contracts", () => {
     ["chat.enqueue", { projectId: "p1", sessionId: "s1", content: "hello", clientMutationId: "cm1", idempotencyKey: "ik1" }],
     ["loop.start", { projectId: "p1", idempotencyKey: "ik2", ...runPolicy }],
     ["loop.pause", { projectId: "p1", jobId: "j1", expectedProjectRevision: 2 }],
-    ["loop.resume", { projectId: "p1", interruptedJobId: "j1", checkpointId: "c1", idempotencyKey: "ik3", ...runPolicy }],
+    ["loop.resume", { projectId: "p1", interruptedJobId: "j1", checkpointId: "c1", expectedProjectRevision: 2, idempotencyKey: "ik3", ...runPolicy }],
     ["loop.abort", { projectId: "p1", jobId: "j1", expectedProjectRevision: 2 }],
     ["jobs.get", { projectId: "p1", jobId: "j1" }],
     ["jobs.list", { projectId: "p1" }]
@@ -180,6 +266,13 @@ describe("job contracts", () => {
         requestId: "r-start",
         method: "loop.start",
         params: { projectId: "p1", idempotencyKey: "ik", ...runPolicy, requestedCapabilities: { agent: true } }
+      }).success
+    ).toBe(false);
+    expect(
+      JobRpcRequestSchema.safeParse({
+        requestId: "r-resume",
+        method: "loop.resume",
+        params: { projectId: "p1", interruptedJobId: "j1", idempotencyKey: "ik-resume", ...runPolicy }
       }).success
     ).toBe(false);
   });

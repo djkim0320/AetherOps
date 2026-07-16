@@ -56,6 +56,8 @@ export interface StorageJobInput {
   id: string;
   projectId: string;
   operation: StorageJobOperation;
+  /** Optimistic-concurrency base checked only by the atomic job.enqueue command. */
+  expectedProjectRevision?: number;
   payload?: unknown;
   priority?: number;
   idempotencyKey?: string;
@@ -254,6 +256,7 @@ export type StorageCapabilityOperation = "agent" | "engineering" | "search";
 export interface StorageCapabilityAuditData {
   jobKind: "research_loop" | "chat_reply" | "engineering_run";
   blockedBy?: "app" | "project" | "job";
+  projectRevision?: number;
 }
 
 export interface StorageCapabilityAudit {

@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildServerRuntimeToolDiagnostics as buildRuntimeToolDiagnostics } from "../../../src/server/runtime/engineering/runtimeEngineeringDiagnostics.js";
 import { runEngineeringProgramPreflight } from "../../../src/server/runtime/engineering/engineeringProgramRegistry.js";
+import { BUNDLED_WEBXFOIL_RUNTIME, BUNDLED_WEBXFOIL_VERSION } from "../../../src/server/runtime/engineering/engineeringRuntimeVersions.js";
 import { ResearchMetadataTool } from "../../../src/server/runtime/tools/researchMetadataTool.js";
 import { CLARK_Y_COORDINATES, installToolRunnerTestCleanup, runInput, settings } from "./toolRunner.integration.support.js";
 
@@ -28,10 +29,15 @@ describe("Runtime tool diagnostics and research metadata", () => {
       const su2CaseRoot = join(tempRoot, "su2-case");
       mkdirSync(su2CaseRoot, { recursive: true });
       writeFileSync(join(su2CaseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
+      const su2Marker = join(tempRoot, "su2-diagnostics-executed.txt");
+      const su2ProbePath = join(tempRoot, "su2-probe.mjs");
+      writeFileSync(su2ProbePath, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(su2Marker)}, "executed");\n`, "utf8");
       const openVspScriptPath = join(tempRoot, "openvsp-script.mjs");
-      writeFileSync(openVspScriptPath, "console.log('OpenVSP harness ready');\n", "utf8");
+      const openVspMarker = join(tempRoot, "openvsp-diagnostics-executed.txt");
+      writeFileSync(openVspScriptPath, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(openVspMarker)}, "executed");\n`, "utf8");
       const xflr5ScriptPath = join(tempRoot, "xflr5-script.mjs");
-      writeFileSync(xflr5ScriptPath, "console.log('XFLR5 harness ready');\n", "utf8");
+      const xflr5Marker = join(tempRoot, "xflr5-diagnostics-executed.txt");
+      writeFileSync(xflr5ScriptPath, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(xflr5Marker)}, "executed");\n`, "utf8");
       writeFileSync(join(tempRoot, "wing.obj"), ["v 0 0 0", "v 1 0 0", "v 0 1 0", "f 1 2 3", ""].join("\n"), "utf8");
       writeFileSync(join(tempRoot, "clarky.dat"), CLARK_Y_COORDINATES, "utf8");
       writeFileSync(join(tempRoot, "invalid.obj"), "not a mesh\n", "utf8");
@@ -50,7 +56,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
             command: process.execPath,
             caseRoot: su2CaseRoot,
             configFile: "case.cfg",
-            probeArgs: ["--version"],
+            probeArgs: [su2ProbePath],
             runArgsTemplate: ["{config}", "--output", "{output}"]
           },
           openVsp: {
@@ -58,6 +64,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
             enabled: true,
             command: process.execPath,
             scriptPath: openVspScriptPath,
+            probeArgs: [openVspScriptPath],
             runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"]
           },
           xflr5: {
@@ -65,6 +72,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
             enabled: true,
             command: process.execPath,
             scriptPath: xflr5ScriptPath,
+            probeArgs: [xflr5ScriptPath],
             runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"]
           }
         }
@@ -92,25 +100,42 @@ describe("Runtime tool diagnostics and research metadata", () => {
         validated: false,
         format: "stl"
       });
-      expect(configured.engineeringPrograms.find((capability) => capability.target === "su2")?.ready).toBe(true);
-      expect(configured.engineeringPrograms.find((capability) => capability.target === "openvsp")?.ready).toBe(true);
-      expect(configured.engineeringPrograms.find((capability) => capability.target === "xflr5")?.ready).toBe(true);
+      for (const target of ["modeling", "su2", "openvsp", "xflr5"] as const) {
+        expect(configured.engineeringPrograms.find((capability) => capability.target === target)).toMatchObject({
+          ready: false,
+          blockedReason: expect.stringMatching(new RegExp(`${target === "modeling" ? "mesh" : target}.*NOT_READY.*exact runtime-version receipt`, "i"))
+        });
+      }
+      expect(configured.engineeringPrograms.find((capability) => capability.target === "xfoil")).toMatchObject({
+        ready: false,
+        blockedReason: expect.stringContaining("not configured")
+      });
+      expect(configured.engineeringProgramRequestTemplates.filter((template) => template.ready).map((template) => template.id)).toEqual([
+        "xfoil-wasm-polar:xfoil-wasm"
+      ]);
       expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "mesh-inspect:modeling")).toMatchObject({
-        ready: true,
+        ready: false,
+        blockedReason: expect.stringMatching(/mesh.*NOT_READY.*exact runtime-version receipt/i),
         request: { kind: "mesh-inspect", target: "modeling" }
       });
       expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "su2-case-run:su2")).toMatchObject({
-        ready: true,
+        ready: false,
+        blockedReason: expect.stringMatching(/su2.*NOT_READY.*exact runtime-version receipt/i),
         request: { kind: "su2-case-run", target: "su2", outputFileName: "su2-run-output.txt", cfdRunSpec: expect.any(Object) }
       });
       expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp")).toMatchObject({
-        ready: true,
+        ready: false,
+        blockedReason: expect.stringMatching(/openvsp.*NOT_READY.*exact runtime-version receipt/i),
         request: { kind: "openvsp-analysis-run", target: "openvsp", outputFileName: "openvsp-analysis-output.json", cfdRunSpec: expect.any(Object) }
       });
       expect(configured.engineeringProgramRequestTemplates.find((template) => template.id === "xflr5-analysis-run:xflr5")).toMatchObject({
-        ready: true,
+        ready: false,
+        blockedReason: expect.stringMatching(/xflr5.*NOT_READY.*exact runtime-version receipt/i),
         request: { kind: "xflr5-analysis-run", target: "xflr5", outputFileName: "xflr5-analysis-output.json", cfdRunSpec: expect.any(Object) }
       });
+      expect(existsSync(su2Marker)).toBe(false);
+      expect(existsSync(openVspMarker)).toBe(false);
+      expect(existsSync(xflr5Marker)).toBe(false);
       const missingSu2RunArgs = buildRuntimeToolDiagnostics({
         ...settings,
         allowCodeExecution: true,
@@ -129,7 +154,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
       });
       expect(missingSu2RunArgs.engineeringProgramRequestTemplates.find((template) => template.id === "su2-case-run:su2")).toMatchObject({
         ready: false,
-        blockedReason: expect.stringContaining("run args template")
+        blockedReason: expect.stringMatching(/su2.*NOT_READY.*exact runtime-version receipt/i)
       });
       const missingSu2ConfigPlaceholder = buildRuntimeToolDiagnostics({
         ...settings,
@@ -149,7 +174,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
       });
       expect(missingSu2ConfigPlaceholder.engineeringProgramRequestTemplates.find((template) => template.id === "su2-case-run:su2")).toMatchObject({
         ready: false,
-        blockedReason: expect.stringContaining("{config}")
+        blockedReason: expect.stringMatching(/su2.*NOT_READY.*exact runtime-version receipt/i)
       });
       const missingOpenVspRunArgs = buildRuntimeToolDiagnostics({
         ...settings,
@@ -168,7 +193,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
       });
       expect(missingOpenVspRunArgs.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp")).toMatchObject({
         ready: false,
-        blockedReason: expect.stringContaining("run args template")
+        blockedReason: expect.stringMatching(/openvsp.*NOT_READY.*exact runtime-version receipt/i)
       });
       const missingOpenVspScriptPlaceholder = buildRuntimeToolDiagnostics({
         ...settings,
@@ -189,7 +214,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
         missingOpenVspScriptPlaceholder.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp")
       ).toMatchObject({
         ready: false,
-        blockedReason: expect.stringContaining("{script}")
+        blockedReason: expect.stringMatching(/openvsp.*NOT_READY.*exact runtime-version receipt/i)
       });
       const missingOpenVspSpecPlaceholder = buildRuntimeToolDiagnostics({
         ...settings,
@@ -209,7 +234,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
       expect(missingOpenVspSpecPlaceholder.engineeringProgramRequestTemplates.find((template) => template.id === "openvsp-analysis-run:openvsp")).toMatchObject(
         {
           ready: false,
-          blockedReason: expect.stringContaining("{spec}")
+          blockedReason: expect.stringMatching(/openvsp.*NOT_READY.*exact runtime-version receipt/i)
         }
       );
       const missingXflr5SpecPlaceholder = buildRuntimeToolDiagnostics({
@@ -229,7 +254,7 @@ describe("Runtime tool diagnostics and research metadata", () => {
       });
       expect(missingXflr5SpecPlaceholder.engineeringProgramRequestTemplates.find((template) => template.id === "xflr5-analysis-run:xflr5")).toMatchObject({
         ready: false,
-        blockedReason: expect.stringContaining("{spec}")
+        blockedReason: expect.stringMatching(/xflr5.*NOT_READY.*exact runtime-version receipt/i)
       });
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
@@ -248,104 +273,88 @@ describe("Runtime tool diagnostics and research metadata", () => {
     expect(missingRoot.blockers.find((blocker) => blocker.key === "engineeringArtifacts")?.message).toContain("does not exist");
   });
 
-  it("runs engineering preflight only against configured real commands", async () => {
-    const blocked = await runEngineeringProgramPreflight(settings, "all");
-    expect(blocked.status).toBe("failed");
-    expect(blocked.error).toContain("code execution");
-
-    const su2TempRoot = mkdtempSync(join(tmpdir(), "aetherops-su2-preflight-"));
+  it("fails native and modeling preflight before probes or filesystem inspection and only allows pinned WebXFOIL", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-receipt-preflight-"));
     try {
-      const caseRoot = join(su2TempRoot, "case");
+      const markers = {
+        xfoil: join(tempRoot, "xfoil-probed.txt"),
+        su2: join(tempRoot, "su2-probed.txt"),
+        openvsp: join(tempRoot, "openvsp-probed.txt"),
+        xflr5: join(tempRoot, "xflr5-probed.txt")
+      };
+      const xfoilCommand = join(tempRoot, process.platform === "win32" ? "xfoil.cmd" : "xfoil");
+      writeMarkerCommand(xfoilCommand, markers.xfoil);
+      const su2Probe = writeNodeMarkerScript(tempRoot, "su2", markers.su2);
+      const openVspProbe = writeNodeMarkerScript(tempRoot, "openvsp", markers.openvsp);
+      const xflr5Probe = writeNodeMarkerScript(tempRoot, "xflr5", markers.xflr5);
+      const caseRoot = join(tempRoot, "case");
       mkdirSync(caseRoot, { recursive: true });
       writeFileSync(join(caseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
-      const su2 = await runEngineeringProgramPreflight(
-        {
-          ...settings,
-          allowCodeExecution: true,
-          engineeringTools: {
-            ...settings.engineeringTools,
+      const configured = {
+        ...settings,
+        allowCodeExecution: true,
+        engineeringTools: {
+          ...settings.engineeringTools,
+          enabled: true,
+          xfoil: { ...settings.engineeringTools.xfoil, enabled: true, command: xfoilCommand },
+          modeling: { ...settings.engineeringTools.modeling, enabled: true, artifactRoot: join(tempRoot, "missing-model-root") },
+          su2: {
+            ...settings.engineeringTools.su2,
             enabled: true,
-            su2: {
-              ...settings.engineeringTools.su2,
-              enabled: true,
-              command: process.execPath,
-              caseRoot,
-              configFile: "case.cfg",
-              probeArgs: ["--version"],
-              runArgsTemplate: ["{config}"]
-            }
-          }
-        },
-        "su2"
-      );
-
-      expect(su2.status).toBe("completed");
-      expect(JSON.stringify(su2.output)).toContain("su2");
-      expect(JSON.stringify(su2.output)).toContain(process.version);
-    } finally {
-      rmSync(su2TempRoot, { recursive: true, force: true });
-    }
-
-    const openVspTempRoot = mkdtempSync(join(tmpdir(), "aetherops-openvsp-preflight-"));
-    try {
-      const scriptPath = join(openVspTempRoot, "openvsp-script.mjs");
-      writeFileSync(scriptPath, "console.log('OpenVSP harness ready');\n", "utf8");
-      const openVsp = await runEngineeringProgramPreflight(
-        {
-          ...settings,
-          allowCodeExecution: true,
-          engineeringTools: {
-            ...settings.engineeringTools,
+            command: process.execPath,
+            caseRoot,
+            configFile: "case.cfg",
+            probeArgs: [su2Probe]
+          },
+          openVsp: {
+            ...settings.engineeringTools.openVsp,
             enabled: true,
-            openVsp: {
-              ...settings.engineeringTools.openVsp,
-              enabled: true,
-              command: process.execPath,
-              scriptPath,
-              probeArgs: ["--version"],
-              runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"]
-            }
-          }
-        },
-        "openvsp"
-      );
-
-      expect(openVsp.status).toBe("completed");
-      expect(JSON.stringify(openVsp.output)).toContain("openvsp");
-      expect(JSON.stringify(openVsp.output)).toContain(process.version);
-    } finally {
-      rmSync(openVspTempRoot, { recursive: true, force: true });
-    }
-
-    const xflr5TempRoot = mkdtempSync(join(tmpdir(), "aetherops-xflr5-preflight-"));
-    try {
-      const scriptPath = join(xflr5TempRoot, "xflr5-script.mjs");
-      writeFileSync(scriptPath, "console.log('XFLR5 harness ready');\n", "utf8");
-      const xflr5 = await runEngineeringProgramPreflight(
-        {
-          ...settings,
-          allowCodeExecution: true,
-          engineeringTools: {
-            ...settings.engineeringTools,
+            command: process.execPath,
+            scriptPath: openVspProbe,
+            probeArgs: [openVspProbe]
+          },
+          xflr5: {
+            ...settings.engineeringTools.xflr5,
             enabled: true,
-            xflr5: {
-              ...settings.engineeringTools.xflr5,
-              enabled: true,
-              command: process.execPath,
-              scriptPath,
-              probeArgs: ["--version"],
-              runArgsTemplate: ["--script", "{script}", "--spec", "{spec}", "--output", "{output}"]
-            }
+            command: process.execPath,
+            scriptPath: xflr5Probe,
+            probeArgs: [xflr5Probe]
           }
-        },
-        "xflr5"
-      );
+        }
+      };
 
-      expect(xflr5.status).toBe("completed");
-      expect(JSON.stringify(xflr5.output)).toContain("xflr5");
-      expect(JSON.stringify(xflr5.output)).toContain(process.version);
+      for (const [target, promotionTarget] of [
+        ["all", "all"],
+        ["xfoil", "xfoil"],
+        ["modeling", "mesh"],
+        ["su2", "su2"],
+        ["openvsp", "openvsp"],
+        ["xflr5", "xflr5"]
+      ] as const) {
+        const result = await runEngineeringProgramPreflight(configured, target);
+        expect(result).toMatchObject({
+          target,
+          status: "failed",
+          error: expect.stringMatching(new RegExp(`${promotionTarget}.*NOT_READY.*exact runtime-version receipt`, "i"))
+        });
+      }
+      expect(Object.values(markers).every((marker) => !existsSync(marker))).toBe(true);
+
+      const webXfoil = await runEngineeringProgramPreflight(configured, "xfoil-wasm");
+      expect(webXfoil).toMatchObject({
+        target: "xfoil-wasm",
+        status: "completed",
+        output: {
+          checked: ["xfoil-wasm"],
+          xfoilWasm: { runtime: BUNDLED_WEBXFOIL_RUNTIME, version: BUNDLED_WEBXFOIL_VERSION, bundled: true }
+        }
+      });
+      expect(Object.values(markers).every((marker) => !existsSync(marker))).toBe(true);
+
+      const disabledWebXfoil = await runEngineeringProgramPreflight({ ...configured, allowCodeExecution: false }, "xfoil-wasm");
+      expect(disabledWebXfoil).toMatchObject({ status: "failed", error: expect.stringContaining("code execution") });
     } finally {
-      rmSync(xflr5TempRoot, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
@@ -495,3 +504,18 @@ describe("Runtime tool diagnostics and research metadata", () => {
     expect(result.sources[0]?.title).toContain("Airfoil polar");
   });
 });
+
+function writeNodeMarkerScript(root: string, name: string, marker: string): string {
+  const scriptPath = join(root, `${name}-probe.mjs`);
+  writeFileSync(scriptPath, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "probed", "utf8");\n`, "utf8");
+  return scriptPath;
+}
+
+function writeMarkerCommand(path: string, marker: string): void {
+  if (process.platform === "win32") {
+    writeFileSync(path, `@echo off\r\n> "${marker}" echo probed\r\n`, "utf8");
+    return;
+  }
+  writeFileSync(path, `#!/bin/sh\nprintf probed > '${marker.replace(/'/g, `'\\''`)}'\n`, "utf8");
+  chmodSync(path, 0o700);
+}

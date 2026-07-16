@@ -112,16 +112,7 @@ export function buildTargetManifest(source, backupManifest, targetDbSummary, set
     backupHash: backupManifest.backupHash,
     settingsArchive,
     targetFiles,
-    runtimePolicy: {
-      mutableSqlite: [
-        { relativePath: "storage.sqlite", role: "durable-job-storage", required: true },
-        { relativePath: "legacy-research.sqlite", role: "legacy-research-storage", required: false },
-        { relativePath: "main/main.sqlite", role: "main-memory-storage", required: false },
-        { relativePath: "main/vector.sqlite", role: "vector-storage", required: false },
-        { relativePath: "main/ontology.sqlite", role: "ontology-storage", required: false }
-      ],
-      mutableFilePrefixes: ["main/files/sources/", "main/files/artifacts/", "main/files/logs/"]
-    },
+    runtimePolicy: buildRuntimePolicy(),
     targetDbSummary,
     targetSchemaFingerprint: targetDbSummary.targetSchemaFingerprint,
     schemaFingerprint: targetDbSummary.schemaFingerprint,
@@ -130,9 +121,51 @@ export function buildTargetManifest(source, backupManifest, targetDbSummary, set
       backupHash: backupManifest.backupHash,
       settingsArchive,
       targetFiles,
-      runtimePolicyVersion: 1,
+      runtimePolicyVersion: 2,
       targetDbSummary
     })
+  };
+}
+
+export function buildRuntimePolicy() {
+  return {
+    mutableSqlite: [
+      { relativePath: "storage.sqlite", role: "durable-job-storage", required: true },
+      { relativePath: "legacy-research.sqlite", role: "legacy-research-storage", required: false },
+      { relativePath: "main/main.sqlite", role: "main-memory-storage", required: false },
+      { relativePath: "main/vector.sqlite", role: "vector-storage", required: false },
+      { relativePath: "main/ontology.sqlite", role: "ontology-storage", required: false }
+    ],
+    mutableFilePrefixes: [
+      "main/files/sources/",
+      "main/files/artifacts/",
+      "main/files/logs/",
+      "terminal-cas/sha256/",
+      "terminal-cas/journal/",
+      "terminal-cas/tmp/"
+    ],
+    contentAddressedFiles: [
+      {
+        prefix: "terminal-cas/sha256/",
+        database: "storage.sqlite",
+        references: [
+          {
+            table: "canonical_terminal_result_attestations",
+            locatorColumn: "cas_locator",
+            hashColumn: "cas_hash",
+            byteLengthColumn: "byte_length",
+            introducedInVersion: 9
+          },
+          {
+            table: "engineering_result_promotions",
+            locatorColumn: "cas_locator",
+            hashColumn: "artifact_hash",
+            byteLengthColumn: "artifact_bytes",
+            introducedInVersion: 12
+          }
+        ]
+      }
+    ]
   };
 }
 

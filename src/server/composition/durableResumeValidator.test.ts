@@ -27,28 +27,22 @@ describe("durable resume validation", () => {
     const client = storageClient(checkpoint(checkpointProject), job(sourceProject, operation));
     await expect(assertDurableResumeSource(client, resumeInput())).rejects.toThrow(/committed checkpoint/);
   });
-
   it("accepts a committed checkpoint from the same project and kind", async () => {
     await expect(assertDurableResumeSource(storageClient(checkpoint("project-1"), job("project-1", "chat_reply")), resumeInput())).resolves.toBeUndefined();
   });
-
   it("rejects an older checkpoint when a newer committed checkpoint exists", async () => {
     const selected = checkpoint("project-1");
     const latest = { ...selected, id: "checkpoint-2", checkpointKey: "checkpoint-key-2" };
-
     await expect(assertDurableResumeSource(storageClient(selected, job("project-1", "chat_reply"), latest), resumeInput())).rejects.toThrow(
       /committed checkpoint/
     );
   });
-
   it("rejects resume while a prior tool attempt has no terminal receipt", async () => {
     const pending = toolAttempt("running");
-
     await expect(
       assertDurableResumeSource(storageClient(checkpoint("project-1"), job("project-1", "chat_reply"), undefined, [pending]), resumeInput())
     ).rejects.toThrow(/no durable terminal receipt/);
   });
-
   it("fails closed when a prior LLM invocation has no durable terminal receipt", async () => {
     await expect(
       assertDurableResumeSource(
@@ -57,7 +51,6 @@ describe("durable resume validation", () => {
       )
     ).rejects.toMatchObject({ code: "NOT_READY", message: expect.stringMatching(/PENDING_EXTERNAL_SIDE_EFFECT.*no durable terminal receipt/i) });
   });
-
   it.each([
     { label: "response loss", status: "failed" as const, effects: ["filesystem" as const] },
     { label: "process interruption", status: "interrupted" as const, effects: ["process" as const] },
@@ -68,7 +61,6 @@ describe("durable resume validation", () => {
       assertDurableResumeSource(storageClient(checkpoint("project-1"), job("project-1", "chat_reply"), undefined, [attempt]), resumeInput())
     ).rejects.toThrow(/ambiguous external side effect/i);
   });
-
   it("accepts a completed network-only observation without a postcondition receipt", async () => {
     const attempt = vnextToolAttempt("completed", ["network"]);
     await expect(
@@ -154,7 +146,34 @@ describe("durable resume validation", () => {
   ])("rejects checkpoint-free bootstrap with $label", async ({ existingState, checkpointRow, mutate }) => {
     await expect(assertDurableResumeSource(bootstrapStorageClient(existingState, checkpointRow, mutate), bootstrapInput())).rejects.toThrow();
   });
+
+  it("rejects a research resume when a lineage job lacks its frozen engineering baseline", async () => {
+    const source = researchJob();
+    source.payload = { kind: "research_loop", projectRevision: 1, request: { action: "start" } };
+    await expect(
+      assertDurableResumeSource(storageClient(checkpoint("project-1"), source, undefined, [], [], canonicalResearchState()), researchResumeInput())
+    ).rejects.toMatchObject({ code: "NOT_READY", message: expect.stringMatching(/missing.*engineering baseline binding/i) });
+  });
+
+  it("rejects a checkpoint resume that changes the frozen engineering baseline", async () => {
+    const changed = { ...researchResumeInput(), payload: { action: "resume", engineeringBaseline: baselineBinding() } };
+    await expect(
+      assertDurableResumeSource(storageClient(checkpoint("project-1"), researchJob(), undefined, [], [], canonicalResearchState()), changed)
+    ).rejects.toMatchObject({ code: "CONFLICT", message: expect.stringMatching(/change.*engineering configuration baseline/i) });
+  });
+
+  it("rejects a checkpoint-free resume that changes the root engineering baseline", async () => {
+    const changed = { ...bootstrapInput(), payload: { action: "resume", engineeringBaseline: baselineBinding() } };
+    await expect(assertDurableResumeSource(bootstrapStorageClient(), changed)).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(/change.*engineering configuration baseline/i)
+    });
+  });
 });
+
+function baselineBinding() {
+  return { id: "baseline-1", revision: 1, contentHash: "a".repeat(64) };
+}
 
 function storageClient(
   checkpointRow: StorageCheckpoint,
@@ -167,10 +186,14 @@ function storageClient(
   llmInvocations: StorageLlmInvocation[] = []
 ): StorageWorkerClient {
   const selectedCheckpoint =
-    contextPackRow && jobRow.operation === "research_loop"
+    jobRow.operation === "research_loop"
       ? {
           ...checkpointRow,
-          data: { ...(recordValue(checkpointRow.data) ?? {}), canonicalContextPackId: contextPackRow.id }
+          data: {
+            ...(recordValue(checkpointRow.data) ?? {}),
+            engineeringBaseline: null,
+            ...(contextPackRow ? { canonicalContextPackId: contextPackRow.id } : {})
+          }
         }
       : checkpointRow;
   const selectedLatest = latestCheckpoint?.id === checkpointRow.id ? selectedCheckpoint : latestCheckpoint;
@@ -223,7 +246,7 @@ function bootstrapInput() {
     requestedCapabilities: { agent: true, engineering: false, search: false },
     effectiveCapabilities: { agent: true, engineering: false, search: false },
     toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" as const } },
-    payload: { action: "resume" }
+    payload: { action: "resume", engineeringBaseline: null }
   };
 }
 
@@ -237,7 +260,8 @@ function researchResumeInput() {
     resumeCheckpointId: "checkpoint-1",
     requestedCapabilities: { agent: true, engineering: false, search: true },
     effectiveCapabilities: { agent: true, engineering: false, search: true },
-    toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "discovery" as const, allowedDomains: [] } }
+    toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "discovery" as const, allowedDomains: [] } },
+    payload: { action: "resume", engineeringBaseline: null }
   };
 }
 
@@ -258,6 +282,7 @@ function bootstrapStorageClient(
     projectRevision: 1,
     request: {
       action: "start",
+      engineeringBaseline: null,
       canonicalInitializationAnchor: mutateAnchor ? { ...anchor, projectId: "project-mutated" } : anchor
     }
   };
@@ -334,7 +359,7 @@ function researchJob(): StorageJob {
     requestedCapabilities: { agent: true, engineering: false, search: true },
     effectiveCapabilities: { agent: true, engineering: false, search: true },
     toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "discovery", allowedDomains: [] } },
-    payload: { kind: "research_loop", projectRevision: 1, request: { action: "start" } }
+    payload: { kind: "research_loop", projectRevision: 1, request: { action: "start", engineeringBaseline: null } }
   };
 }
 

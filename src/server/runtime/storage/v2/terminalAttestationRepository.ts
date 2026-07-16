@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
+import { requiredNumber, requiredString } from "./repositorySupport.js";
 import { storageCanonicalHasher } from "./runStatePayloadValidator.js";
-import { TerminalCasStore } from "./terminalCasStore.js";
+import { TerminalCasStore, type StorageTerminalCasObject } from "./terminalCasStore.js";
 import type { StorageTerminalResultAttestation, StorageTerminalAttestationBatch } from "./terminalAttestationTypes.js";
 import type { StorageTerminalCriterionCandidate, StorageTerminalResourceCandidate } from "./terminalReceiptTypes.js";
 import type { StorageRunOwnership } from "./runStateTypes.js";
@@ -35,7 +36,6 @@ export class TerminalAttestationRepository {
     private readonly source: TerminalResultReadbackRepository
   ) {
     this.cas = new TerminalCasStore(dataRoot);
-    if (dataRoot) this.cas.cleanup(this.referencedLocators(), 2_048);
   }
 
   resolveOrCreate(input: StorageTerminalAttestationResolveInput): StorageTerminalAttestationResolution {
@@ -197,9 +197,17 @@ export class TerminalAttestationRepository {
     return { batchHash: values[0]!.batchHash, attestations: [...values].sort(compareAttestations), exactReplay, artifacts, evidence, validations };
   }
 
-  private referencedLocators(): Set<string> {
-    const rows = this.db.prepare("select cas_locator from canonical_terminal_result_attestations").all() as Array<{ cas_locator?: unknown }>;
-    return new Set(rows.map((row) => String(row.cas_locator)));
+  referencedCasObjects(): StorageTerminalCasObject[] {
+    const rows = this.db.prepare("select cas_locator,cas_hash,byte_length from canonical_terminal_result_attestations order by id").all() as Array<{
+      cas_locator?: unknown;
+      cas_hash?: unknown;
+      byte_length?: unknown;
+    }>;
+    return rows.map((row) => ({
+      casLocator: requiredString(row.cas_locator, "terminal attestation CAS locator"),
+      casHash: requiredString(row.cas_hash, "terminal attestation CAS hash"),
+      byteLength: requiredNumber(row.byte_length, "terminal attestation CAS byte length")
+    }));
   }
 }
 

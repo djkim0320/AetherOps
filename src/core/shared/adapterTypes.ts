@@ -58,6 +58,7 @@ export interface CodexCliTaskResult {
   summary: string;
   outputs: Array<{ relativePath: string; kind: "code" | "report" | "data"; absolutePath: string; sha256: string; bytes: number }>;
   trace: {
+    cliVersion: string;
     model: string;
     reasoningEffort: string;
     sandboxProfile: "aetherops-codex-workspace-v1";

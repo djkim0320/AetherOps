@@ -1,16 +1,6 @@
-import { existsSync } from "node:fs";
 import { createId, nowIso } from "../../../core/shared/ids.js";
-import { assertCommandSucceeded, probeScriptedCfd, probeSu2, probeXfoil } from "./engineeringProgramCommands.js";
-import { hasConfiguredModelingRoot, resolveConfiguredModelingRoot } from "./engineeringProgramMeshAdapter.js";
-import {
-  hasConfiguredOpenVsp,
-  hasConfiguredXflr5,
-  scriptedCfdConfig,
-  validateOptionalScriptedCfdScriptPath,
-  validateBuiltinScriptedCfdAdapterPath
-} from "./engineeringProgramScriptedCfdAdapter.js";
-import { hasConfiguredSu2, runSu2Case, su2Config, validateSu2CaseConfig } from "./engineeringProgramSu2Adapter.js";
-import { hasConfiguredXfoil, resolveXfoilCommand, runXfoilPolar } from "./engineeringProgramXfoilAdapter.js";
+import { runSu2Case } from "./engineeringProgramSu2Adapter.js";
+import { runXfoilPolar } from "./engineeringProgramXfoilAdapter.js";
 import { hasConfiguredXfoilWasm, runXfoilWasmPolar } from "./engineeringProgramWebXfoilAdapter.js";
 import {
   meshSummaryArtifact,
@@ -39,19 +29,23 @@ import type {
   ResearchArtifact,
   ToolRun
 } from "../../../core/shared/types.js";
+import { ResearchLoopStep } from "../../../core/shared/types.js";
 import type { ResearchToolExecutionContext, ResearchToolResult } from "../../../core/tools/researchToolTypes.js";
+import { engineeringProgramPromotionTarget } from "../../../core/tools/engineeringProgramTool.js";
+import { RuntimeRequirementError } from "../../../core/tools/runtimeRequirements.js";
 import { bindFetchedAirfoilCoordinates } from "./airfoilCoordinateBinder.js";
+import { BUNDLED_WEBXFOIL_RUNTIME, BUNDLED_WEBXFOIL_VERSION } from "./engineeringRuntimeVersions.js";
+import { engineeringPromotionRuntimeReceiptSupport } from "../../../core/aerospace/engineeringBaselineCompatibility.js";
 
 export async function runEngineeringProgram(
   input: ResearchToolInput,
   settings: AppSettings,
   context?: Pick<ResearchToolExecutionContext, "signal">
 ): Promise<ResearchToolResult> {
-  input = bindFetchedAirfoilCoordinates(input);
   const signal = context?.signal;
   signal?.throwIfAborted();
   const startedAt = nowIso();
-  const requests = normalizeEngineeringProgramRequests(input.researchPlan?.programRequests);
+  let requests = normalizeEngineeringProgramRequests(input.researchPlan?.programRequests);
   const completedAt = nowIso();
   if (!requests.length) {
     return {
@@ -69,6 +63,22 @@ export async function runEngineeringProgram(
       sources: []
     };
   }
+  const unsupported = requests.find((request) => !engineeringPromotionRuntimeReceiptSupport(engineeringProgramPromotionTarget(request)).supported);
+  if (unsupported) {
+    const target = engineeringProgramPromotionTarget(unsupported);
+    const message = engineeringPromotionRuntimeReceiptSupport(target).reason ?? `${target} has no durable promotion runtime receipt.`;
+    throw new RuntimeRequirementError(ResearchLoopStep.ExecuteTools, [
+      {
+        key: `engineering.runtimeReceipt.${target}`,
+        label: `${target} durable runtime receipt`,
+        requiredForSteps: [ResearchLoopStep.ExecuteTools],
+        isSatisfied: false,
+        message
+      }
+    ]);
+  }
+  input = bindFetchedAirfoilCoordinates(input);
+  requests = normalizeEngineeringProgramRequests(input.researchPlan?.programRequests);
 
   const outputs: unknown[] = [];
   const artifacts: ResearchArtifact[] = [];
@@ -148,23 +158,17 @@ export async function runEngineeringProgramPreflight(
 ): Promise<EngineeringProgramPreflightResult> {
   const startedAt = nowIso();
   const normalizedTarget = normalizeEngineeringProgramTarget(target) ?? "all";
-  if (!settings.allowCodeExecution) {
-    return {
-      target: normalizedTarget,
-      status: "failed",
-      error: "Engineering program preflight requires code execution to be enabled in app settings.",
+  const promotionTarget = engineeringProgramPromotionTarget({ kind: "toolchain-check", target: normalizedTarget });
+  const receiptSupport = engineeringPromotionRuntimeReceiptSupport(promotionTarget);
+  if (!receiptSupport.supported) {
+    return failedPreflight(
+      normalizedTarget,
       startedAt,
-      completedAt: nowIso()
-    };
+      receiptSupport.reason ?? `${promotionTarget} is NOT_READY because its exact durable runtime receipt cannot be verified.`
+    );
   }
-  if (!settings.engineeringTools.enabled && normalizedTarget !== "all" && normalizedTarget !== "xfoil-wasm") {
-    return {
-      target: normalizedTarget,
-      status: "failed",
-      error: "Engineering program tools are disabled in app settings.",
-      startedAt,
-      completedAt: nowIso()
-    };
+  if (!settings.allowCodeExecution) {
+    return failedPreflight(normalizedTarget, startedAt, "Engineering program preflight requires code execution to be enabled in app settings.");
   }
 
   try {
@@ -177,13 +181,7 @@ export async function runEngineeringProgramPreflight(
       completedAt: nowIso()
     };
   } catch (error) {
-    return {
-      target: normalizedTarget,
-      status: "failed",
-      error: error instanceof Error ? error.message : String(error),
-      startedAt,
-      completedAt: nowIso()
-    };
+    return failedPreflight(normalizedTarget, startedAt, error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -191,101 +189,28 @@ export { supportedEngineeringProgramKinds } from "./engineeringProgramRequestVal
 
 async function runToolchainCheck(target: EngineeringProgramTarget, settings: AppSettings, signal?: AbortSignal): Promise<unknown> {
   signal?.throwIfAborted();
-  const wantsXfoil = target === "all" || target === "xfoil";
-  const wantsXfoilWasm = target === "all" || target === "xfoil-wasm";
-  const wantsModeling = target === "all" || target === "modeling";
-  const wantsSu2 = target === "all" || target === "su2";
-  const wantsOpenVsp = target === "all" || target === "openvsp";
-  const wantsXflr5 = target === "all" || target === "xflr5";
-  const checked: string[] = [];
-  const unavailable: Array<{ target: string; reason: string }> = [];
-  const output: Record<string, unknown> = { kind: "toolchain-check", target, checked, unavailable };
-
-  if (wantsXfoil) {
-    if (hasConfiguredXfoil(settings)) {
-      checked.push("xfoil");
-      output.xfoil = assertCommandSucceeded("XFOIL probe", await probeXfoil(resolveXfoilCommand(settings), settings.engineeringTools.xfoil.timeoutMs, signal));
-    } else {
-      unavailable.push({ target: "xfoil", reason: "Embedded XFOIL executable is not available under the AetherOps engineering toolchain." });
-      if (target === "xfoil") throw new Error("Embedded XFOIL executable is not available.");
+  if (target !== "xfoil-wasm") {
+    const promotionTarget = engineeringProgramPromotionTarget({ kind: "toolchain-check", target });
+    const reason = engineeringPromotionRuntimeReceiptSupport(promotionTarget).reason;
+    throw new Error(reason ?? `${promotionTarget} is NOT_READY because its exact durable runtime receipt cannot be verified.`);
+  }
+  if (!hasConfiguredXfoilWasm(settings)) throw new Error("XFOIL WebAssembly solver is unavailable.");
+  return {
+    kind: "toolchain-check",
+    target,
+    checked: ["xfoil-wasm"],
+    unavailable: [],
+    xfoilWasm: {
+      runtime: BUNDLED_WEBXFOIL_RUNTIME,
+      version: BUNDLED_WEBXFOIL_VERSION,
+      license: "GPL-2.0-or-later",
+      bundled: true
     }
-  }
+  };
+}
 
-  if (wantsXfoilWasm) {
-    if (hasConfiguredXfoilWasm(settings)) {
-      checked.push("xfoil-wasm");
-      output.xfoilWasm = { runtime: "webxfoil-wasm", version: "0.1.1", license: "GPL-2.0-or-later", bundled: true };
-    } else {
-      unavailable.push({ target: "xfoil-wasm", reason: "XFOIL WebAssembly solver is unavailable because engineering tools are disabled." });
-      if (target === "xfoil-wasm") throw new Error("XFOIL WebAssembly solver is unavailable.");
-    }
-  }
-
-  if (wantsModeling) {
-    if (hasConfiguredModelingRoot(settings)) {
-      checked.push("modeling");
-      const root = resolveConfiguredModelingRoot(settings);
-      output.modeling = { artifactRoot: root, exists: existsSync(root), maxMeshBytes: settings.engineeringTools.modeling.maxMeshBytes };
-      if (!existsSync(root)) throw new Error(`Configured modeling artifact root does not exist: ${root}`);
-    } else {
-      unavailable.push({ target: "modeling", reason: "Modeling artifact root is not configured." });
-      if (target === "modeling") throw new Error("Modeling artifact root is not configured.");
-    }
-  }
-
-  if (wantsSu2) {
-    if (hasConfiguredSu2(settings)) {
-      checked.push("su2");
-      const config = su2Config(settings);
-      const su2Case = validateSu2CaseConfig(config.caseRoot, config.configFile);
-      output.su2 = { caseRoot: su2Case.caseRoot, configPath: su2Case.configPath, probe: assertCommandSucceeded("SU2 probe", await probeSu2(config, signal)) };
-    } else {
-      unavailable.push({ target: "su2", reason: "SU2 requires an embedded executable and a case root containing the configured .cfg file." });
-      if (target === "su2") throw new Error("Embedded SU2 executable or case config is not configured.");
-    }
-  }
-
-  if (wantsOpenVsp) {
-    if (hasConfiguredOpenVsp(settings)) {
-      checked.push("openvsp");
-      const config = scriptedCfdConfig(settings, "openvsp");
-      const customScriptPath = validateOptionalScriptedCfdScriptPath(config);
-      output.openVsp = {
-        adapterMode: customScriptPath ? "custom" : "builtin",
-        scriptPath: customScriptPath,
-        builtinAdapterPath: customScriptPath ? undefined : validateBuiltinScriptedCfdAdapterPath("openvsp"),
-        probe: await probeScriptedCfd(config, signal)
-      };
-    } else {
-      unavailable.push({
-        target: "openvsp",
-        reason: "OpenVSP requires an embedded executable and either the built-in adapter or a valid custom script contract."
-      });
-      if (target === "openvsp") throw new Error("Embedded OpenVSP executable or adapter contract is not configured.");
-    }
-  }
-
-  if (wantsXflr5) {
-    if (hasConfiguredXflr5(settings)) {
-      checked.push("xflr5");
-      const config = scriptedCfdConfig(settings, "xflr5");
-      const customScriptPath = validateOptionalScriptedCfdScriptPath(config);
-      output.xflr5 = {
-        adapterMode: customScriptPath ? "custom" : "builtin",
-        scriptPath: customScriptPath,
-        builtinAdapterPath: customScriptPath ? undefined : validateBuiltinScriptedCfdAdapterPath("xflr5"),
-        probe: await probeScriptedCfd(config, signal)
-      };
-    } else {
-      unavailable.push({ target: "xflr5", reason: "XFLR5 requires an embedded executable and either the built-in adapter or a valid custom script contract." });
-      if (target === "xflr5") throw new Error("Embedded XFLR5 executable or adapter contract is not configured.");
-    }
-  }
-
-  if (!checked.length) {
-    throw new Error("No configured headless engineering target is available for EngineeringProgramTool.");
-  }
-  return output;
+function failedPreflight(target: EngineeringProgramTarget, startedAt: string, error: string): EngineeringProgramPreflightResult {
+  return { target, status: "failed", error, startedAt, completedAt: nowIso() };
 }
 
 function failedToolRun(

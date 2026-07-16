@@ -10,10 +10,15 @@ import { FileToolExecutionWorkspace } from "../runtime/tools/toolExecutionWorksp
 import { migrateStorageV2Schema } from "../runtime/storage/v2/schema.js";
 import type { StorageToolAttempt, StorageToolDecision, StorageToolOutputLink } from "../runtime/storage/v2/traceTypes.js";
 import { DurableJobRuntime } from "./durableJobRuntime.js";
+import { DurableJobRuntimeTestSupport } from "./durableJobRuntimeTestSupport.js";
 import { DurableToolExecutionAdapter } from "./durableToolExecutionAdapter.js";
 
 let root: string | undefined;
 let runtime: DurableJobRuntime | undefined;
+const support = new DurableJobRuntimeTestSupport(
+  () => runtime,
+  () => root
+);
 
 afterEach(async () => {
   await runtime?.close().catch(() => undefined);
@@ -38,23 +43,21 @@ describe("durable external side-effect execution", () => {
       await runner.execute(engineeringInput(job.projectId), SETTINGS, {
         execution: executionContext(job.id, job.idempotencyKey, context.signal, trace.onStatus)
       });
-      await durableRuntime.finish(job.id, job.projectRevision, trace.completedOutputPromotions());
+      await durableRuntime.finish(job.id, await support.currentRevision(job.projectId), trace.completedOutputPromotions());
     });
     await runtime.initialize();
 
-    const first = await runtime.enqueue({
+    const first = await support.enqueueCurrent({
       projectId: "project-side-effect-integration",
       kind: "engineering_run",
-      projectRevision: 1,
       idempotencyKey: "response-loss-1",
       requestHash: "request-response-loss-1",
       payload: {}
     });
     await waitForStatus(first.jobId, "failed");
-    const second = await runtime.enqueue({
+    const second = await support.enqueueCurrent({
       projectId: "project-side-effect-integration",
       kind: "engineering_run",
-      projectRevision: 1,
       idempotencyKey: "response-loss-2",
       requestHash: "request-response-loss-2",
       payload: {}

@@ -1,42 +1,21 @@
-import { randomUUID } from "node:crypto";
 import { API_V2_METHODS, ApiV2RpcRequestSchema, type ApiV2RpcRequest } from "../../../contracts/api-v2/rpc.js";
 import { RpcRequestV2Schema } from "../../../contracts/api-v2/common.js";
-import type { JobKind } from "../../../contracts/api-v2/jobs.js";
-import { authorizeJobCapabilities, defaultJobCapabilityPolicy, type CapabilityPolicy } from "../../../core/application/capabilities/index.js";
-import { ResearchLoopStep } from "../../../core/shared/types.js";
-import type { StorageCapabilityAudit } from "../../runtime/storage/v2/types.js";
-import { canonicalResearchStartPayload } from "../../composition/canonicalResearchEnqueue.js";
-import { durablePublicJobRequestHash } from "../../composition/durableJobRequestHash.js";
-import type { DurableJobReceipt } from "../../composition/durableJobTypes.js";
 import type { RpcHandlerContext } from "./context.js";
 import {
-  computeProjectRevision,
-  projectCapabilities,
   toCodexAuthStatusResponse,
-  toEngineeringPreflightResponse,
   toLlmStatusResponse,
   toJobDetailResponse,
   toJobResponse,
-  toProjectResponse,
-  toProjectSummary,
-  toSessionResponse,
   toSettingsResponse,
   toSettingsSaveInput,
-  toSnapshotResponse,
   toToolDiagnosticsResponse
 } from "./common.js";
-import { emitProjectSnapshotChanged } from "./eventEmitters.js";
-import {
-  mapRpcV2Error,
-  requestIdFromBody,
-  RpcCapabilityDeniedError,
-  RpcConflictError,
-  RpcNotFoundError,
-  RpcNotReadyError,
-  RpcV2Error,
-  RpcValidationError
-} from "./rpcErrors.js";
+import { toProjectResponse, toProjectSummary, toSnapshotResponse } from "./projectResponses.js";
+import { assertStoredProjectRevision } from "./projectRevision.js";
+import { mapRpcV2Error, requestIdFromBody, RpcNotFoundError, RpcV2Error, RpcValidationError } from "./rpcErrors.js";
 import { validateSourcePolicy } from "./rpcSourcePolicy.js";
+import { handleEngineeringRpc } from "./engineeringRpcHandlers.js";
+import { enqueueRpcJob, idempotentRpcEnqueue } from "./rpcJobOperations.js";
 
 export { RpcCapabilityDeniedError, RpcConflictError, RpcNotFoundError, RpcNotReadyError, RpcV2Error, RpcValidationError } from "./rpcErrors.js";
 
@@ -59,66 +38,49 @@ export async function handleRpcV2(body: unknown, context: RpcHandlerContext): Pr
 }
 
 async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): Promise<unknown> {
-  const { orchestrator, settingsStore, jobs, events } = context;
+  const { orchestrator, projectMutations, settingsStore, jobs } = context;
   switch (request.method) {
-    case "projects.create": {
-      const snapshot = await orchestrator.createProject({
-        ...request.params.input,
-        autonomyPolicy: { toolApproval: "suggested", allowAgent: true, allowExternalSearch: false, allowCodeExecution: false, maxLoopIterations: 3 }
-      });
-      await jobs.syncProject(snapshot.project);
-      return toProjectResponse(snapshot);
+    case "projects.create":
+      return projectMutations.create(request.requestId, request.params.input);
+    case "projects.get": {
+      const { snapshot, projectRevision } = await projectMutations.readSnapshot(request.params.projectId);
+      return toProjectResponse(snapshot, projectRevision);
     }
-    case "projects.get":
-      return toProjectResponse(await orchestrator.getSnapshot(request.params.projectId));
-    case "projects.list":
-      return Promise.all((await orchestrator.listProjects()).map(async (project) => toProjectSummary(await orchestrator.getSnapshot(project.id))));
-    case "projects.update": {
-      const current = await orchestrator.getSnapshot(request.params.projectId);
-      if (computeProjectRevision(current) !== request.params.expectedRevision) throw new RpcConflictError("Project revision changed.");
-      const input = {
-        goal: current.project.goal,
-        topic: current.project.topic,
-        scope: current.project.scope,
-        budget: current.project.budget,
-        autonomyPolicy: {
-          ...current.project.autonomyPolicy,
-          allowAgent: request.params.capabilities?.agent ?? current.project.autonomyPolicy.allowAgent ?? true,
-          allowCodeExecution: request.params.capabilities?.engineering ?? current.project.autonomyPolicy.allowCodeExecution,
-          allowExternalSearch: request.params.capabilities?.search ?? current.project.autonomyPolicy.allowExternalSearch
-        },
-        ...request.params.input
-      };
-      const snapshot = await orchestrator.updateProjectInput(request.params.projectId, input);
-      await jobs.syncProject(snapshot.project);
-      await emitProjectSnapshotChanged(events, snapshot, "project_updated");
-      return toProjectResponse(snapshot);
+    case "projects.list": {
+      projectMutations.assertAllReadable();
+      const projects = await orchestrator.listProjects();
+      return Promise.all(
+        projects.map(async (project) => {
+          const { snapshot, projectRevision } = await projectMutations.readSnapshot(project.id);
+          return toProjectSummary(snapshot, projectRevision);
+        })
+      );
     }
-    case "sessions.create": {
-      const before = await orchestrator.getSnapshot(request.params.projectId);
-      const snapshot = await orchestrator.createChatSession(request.params.projectId, request.params.title, request.params.focus);
-      const ids = new Set(before.sessions.map((item) => item.id));
-      const session = snapshot.sessions.find((item) => !ids.has(item.id));
-      if (!session) throw new Error("Session was not created.");
-      return toSessionResponse(session);
-    }
-    case "sessions.delete": {
-      await orchestrator.deleteChatSession(request.params.projectId, request.params.sessionId);
-      return { deleted: true };
-    }
+    case "projects.update":
+      return projectMutations.update(
+        request.requestId,
+        request.params.projectId,
+        request.params.expectedRevision,
+        request.params.input,
+        request.params.capabilities
+      );
+    case "sessions.create":
+      return projectMutations.createSession(request.requestId, request.params.projectId, request.params.title, request.params.focus);
+    case "sessions.delete":
+      return projectMutations.deleteSession(request.requestId, request.params.projectId, request.params.sessionId);
     case "chat.enqueue":
-      return idempotentEnqueue(context, request, (requestHash) =>
-        enqueue(context, request.params.projectId, "chat_reply", request.params.idempotencyKey, requestHash, {
+      return idempotentRpcEnqueue(context, request, (requestHash) =>
+        enqueueRpcJob(context, request.params.projectId, "chat_reply", request.params.idempotencyKey, requestHash, {
           sessionId: request.params.sessionId,
           content: request.params.content,
           clientMutationId: request.params.clientMutationId
         })
       );
     case "loop.start":
-      return idempotentEnqueue(context, request, async (requestHash) => {
+      return idempotentRpcEnqueue(context, request, async (requestHash) => {
         const sourceAccess = await validateSourcePolicy(request.params.toolPolicy.sourceAccess);
         const toolPolicy = { ...request.params.toolPolicy, sourceAccess };
-        return enqueue(
+        return enqueueRpcJob(
           context,
           request.params.projectId,
           "research_loop",
@@ -129,10 +91,10 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
         );
       });
     case "loop.resume":
-      return idempotentEnqueue(context, request, async (requestHash) => {
+      return idempotentRpcEnqueue(context, request, async (requestHash) => {
         const sourceAccess = await validateSourcePolicy(request.params.toolPolicy.sourceAccess);
         const toolPolicy = { ...request.params.toolPolicy, sourceAccess };
-        return enqueue(
+        return enqueueRpcJob(
           context,
           request.params.projectId,
           "research_loop",
@@ -141,7 +103,8 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
           { action: "resume", requestedCapabilities: request.params.requestedCapabilities, toolPolicy },
           request.params.requestedCapabilities,
           request.params.interruptedJobId,
-          request.params.checkpointId
+          request.params.checkpointId,
+          request.params.expectedProjectRevision
         );
       });
     case "loop.pause": {
@@ -174,38 +137,24 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
         ...(result.nextCursor ? { nextCursor: result.nextCursor } : {})
       };
     }
-    case "engineering.preflight": {
-      await assertRequestedCapabilities(context, request.params.projectId, "engineering_run", request.params.requestedCapabilities);
-      const codexStatus = request.params.targets.includes("codex") && context.llm ? await context.llm.getStatus() : undefined;
-      return toEngineeringPreflightResponse(request.params.projectId, request.params.targets, await settingsStore.getRuntimeSettings(), codexStatus?.sandbox);
-    }
+    case "engineering.baseline.activate":
+    case "engineering.baseline.get":
+    case "engineering.baseline.list":
+    case "engineering.artifact.read":
+    case "engineering.preflight":
     case "engineering.enqueue":
-      return idempotentEnqueue(context, request, async (requestHash) => {
-        const runtimeSettings = await settingsStore.getRuntimeSettings();
-        const preflight = toEngineeringPreflightResponse(
-          request.params.projectId,
-          request.params.requests.map((item) => item.target),
-          runtimeSettings,
-          request.params.requests.some((item) => item.target === "codex") && context.llm ? (await context.llm.getStatus()).sandbox : undefined
-        );
-        if (!preflight.ready) throw new RpcNotReadyError("One or more engineering adapters are not ready.", { targets: preflight.targets });
-        return enqueue(
-          context,
-          request.params.projectId,
-          "engineering_run",
-          request.params.idempotencyKey,
-          requestHash,
-          { requests: request.params.requests, requestedCapabilities: request.params.requestedCapabilities },
-          request.params.requestedCapabilities
-        );
-      });
-    case "snapshots.get":
-      return durableSnapshotResponse(context, await orchestrator.getSnapshot(request.params.projectId));
+      return handleEngineeringRpc(request, context);
+    case "snapshots.get": {
+      const { snapshot, projectRevision } = await projectMutations.readSnapshot(request.params.projectId);
+      return durableSnapshotResponse(context, snapshot, projectRevision);
+    }
     case "settings.get":
       return toSettingsResponse(await settingsStore.getRuntimeSettings());
     case "settings.save": {
-      const current = await settingsStore.getRuntimeSettings();
-      return toSettingsResponse(await settingsStore.saveSettings(toSettingsSaveInput(request.params, current)));
+      return context.capabilityMutations.runExclusive(async () => {
+        const current = await settingsStore.getRuntimeSettings();
+        return toSettingsResponse(await settingsStore.saveSettings(toSettingsSaveInput(request.params, current)));
+      });
     }
     case "tools.diagnostics": {
       const [codexStatus, settings, reliability] = await Promise.all([
@@ -229,141 +178,20 @@ async function dispatch(request: ApiV2RpcRequest, context: RpcHandlerContext): P
 async function assertJobControlTarget(context: RpcHandlerContext, projectId: string, jobId: string, expectedRevision: number): Promise<void> {
   const job = await context.jobs.get(jobId);
   if (!job || job.projectId !== projectId) throw new RpcNotFoundError("Job not found.");
-  if (job.projectRevision !== expectedRevision) throw new RpcConflictError("Project revision changed.");
+  await assertStoredProjectRevision(context.jobs, projectId, expectedRevision);
 }
 
-async function durableSnapshotResponse(context: RpcHandlerContext, snapshot: Awaited<ReturnType<RpcHandlerContext["orchestrator"]["getSnapshot"]>>) {
+async function durableSnapshotResponse(
+  context: RpcHandlerContext,
+  snapshot: Awaited<ReturnType<RpcHandlerContext["orchestrator"]["getSnapshot"]>>,
+  projectRevision: number
+) {
   const { job, checkpoint } = await context.jobs.latestProjectExecution(snapshot.project.id, "research_loop");
-  if (!job) return toSnapshotResponse(snapshot);
-  return toSnapshotResponse(snapshot, {
+  await context.projectMutations.assertRevisionUnchanged(snapshot.project.id, projectRevision);
+  if (!job) return toSnapshotResponse(snapshot, projectRevision);
+  return toSnapshotResponse(snapshot, projectRevision, {
     status: job.status,
     activeJobId: job.id,
-    ...(checkpoint ? { lastCheckpointId: checkpoint.id, currentStep: checkpoint.step as typeof snapshot.project.currentStep } : {}),
-    revision: job.projectRevision
+    ...(checkpoint ? { lastCheckpointId: checkpoint.id, currentStep: checkpoint.step as typeof snapshot.project.currentStep } : {})
   });
-}
-
-async function enqueue(
-  context: RpcHandlerContext,
-  projectId: string,
-  kind: JobKind,
-  idempotencyKey: string,
-  requestHash: string,
-  payload: unknown,
-  requestedCapabilities?: Partial<CapabilityPolicy>,
-  resumesJobId?: string,
-  resumeCheckpointId?: string
-) {
-  const snapshot = await context.orchestrator.getSnapshot(projectId);
-  const settings = await context.settingsStore.getRuntimeSettings();
-  const defaultCapabilities = defaultJobCapabilityPolicy(kind);
-  const requestedPolicy = {
-    agent: requestedCapabilities?.agent ?? defaultCapabilities.agent,
-    engineering: requestedCapabilities?.engineering ?? defaultCapabilities.engineering,
-    search: requestedCapabilities?.search ?? defaultCapabilities.search
-  };
-  const authorization = authorizeJobCapabilities({
-    app: { agent: settings.allowAgent, engineering: Boolean(settings.allowCodeExecution), search: Boolean(settings.allowExternalSearch) },
-    project: projectCapabilities(snapshot.project),
-    jobKind: kind,
-    job: requestedPolicy,
-    projectId,
-    recordedAt: new Date().toISOString()
-  });
-  if (!authorization.allowed) {
-    await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits), snapshot.project);
-    const denied = authorization.requiredCapabilityKinds.filter((capability) => !authorization.decisions[capability].allowed);
-    throw new RpcCapabilityDeniedError(`Required capabilities are denied: ${denied.join(", ")}.`, { denied });
-  }
-  const effectiveCapabilities = {
-    agent: authorization.decisions.agent.allowed,
-    engineering: authorization.decisions.engineering.allowed,
-    search: authorization.decisions.search.allowed
-  };
-  const toolPolicy =
-    kind === "research_loop" && payload && typeof payload === "object" && "toolPolicy" in payload
-      ? (payload as { toolPolicy: NonNullable<Parameters<typeof context.jobs.enqueue>[0]["toolPolicy"]> }).toolPolicy
-      : undefined;
-  const persistedPayload =
-    kind === "research_loop" && payload && typeof payload === "object" && (payload as { action?: unknown }).action === "start" && toolPolicy
-      ? canonicalResearchStartPayload({
-          snapshot,
-          payload: payload as Record<string, unknown>,
-          requestedCapabilities: requestedPolicy,
-          effectiveCapabilities,
-          toolPolicy
-        })
-      : payload;
-  const jobId = randomUUID();
-  const capabilityAudits = toStorageAudits(authorization.audits, jobId);
-  const receipt = await context.jobs.enqueue({
-    jobId,
-    projectId,
-    project: snapshot.project,
-    kind,
-    projectRevision: computeProjectRevision(snapshot),
-    currentStep: kind === "engineering_run" ? ResearchLoopStep.ExecuteTools : snapshot.project.currentStep,
-    idempotencyKey,
-    requestHash,
-    requestedCapabilities: requestedPolicy,
-    effectiveCapabilities,
-    capabilityAudits,
-    ...(toolPolicy ? { toolPolicy } : {}),
-    resumesJobId,
-    resumeCheckpointId,
-    payload: persistedPayload
-  });
-  return receipt;
-}
-
-type EnqueueRpcRequest = Extract<ApiV2RpcRequest, { method: "chat.enqueue" | "loop.start" | "loop.resume" | "engineering.enqueue" }>;
-
-async function idempotentEnqueue(
-  context: RpcHandlerContext,
-  request: EnqueueRpcRequest,
-  create: (requestHash: string) => Promise<DurableJobReceipt>
-): Promise<DurableJobReceipt> {
-  const requestHash = durablePublicJobRequestHash(request);
-  const existing = await context.jobs.findIdempotentReceipt(request.params.projectId, request.params.idempotencyKey, requestHash);
-  return existing ?? create(requestHash);
-}
-
-async function assertRequestedCapabilities(
-  context: RpcHandlerContext,
-  projectId: string,
-  kind: JobKind,
-  requestedCapabilities: CapabilityPolicy
-): Promise<void> {
-  const snapshot = await context.orchestrator.getSnapshot(projectId);
-  const settings = await context.settingsStore.getRuntimeSettings();
-  const authorization = authorizeJobCapabilities({
-    app: { agent: settings.allowAgent, engineering: settings.allowCodeExecution, search: settings.allowExternalSearch },
-    project: projectCapabilities(snapshot.project),
-    jobKind: kind,
-    job: requestedCapabilities,
-    projectId,
-    recordedAt: new Date().toISOString()
-  });
-  await context.jobs.recordCapabilityAudits(toStorageAudits(authorization.audits), snapshot.project);
-  if (!authorization.allowed) {
-    const denied = authorization.requiredCapabilityKinds.filter((capability) => !authorization.decisions[capability].allowed);
-    throw new RpcCapabilityDeniedError(`Required capabilities are denied: ${denied.join(", ")}.`, { denied });
-  }
-}
-
-function toStorageAudits(audits: ReturnType<typeof authorizeJobCapabilities>["audits"], jobId?: string): StorageCapabilityAudit[] {
-  return audits.map((audit) => ({
-    id: randomUUID(),
-    projectId: audit.projectId,
-    jobId,
-    operation: audit.kind,
-    capability: audit.kind,
-    appAllowed: audit.appAllowed,
-    projectAllowed: audit.projectAllowed,
-    operationAllowed: audit.jobAllowed,
-    allowed: audit.allowed,
-    reason: audit.reason,
-    data: { jobKind: audit.jobKind, blockedBy: audit.blockedBy },
-    auditedAt: audit.recordedAt
-  }));
 }

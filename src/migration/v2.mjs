@@ -119,6 +119,8 @@ function copyProjects(sourceDb, targetDb) {
       stableStringify(project)
     );
   }
+  targetDb.exec(`insert into project_revision_heads(project_id,revision,last_receipt_id,updated_at)
+    select id,0,null,updated_at from projects_v2 where true on conflict(project_id) do nothing`);
   return summarizeTable("projects", rows, "projects_v2");
 }
 

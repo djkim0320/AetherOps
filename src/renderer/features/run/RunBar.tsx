@@ -47,6 +47,7 @@ export function RunBar({ projectId }: { projectId: string }): ReactElement {
           projectId,
           idempotencyKey,
           interruptedJobId: activeJob.id,
+          expectedProjectRevision: execution.revision,
           ...(execution.lastCheckpointId ? { checkpointId: execution.lastCheckpointId } : {}),
           ...command.policy
         });

@@ -37,6 +37,7 @@ export interface CodexCliRunRequest {
 }
 
 export interface CodexCliProcessResult {
+  cliVersion: string;
   exitCode: number;
   durationMs: number;
   eventCount: number;

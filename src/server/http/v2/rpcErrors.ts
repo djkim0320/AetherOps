@@ -2,13 +2,37 @@ import { RequestIdSchema, type RpcErrorCode } from "../../../contracts/api-v2/co
 import { CanonicalRunRuntimeError } from "../../composition/canonicalRunTypes.js";
 import { DurableResumeValidationError } from "../../composition/durableResumeValidator.js";
 import { DurableRuntimeAdmissionError } from "../../composition/durableRuntimeAdmission.js";
+import {
+  ProjectMutationNotReadyError,
+  ProjectMutationPendingError,
+  ProjectMutationReadRaceError,
+  ProjectMutationTargetNotFoundError
+} from "../../composition/projectMutationSagaCoordinator.js";
 import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, IdempotencyConflictError } from "../../runtime/storage/v2/jobErrors.js";
 import { createServerRequestId, internalErrorMessage } from "../errorBoundary.js";
+import { EngineeringArtifactNotCurrentError } from "../../runtime/storage/v2/engineeringBaselineTypes.js";
+import { StorageImmutableConflictError, StorageOwnershipConflictError, StorageRevisionConflictError } from "../../runtime/storage/v2/runStateErrors.js";
+import { ProjectMutationReservationConflictError } from "../../runtime/storage/v2/projectMutationTypes.js";
 
 export function mapRpcV2Error(error: unknown, requestId: string): RpcV2Error {
   if (error instanceof RpcV2Error) return error;
   if (error instanceof IdempotencyConflictError) {
     return new RpcV2Error(409, requestId, "CONFLICT", IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, undefined, error);
+  }
+  if (error instanceof StorageRevisionConflictError || error instanceof StorageImmutableConflictError) {
+    return new RpcV2Error(409, requestId, "CONFLICT", error.message, undefined, error);
+  }
+  if (error instanceof ProjectMutationReservationConflictError) {
+    return new RpcV2Error(409, requestId, "CONFLICT", error.message, { reason: error.code }, error);
+  }
+  if (error instanceof ProjectMutationPendingError || error instanceof ProjectMutationNotReadyError || error instanceof ProjectMutationReadRaceError) {
+    return new RpcV2Error(503, requestId, "NOT_READY", error.message, { reason: error.code, projectId: error.projectId }, error);
+  }
+  if (error instanceof ProjectMutationTargetNotFoundError) {
+    return new RpcV2Error(404, requestId, "NOT_FOUND", error.message, { reason: error.code }, error);
+  }
+  if (error instanceof StorageOwnershipConflictError) {
+    return new RpcV2Error(404, requestId, "NOT_FOUND", "The requested resource was not found.", undefined, error);
   }
   if (error instanceof RpcConflictError) return new RpcV2Error(409, requestId, "CONFLICT", error.message, undefined, error);
   if (error instanceof RpcNotFoundError) return new RpcV2Error(404, requestId, "NOT_FOUND", error.message, undefined, error);
@@ -16,6 +40,9 @@ export function mapRpcV2Error(error: unknown, requestId: string): RpcV2Error {
     return new RpcV2Error(403, requestId, "CAPABILITY_DENIED", error.message, error.details, error);
   }
   if (error instanceof RpcNotReadyError) return new RpcV2Error(503, requestId, "NOT_READY", error.message, error.details, error);
+  if (error instanceof EngineeringArtifactNotCurrentError) {
+    return new RpcV2Error(503, requestId, "NOT_READY", error.message, { reason: error.code }, error);
+  }
   if (error instanceof DurableRuntimeAdmissionError) {
     return new RpcV2Error(503, requestId, "NOT_READY", error.message, { runtimeState: error.state }, error);
   }

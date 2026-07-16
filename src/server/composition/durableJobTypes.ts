@@ -11,6 +11,7 @@ import type {
   StorageToolOutputLink
 } from "../runtime/storage/v2/traceTypes.js";
 import type { StorageTraceCategory, StorageTraceSummary } from "../runtime/storage/v2/traceTypes.js";
+import type { StorageEngineeringResultPromotion } from "../runtime/storage/v2/engineeringBaselineTypes.js";
 
 export const DURABLE_TRACE_PREVIEW_LIMIT = 20;
 export const DURABLE_TRACE_MAX_RECORDS = 300;
@@ -53,6 +54,7 @@ export interface DurableJobRecord {
   requestedCapabilities?: StorageCapabilitySet;
   effectiveCapabilities?: StorageCapabilitySet;
   toolPolicy?: StorageJobToolPolicy;
+  engineeringBaseline?: DurableEngineeringBaselineBinding | null;
   resumesJobId?: string;
   resumeCheckpointId?: string;
   canonicalInitializationAnchor?: unknown;
@@ -63,6 +65,12 @@ export interface DurableJobRecord {
   startedAt?: string;
   finishedAt?: string;
   leaseExpiresAt?: string;
+}
+
+export interface DurableEngineeringBaselineBinding {
+  id: string;
+  revision: number;
+  contentHash: string;
 }
 
 export interface DurableJobReceipt {
@@ -81,6 +89,7 @@ export interface DurableJobDetail extends DurableJobRecord {
   tracePages: DurableTracePages;
   traceContinuationCursors?: DurableTraceContinuationCursors;
   traceBudget: DurableTraceBudget;
+  engineeringPromotions: StorageEngineeringResultPromotion[];
   trace: {
     llmInvocations: StorageLlmInvocation[];
     toolDecisions: StorageToolDecision[];

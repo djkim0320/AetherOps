@@ -19,6 +19,7 @@ export function toPublicJobTrace(job: DurableJobDetail): JobDetail["trace"] {
   ) {
     throw new Error("Durable trace record budget metadata is inconsistent.");
   }
+  const engineeringPromotions = new Map((job.engineeringPromotions ?? []).map((promotion) => [promotion.outputLinkId, promotion]));
   return {
     llmInvocations: job.trace.llmInvocations.map((item) => ({
       id: item.id,
@@ -85,6 +86,7 @@ export function toPublicJobTrace(job: DurableJobDetail): JobDetail["trace"] {
       outputKind: item.outputKind,
       outputId: item.outputId,
       promoted: item.promoted,
+      ...engineeringOutputTrace(engineeringPromotions.get(item.id)),
       createdAt: item.createdAt,
       promotedAt: item.promotedAt
     })),
@@ -101,6 +103,34 @@ export function toPublicJobTrace(job: DurableJobDetail): JobDetail["trace"] {
     pages: job.tracePages,
     budget: job.traceBudget
   };
+}
+
+function engineeringOutputTrace(value: DurableJobDetail["engineeringPromotions"][number] | undefined): {
+  engineeringPromotionId?: string;
+  baselineId?: string;
+  baselineRevision?: number;
+  engineeringStatus?: "current" | "stale";
+  staleAt?: string;
+  staleReason?: string;
+} {
+  if (!value) return {};
+  const engineeringPromotionId = boundedIdentifier(value.id);
+  const baselineId = boundedIdentifier(value.baselineId);
+  const baselineRevision = Number(value.baselineRevision);
+  const staleAt = Number.isFinite(Date.parse(value.staleAt ?? "")) ? value.staleAt : undefined;
+  const staleReason = boundedTraceText(value.staleReason, 500);
+  return {
+    ...(engineeringPromotionId ? { engineeringPromotionId } : {}),
+    ...(baselineId ? { baselineId } : {}),
+    ...(Number.isSafeInteger(baselineRevision) && baselineRevision > 0 ? { baselineRevision } : {}),
+    engineeringStatus: value.staleAt ? "stale" : "current",
+    ...(staleAt ? { staleAt } : {}),
+    ...(staleReason ? { staleReason } : {})
+  };
+}
+
+function boundedIdentifier(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? boundedTraceText(value, 256) : undefined;
 }
 
 export function assertSerializedTraceResponseBudget(response: JobDetail): void {

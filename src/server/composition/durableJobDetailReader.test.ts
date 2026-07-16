@@ -15,6 +15,7 @@ describe("readDurableJobDetail", () => {
           total: 205
         };
       }
+      if (command.name === "engineering.promotion.listJob") return [];
       if (command.name === "trace.pageJob" && command.category) {
         return {
           category: command.category,
@@ -35,8 +36,12 @@ describe("readDurableJobDetail", () => {
       limit: 200
     });
 
-    expect(request).toHaveBeenCalledTimes(7);
-    expect(request.mock.calls.map(([command]) => command.name)).toEqual(["trace.summaryJob", ...STORAGE_TRACE_CATEGORIES.map(() => "trace.pageJob")]);
+    expect(request).toHaveBeenCalledTimes(8);
+    expect(request.mock.calls.map(([command]) => command.name)).toEqual([
+      "trace.summaryJob",
+      "engineering.promotion.listJob",
+      ...STORAGE_TRACE_CATEGORIES.map(() => "trace.pageJob")
+    ]);
     expect(request).toHaveBeenCalledWith({
       name: "trace.pageJob",
       jobId: "job-1",
@@ -68,6 +73,7 @@ describe("readDurableJobDetail", () => {
           total: 0
         };
       }
+      if (command.name === "engineering.promotion.listJob") return [];
       if (command.name === "trace.pageJob" && command.category) {
         return { category: command.category, order: "newest_first", items: [], itemCursors: [], total: 0, truncated: false } satisfies StorageTracePage;
       }
@@ -76,7 +82,7 @@ describe("readDurableJobDetail", () => {
 
     await readDurableJobDetail({ request } as unknown as StorageWorkerClient, job());
 
-    expect(request).toHaveBeenCalledTimes(7);
+    expect(request).toHaveBeenCalledTimes(8);
     for (const category of STORAGE_TRACE_CATEGORIES) {
       expect(request).toHaveBeenCalledWith({ name: "trace.pageJob", jobId: "job-1", category, limit: 20 });
     }
@@ -92,6 +98,7 @@ describe("readDurableJobDetail", () => {
           total: 1
         };
       }
+      if (command.name === "engineering.promotion.listJob") return [];
       if (command.name === "trace.pageJob" && command.category === "outputs") throw new Error("injected storage read failure");
       if (command.name === "trace.pageJob" && command.category) {
         return { category: command.category, order: "newest_first", items: [], itemCursors: [], total: 0, truncated: false } satisfies StorageTracePage;
@@ -100,7 +107,7 @@ describe("readDurableJobDetail", () => {
     });
 
     await expect(readDurableJobDetail({ request } as unknown as StorageWorkerClient, job(), requestOptions)).rejects.toThrow("injected storage read failure");
-    expect(request).toHaveBeenCalledTimes(7);
+    expect(request).toHaveBeenCalledTimes(8);
     expect(requestOptions).toEqual({ category: "outputs", cursor: "stable_cursor", limit: 20 });
   });
 });

@@ -14,7 +14,7 @@ function run(command: string, args: string[]): Promise<void> {
         resolve();
         return;
       }
-      reject(new Error(`Required storage migration failed: ${stderr.trim() || stdout.trim() || error.message}`, { cause: error }));
+      reject(new Error(`Required storage migration failed: ${stdout.trim() || stderr.trim() || error.message}`, { cause: error }));
     });
   });
 }

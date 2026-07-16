@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeBaselineChange, type ConfigurationBaseline } from "./configurationBaseline.js";
+import { analyzeBaselineChange, validateConfigurationBaseline, type ConfigurationBaseline } from "./configurationBaseline.js";
 import { assertArtifactCurrent, createEngineeringRunState, reduceEngineeringRunState } from "./engineeringRunState.js";
 
 describe("EngineeringRunState", () => {
@@ -48,6 +48,21 @@ describe("EngineeringRunState", () => {
     expect(() => assertArtifactCurrent(revised, "artifact-other")).not.toThrow();
   });
 
+  it("treats changed provenance content under a stable source ID as a source revision change", () => {
+    const previous = baseline();
+    const next = { ...baseline("baseline-2", 2), provenance: [{ id: "baseline-source", contentHash: "f".repeat(64) }] };
+    const impact = analyzeBaselineChange(previous, next, [{ artifactId: "artifact-source", baselineId: previous.id, aspects: ["source_revision"] }]);
+    expect(impact.changedAspects).toContain("source_revision");
+    expect(impact.staleArtifactIds).toEqual(["artifact-source"]);
+  });
+
+  it("rejects ambiguous duplicate source and provenance identities", () => {
+    expect(() => validateConfigurationBaseline({ ...baseline(), sourceRevisionIds: ["source-1", "source-1"] })).toThrow(/unique/i);
+    expect(() => validateConfigurationBaseline({ ...baseline(), provenance: [{ id: "source" }, { id: "source", contentHash: "a".repeat(64) }] })).toThrow(
+      /provenance/i
+    );
+  });
+
   it("rejects task nodes outside the canonical graph", () => {
     expect(() => reduceEngineeringRunState(state(), { type: "task_progressed", expectedRevision: 0, completedNodeId: "unknown" })).toThrow(
       /not in the engineering graph/i
@@ -89,15 +104,20 @@ function baseline(id = "baseline-1", revision = 1): ConfigurationBaseline {
     id,
     projectId: "project-1",
     revision,
+    status: "active",
     geometryHash: "a".repeat(64),
     massPropertiesHash: "b".repeat(64),
     atmosphereModelId: "isa-1976-v1",
+    unitConventionId: "si-v1",
+    coordinateConventionId: "aircraft-body-v1",
     solverVersions: { webxfoil: "0.1.1" },
     materialRevisionIds: ["material-1"],
     sourceRevisionIds: ["source-1-r1"],
     equationVersionIds: ["equation-1-v1"],
+    contentHash: "e".repeat(64),
     createdAt: "2026-07-15T00:00:00Z",
-    provenanceId: "baseline-source"
+    createdBy: "test",
+    provenance: [{ id: "baseline-source" }]
   };
 }
 

@@ -4,12 +4,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ConfigurationBaseline } from "../../core/aerospace/configurationBaseline.js";
+import { configurationBaselineContentHash, configurationBaselineDependencyHash } from "../runtime/storage/v2/engineeringBaselineIntegrity.js";
+import type { StorageEngineeringPromotionDraft } from "../runtime/storage/v2/engineeringBaselineTypes.js";
+import type { StorageCapabilityAudit } from "../runtime/storage/v2/types.js";
 import { migrateStorageV2Schema } from "../runtime/storage/v2/schema.js";
+import { TerminalCasStore } from "../runtime/storage/v2/terminalCasStore.js";
 import { DurableJobRuntime } from "./durableJobRuntime.js";
+import { DurableJobRuntimeTestSupport } from "./durableJobRuntimeTestSupport.js";
+import { engineeringPromotionDraftKey } from "./durableEngineeringPromotionDrafts.js";
 import { DurableToolExecutionAdapter } from "./durableToolExecutionAdapter.js";
 
 let root: string | undefined;
 let runtime: DurableJobRuntime | undefined;
+const support = new DurableJobRuntimeTestSupport(
+  () => runtime,
+  () => root
+);
 
 afterEach(async () => {
   await runtime?.close().catch(() => undefined);
@@ -26,6 +37,7 @@ describe("DurableToolExecutionAdapter", () => {
     const now = new Date(clockMs).toISOString();
     const completedAt = new Date(Date.parse(now) + 1_000).toISOString();
     const promotedAt = new Date(Date.parse(now) + 2_000).toISOString();
+    const baseline = configurationBaseline("project-1", now);
     let observedUnpromoted = false;
     runtime.registerHandler("research_loop", async (job) => {
       const adapter = new DurableToolExecutionAdapter(job, runtime as DurableJobRuntime);
@@ -74,6 +86,7 @@ describe("DurableToolExecutionAdapter", () => {
         outputBytes: codexOutput.byteLength,
         outputs: [{ id: "artifact-codex", kind: "artifact", name: "Codex result", artifactKind: "generated_artifact" }],
         codexCliTrace: {
+          cliVersion: "0.144.1",
           model: "gpt-5.6-sol",
           reasoningEffort: "high",
           sandboxProfile: "aetherops-codex-workspace-v1",
@@ -87,13 +100,37 @@ describe("DurableToolExecutionAdapter", () => {
         }
       });
       clockMs = Date.parse(promotedAt);
-      await runtime?.finish(job.id, 5, adapter.completedOutputPromotions(promotedAt));
+      const codexCas = new TerminalCasStore(root as string).materializeBytes(codexOutput);
+      const codexDraft = engineeringReportDraft(baseline, codexCas);
+      await runtime?.finish(
+        job.id,
+        await support.currentRevision(job.projectId),
+        adapter.completedOutputPromotions(
+          promotedAt,
+          new Map([[engineeringPromotionDraftKey("execution-1:action-3", "artifact", "artifact-codex"), codexDraft]])
+        )
+      );
     });
     await runtime.initialize();
+    const projectRoot = join(root as string, "project-1");
+    mkdirSync(projectRoot, { recursive: true });
+    await runtime.syncProject({
+      id: "project-1",
+      projectRoot,
+      topic: "Durable adapter",
+      status: "active",
+      autonomyPolicy: { allowAgent: true, allowCodeExecution: true, allowExternalSearch: false },
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.engineering.activateBaseline(
+      { baseline, expectedRevision: 0, changeReason: "Bind the Codex test output to an immutable baseline." },
+      { projectRevision: 0, snapshotVersion: 0, capabilityAudits: baselineCapabilityAudits("project-1", 0) }
+    );
     const receipt = await runtime.enqueue({
       projectId: "project-1",
       kind: "research_loop",
-      projectRevision: 4,
+      projectRevision: await support.currentRevision("project-1"),
       idempotencyKey: "key-1",
       requestHash: "request-hash",
       payload: {}
@@ -153,13 +190,12 @@ describe("DurableToolExecutionAdapter", () => {
       } catch (error) {
         blocked = /workspace|ENOENT/i.test(error instanceof Error ? error.message : String(error));
       }
-      await runtime?.settle(job.id, "failed", 1, "ambiguous_side_effect_postcondition");
+      await runtime?.settle(job.id, "failed", await support.currentRevision(job.projectId), "ambiguous_side_effect_postcondition");
     });
     await runtime.initialize();
-    const receipt = await runtime.enqueue({
+    const receipt = await support.enqueueCurrent({
       projectId: "project-1",
       kind: "research_loop",
-      projectRevision: 1,
       idempotencyKey: "key-ambiguous",
       requestHash: "request-hash-ambiguous",
       payload: {}
@@ -221,13 +257,12 @@ describe("DurableToolExecutionAdapter", () => {
       });
 
       promotionCount = adapter.completedOutputPromotions("2026-07-14T00:00:05.000Z").length;
-      await runtime?.settle(job.id, "failed", 1, "analysis failed");
+      await runtime?.settle(job.id, "failed", await support.currentRevision(job.projectId), "analysis failed");
     });
     await runtime.initialize();
-    const receipt = await runtime.enqueue({
+    const receipt = await support.enqueueCurrent({
       projectId: "project-1",
       kind: "research_loop",
-      projectRevision: 1,
       idempotencyKey: "key-partial-dag",
       requestHash: "request-hash-partial-dag",
       payload: {}
@@ -275,6 +310,7 @@ describe("DurableToolExecutionAdapter", () => {
         outputBytes: content.byteLength,
         outputs: [{ id: "artifact-codex-provisional", kind: "artifact" as const, name: "Codex provisional", artifactKind: "generated_artifact" }],
         codexCliTrace: {
+          cliVersion: "0.144.1",
           model: "gpt-5.6-sol",
           reasoningEffort: "high",
           sandboxProfile: "aetherops-codex-workspace-v1",
@@ -313,13 +349,12 @@ describe("DurableToolExecutionAdapter", () => {
       });
 
       promotionCount = adapter.completedOutputPromotions("2026-07-14T00:00:05.000Z").length;
-      await runtime?.settle(job.id, "failed", 1, "analysis failed");
+      await runtime?.settle(job.id, "failed", await support.currentRevision(job.projectId), "analysis failed");
     });
     await runtime.initialize();
-    const receipt = await runtime.enqueue({
+    const receipt = await support.enqueueCurrent({
       projectId: "project-1",
       kind: "research_loop",
-      projectRevision: 1,
       idempotencyKey: "key-codex-quarantine",
       requestHash: "request-hash-codex-quarantine",
       payload: {}
@@ -340,6 +375,21 @@ describe("DurableToolExecutionAdapter", () => {
     expect((await runtime.eventsAfter("project-1")).filter((event) => event.type === "artifact.created")).toHaveLength(0);
   });
 });
+
+function baselineCapabilityAudits(projectId: string, projectRevision: number): StorageCapabilityAudit[] {
+  return (["agent", "engineering", "search"] as const).map((capability) => ({
+    id: `baseline-${capability}-${projectRevision}`,
+    projectId,
+    operation: capability,
+    capability,
+    appAllowed: true,
+    projectAllowed: capability !== "search",
+    operationAllowed: capability !== "search",
+    allowed: capability !== "search",
+    data: { jobKind: "engineering_run", ...(capability === "search" ? { blockedBy: "project" as const } : {}), projectRevision },
+    auditedAt: "2026-07-16T00:00:00.000Z"
+  }));
+}
 
 function createDatabase(): string {
   root = mkdtempSync(join(tmpdir(), "aetherops-tool-trace-"));
@@ -397,6 +447,45 @@ function prepareCodexWorkspace(
 
 function hashCanonical(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+function configurationBaseline(projectId: string, createdAt: string): ConfigurationBaseline {
+  const unhashed: ConfigurationBaseline = {
+    id: "baseline-codex-adapter-v1",
+    projectId,
+    revision: 1,
+    status: "active",
+    unitConventionId: "si-v1",
+    coordinateConventionId: "right-handed-cartesian-v1",
+    solverVersions: { codex: "gpt-5.6-sol" },
+    materialRevisionIds: [],
+    sourceRevisionIds: ["fixture:durable-codex-adapter"],
+    equationVersionIds: [],
+    contentHash: "0".repeat(64),
+    createdAt,
+    createdBy: "durable-tool-execution-adapter-test",
+    provenance: [{ id: "fixture:durable-codex-adapter", contentHash: hashCanonical("verified output\n") }]
+  };
+  return { ...unhashed, contentHash: configurationBaselineContentHash(unhashed) };
+}
+
+function engineeringReportDraft(baseline: ConfigurationBaseline, artifact: ReturnType<TerminalCasStore["materializeBytes"]>): StorageEngineeringPromotionDraft {
+  const dependencyAspects = ["solver", "source_revision", "unit_convention", "coordinate_convention"] as const;
+  return {
+    resultKind: "engineering_report",
+    baselineId: baseline.id,
+    baselineRevision: baseline.revision,
+    baselineContentHash: baseline.contentHash,
+    baselineDependencyHash: configurationBaselineDependencyHash(baseline, dependencyAspects),
+    dependencyAspects,
+    artifact: { casLocator: artifact.casLocator, sha256: artifact.casHash, byteLength: artifact.byteLength, mediaType: "text/plain" },
+    executionMedia: "codex@gpt-5.6-sol",
+    modelCardId: "model-card:codex:gpt-5.6-sol",
+    simulationRunReceiptId: "tool-run:codex-adapter",
+    convergence: "not_applicable",
+    domainAssessment: "not_assessed",
+    sensitivity: "project"
+  };
 }
 
 function canonicalJson(value: unknown): string {

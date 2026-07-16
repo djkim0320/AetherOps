@@ -15,6 +15,11 @@ import { TerminalResultReadbackRepository } from "./terminalResultReadbackReposi
 import { TerminalAttestationRepository } from "./terminalAttestationRepository.js";
 import { TerminalAttestedReadbackRepository } from "./terminalAttestedReadbackRepository.js";
 import { ToolSideEffectReservationRepository } from "./toolSideEffectReservationRepository.js";
+import { EngineeringBaselineRepository } from "./engineeringBaselineRepository.js";
+import { ProjectRevisionRepository } from "./projectRevisionRepository.js";
+import { ProjectMutationRepository } from "./projectMutationRepository.js";
+import { TerminalCasStore } from "./terminalCasStore.js";
+import { createStorageTerminalCasReferenceSource } from "./terminalCasReferences.js";
 
 export {
   ProjectRepository,
@@ -32,7 +37,10 @@ export {
   TerminalResultReadbackRepository,
   TerminalAttestationRepository,
   TerminalAttestedReadbackRepository,
-  ToolSideEffectReservationRepository
+  ToolSideEffectReservationRepository,
+  EngineeringBaselineRepository,
+  ProjectRevisionRepository,
+  ProjectMutationRepository
 };
 export { runAtomically } from "./repositorySupport.js";
 
@@ -53,6 +61,9 @@ export interface StorageV2RepositorySet {
   terminalAttestations: TerminalAttestationRepository;
   terminalAttestedReadback: TerminalAttestedReadbackRepository;
   toolSideEffects: ToolSideEffectReservationRepository;
+  engineering: EngineeringBaselineRepository;
+  projectRevisions: ProjectRevisionRepository;
+  projectMutations: ProjectMutationRepository;
 }
 export interface StorageV2RepositoryDbs {
   appDb: DatabaseSync;
@@ -71,14 +82,16 @@ export function createStorageV2Repositories(dbs: StorageV2RepositoryDbs, options
   const embeddings = new EmbeddingRepository(vectorDb);
   const terminalReadback = new TerminalResultReadbackRepository(dbs.appDb, options.dataRoot);
   const terminalAttestations = new TerminalAttestationRepository(dbs.appDb, options.dataRoot, terminalReadback);
-  return {
+  const engineering = new EngineeringBaselineRepository(dbs.appDb, options.dataRoot);
+  const projectRevisions = new ProjectRevisionRepository(dbs.appDb);
+  const repositories: StorageV2RepositorySet = {
     projects: new ProjectRepository(dbs.appDb),
     records: new RecordRepository(vectorDb, embeddings),
     memory: new MemoryRepository(vectorDb, embeddings),
     embeddings,
     jobs: new JobRepository(dbs.appDb, options.leaseClock),
     checkpoints: new CheckpointRepository(dbs.appDb),
-    events: new EventRepository(dbs.appDb),
+    events: new EventRepository(dbs.appDb, projectRevisions),
     capabilities: new CapabilityAuditRepository(dbs.appDb),
     ontology: new OntologyRepository(ontologyDb),
     trace: new TraceRepository(dbs.appDb),
@@ -87,6 +100,13 @@ export function createStorageV2Repositories(dbs: StorageV2RepositoryDbs, options
     terminalReadback,
     terminalAttestations,
     terminalAttestedReadback: new TerminalAttestedReadbackRepository(dbs.appDb, options.dataRoot, terminalAttestations),
-    toolSideEffects: new ToolSideEffectReservationRepository(dbs.appDb)
+    toolSideEffects: new ToolSideEffectReservationRepository(dbs.appDb),
+    engineering,
+    projectRevisions,
+    projectMutations: new ProjectMutationRepository(dbs.appDb)
   };
+  if (options.dataRoot) {
+    new TerminalCasStore(options.dataRoot).reconcile(createStorageTerminalCasReferenceSource(dbs.appDb), 2_048);
+  }
+  return repositories;
 }

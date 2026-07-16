@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { StorageWorkerRuntime } from "../worker/typedRuntime.js";
 import { createStorageV2Repositories } from "./repositories.js";
 import { migrateStorageV2Schema } from "./schema.js";
+import { captureStorageTestError as captureThrown, storageTestProjectHead, storageTestProjectRevision } from "./storageWorkerTestSupport.js";
 import type { StorageClaimStartResult, StorageJob, StorageStepDispositionInput, StorageStepDispositionResult } from "./types.js";
 
 let root: string | undefined;
@@ -22,9 +23,9 @@ afterEach(() => {
 describe("durable job transaction fault injection", () => {
   it("recovers a claim committed immediately before process loss without duplicate execution or events", () => {
     const path = createRuntime();
-    runtime?.handle({ name: "job.enqueue", job: jobInput("job-crashed-after-claim", "project-claim-crash") });
+    enqueueRuntime(jobInput("job-crashed-after-claim", "project-claim-crash"));
     const crashed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions("project-claim-crash") }) as StorageClaimStartResult;
-    runtime?.handle({ name: "job.enqueue", job: jobInput("job-successor-after-crash", "project-claim-crash") });
+    enqueueRuntime(jobInput("job-successor-after-crash", "project-claim-crash"));
     expect(crashed.job).toMatchObject({ status: "running", attempt: 1, leaseGeneration: 1 });
 
     runtime?.close();
@@ -62,7 +63,18 @@ describe("durable job transaction fault injection", () => {
   it("rolls claim, attempt, and event back when the running event insert aborts", () => {
     const path = createRuntime();
     const setup = new DatabaseSync(path);
-    createStorageV2Repositories({ appDb: setup }).jobs.enqueue(jobInput("job-claim-fault", "project-claim-fault"));
+    const directRepositories = createStorageV2Repositories({ appDb: setup });
+    const directProjectRoot = join(root as string, "project-claim-fault");
+    mkdirSync(directProjectRoot, { recursive: true });
+    directRepositories.projects.upsert({
+      id: "project-claim-fault",
+      projectRoot: directProjectRoot,
+      topic: "project-claim-fault",
+      status: "active",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z"
+    });
+    directRepositories.jobs.enqueue(jobInput("job-claim-fault", "project-claim-fault"));
     setup.exec(`
       create trigger fail_running_event before insert on job_events
       when new.payload like '%"status":"running"%'
@@ -85,7 +97,7 @@ describe("durable job transaction fault injection", () => {
 
   it("rolls a completed checkpoint, attempt, and terminal status back when the terminal event insert aborts", () => {
     const path = createRuntime();
-    const enqueued = runtime?.handle({ name: "job.enqueue", job: jobInput("job-terminal-fault", "project-terminal-fault") }) as { job: StorageJob };
+    const enqueued = enqueueRuntime(jobInput("job-terminal-fault", "project-terminal-fault")) as { job: StorageJob };
     expect(enqueued.job.status).toBe("queued");
     const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions("project-terminal-fault") }) as StorageClaimStartResult;
     const setup = new DatabaseSync(path);
@@ -102,7 +114,7 @@ describe("durable job transaction fault injection", () => {
         input: {
           fence: claimed.fence,
           status: "completed",
-          projectRevision: 1,
+          projectRevision: storageTestProjectRevision(runtime, claimed.job.projectId),
           occurredAt: "2026-07-14T00:00:02.000Z",
           completedStep: {
             step: "EXECUTE_TOOLS",
@@ -128,7 +140,7 @@ describe("durable job transaction fault injection", () => {
 
   it("rolls a quarantined checkpoint, attempt, and failed status back when the terminal event insert aborts", () => {
     const path = createRuntime();
-    runtime?.handle({ name: "job.enqueue", job: jobInput("job-failed-terminal-fault", "project-failed-terminal-fault") });
+    enqueueRuntime(jobInput("job-failed-terminal-fault", "project-failed-terminal-fault"));
     const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions("project-failed-terminal-fault") }) as StorageClaimStartResult;
     const setup = new DatabaseSync(path);
     setup.exec(`
@@ -144,7 +156,7 @@ describe("durable job transaction fault injection", () => {
         input: {
           fence: claimed.fence,
           status: "failed",
-          projectRevision: 1,
+          projectRevision: storageTestProjectRevision(runtime, claimed.job.projectId),
           reason: "safe failure",
           occurredAt: "2026-07-14T00:00:02.000Z",
           quarantinedStep: { step: "EXECUTE_TOOLS", error: "safe failure", quarantineRef: "quarantine/job-failed-terminal-fault" }
@@ -169,7 +181,7 @@ describe("durable job transaction fault injection", () => {
 
   it("rolls a completed checkpoint and attempt back when the attempt update aborts", () => {
     const path = createRuntime();
-    runtime?.handle({ name: "job.enqueue", job: jobInput("job-checkpoint-fault", "project-checkpoint-fault") });
+    enqueueRuntime(jobInput("job-checkpoint-fault", "project-checkpoint-fault"));
     const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions("project-checkpoint-fault") }) as StorageClaimStartResult;
     const setup = new DatabaseSync(path);
     setup.exec(`
@@ -197,7 +209,7 @@ describe("durable job transaction fault injection", () => {
 
   it("rolls a quarantine checkpoint and attempt back when the attempt update aborts", () => {
     const path = createRuntime();
-    runtime?.handle({ name: "job.enqueue", job: jobInput("job-quarantine-fault", "project-quarantine-fault") });
+    enqueueRuntime(jobInput("job-quarantine-fault", "project-quarantine-fault"));
     const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions("project-quarantine-fault") }) as StorageClaimStartResult;
     const setup = new DatabaseSync(path);
     setup.exec(`
@@ -231,11 +243,11 @@ describe("durable job transaction fault injection", () => {
     const path = createRuntime();
     const jobId = `job-commit-after-${control}`;
     const projectId = `project-commit-after-${control}`;
-    runtime?.handle({ name: "job.enqueue", job: jobInput(jobId, projectId) });
+    enqueueRuntime(jobInput(jobId, projectId));
     const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions(projectId) }) as StorageClaimStartResult;
     runtime?.handle({
       name: "job.requestControl",
-      input: { jobId, control, projectRevision: 1, occurredAt: "2026-07-14T00:00:02.000Z" }
+      input: { jobId, control, projectRevision: storageTestProjectRevision(runtime, projectId), occurredAt: "2026-07-14T00:00:02.000Z" }
     });
 
     expect(() =>
@@ -266,16 +278,16 @@ describe("durable job transaction fault injection", () => {
     const path = createRuntime();
     const jobId = `job-control-retry-${control}`;
     const projectId = `project-control-retry-${control}`;
-    runtime?.handle({ name: "job.enqueue", job: jobInput(jobId, projectId) });
+    enqueueRuntime(jobInput(jobId, projectId));
     const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions(projectId) }) as StorageClaimStartResult;
     runtime?.handle({
       name: "job.requestControl",
-      input: { jobId, control, projectRevision: 1, occurredAt: "2026-07-14T00:00:02.000Z" }
+      input: { jobId, control, projectRevision: storageTestProjectRevision(runtime, projectId), occurredAt: "2026-07-14T00:00:02.000Z" }
     });
     const input = {
       fence: claimed.fence,
       status: "completed" as const,
-      projectRevision: 1,
+      projectRevision: storageTestProjectRevision(runtime, projectId),
       occurredAt: "2026-07-14T00:00:03.000Z",
       completedStep: { step: "EXECUTE_TOOLS", checkpointData: { phase: "execute_tools_completed" }, outputHash: "output-hash" },
       promotions: [
@@ -297,9 +309,11 @@ describe("durable job transaction fault injection", () => {
     };
 
     const first = runtime?.handle({ name: "job.transitionTerminal", input }) as { events: Array<{ sequence: number }> };
+    const committedHead = storageTestProjectHead(runtime, projectId);
     const retry = runtime?.handle({ name: "job.transitionTerminal", input }) as { events: Array<{ sequence: number }> };
 
     expect(retry.events.map((event) => event.sequence)).toEqual(first.events.map((event) => event.sequence));
+    expect(storageTestProjectHead(runtime, projectId)).toEqual(committedHead);
     const readback = new DatabaseSync(path, { readOnly: true });
     expect(readback.prepare("select status from jobs where id=?").get(jobId)).toEqual({ status });
     expect(readback.prepare("select status from checkpoints where job_id=?").all(jobId)).toEqual([{ status: "quarantined" }]);
@@ -313,7 +327,7 @@ describe("durable job transaction fault injection", () => {
 
   it("returns an exact committed step retry and rolls every divergent retry back without changing rows or events", () => {
     const path = createRuntime();
-    runtime?.handle({ name: "job.enqueue", job: jobInput("job-commit-retry", "project-commit-retry") });
+    enqueueRuntime(jobInput("job-commit-retry", "project-commit-retry"));
     const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions("project-commit-retry") }) as StorageClaimStartResult;
     const input: StorageStepDispositionInput = {
       fence: claimed.fence,
@@ -340,19 +354,19 @@ describe("durable job transaction fault injection", () => {
       { ...input, checkpointData: { privatePayload: "changed" } },
       { ...input, outputRef: "staging/private-other-output.json" },
       { ...input, outputHash: "private-other-output-hash" },
-      { ...input, occurredAt: "2026-07-14T00:00:03.000Z" },
-      { ...input, projectRevision: 2 }
+      { ...input, occurredAt: "2026-07-14T00:00:03.000Z" }
     ];
     for (const conflict of conflicts) {
       const failure = captureThrown(() => runtime?.handle({ name: "job.commitStep", input: conflict }));
       expect(failure.message).not.toMatch(/privatePayload|private-other/);
       expect(readStepPersistence(path, claimed.job.id)).toEqual(beforeRetry);
     }
+    expect(runtime?.handle({ name: "job.commitStep", input: { ...input, projectRevision: 2 } })).toEqual(first);
   });
 
   it("treats a lease as expired at its exact expiry instant", () => {
     createRuntime();
-    runtime?.handle({ name: "job.enqueue", job: jobInput("job-expiry-boundary", "project-expiry-boundary") });
+    enqueueRuntime(jobInput("job-expiry-boundary", "project-expiry-boundary"));
     const claimed = runtime?.handle({
       name: "job.claimAndStart",
       options: {
@@ -379,7 +393,7 @@ describe("durable job transaction fault injection", () => {
 
   it("reads an identical completed promotion retry without creating duplicate events", () => {
     const path = createRuntime();
-    runtime?.handle({ name: "job.enqueue", job: jobInput("job-promotion-retry", "project-promotion-retry") });
+    enqueueRuntime(jobInput("job-promotion-retry", "project-promotion-retry"));
     const claimed = runtime?.handle({ name: "job.claimAndStart", options: claimOptions("project-promotion-retry") }) as StorageClaimStartResult;
     runtime?.handle({
       name: "fencedTransaction",
@@ -439,7 +453,7 @@ describe("durable job transaction fault injection", () => {
     const input = {
       fence: claimed.fence,
       status: "completed" as const,
-      projectRevision: 1,
+      projectRevision: storageTestProjectRevision(runtime, claimed.job.projectId),
       occurredAt: "2026-07-14T00:00:03.000Z",
       completedStep: {
         step: "EXECUTE_TOOLS",
@@ -465,10 +479,16 @@ describe("durable job transaction fault injection", () => {
     };
 
     const first = runtime?.handle({ name: "job.transitionTerminal", input }) as { events: Array<{ sequence: number }> };
+    const committedHead = storageTestProjectHead(runtime, claimed.job.projectId);
     expect(() =>
       runtime?.handle({
         name: "job.requestControl",
-        input: { jobId: claimed.job.id, control: "cancel", projectRevision: 1, occurredAt: "2026-07-14T00:00:04.000Z" }
+        input: {
+          jobId: claimed.job.id,
+          control: "cancel",
+          projectRevision: storageTestProjectRevision(runtime, claimed.job.projectId),
+          occurredAt: "2026-07-14T00:00:04.000Z"
+        }
       })
     ).toThrow(/cancel|completed/i);
     runtime?.close();
@@ -476,6 +496,7 @@ describe("durable job transaction fault injection", () => {
     const retry = runtime.handle({ name: "job.transitionTerminal", input }) as { events: Array<{ sequence: number }> };
 
     expect(retry.events.map((event) => event.sequence)).toEqual(first.events.map((event) => event.sequence));
+    expect(storageTestProjectHead(runtime, claimed.job.projectId)).toEqual(committedHead);
     expect(runtime?.handle({ name: "event.after", projectId: claimed.job.projectId })).toHaveLength(5);
     expect(() =>
       runtime?.handle({
@@ -520,6 +541,23 @@ function jobInput(id: string, projectId: string) {
   };
 }
 
+function enqueueRuntime(input: ReturnType<typeof jobInput>): unknown {
+  const projectRoot = join(root as string, input.projectId);
+  mkdirSync(projectRoot, { recursive: true });
+  runtime?.handle({
+    name: "project.upsert",
+    project: {
+      id: input.projectId,
+      projectRoot,
+      topic: input.projectId,
+      status: "active",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z"
+    }
+  });
+  return runtime?.handle({ name: "job.enqueue", job: { ...input, expectedProjectRevision: storageTestProjectRevision(runtime, input.projectId) } });
+}
+
 function claimOptions(projectId: string) {
   return {
     projectId,
@@ -552,13 +590,4 @@ function readStepPersistence(path: string, jobId: string) {
   };
   readback.close();
   return state;
-}
-
-function captureThrown(action: () => unknown): Error {
-  try {
-    action();
-  } catch (error) {
-    if (error instanceof Error) return error;
-  }
-  throw new Error("Expected an Error to be thrown.");
 }

@@ -44,8 +44,8 @@ export function runGrepChecks(context) {
     {
       label: "legacy RPC endpoint is hard 404",
       requirements: [
-        { pattern: /url\.pathname\.startsWith\(["']\/api\/["']\)/, paths: ["src/server/webServer.ts"] },
-        { pattern: /sendJson\(response, 404, \{ ok: false, error: ["']Not found\.["'] \}\)/, paths: ["src/server/webServer.ts"] }
+        { pattern: /url\.pathname\.startsWith\(["']\/api\/["']\)/, paths: ["src/server/http/webRequestHandler.ts"] },
+        { pattern: /sendJson\(response, 404, \{ ok: false, error: ["']Not found\.["'] \}\)/, paths: ["src/server/http/webRequestHandler.ts"] }
       ]
     },
     {

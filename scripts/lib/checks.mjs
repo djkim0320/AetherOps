@@ -28,6 +28,12 @@ export async function canListen(port) {
   });
 }
 
+export async function inspectListenPort(port) {
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) return { available: false, status: "invalid" };
+  const available = await canListen(port);
+  return { available, status: available ? (port === 0 ? "dynamic" : "available") : "occupied" };
+}
+
 export function satisfiesNodeEngine(version, range) {
   const actual = parseVersionParts(version);
   const comparators = [...range.matchAll(/(>=|<=|>|<|=)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/g)];

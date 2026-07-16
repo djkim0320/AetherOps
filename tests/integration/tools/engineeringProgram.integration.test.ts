@@ -1,7 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { ScriptedCfdConfig } from "../../../src/core/tools/engineeringProgramTypes.js";
+import { validateCustomScriptedCfdTemplate } from "../../../src/server/runtime/engineering/engineeringProgramScriptedCfdAdapter.js";
+import { runSu2Case, validateSu2CaseConfig, validateSu2RunArgsTemplate } from "../../../src/server/runtime/engineering/engineeringProgramSu2Adapter.js";
 import {
   CLARK_Y_COORDINATES,
   EngineeringProgramTool,
@@ -15,7 +18,7 @@ import {
 installToolRunnerTestCleanup();
 
 describe("Engineering program adapters", () => {
-  it("inspects OBJ mesh artifacts only from the configured modeling root", async () => {
+  it("rejects mesh inspection before reading or changing the configured modeling root", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-mesh-"));
     try {
       writeFileSync(join(tempRoot, "wing.obj"), ["v 0 0 0", "v 1 0 0", "v 0 1 0", "f 1 2 3", ""].join("\n"), "utf8");
@@ -25,33 +28,35 @@ describe("Engineering program adapters", () => {
         ...input.researchPlan!,
         programRequests: [{ kind: "mesh-inspect", target: "modeling", artifactPath: "wing.obj" }]
       };
-      const result = await new EngineeringProgramTool().run(input, {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          modeling: { ...settings.engineeringTools.modeling, enabled: true, artifactRoot: tempRoot }
-        }
-      });
-
-      expect(result.toolRun.status).toBe("completed");
-      expect(result.artifacts).toHaveLength(1);
-      expect(result.artifacts[0]?.content).toContain('"vertexCount": 3');
-      expect(result.artifacts[0]?.content).toContain('"triangleCount": 1');
+      await expectNativeRuntimeNotReady(
+        new EngineeringProgramTool().run(input, {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
+            enabled: true,
+            modeling: { ...settings.engineeringTools.modeling, enabled: true, artifactRoot: tempRoot }
+          }
+        }),
+        "mesh"
+      );
+      expect(readdirSync(tempRoot)).toEqual(["wing.obj"]);
+      expect(readFileSync(join(tempRoot, "wing.obj"), "utf8")).toBe(["v 0 0 0", "v 1 0 0", "v 0 1 0", "f 1 2 3", ""].join("\n"));
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("runs an XFLR5 adapter only from explicit settings and a CFD run spec", async () => {
+  it("rejects an explicitly configured XFLR5 adapter before its process can run", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-xflr5-run-"));
     try {
       const scriptPath = join(tempRoot, "xflr5-runner.mjs");
+      const markerPath = join(tempRoot, "xflr5-ran.txt");
       writeFileSync(
         scriptPath,
         [
           "import { readFileSync, writeFileSync } from 'node:fs';",
+          `writeFileSync(${JSON.stringify(markerPath)}, 'ran', 'utf8');`,
           "const specIndex = process.argv.indexOf('--spec');",
           "const outputIndex = process.argv.indexOf('--output');",
           "if (specIndex < 0 || outputIndex < 0) process.exit(2);",
@@ -68,43 +73,44 @@ describe("Engineering program adapters", () => {
         ...input.researchPlan!,
         programRequests: [{ kind: "xflr5-analysis-run", target: "xflr5", outputFileName: "xflr5-result.json", cfdRunSpec: cfdRunSpec("xflr5") }]
       };
-      const result = await new EngineeringProgramTool().run(input, {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          xflr5: {
-            ...settings.engineeringTools.xflr5,
+      await expectNativeRuntimeNotReady(
+        new EngineeringProgramTool().run(input, {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
             enabled: true,
-            command: process.execPath,
-            scriptPath,
-            runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"],
-            probeArgs: ["--version"]
+            xflr5: {
+              ...settings.engineeringTools.xflr5,
+              enabled: true,
+              command: process.execPath,
+              scriptPath,
+              runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"],
+              probeArgs: ["--version"]
+            }
           }
-        }
-      });
-
-      expect(result.toolRun.status).toBe("completed");
-      expect(result.artifacts[0]?.content).toContain("xflr5-result.json");
-      expect(result.artifacts[0]?.content).toContain("xflr5");
-      expect(result.evidence[0]?.metadata).toMatchObject({ program: "xflr5", traceabilityKind: "tool_observation" });
+        }),
+        "xflr5"
+      );
+      expect(existsSync(markerPath)).toBe(false);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("runs an SU2-compatible case command only from explicit settings", async () => {
+  it("rejects an explicitly configured SU2 case before its process can run", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-su2-run-"));
     try {
       const caseRoot = join(tempRoot, "case");
       mkdirSync(caseRoot, { recursive: true });
       writeFileSync(join(caseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
       const runnerPath = join(tempRoot, "su2-runner.mjs");
+      const markerPath = join(tempRoot, "su2-ran.txt");
       writeFileSync(
         runnerPath,
         [
           "import { writeFileSync } from 'node:fs';",
+          `writeFileSync(${JSON.stringify(markerPath)}, 'ran', 'utf8');`,
           "const outputIndex = process.argv.indexOf('--output');",
           "const configPath = process.argv[2];",
           "if (!configPath || outputIndex < 0) process.exit(2);",
@@ -120,34 +126,33 @@ describe("Engineering program adapters", () => {
         ...input.researchPlan!,
         programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt", cfdRunSpec: cfdRunSpec("su2") }]
       };
-      const result = await new EngineeringProgramTool().run(input, {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          su2: {
-            ...settings.engineeringTools.su2,
+      await expectNativeRuntimeNotReady(
+        new EngineeringProgramTool().run(input, {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
             enabled: true,
-            command: process.execPath,
-            caseRoot,
-            configFile: "case.cfg",
-            runArgsTemplate: [runnerPath, "{config}", "--output", "{output}"],
-            probeArgs: ["--version"]
+            su2: {
+              ...settings.engineeringTools.su2,
+              enabled: true,
+              command: process.execPath,
+              caseRoot,
+              configFile: "case.cfg",
+              runArgsTemplate: [runnerPath, "{config}", "--output", "{output}"],
+              probeArgs: ["--version"]
+            }
           }
-        }
-      });
-
-      expect(result.toolRun.status).toBe("completed");
-      expect(result.artifacts[0]?.content).toContain("su2-result.txt");
-      expect(result.artifacts[0]?.content).toContain("cl=0.42");
-      expect(result.evidence[0]?.metadata).toMatchObject({ program: "su2", traceabilityKind: "tool_observation" });
+        }),
+        "su2"
+      );
+      expect(existsSync(markerPath)).toBe(false);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("fails closed for SU2 case runs without explicit config file and target", async () => {
+  it("rejects SU2 before config access while still rejecting a missing target at schema validation", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-su2-explicit-contract-"));
     try {
       const caseRoot = join(tempRoot, "case");
@@ -160,28 +165,27 @@ describe("Engineering program adapters", () => {
         ...withoutConfig.researchPlan!,
         programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt", cfdRunSpec: cfdRunSpec("su2") }]
       };
-      const missingConfigResult = await new EngineeringProgramTool().run(withoutConfig, {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          su2: {
-            ...settings.engineeringTools.su2,
+      await expectNativeRuntimeNotReady(
+        new EngineeringProgramTool().run(withoutConfig, {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
             enabled: true,
-            command: process.execPath,
-            caseRoot,
-            configFile: "",
-            runArgsTemplate: ["{config}", "--output", "{output}"],
-            probeArgs: ["--version"]
+            su2: {
+              ...settings.engineeringTools.su2,
+              enabled: true,
+              command: process.execPath,
+              caseRoot,
+              configFile: "",
+              runArgsTemplate: ["{config}", "--output", "{output}"],
+              probeArgs: ["--version"]
+            }
           }
-        }
-      });
-
-      expect(missingConfigResult.toolRun.status).toBe("failed");
-      expect(missingConfigResult.toolRun.error).toContain("config file");
-      expect(missingConfigResult.artifacts).toHaveLength(0);
-      expect(missingConfigResult.evidence).toHaveLength(0);
+        }),
+        "su2"
+      );
+      expect(() => validateSu2CaseConfig(caseRoot, "")).toThrow("SU2 case config file is not configured");
 
       const withoutTarget = runInput(["EngineeringProgramTool"]);
       withoutTarget.project.autonomyPolicy.allowCodeExecution = true;
@@ -213,14 +217,16 @@ describe("Engineering program adapters", () => {
     }
   });
 
-  it("runs an OpenVSP-compatible headless script only from explicit settings", async () => {
+  it("rejects an explicitly configured OpenVSP script before its process can run", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-openvsp-run-"));
     try {
       const scriptPath = join(tempRoot, "openvsp-runner.mjs");
+      const markerPath = join(tempRoot, "openvsp-ran.txt");
       writeFileSync(
         scriptPath,
         [
           "import { readFileSync, writeFileSync } from 'node:fs';",
+          `writeFileSync(${JSON.stringify(markerPath)}, 'ran', 'utf8');`,
           "const specIndex = process.argv.indexOf('--spec');",
           "const outputIndex = process.argv.indexOf('--output');",
           "if (specIndex < 0 || outputIndex < 0) process.exit(2);",
@@ -237,54 +243,60 @@ describe("Engineering program adapters", () => {
         ...input.researchPlan!,
         programRequests: [{ kind: "openvsp-analysis-run", target: "openvsp", outputFileName: "openvsp-result.json", cfdRunSpec: cfdRunSpec("openvsp") }]
       };
-      const result = await new EngineeringProgramTool().run(input, {
-        ...settings,
-        allowCodeExecution: true,
-        engineeringTools: {
-          ...settings.engineeringTools,
-          enabled: true,
-          openVsp: {
-            ...settings.engineeringTools.openVsp,
+      await expectNativeRuntimeNotReady(
+        new EngineeringProgramTool().run(input, {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
             enabled: true,
-            command: process.execPath,
-            scriptPath,
-            runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"],
-            probeArgs: ["--version"]
+            openVsp: {
+              ...settings.engineeringTools.openVsp,
+              enabled: true,
+              command: process.execPath,
+              scriptPath,
+              runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"],
+              probeArgs: ["--version"]
+            }
           }
-        }
-      });
-
-      expect(result.toolRun.status).toBe("completed");
-      expect(result.artifacts[0]?.content).toContain("openvsp-result.json");
-      expect(result.artifacts[0]?.content).toContain("components");
-      expect(result.evidence[0]?.metadata).toMatchObject({ program: "openvsp", traceabilityKind: "tool_observation" });
+        }),
+        "openvsp"
+      );
+      expect(existsSync(markerPath)).toBe(false);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("fails closed for XFOIL polar requests when no XFOIL command is configured", async () => {
-    const input = runInput(["EngineeringProgramTool"]);
-    input.project.autonomyPolicy.allowCodeExecution = true;
-    input.researchPlan = {
-      ...input.researchPlan!,
-      programRequests: [{ kind: "xfoil-polar", target: "xfoil", naca: "2412", reynolds: 1_000_000, alphaStart: -2, alphaEnd: 4, alphaStep: 2 }]
-    };
+  it("rejects an explicitly configured native XFOIL command before its process can run", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-xfoil-native-"));
+    try {
+      const markerPath = join(tempRoot, "xfoil-ran.txt");
+      const commandPath = join(tempRoot, process.platform === "win32" ? "xfoil.cmd" : "xfoil");
+      writeMarkerCommand(commandPath, markerPath);
+      const input = runInput(["EngineeringProgramTool"]);
+      input.project.autonomyPolicy.allowCodeExecution = true;
+      input.researchPlan = {
+        ...input.researchPlan!,
+        programRequests: [{ kind: "xfoil-polar", target: "xfoil", naca: "2412", reynolds: 1_000_000, alphaStart: -2, alphaEnd: 4, alphaStep: 2 }]
+      };
 
-    const result = await new EngineeringProgramTool().run(input, {
-      ...settings,
-      allowCodeExecution: true,
-      engineeringTools: {
-        ...settings.engineeringTools,
-        enabled: true,
-        xfoil: { ...settings.engineeringTools.xfoil, enabled: false, command: "" }
-      }
-    });
-
-    expect(result.toolRun.status).toBe("failed");
-    expect(result.toolRun.error).toContain("embedded XFOIL executable");
-    expect(result.artifacts).toHaveLength(0);
-    expect(result.evidence).toHaveLength(0);
+      await expectNativeRuntimeNotReady(
+        new EngineeringProgramTool().run(input, {
+          ...settings,
+          allowCodeExecution: true,
+          engineeringTools: {
+            ...settings.engineeringTools,
+            enabled: true,
+            xfoil: { ...settings.engineeringTools.xfoil, enabled: true, command: commandPath }
+          }
+        }),
+        "xfoil"
+      );
+      expect(existsSync(markerPath)).toBe(false);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("runs bundled WebXFOIL on Clark Y coordinates without a local xfoil executable", async () => {
@@ -357,20 +369,22 @@ describe("Engineering program adapters", () => {
     expect(result.evidence[0]?.metadata).toMatchObject({ program: "xfoil-wasm", traceabilityKind: "tool_observation", sourceUrl: clarkYUrl });
   });
 
-  it("fails closed for SU2 case runs when the args template omits the config placeholder", async () => {
+  it("rejects an invalid SU2 command contract at the native runtime receipt gate without execution", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-su2-fail-"));
     try {
       const caseRoot = join(tempRoot, "case");
       mkdirSync(caseRoot, { recursive: true });
       writeFileSync(join(caseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
+      const markerPath = join(tempRoot, "su2-invalid-contract-ran.txt");
+      const commandPath = join(tempRoot, process.platform === "win32" ? "su2.cmd" : "su2");
+      writeMarkerCommand(commandPath, markerPath);
       const input = runInput(["EngineeringProgramTool"]);
       input.project.autonomyPolicy.allowCodeExecution = true;
       input.researchPlan = {
         ...input.researchPlan!,
         programRequests: [{ kind: "su2-case-run", target: "su2", outputFileName: "su2-result.txt", cfdRunSpec: cfdRunSpec("su2") }]
       };
-
-      const result = await new EngineeringProgramTool().run(input, {
+      const executionSettings = {
         ...settings,
         allowCodeExecution: true,
         engineeringTools: {
@@ -379,37 +393,37 @@ describe("Engineering program adapters", () => {
           su2: {
             ...settings.engineeringTools.su2,
             enabled: true,
-            command: process.execPath,
+            command: commandPath,
             caseRoot,
             configFile: "case.cfg",
             runArgsTemplate: ["--output", "{output}"],
             probeArgs: ["--version"]
           }
         }
-      });
+      };
 
-      expect(result.toolRun.status).toBe("failed");
-      expect(result.toolRun.error).toContain("{config}");
-      expect(result.artifacts).toHaveLength(0);
-      expect(result.evidence).toHaveLength(0);
+      await expectNativeRuntimeNotReady(new EngineeringProgramTool().run(input, executionSettings), "su2");
+      expect(existsSync(markerPath)).toBe(false);
+      await expect(runSu2Case(input.researchPlan.programRequests![0]!, executionSettings)).rejects.toThrow("must include {config}");
+      expect(existsSync(markerPath)).toBe(false);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("fails closed for OpenVSP analysis runs when the args template omits the script placeholder", async () => {
+  it("rejects an invalid OpenVSP command contract at the native runtime receipt gate without execution", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-openvsp-fail-"));
     try {
       const scriptPath = join(tempRoot, "openvsp-runner.mjs");
-      writeFileSync(scriptPath, "console.log('should not run without explicit script placeholder');\n", "utf8");
+      const markerPath = join(tempRoot, "openvsp-invalid-contract-ran.txt");
+      writeFileSync(scriptPath, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(markerPath)}, "ran", "utf8");\n`, "utf8");
       const input = runInput(["EngineeringProgramTool"]);
       input.project.autonomyPolicy.allowCodeExecution = true;
       input.researchPlan = {
         ...input.researchPlan!,
         programRequests: [{ kind: "openvsp-analysis-run", target: "openvsp", outputFileName: "openvsp-result.json", cfdRunSpec: cfdRunSpec("openvsp") }]
       };
-
-      const result = await new EngineeringProgramTool().run(input, {
+      const executionSettings = {
         ...settings,
         allowCodeExecution: true,
         engineeringTools: {
@@ -424,14 +438,86 @@ describe("Engineering program adapters", () => {
             probeArgs: ["--version"]
           }
         }
-      });
+      };
 
-      expect(result.toolRun.status).toBe("failed");
-      expect(result.toolRun.error).toContain("{script}");
-      expect(result.artifacts).toHaveLength(0);
-      expect(result.evidence).toHaveLength(0);
+      await expectNativeRuntimeNotReady(new EngineeringProgramTool().run(input, executionSettings), "openvsp");
+      expect(existsSync(markerPath)).toBe(false);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    { name: "SU2 empty template", validate: () => validateSu2RunArgsTemplate([]), expected: /not configured/ },
+    { name: "SU2 missing config", validate: () => validateSu2RunArgsTemplate(["--output", "{output}"]), expected: /must include \{config\}/ },
+    {
+      name: "OpenVSP empty template",
+      validate: () => validateCustomScriptedCfdTemplate(scriptedTemplate("openvsp", [])),
+      expected: /not configured/
+    },
+    {
+      name: "OpenVSP missing script",
+      validate: () => validateCustomScriptedCfdTemplate(scriptedTemplate("openvsp", ["--spec", "{spec}"])),
+      expected: /must include \{script\}/
+    },
+    {
+      name: "OpenVSP missing spec",
+      validate: () => validateCustomScriptedCfdTemplate(scriptedTemplate("openvsp", ["--script", "{script}"])),
+      expected: /must include \{spec\}/
+    },
+    {
+      name: "XFLR5 empty template",
+      validate: () => validateCustomScriptedCfdTemplate(scriptedTemplate("xflr5", [])),
+      expected: /not configured/
+    },
+    {
+      name: "XFLR5 missing script",
+      validate: () => validateCustomScriptedCfdTemplate(scriptedTemplate("xflr5", ["--spec", "{spec}"])),
+      expected: /must include \{script\}/
+    },
+    {
+      name: "XFLR5 missing spec",
+      validate: () => validateCustomScriptedCfdTemplate(scriptedTemplate("xflr5", ["--script", "{script}"])),
+      expected: /must include \{spec\}/
+    }
+  ])("preserves $name validation independently of the runtime receipt gate", ({ validate, expected }) => {
+    expect(validate).toThrow(expected);
+  });
 });
+
+async function expectNativeRuntimeNotReady(operation: Promise<unknown>, target: "mesh" | "xflr5" | "su2" | "openvsp" | "xfoil"): Promise<void> {
+  await expect(operation).rejects.toMatchObject({
+    name: "RuntimeRequirementError",
+    step: "EXECUTE_TOOLS",
+    message: expect.stringMatching(new RegExp(`${target}.*NOT_READY`, "i")),
+    unmetRequirements: [
+      expect.objectContaining({
+        key: `engineering.runtimeReceipt.${target}`,
+        isSatisfied: false,
+        message: expect.stringMatching(/NOT_READY/)
+      })
+    ]
+  });
+}
+
+function writeMarkerCommand(path: string, marker: string): void {
+  if (process.platform === "win32") {
+    writeFileSync(path, `@echo off\r\n> "${marker}" echo ran\r\n`, "utf8");
+    return;
+  }
+  writeFileSync(path, `#!/bin/sh\nprintf ran > '${marker.replace(/'/g, `'\\''`)}'\n`, "utf8");
+  chmodSync(path, 0o700);
+}
+
+function scriptedTemplate(target: "openvsp" | "xflr5", runArgsTemplate: string[]): ScriptedCfdConfig {
+  return {
+    target,
+    label: target === "openvsp" ? "OpenVSP" : "XFLR5",
+    command: "not-executed",
+    scriptPath: "not-read.mjs",
+    workingDirectory: "",
+    probeArgs: [],
+    runArgsTemplate,
+    timeoutMs: 1_000
+  };
+}

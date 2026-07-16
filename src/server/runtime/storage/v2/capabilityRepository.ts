@@ -6,6 +6,10 @@ import { boolInt, json, normalizeLimit, requiredCapabilityAudit, rowToCapability
 
 export class CapabilityAuditRepository {
   constructor(private readonly db: DatabaseSync) {}
+  get(id: string): StorageCapabilityAudit | undefined {
+    const row = this.db.prepare("select * from capability_audits where id=?").get(id) as Row | undefined;
+    return row ? rowToCapabilityAudit(row) : undefined;
+  }
   record(value: StorageCapabilityAudit): StorageCapabilityAudit {
     assertCapabilityAuditBoundary(value);
     if (value.jobId) {
@@ -66,8 +70,11 @@ function assertCapabilityAuditBoundary(value: StorageCapabilityAudit): void {
   if (!data || typeof data !== "object" || Array.isArray(data) || Object.getPrototypeOf(data) !== Object.prototype) {
     throw new Error("Capability audit metadata is invalid.");
   }
-  if (Object.keys(data).some((key) => !["jobKind", "blockedBy"].includes(key)) || !JOB_KINDS.includes(data.jobKind)) {
+  if (Object.keys(data).some((key) => !["jobKind", "blockedBy", "projectRevision"].includes(key)) || !JOB_KINDS.includes(data.jobKind)) {
     throw new Error("Capability audit metadata contains an unsupported value.");
+  }
+  if (data.projectRevision !== undefined && (!Number.isSafeInteger(data.projectRevision) || data.projectRevision < 0)) {
+    throw new Error("Capability audit project revision is invalid.");
   }
   const expectedBlockedBy = allowed ? undefined : !value.appAllowed ? "app" : !value.projectAllowed ? "project" : "job";
   if (data.blockedBy !== expectedBlockedBy) throw new Error("Capability audit blocker is inconsistent.");

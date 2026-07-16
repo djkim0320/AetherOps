@@ -4,28 +4,12 @@ import { DurableResumeValidationError } from "../../composition/durableResumeVal
 import { DurableRuntimeAdmissionError } from "../../composition/durableRuntimeAdmission.js";
 import { defaultSettings } from "../../runtime/storage/settingsStore.js";
 import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE, IdempotencyConflictError } from "../../runtime/storage/v2/jobErrors.js";
+import { StorageImmutableConflictError, StorageOwnershipConflictError, StorageRevisionConflictError } from "../../runtime/storage/v2/runStateErrors.js";
 import type { RpcHandlerContext } from "./context.js";
 import { handleRpcV2, RpcV2Error, RpcValidationError } from "./rpcRouter.js";
+import { job, researchEnqueueContext } from "./rpcRouterTestSupport.js";
 
 describe("RPC v2 error mapping", () => {
-  it("synchronously projects a newly created legacy project into durable storage", async () => {
-    const context = researchEnqueueContext(vi.fn());
-    const snapshot = await context.orchestrator.getSnapshot("project-1");
-    context.orchestrator.createProject = vi.fn().mockResolvedValue(snapshot);
-    context.jobs.syncProject = vi.fn().mockResolvedValue(undefined);
-
-    await handleRpcV2(
-      {
-        requestId: "request-create-projection",
-        method: "projects.create",
-        params: { input: { goal: "goal", topic: "topic", scope: "scope", budget: "budget" } }
-      },
-      context
-    );
-
-    expect(context.jobs.syncProject).toHaveBeenCalledWith(snapshot.project);
-  });
-
   it.each([
     new Error("token=secret-provider-response at C:\\private\\file.txt"),
     "password=secret-string",
@@ -56,6 +40,21 @@ describe("RPC v2 error mapping", () => {
       message: "The selected value is invalid.",
       details: { field: "model" }
     });
+  });
+
+  it.each([
+    { failure: new StorageRevisionConflictError(1, 2), status: 409, code: "CONFLICT" },
+    { failure: new StorageImmutableConflictError(), status: 409, code: "CONFLICT" },
+    { failure: new StorageOwnershipConflictError(), status: 404, code: "NOT_FOUND" }
+  ])("maps $failure.name to the public $code response", async ({ failure, status, code }) => {
+    const context = contextWithSettingsFailure(failure);
+
+    const error = await handleRpcV2({ requestId: `request-${failure.name}`, method: "settings.get", params: {} }, context).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ status, code });
+    if (failure instanceof StorageOwnershipConflictError) {
+      expect(error).toMatchObject({ message: "The requested resource was not found." });
+    }
   });
 
   it("maps a draining durable runtime to an explicit NOT_READY response", async () => {
@@ -107,6 +106,7 @@ describe("RPC v2 error mapping", () => {
           projectId: "project-1",
           interruptedJobId: "job-interrupted",
           checkpointId: "checkpoint-1",
+          expectedProjectRevision: 1,
           idempotencyKey: `resume-${resumeCode}`,
           requestedCapabilities: { agent: true, engineering: false, search: false },
           toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" } }
@@ -119,6 +119,32 @@ describe("RPC v2 error mapping", () => {
     expect(error).toMatchObject({ status, code: resumeCode, message: "The durable resume source cannot be used.", details: { resumeCode } });
   });
 
+  it("rejects a resume whose expected project revision is stale", async () => {
+    const enqueue = vi.fn();
+    const context = researchEnqueueContext(enqueue);
+    context.jobs.getProjectRevision = vi.fn().mockResolvedValue(2);
+
+    const error = await handleRpcV2(
+      {
+        requestId: "request-resume-stale-project",
+        method: "loop.resume",
+        params: {
+          projectId: "project-1",
+          interruptedJobId: "job-interrupted",
+          checkpointId: "checkpoint-1",
+          expectedProjectRevision: 1,
+          idempotencyKey: "resume-stale-project",
+          requestedCapabilities: { agent: true, engineering: false, search: false },
+          toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" } }
+        }
+      },
+      context
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ status: 409, code: "CONFLICT" });
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it("passes the project projection and job-bound capability audits into one atomic durable enqueue", async () => {
     const enqueue = vi.fn().mockResolvedValue({
       jobId: "job-start",
@@ -129,6 +155,7 @@ describe("RPC v2 error mapping", () => {
       projectRevision: 1
     });
     const context = researchEnqueueContext(enqueue);
+    context.jobs.getProjectRevision = vi.fn().mockResolvedValue(7);
 
     await handleRpcV2(
       {
@@ -148,7 +175,9 @@ describe("RPC v2 error mapping", () => {
       expect.objectContaining({
         jobId: expect.any(String),
         projectId: "project-1",
+        projectRevision: 7,
         project: expect.objectContaining({ id: "project-1" }),
+        payload: expect.objectContaining({ engineeringBaseline: null }),
         capabilityAudits: expect.arrayContaining([
           expect.objectContaining({ projectId: "project-1", jobId: expect.any(String), capability: "agent" }),
           expect.objectContaining({ projectId: "project-1", jobId: expect.any(String), capability: "engineering" }),
@@ -159,6 +188,56 @@ describe("RPC v2 error mapping", () => {
     const queued = enqueue.mock.calls[0]![0] as { jobId: string; capabilityAudits: Array<{ jobId?: string }> };
     expect(queued.capabilityAudits.every((audit) => audit.jobId === queued.jobId)).toBe(true);
     expect(context.jobs.recordCapabilityAudits).not.toHaveBeenCalled();
+  });
+
+  it("freezes the active engineering baseline identity and hash into a research enqueue", async () => {
+    const enqueue = vi.fn().mockResolvedValue({
+      jobId: "job-baseline-bound",
+      projectId: "project-1",
+      kind: "research_loop",
+      status: "queued",
+      acceptedAt: "2026-07-14T00:00:00.000Z",
+      projectRevision: 1
+    });
+    const context = researchEnqueueContext(enqueue);
+    vi.mocked(context.jobs.engineering.activeBaseline).mockResolvedValue({
+      id: "baseline-active",
+      projectId: "project-1",
+      revision: 7,
+      status: "active",
+      unitConventionId: "si-v1",
+      coordinateConventionId: "body-axis-v1",
+      solverVersions: {},
+      materialRevisionIds: [],
+      sourceRevisionIds: ["source-1"],
+      equationVersionIds: [],
+      contentHash: "a".repeat(64),
+      createdAt: "2026-07-14T00:00:00.000Z",
+      createdBy: "test",
+      provenance: [{ id: "source-1" }]
+    });
+
+    await handleRpcV2(
+      {
+        requestId: "request-baseline-bound",
+        method: "loop.start",
+        params: {
+          projectId: "project-1",
+          idempotencyKey: "baseline-bound",
+          requestedCapabilities: { agent: true, engineering: false, search: false },
+          toolPolicy: { allowCodexCli: false, sourceAccess: { mode: "offline" } }
+        }
+      },
+      context
+    );
+
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          engineeringBaseline: { id: "baseline-active", revision: 7, contentHash: "a".repeat(64) }
+        })
+      })
+    );
   });
 
   it("records a first-request denial with the project projection and preserves CAPABILITY_DENIED", async () => {
@@ -289,6 +368,7 @@ describe("RPC v2 error mapping", () => {
     expect(enqueue).toHaveBeenCalledOnce();
     expect(getSnapshot).toHaveBeenCalledOnce();
     expect(getRuntimeSettings).toHaveBeenCalledOnce();
+    expect(context.jobs.getProjectRevision).toHaveBeenCalledOnce();
     expect(findIdempotentReceipt).toHaveBeenCalledTimes(3);
     expect(mismatch).toMatchObject({ status: 409, code: "CONFLICT", message: IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE });
   });
@@ -299,6 +379,7 @@ describe("RPC v2 error mapping", () => {
     const context = {
       jobs: {
         get: vi.fn().mockResolvedValue(job("project-other", 4)),
+        getProjectRevision: vi.fn().mockResolvedValue(4),
         requestPause
       },
       orchestrator: { pause }
@@ -310,7 +391,8 @@ describe("RPC v2 error mapping", () => {
     expect(crossProject).toMatchObject({ code: "NOT_FOUND" });
     expect(requestPause).not.toHaveBeenCalled();
 
-    context.jobs.get = vi.fn().mockResolvedValue(job("project-1", 5));
+    context.jobs.get = vi.fn().mockResolvedValue(job("project-1", 4));
+    context.jobs.getProjectRevision = vi.fn().mockResolvedValue(5);
     const stale = await handleRpcV2(
       { requestId: "request-control-revision", method: "loop.pause", params: { projectId: "project-1", jobId: "job-1", expectedProjectRevision: 4 } },
       context
@@ -323,7 +405,7 @@ describe("RPC v2 error mapping", () => {
     const requestPause = vi.fn().mockResolvedValue({ ...job("project-1", 4), status: "pause_requested" });
     const pause = vi.fn().mockResolvedValue(undefined);
     const context = {
-      jobs: { get: vi.fn().mockResolvedValue(job("project-1", 4)), requestPause },
+      jobs: { get: vi.fn().mockResolvedValue(job("project-1", 4)), getProjectRevision: vi.fn().mockResolvedValue(4), requestPause },
       orchestrator: { pause }
     } as unknown as RpcHandlerContext;
 
@@ -355,19 +437,24 @@ describe("RPC v2 error mapping", () => {
       checkpoint: { id: "checkpoint-newest", step: "EXECUTE_TOOLS" }
     });
     const context = researchEnqueueContext(vi.fn());
-    context.jobs = { latestProjectExecution, list } as unknown as RpcHandlerContext["jobs"];
+    context.jobs = { latestProjectExecution, list, getProjectRevision: vi.fn().mockResolvedValue(23) } as unknown as RpcHandlerContext["jobs"];
+    vi.mocked(context.projectMutations.readSnapshot).mockImplementation(async (projectId) => ({
+      snapshot: await context.orchestrator.getSnapshot(projectId),
+      projectRevision: 23
+    }));
 
     const response = await handleRpcV2({ requestId: "request-latest-snapshot", method: "snapshots.get", params: { projectId: "project-1" } }, context);
 
     expect(response).toMatchObject({
       result: {
         projectId: "project-1",
+        revision: 23,
         execution: {
           status: "paused",
           activeJobId: "job-newest",
           lastCheckpointId: "checkpoint-newest",
           currentStep: "EXECUTE_TOOLS",
-          revision: 17
+          revision: 23
         }
       }
     });
@@ -425,54 +512,6 @@ function contextWithSettingsFailure(failure: unknown): RpcHandlerContext {
   return {
     settingsStore: { getRuntimeSettings: vi.fn().mockRejectedValue(failure) }
   } as unknown as RpcHandlerContext;
-}
-
-function researchEnqueueContext(
-  enqueue: ReturnType<typeof vi.fn>,
-  findIdempotentReceipt: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined)
-): RpcHandlerContext {
-  return {
-    orchestrator: {
-      getSnapshot: vi.fn().mockResolvedValue({
-        project: {
-          id: "project-1",
-          goal: "Verify fail-closed execution.",
-          topic: "Offline ownership",
-          scope: "Local test data only",
-          budget: "One bounded run",
-          currentStep: "PLAN_RESEARCH",
-          status: "idle",
-          projectRoot: ".tmp/projects/project-1",
-          createdAt: "2026-07-14T00:00:00.000Z",
-          updatedAt: "2026-07-14T00:00:00.000Z",
-          autonomyPolicy: { allowAgent: true, allowCodeExecution: false, allowExternalSearch: false }
-        },
-        iterations: [],
-        sessions: [],
-        researchInputs: [],
-        specifications: [],
-        toolRuns: [],
-        evidence: [],
-        artifacts: []
-      })
-    },
-    settingsStore: { getRuntimeSettings: vi.fn().mockResolvedValue(defaultSettings) },
-    jobs: { enqueue, findIdempotentReceipt, recordCapabilityAudits: vi.fn().mockResolvedValue(undefined) }
-  } as unknown as RpcHandlerContext;
-}
-
-function job(projectId: string, projectRevision: number) {
-  return {
-    id: "job-1",
-    projectId,
-    kind: "research_loop" as const,
-    status: "running" as const,
-    projectRevision,
-    currentStep: "PLAN_RESEARCH" as const,
-    idempotencyKey: "job-key",
-    createdAt: "2026-07-14T00:00:00.000Z",
-    updatedAt: "2026-07-14T00:00:00.000Z"
-  };
 }
 
 function reliabilityDiagnostics() {

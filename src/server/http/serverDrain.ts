@@ -1,4 +1,5 @@
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
+export { closeResourcesInOrder, rethrowAfterStartupCleanup } from "../composition/runtimeResourceCleanup.js";
 
 export type ServerLifecycleState = "RUNNING" | "DRAINING" | "CLOSING_RESOURCES" | "CLOSED";
 
@@ -102,22 +103,5 @@ export class ServerDrainController {
       timeout.unref();
       this.activeWaiter = () => finish(true);
     });
-  }
-}
-
-export async function closeResourcesInOrder(resources: Array<{ name: string; close: () => void | Promise<void> }>): Promise<void> {
-  const failures: Array<{ name: string; error: unknown }> = [];
-  for (const resource of resources) {
-    try {
-      await resource.close();
-    } catch (error) {
-      failures.push({ name: resource.name, error });
-    }
-  }
-  if (failures.length) {
-    throw new AggregateError(
-      failures.map((failure) => failure.error),
-      `Failed to close server resources: ${failures.map((failure) => failure.name).join(", ")}`
-    );
   }
 }

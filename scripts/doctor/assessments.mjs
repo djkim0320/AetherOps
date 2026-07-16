@@ -4,39 +4,71 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { codexSettings, hasEncryptedSecret } from "./settings.mjs";
+import { hasEncryptedSecret, normalizedCodexSettings } from "./settings.mjs";
 
-export function assessCodex(settings) {
-  const codex = codexSettings(settings);
-  const source = codex.source ?? "codex-oauth";
-  const hasApiSecret = Boolean(codex.apiKey || codex.apiKeyConfigured || settings.encryptedLlmKey);
-  const valid = source === "codex-oauth" && !hasApiSecret;
-  const configured = Boolean(codex.model);
+export function assessCodex(settings, environment = {}) {
+  const codex = normalizedCodexSettings(settings);
+  const root = settings && typeof settings === "object" && !Array.isArray(settings) ? settings : {};
+  const source = codex.source === undefined ? "codex-oauth" : codex.source;
+  const hasApiSecret = Boolean(codex.apiKey || codex.apiKeyConfigured || root.encryptedLlmKey);
+  const orchestratorValid = codex.structurallyValid && source === "codex-oauth" && !hasApiSecret;
+  const configured = codex.configured;
   const catalog = SUPPORTED_CODEX_MODELS.has(codex.model) ? "supported" : "unsupported";
   const effortSupported = isSupportedEffort(codex.model, codex.reasoningEffort);
-  const authenticated = hasCodexOAuth(resolve(process.env.CODEX_HOME ?? join(homedir(), ".codex")));
-  const sandbox = assessCodexSandbox(process.cwd());
+  const timeoutSupported = isSupportedTimeout(codex.timeoutMs);
+  const taskTimeoutSupported = isSupportedTimeout(codex.taskTimeoutMs);
+  const settingsValid = codex.structurallyValid && catalog === "supported" && effortSupported && timeoutSupported && taskTimeoutSupported;
+  const authenticated = environment.authenticated ?? hasCodexOAuth(resolve(process.env.CODEX_HOME ?? join(homedir(), ".codex")));
+  const sandbox = environment.sandbox ?? assessCodexSandbox(process.cwd());
   const cliAvailable = sandbox.cliAvailable;
-  const status = !valid
-    ? "invalid_non_codex_orchestrator"
-    : !configured
-      ? "missing_model"
+  const access = normalizeAccess(environment.access);
+  const locallyReady =
+    orchestratorValid &&
+    catalog === "supported" &&
+    effortSupported &&
+    timeoutSupported &&
+    taskTimeoutSupported &&
+    authenticated &&
+    cliAvailable &&
+    sandbox.ready;
+  const status = !codex.structurallyValid
+    ? "invalid_codex_settings"
+    : !orchestratorValid
+      ? "invalid_non_codex_orchestrator"
       : catalog === "unsupported"
         ? "unsupported_model"
         : !effortSupported
           ? "unsupported_reasoning_effort"
-          : !authenticated
-            ? "unauthenticated"
-            : !cliAvailable
-              ? "cli_unavailable"
-              : !sandbox.ready
-                ? sandbox.status
-                : "access_not_checked";
+          : !timeoutSupported
+            ? "unsupported_timeout"
+            : !taskTimeoutSupported
+              ? "unsupported_task_timeout"
+              : !authenticated
+                ? "unauthenticated"
+                : !cliAvailable
+                  ? "cli_unavailable"
+                  : !sandbox.ready
+                    ? sandbox.status
+                    : access === "unavailable"
+                      ? "access_unavailable"
+                      : access === "available"
+                        ? "available"
+                        : "access_not_checked";
   return {
-    ready: valid && configured && catalog === "supported" && effortSupported && authenticated && cliAvailable && sandbox.ready,
+    ready: locallyReady,
+    available: locallyReady && access === "available",
     status,
+    configured,
+    configurationSource: codex.configurationSource,
+    settingsValid,
+    orchestratorValid,
+    model: codex.model,
+    reasoningEffort: codex.reasoningEffort,
+    timeoutMs: codex.timeoutMs,
+    taskTimeoutMs: codex.taskTimeoutMs,
+    defaultsApplied: codex.defaultsApplied,
     catalog,
-    access: "not_checked",
+    access,
     authenticated,
     cliAvailable,
     sandboxReady: sandbox.ready,
@@ -95,6 +127,14 @@ export function assessCodexSandbox(appRoot, platform = process.platform) {
 function isSupportedEffort(model, effort) {
   if (!SUPPORTED_CODEX_EFFORTS.has(effort)) return false;
   return effort !== "max" || (typeof model === "string" && model.startsWith("gpt-5.6"));
+}
+
+function isSupportedTimeout(value) {
+  return Number.isInteger(value) && value >= 1_000 && value <= 900_000;
+}
+
+function normalizeAccess(value) {
+  return value === "available" || value === "unavailable" ? value : "not_checked";
 }
 
 export function assessEmbedding(settings) {

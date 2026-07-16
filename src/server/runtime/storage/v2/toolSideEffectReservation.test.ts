@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -19,6 +19,7 @@ import {
 import { SideEffectReservationConflictError, type StorageToolSideEffectReservation } from "./toolSideEffectReservationTypes.js";
 import type { StorageJob, StorageLeaseFence } from "./types.js";
 import type { StorageToolAttempt, StorageToolDecision } from "./traceTypes.js";
+import { storageTestProjectRevision } from "./storageWorkerTestSupport.js";
 
 const roots: string[] = [];
 
@@ -95,7 +96,13 @@ describe("durable tool side-effect reservations", () => {
 
       const failed = runtime.handle({
         name: "job.transitionTerminal",
-        input: { fence: first.fence, status: "failed", projectRevision: 1, reason: "Solver response was lost.", occurredAt: later(fixture.now, 1_000) }
+        input: {
+          fence: first.fence,
+          status: "failed",
+          projectRevision: storageTestProjectRevision(runtime, "project-effect"),
+          reason: "Solver response was lost.",
+          occurredAt: later(fixture.now, 1_000)
+        }
       }) as StorageTerminalTransitionResult;
       expect(failed.events.map((event) => event.type)).toEqual(["tool.run.changed", "run.status.changed"]);
       expect(runtime.handle({ name: "trace.attempt.get", attemptId: firstTrace.attempt.id })).toMatchObject({
@@ -120,7 +127,7 @@ describe("durable tool side-effect reservations", () => {
         input: {
           fence: second.fence,
           status: "failed",
-          projectRevision: 1,
+          projectRevision: storageTestProjectRevision(runtime, "project-effect"),
           reason: "Prior external side effect is unresolved.",
           occurredAt: later(fixture.now, 3_000)
         }
@@ -179,8 +186,22 @@ function runtimeFixture(): { runtime: StorageWorkerRuntime; now: string; advance
   migrateStorageV2Schema(db);
   db.close();
   let clockMs = Date.now();
+  const runtime = new StorageWorkerRuntime({ appDbPath: path, vectorDbPath: path, ontologyDbPath: path, dataRoot: root }, { leaseClock: () => clockMs });
+  const projectRoot = join(root, "project-effect");
+  mkdirSync(projectRoot);
+  runtime.handle({
+    name: "project.upsert",
+    project: {
+      id: "project-effect",
+      projectRoot,
+      topic: "Tool side effect",
+      status: "active",
+      createdAt: new Date(clockMs).toISOString(),
+      updatedAt: new Date(clockMs).toISOString()
+    }
+  });
   return {
-    runtime: new StorageWorkerRuntime({ appDbPath: path, vectorDbPath: path, ontologyDbPath: path, dataRoot: root }, { leaseClock: () => clockMs }),
+    runtime,
     now: new Date(clockMs).toISOString(),
     advance(milliseconds) {
       clockMs += milliseconds;
@@ -201,6 +222,7 @@ function enqueueAndClaim(
       id: jobId,
       projectId: "project-effect",
       operation: "engineering_run",
+      expectedProjectRevision: storageTestProjectRevision(runtime, "project-effect"),
       idempotencyKey,
       requestHash: hash(idempotencyKey),
       payload: { projectRevision: 1 },

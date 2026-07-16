@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { normalizeForStableJson, semanticTextHash, sha256Hex, stableJsonHash, stableStringify } from "./hash.mjs";
-
 const v2SchemaSourceUrl = new URL("../server/runtime/storage/v2/schema.ts", import.meta.url);
 const traceSchemaSourceUrl = new URL("../server/runtime/storage/v2/traceSchema.ts", import.meta.url);
 const jobSchemaSourceUrl = new URL("../server/runtime/storage/v2/jobSchema.ts", import.meta.url);
@@ -12,6 +11,9 @@ const terminalReceiptSchemaSourceUrl = new URL("../server/runtime/storage/v2/ter
 const terminalAttestationSchemaSourceUrl = new URL("../server/runtime/storage/v2/terminalAttestationSchema.ts", import.meta.url);
 const ownershipSchemaSourceUrl = new URL("../server/runtime/storage/v2/ownershipSchema.ts", import.meta.url);
 const toolSideEffectSchemaSourceUrl = new URL("../server/runtime/storage/v2/toolSideEffectReservationSchema.ts", import.meta.url);
+const engineeringBaselineSchemaSourceUrl = new URL("../server/runtime/storage/v2/engineeringBaselineSchema.ts", import.meta.url);
+const projectRevisionSchemaSourceUrl = new URL("../server/runtime/storage/v2/projectRevisionSchema.ts", import.meta.url);
+const projectMutationSchemaSourceUrl = new URL("../server/runtime/storage/v2/projectMutationSchema.ts", import.meta.url);
 const canonicalEntityTables = new Set([
   "projects_v2",
   "records_v2",
@@ -146,10 +148,22 @@ export function createV2Database(dbPath, metadata = {}) {
 
 export function loadV2SchemaSql() {
   const base = loadV2BaseSchemaSql();
-  const { trace, jobFencing, runState, runStateBootstrap, terminalReceipt, terminalAttestation, ownership, toolSideEffects } = loadV2OperationalMigrationSql();
+  const {
+    trace,
+    jobFencing,
+    runState,
+    runStateBootstrap,
+    terminalReceipt,
+    terminalAttestation,
+    ownership,
+    toolSideEffects,
+    engineeringBaselines,
+    projectRevisions,
+    projectMutations
+  } = loadV2OperationalMigrationSql();
   const sideEffectIndex =
     "create index if not exists idx_tool_attempts_side_effect_key on tool_attempts(project_id, side_effect_key) where side_effect_key is not null;";
-  return `${base}\n${trace}\n${jobFencing}\n${runState}\n${runStateBootstrap}\n${terminalReceipt}\n${terminalAttestation}\n${ownership}\n${toolSideEffects}\n${sideEffectIndex}`;
+  return `${base}\n${trace}\n${jobFencing}\n${runState}\n${runStateBootstrap}\n${terminalReceipt}\n${terminalAttestation}\n${ownership}\n${toolSideEffects}\n${engineeringBaselines}\n${projectRevisions}\n${projectMutations}\n${sideEffectIndex}`;
 }
 
 export function loadV2BaseSchemaSql() {
@@ -176,7 +190,22 @@ export function loadV2OperationalMigrationSql() {
   const terminalAttestation = extractTemplateSql(terminalAttestationSchemaSourceUrl, "function installStorageTerminalAttestationV9Objects");
   const ownership = extractTemplateSql(ownershipSchemaSourceUrl, "function installStorageOwnershipV10Objects");
   const toolSideEffects = extractTemplateSql(toolSideEffectSchemaSourceUrl, "function installStorageToolSideEffectV11Objects");
-  return { trace, jobFencing, runState, runStateBootstrap, terminalReceipt, terminalAttestation, ownership, toolSideEffects };
+  const engineeringBaselines = extractTemplateSql(engineeringBaselineSchemaSourceUrl, "function installStorageEngineeringBaselineV12Objects");
+  const projectRevisions = extractTemplateSql(projectRevisionSchemaSourceUrl, "function installStorageProjectRevisionV13Objects");
+  const projectMutations = extractTemplateSql(projectMutationSchemaSourceUrl, "function installStorageProjectMutationV14Objects");
+  return {
+    trace,
+    jobFencing,
+    runState,
+    runStateBootstrap,
+    terminalReceipt,
+    terminalAttestation,
+    ownership,
+    toolSideEffects,
+    engineeringBaselines,
+    projectRevisions,
+    projectMutations
+  };
 }
 
 export function loadV2FtsSql() {

@@ -17,6 +17,7 @@ describe("CodexCliTool", () => {
           }
         ],
         trace: {
+          cliVersion: "0.144.1",
           model: "gpt-5.6-sol",
           reasoningEffort: "high",
           sandboxProfile: "aetherops-codex-workspace-v1" as const,

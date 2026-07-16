@@ -37,9 +37,39 @@ import type {
   ValidationResult
 } from "../../../core/shared/types.js";
 import { OPEN_CODE_RUNS_TABLE, SqliteStoreBase, type JsonRecord } from "./sqliteStoreBase.js";
+import { applyLegacyProjectMutation, listLegacyProjectMutationReceipts, readLegacyProjectMutationReceipt } from "./legacyProjectMutationStore.js";
+import { assertLegacyProjectMutationSchemaReady } from "./legacyProjectMutationSchema.js";
+import type {
+  LegacyProjectMutationApplyResult,
+  LegacyProjectMutationReceipt,
+  LegacyProjectMutationReceiptQuery,
+  LegacyProjectMutationRequest
+} from "./legacyProjectMutationTypes.js";
 import { groupByProject, normalizeRecord, sanitizeProject, sanitizeSourceForSqlite, searchScopedItems } from "./sqliteStoreSupport.js";
 
 export class SqliteResearchStore extends SqliteStoreBase implements ResearchStore {
+  private legacyProjectMutationSchemaVersion: number | undefined;
+
+  async applyProjectMutation(request: LegacyProjectMutationRequest): Promise<LegacyProjectMutationApplyResult> {
+    this.assertLegacyProjectMutationsReady();
+    return applyLegacyProjectMutation(this.db, request, (projectId) => this.snapshotSync(projectId));
+  }
+  async getProjectMutationReceipt(operationId: string): Promise<LegacyProjectMutationReceipt | undefined> {
+    this.assertLegacyProjectMutationsReady();
+    return readLegacyProjectMutationReceipt(this.db, operationId);
+  }
+  async listProjectMutationReceipts(query?: LegacyProjectMutationReceiptQuery): Promise<LegacyProjectMutationReceipt[]> {
+    this.assertLegacyProjectMutationsReady();
+    return listLegacyProjectMutationReceipts(this.db, query);
+  }
+
+  private assertLegacyProjectMutationsReady(): void {
+    const current = Number((this.db.prepare("pragma schema_version").get() as { schema_version?: unknown }).schema_version);
+    if (this.legacyProjectMutationSchemaVersion === current) return;
+    assertLegacyProjectMutationSchemaReady(this.db);
+    this.legacyProjectMutationSchemaVersion = current;
+  }
+
   async saveProject(project: ResearchProject): Promise<void> {
     this.upsertProject(project);
   }
@@ -50,7 +80,7 @@ export class SqliteResearchStore extends SqliteStoreBase implements ResearchStor
   async listProjects(): Promise<ResearchProject[]> {
     return this.all("projects")
       .map((row) => sanitizeProject(this.parse<ResearchProject>(row)))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
   }
 
   async getProject(projectId: string): Promise<ResearchProject | undefined> {
@@ -210,7 +240,11 @@ export class SqliteResearchStore extends SqliteStoreBase implements ResearchStor
   }
 
   async getSnapshot(projectId: string): Promise<ResearchSnapshot> {
-    const project = await this.getProject(projectId);
+    return this.snapshotSync(projectId);
+  }
+
+  private snapshotSync(projectId: string): ResearchSnapshot {
+    const project = this.getProjectSync(projectId);
     if (!project) throw new Error(`Research project not found: ${projectId}`);
     return {
       project,

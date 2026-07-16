@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -209,18 +209,24 @@ describe("Research specification and planning architecture", () => {
     ).rejects.toThrow(/EngineeringProgramTool was selected/);
   });
 
-  it("keeps ready OpenVSP program requests and normalizes them from the template contract", async () => {
+  it("fails closed before execution when configured OpenVSP lacks a durable runtime receipt", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-planner-openvsp-"));
     try {
       const scriptPath = join(tempRoot, "openvsp-script.mjs");
-      writeFileSync(scriptPath, "console.log('OpenVSP planner harness');\n", "utf8");
+      const executionMarker = join(tempRoot, "openvsp-executed.txt");
+      writeFileSync(scriptPath, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(executionMarker)}, "executed");\n`, "utf8");
       const base = snapshot();
+      base.project.goal = "Run OpenVSP and block if its exact durable runtime receipt is unavailable.";
+      base.project.topic = "Explicit OpenVSP execution";
+      base.project.scope = "OpenVSP is mandatory; do not substitute another solver.";
       const spec = base.specifications[0]!;
+      const prompts: string[] = [];
       const llm: LlmProvider = {
-        name: "ready-openvsp-request-test",
+        name: "blocked-openvsp-request-test",
         isAvailable: async () => true,
-        completeJson: async <T>(): Promise<T> =>
-          strictPlanResponse({
+        completeJson: async <T>(request: LlmJsonRequest): Promise<T> => {
+          prompts.push(request.user);
+          return strictPlanResponse({
             objective: "Run configured OpenVSP.",
             tools: ["EngineeringProgramTool", "ArtifactWriterTool"],
             programRequests: [
@@ -233,46 +239,39 @@ describe("Research specification and planning architecture", () => {
                 reason: "Use the ready OpenVSP template."
               }
             ]
-          }) as T
+          }) as T;
+        }
       };
 
-      const plan = await new ResearchPlanner(llm).plan({
-        snapshot: base,
-        specification: spec,
-        iteration: 1,
-        settings: {
-          ...settings,
-          allowCodeExecution: true,
-          engineeringTools: {
-            ...settings.engineeringTools,
-            enabled: true,
-            openVsp: {
-              ...settings.engineeringTools.openVsp,
+      await expect(
+        new ResearchPlanner(llm).plan({
+          snapshot: base,
+          specification: spec,
+          iteration: 1,
+          settings: {
+            ...settings,
+            allowCodeExecution: true,
+            engineeringTools: {
+              ...settings.engineeringTools,
               enabled: true,
-              command: process.execPath,
-              scriptPath,
-              probeArgs: ["--version"],
-              runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"]
+              openVsp: {
+                ...settings.engineeringTools.openVsp,
+                enabled: true,
+                command: process.execPath,
+                scriptPath,
+                probeArgs: [scriptPath],
+                runArgsTemplate: ["{script}", "--spec", "{spec}", "--output", "{output}"]
+              }
             }
-          }
-        },
-        availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
-      });
+          },
+          availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
+        })
+      ).rejects.toThrow(/explicit engineering target openvsp is unavailable or not ready/i);
 
-      expect(plan.requiredTools).toContain("EngineeringProgramTool");
-      expect(plan.programRequests).toEqual([
-        {
-          kind: "openvsp-analysis-run",
-          target: "openvsp",
-          outputFileName: "openvsp-custom.json",
-          cfdRunSpec: expect.objectContaining({
-            target: "openvsp",
-            geometry: expect.objectContaining({ source: "configuredCase" }),
-            solver: expect.objectContaining({ name: "openvsp-vspaero" })
-          }),
-          reason: "Use the ready OpenVSP template."
-        }
-      ]);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toMatch(/openvsp-analysis-run:openvsp[\s\S]*?"ready":false/);
+      expect(prompts[0]).toMatch(/openvsp is NOT_READY because AetherOps cannot yet verify its exact runtime-version receipt/);
+      expect(existsSync(executionMarker)).toBe(false);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -327,19 +326,27 @@ describe("Research specification and planning architecture", () => {
     }
   });
 
-  it("keeps ready SU2 program requests only when the configured case contract is ready", async () => {
+  it("fails closed before execution when configured SU2 lacks a durable runtime receipt", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "aetherops-planner-su2-"));
     try {
       const caseRoot = join(tempRoot, "case");
       mkdirSync(caseRoot, { recursive: true });
       writeFileSync(join(caseRoot, "case.cfg"), "SOLVER= EULER\nMESH_FILENAME= mesh.su2\n", "utf8");
+      const executionMarker = join(tempRoot, "su2-executed.txt");
+      const probePath = join(tempRoot, "su2-probe.mjs");
+      writeFileSync(probePath, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(executionMarker)}, "executed");\n`, "utf8");
       const base = snapshot();
+      base.project.goal = "Run SU2 and block if its exact durable runtime receipt is unavailable.";
+      base.project.topic = "Explicit SU2 execution";
+      base.project.scope = "SU2 is mandatory; do not substitute another solver.";
       const spec = base.specifications[0]!;
+      const prompts: string[] = [];
       const llm: LlmProvider = {
-        name: "ready-su2-request-test",
+        name: "blocked-su2-request-test",
         isAvailable: async () => true,
-        completeJson: async <T>(): Promise<T> =>
-          strictPlanResponse({
+        completeJson: async <T>(request: LlmJsonRequest): Promise<T> => {
+          prompts.push(request.user);
+          return strictPlanResponse({
             objective: "Run configured SU2.",
             tools: ["EngineeringProgramTool", "ArtifactWriterTool"],
             programRequests: [
@@ -352,47 +359,40 @@ describe("Research specification and planning architecture", () => {
                 reason: "Use the ready SU2 template."
               }
             ]
-          }) as T
+          }) as T;
+        }
       };
 
-      const plan = await new ResearchPlanner(llm).plan({
-        snapshot: base,
-        specification: spec,
-        iteration: 1,
-        settings: {
-          ...settings,
-          allowCodeExecution: true,
-          engineeringTools: {
-            ...settings.engineeringTools,
-            enabled: true,
-            su2: {
-              ...settings.engineeringTools.su2,
+      await expect(
+        new ResearchPlanner(llm).plan({
+          snapshot: base,
+          specification: spec,
+          iteration: 1,
+          settings: {
+            ...settings,
+            allowCodeExecution: true,
+            engineeringTools: {
+              ...settings.engineeringTools,
               enabled: true,
-              command: process.execPath,
-              caseRoot,
-              configFile: "case.cfg",
-              probeArgs: ["--version"],
-              runArgsTemplate: ["{config}", "--output", "{output}"]
+              su2: {
+                ...settings.engineeringTools.su2,
+                enabled: true,
+                command: process.execPath,
+                caseRoot,
+                configFile: "case.cfg",
+                probeArgs: [probePath],
+                runArgsTemplate: ["{config}", "--output", "{output}"]
+              }
             }
-          }
-        },
-        availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
-      });
+          },
+          availableTools: ["EngineeringProgramTool", "ArtifactWriterTool", "DataAnalysisTool"]
+        })
+      ).rejects.toThrow(/explicit engineering target su2 is unavailable or not ready/i);
 
-      expect(plan.requiredTools).toContain("EngineeringProgramTool");
-      expect(plan.programRequests).toEqual([
-        {
-          kind: "su2-case-run",
-          target: "su2",
-          outputFileName: "su2-custom.txt",
-          cfdRunSpec: expect.objectContaining({
-            target: "su2",
-            geometry: expect.objectContaining({ source: "configuredCase" }),
-            solver: expect.objectContaining({ name: "su2" })
-          }),
-          reason: "Use the ready SU2 template."
-        }
-      ]);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toMatch(/su2-case-run:su2[\s\S]*?"ready":false/);
+      expect(prompts[0]).toMatch(/su2 is NOT_READY because AetherOps cannot yet verify its exact runtime-version receipt/);
+      expect(existsSync(executionMarker)).toBe(false);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }

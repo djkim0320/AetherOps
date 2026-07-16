@@ -27,22 +27,23 @@ export class StorageV2Database {
           : this.appDb;
 
     this.dbs = uniqueDbs([this.appDb, this.vectorDb, this.ontologyDb]);
-    for (const db of this.dbs) {
-      if (options.requireFts5 !== false) preflightFts5(db);
-      assertStorageV2SchemaReady(db);
-    }
-    this.repositories = createStorageV2Repositories(
-      {
-        appDb: this.appDb,
-        vectorDb: this.vectorDb,
-        ontologyDb: this.ontologyDb
-      },
-      { ...repositoryOptions, dataRoot: options.dataRoot }
-    );
     try {
+      for (const db of this.dbs) {
+        if (options.requireFts5 !== false) preflightFts5(db);
+        assertStorageV2SchemaReady(db);
+      }
+      this.repositories = createStorageV2Repositories(
+        {
+          appDb: this.appDb,
+          vectorDb: this.vectorDb,
+          ontologyDb: this.ontologyDb
+        },
+        { ...repositoryOptions, dataRoot: options.dataRoot }
+      );
       this.repositories.projects.assertOwnershipIntegrity();
     } catch (error) {
-      this.close();
+      for (const db of [...this.dbs].reverse()) db.close();
+      this.closed = true;
       throw error;
     }
   }
@@ -54,10 +55,13 @@ export class StorageV2Database {
     const db = this.dbs[0] as DatabaseSync;
     db.exec("begin immediate");
     try {
+      this.repositories.projectRevisions.beginMutationScope();
       const result = work(this.repositories);
+      this.repositories.projectRevisions.finalizeMutationScope();
       db.exec("commit");
       return result;
     } catch (error) {
+      this.repositories.projectRevisions.abortMutationScope();
       if (db.isTransaction) db.exec("rollback");
       throw error;
     }

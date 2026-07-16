@@ -20,6 +20,7 @@ export function toDurableJobRecord(job: StorageJob): DurableJobRecord {
     requestedCapabilities: job.requestedCapabilities,
     effectiveCapabilities: job.effectiveCapabilities,
     toolPolicy: job.toolPolicy,
+    engineeringBaseline: engineeringBaselineBinding(request),
     resumesJobId: payload.resumesJobId as string | undefined,
     resumeCheckpointId: payload.resumeCheckpointId as string | undefined,
     canonicalInitializationAnchor: request.canonicalInitializationAnchor,
@@ -31,6 +32,24 @@ export function toDurableJobRecord(job: StorageJob): DurableJobRecord {
     finishedAt: job.completedAt,
     leaseExpiresAt: job.leaseExpiresAt
   };
+}
+
+function engineeringBaselineBinding(value: Record<string, unknown>): DurableJobRecord["engineeringBaseline"] {
+  if (!("engineeringBaseline" in value)) return undefined;
+  const candidate = value.engineeringBaseline;
+  if (candidate === null) return null;
+  const record = objectRecord(candidate);
+  if (
+    typeof record.id !== "string" ||
+    !record.id ||
+    !Number.isInteger(record.revision) ||
+    Number(record.revision) < 1 ||
+    typeof record.contentHash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(record.contentHash)
+  ) {
+    throw new Error("Durable research job contains an invalid engineering baseline binding.");
+  }
+  return { id: record.id, revision: Number(record.revision), contentHash: record.contentHash };
 }
 
 export function eventFromStorage(event: StorageJobEvent): SseEvent {

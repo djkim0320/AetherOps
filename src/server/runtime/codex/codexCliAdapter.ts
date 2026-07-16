@@ -64,6 +64,9 @@ export class CodexCliAdapter implements CodexCliAdapterContract {
       ...(request.signal ? { signal: request.signal } : {}),
       ...(request.onStage ? { onStage: request.onStage } : {})
     });
+    if (processResult.cliVersion !== resolution.version) {
+      throw new CodexCliError("PROCESS_FAILED", "Codex CLI execution version does not match the resolved bundled runtime.");
+    }
     let parsed: z.infer<typeof FinalOutputSchema>;
     try {
       parsed = FinalOutputSchema.parse(JSON.parse(processResult.lastMessage));
@@ -75,6 +78,7 @@ export class CodexCliAdapter implements CodexCliAdapterContract {
       summary: parsed.summary,
       outputs: validated.outputs,
       trace: {
+        cliVersion: processResult.cliVersion,
         model: request.settings.model,
         reasoningEffort: request.settings.reasoningEffort,
         sandboxProfile: "aetherops-codex-workspace-v1",

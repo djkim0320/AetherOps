@@ -7,13 +7,19 @@ import { CodexCliTool } from "../../core/tools/codexCliTool.js";
 import { EngineeringProgramTool } from "../../core/tools/engineeringProgramTool.js";
 import type { ToolExecutionContext } from "../../core/tools/researchToolTypes.js";
 import { ToolRunner } from "../../core/tools/toolRunner.js";
-import { computeProjectRevision } from "../http/v2/common.js";
 import { runEngineeringProgram } from "../runtime/engineering/engineeringProgramRegistry.js";
 import type { AppSettingsStore } from "../runtime/storage/settingsStore.js";
 import { FileToolExecutionWorkspace } from "../runtime/tools/toolExecutionWorkspace.js";
 import type { DurableJobRuntime } from "./durableJobRuntime.js";
 import type { DurableJobHandlerContext, DurableJobRecord } from "./durableJobTypes.js";
 import { DurableToolExecutionAdapter } from "./durableToolExecutionAdapter.js";
+import { buildDurableEngineeringPromotionDrafts, DurableEngineeringPromotionMaterializationError } from "./durableEngineeringPromotionDrafts.js";
+import { assertBoundEngineeringBaseline } from "./engineeringBaselineBinding.js";
+import { validateEngineeringPromotionReadiness, type EngineeringBaselineTarget } from "../../core/aerospace/engineeringBaselineCompatibility.js";
+import { RuntimeRequirementError } from "../../core/tools/runtimeRequirements.js";
+import { REQUIRED_CODEX_CLI_VERSION } from "../runtime/codex/bundledCodexCli.js";
+import { BUNDLED_WEBXFOIL_VERSION } from "../runtime/engineering/engineeringRuntimeVersions.js";
+import { requireDurableProjectRevision } from "./durableProjectRevision.js";
 
 interface DurableEngineeringJobDependencies {
   dataRoot: string;
@@ -27,18 +33,42 @@ interface DurableEngineeringJobDependencies {
 export async function executeDurableEngineeringJob(
   job: DurableJobRecord,
   requests: EngineeringRequest[],
+  expectedBaseline: { id: string; revision: number; contentHash: string },
   context: DurableJobHandlerContext,
   deps: DurableEngineeringJobDependencies
-): Promise<{ projectRevision: number; promotions: ReturnType<DurableToolExecutionAdapter["completedOutputPromotions"]> }> {
+): Promise<{
+  projectRevision: number;
+  promotions: ReturnType<DurableToolExecutionAdapter["completedOutputPromotions"]>;
+}> {
   context.signal.throwIfAborted();
-  const [snapshot, settings] = await Promise.all([deps.orchestrator.getSnapshot(job.projectId), deps.settingsStore.getRuntimeSettings()]);
+  const [snapshot, settings, baseline] = await Promise.all([
+    deps.orchestrator.getSnapshot(job.projectId),
+    deps.settingsStore.getRuntimeSettings(),
+    deps.jobs.engineering.activeBaseline(job.projectId)
+  ]);
+  const verifiedBaseline = assertBoundEngineeringBaseline(expectedBaseline, baseline);
+  const incompatible = requests
+    .map((request) => validateEngineeringPromotionReadiness(request.target, verifiedBaseline, pinnedRuntimeVersion(request.target)))
+    .filter((item) => !item.ready);
+  if (incompatible.length) {
+    throw new RuntimeRequirementError(
+      ResearchLoopStep.ExecuteTools,
+      incompatible.map((item) => ({
+        key: `engineering.configurationBaseline.${item.target}`,
+        label: `${item.target} configuration baseline`,
+        requiredForSteps: [ResearchLoopStep.ExecuteTools],
+        isSatisfied: false,
+        message: item.reason ?? `The active configuration baseline is not compatible with ${item.target}.`
+      }))
+    );
+  }
   const plan = engineeringExecutionPlan(job, requests);
   const includesCodex = plan.requiredTools.includes("CodexCliTool");
   const tools = [
     ...(includesCodex ? [new CodexCliTool(deps.codexCli)] : []),
     ...(plan.requiredTools.includes("EngineeringProgramTool") ? [new EngineeringProgramTool(runEngineeringProgram)] : [])
   ];
-  const trace = new DurableToolExecutionAdapter(job, deps.jobs, async () => computeProjectRevision(await deps.orchestrator.getSnapshot(job.projectId)));
+  const trace = new DurableToolExecutionAdapter(job, deps.jobs, () => requireDurableProjectRevision(deps.jobs, job.projectId));
   const executionSettings: AppSettings = {
     ...settings,
     allowCodeExecution: Boolean(settings.allowCodeExecution && snapshot.project.autonomyPolicy.allowCodeExecution),
@@ -66,12 +96,50 @@ export async function executeDurableEngineeringJob(
     onStatus: trace.onStatus
   };
   const runner = new ToolRunner(tools, new FileToolExecutionWorkspace(deps.dataRoot));
-  await runner.execute(input, executionSettings, { execution });
+  const results = await runner.execute(input, executionSettings, { execution });
   context.signal.throwIfAborted();
-  return {
-    projectRevision: computeProjectRevision(await deps.orchestrator.getSnapshot(job.projectId)),
-    promotions: trace.completedOutputPromotions()
-  };
+  const promotedAt = nowIso();
+  let casClaims: ReturnType<typeof buildDurableEngineeringPromotionDrafts>["casClaims"] = [];
+  try {
+    const prepared = buildDurableEngineeringPromotionDrafts({
+      results,
+      baseline: verifiedBaseline,
+      dataRoot: deps.dataRoot,
+      jobId: job.id,
+      executionId: execution.executionId as string,
+      claimOwners: trace.completedOutputClaimOwners()
+    });
+    casClaims = prepared.casClaims;
+    return {
+      projectRevision: await requireDurableProjectRevision(deps.jobs, job.projectId),
+      promotions: trace.completedOutputPromotions(promotedAt, prepared.drafts, prepared.claims)
+    };
+  } catch (error) {
+    const pending = error instanceof DurableEngineeringPromotionMaterializationError ? error.casClaims : casClaims;
+    if (pending.length) await abortMaterializedEngineeringOutputs(deps.jobs, job.id, pending, error);
+    throw error;
+  }
+}
+
+function pinnedRuntimeVersion(target: EngineeringBaselineTarget): string | undefined {
+  if (target === "webxfoil") return BUNDLED_WEBXFOIL_VERSION;
+  if (target === "codex") return REQUIRED_CODEX_CLI_VERSION;
+  return undefined;
+}
+
+async function abortMaterializedEngineeringOutputs(
+  jobs: DurableJobRuntime,
+  jobId: string,
+  claims: ReturnType<typeof buildDurableEngineeringPromotionDrafts>["casClaims"],
+  original: unknown
+): Promise<void> {
+  try {
+    await jobs.engineering.abortCasClaims(jobId, claims);
+  } catch (cleanupError) {
+    throw new AggregateError([original, cleanupError], "Engineering promotion failed and its pending CAS claims could not be aborted.", {
+      cause: cleanupError
+    });
+  }
 }
 
 export function toProgramRequest(request: EngineeringRequest): EngineeringProgramRequest {

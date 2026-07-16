@@ -1,7 +1,14 @@
 import { z } from "zod";
 
 import { CodexAuthStatusRequestSchema, LlmStatusRequestSchema, ToolsDiagnosticsRequestSchema } from "./diagnostics.js";
-import { EngineeringEnqueueRequestSchema, EngineeringPreflightRequestSchema } from "./engineering.js";
+import {
+  EngineeringArtifactReadRequestSchema,
+  EngineeringBaselineActivateRequestSchema,
+  EngineeringBaselineGetRequestSchema,
+  EngineeringBaselineListRequestSchema,
+  EngineeringEnqueueRequestSchema,
+  EngineeringPreflightRequestSchema
+} from "./engineering.js";
 import {
   ChatEnqueueRequestSchema,
   JobsGetRequestSchema,
@@ -38,6 +45,10 @@ export const API_V2_METHODS = [
   "jobs.list",
   "engineering.enqueue",
   "engineering.preflight",
+  "engineering.baseline.activate",
+  "engineering.baseline.get",
+  "engineering.baseline.list",
+  "engineering.artifact.read",
   "snapshots.get",
   "settings.get",
   "settings.save",
@@ -64,6 +75,10 @@ export const ApiV2RpcRequestSchema = z.discriminatedUnion("method", [
   JobsListRequestSchema,
   EngineeringEnqueueRequestSchema,
   EngineeringPreflightRequestSchema,
+  EngineeringBaselineActivateRequestSchema,
+  EngineeringBaselineGetRequestSchema,
+  EngineeringBaselineListRequestSchema,
+  EngineeringArtifactReadRequestSchema,
   SnapshotGetRequestSchema,
   SettingsGetRequestSchema,
   SettingsSaveRequestSchema,

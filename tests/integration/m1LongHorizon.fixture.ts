@@ -79,6 +79,9 @@ export function createM1Fixture(label: string): M1Fixture {
          values (?,?,?,?,?,?,?,?)`
       )
       .run(M1_PROJECT_ID, "m1long", project.projectRoot, project.topic, project.status, project.createdAt, project.updatedAt, JSON.stringify(project));
+    database
+      .prepare("insert into project_revision_heads (project_id,revision,last_receipt_id,updated_at) values (?,0,null,?)")
+      .run(M1_PROJECT_ID, project.updatedAt);
   } finally {
     database.close();
   }
@@ -111,6 +114,12 @@ export function releaseM1Runtime(runtime: DurableJobRuntime): void {
   runtimes.delete(runtime);
 }
 
+export async function requiredM1ProjectRevision(runtime: Pick<DurableJobRuntime, "getProjectRevision">): Promise<number> {
+  const revision = await runtime.getProjectRevision(M1_PROJECT_ID);
+  if (revision === undefined) throw new Error("The M1 durable project revision is unavailable.");
+  return revision;
+}
+
 export function canonicalRuntime(runtime: DurableJobRuntime): { gateway: DurableCanonicalRunGateway; runtime: CanonicalRunRuntime } {
   const gateway = new DurableCanonicalRunGateway(runtime);
   return { gateway, runtime: new CanonicalRunRuntime({ gateway, hasher: storageCanonicalHasher }) };
@@ -127,6 +136,10 @@ export function m1RpcContext(fixture: M1Fixture, runtime: DurableJobRuntime, sna
     env: {},
     llm: undefined,
     orchestrator: { getSnapshot: async () => structuredClone(snapshot) } as RpcHandlerContext["orchestrator"],
+    projectMutations: {
+      assertReadable: () => undefined,
+      assertAllReadable: () => undefined
+    } as unknown as RpcHandlerContext["projectMutations"],
     settingsStore: fixture.settings,
     events: runtime,
     jobs: runtime
@@ -159,8 +172,9 @@ export async function interruptM1Run(
       const checkpoint = await runtime.commitCanonicalCheckpoint({
         owner: session.owner,
         step: ResearchLoopStep.ExecuteTools,
-        projectRevision: job.projectRevision,
+        projectRevision: await requiredM1ProjectRevision(runtime),
         requireContextPack: true,
+        checkpointData: { engineeringBaseline: job.engineeringBaseline ?? null },
         prepareRevision: (input) => session.prepareCheckpointRevision(input)
       });
       const lateUnboundPack = lateUnboundBlocker
@@ -392,10 +406,14 @@ async function recordCompletedAnalysis(runtime: DurableJobRuntime, job: DurableJ
     dependsOnAttemptIds: [],
     queuedAt: result.toolRun.startedAt
   };
-  await runtime.recordToolAttemptAndEvent({ attempt: base, projectRevision: job.projectRevision, toolName: descriptor.name });
+  await runtime.recordToolAttemptAndEvent({
+    attempt: base,
+    projectRevision: await requiredM1ProjectRevision(runtime),
+    toolName: descriptor.name
+  });
   await runtime.recordToolAttemptAndEvent({
     attempt: { ...base, status: "running", startedAt: result.toolRun.startedAt },
-    projectRevision: job.projectRevision,
+    projectRevision: await requiredM1ProjectRevision(runtime),
     toolName: descriptor.name
   });
   await runtime.recordToolAttemptAndEvent({
@@ -414,7 +432,7 @@ async function recordCompletedAnalysis(runtime: DurableJobRuntime, job: DurableJ
         }
       }
     },
-    projectRevision: job.projectRevision,
+    projectRevision: await requiredM1ProjectRevision(runtime),
     toolName: descriptor.name
   });
 }
@@ -454,10 +472,14 @@ async function recordPendingExternalAttempt(runtime: DurableJobRuntime, job: Dur
     dependsOnAttemptIds: [`attempt:${job.id}:analysis`],
     queuedAt: now
   };
-  await runtime.recordToolAttemptAndEvent({ attempt: queued, projectRevision: job.projectRevision, toolName: descriptor.name });
+  await runtime.recordToolAttemptAndEvent({
+    attempt: queued,
+    projectRevision: await requiredM1ProjectRevision(runtime),
+    toolName: descriptor.name
+  });
   await runtime.recordToolAttemptAndEvent({
     attempt: { ...queued, status: "running", startedAt: now },
-    projectRevision: job.projectRevision,
+    projectRevision: await requiredM1ProjectRevision(runtime),
     toolName: descriptor.name
   });
 }

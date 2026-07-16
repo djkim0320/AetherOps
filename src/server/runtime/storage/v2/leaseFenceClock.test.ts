@@ -66,7 +66,15 @@ describe("Storage Worker lease clock", () => {
       now: new Date(START_MS + 500).toISOString()
     }) as StorageExpiredLeaseSweepResult;
     expect(expired.jobs).toHaveLength(1);
-    expect(expired.jobs[0]).toMatchObject({ id: claimed.job.id, status: "interrupted" });
+    expect(expired.jobs[0]).toMatchObject({ id: claimed.job.id, status: "interrupted", result: { projectRevision: 3 } });
+    expect(expired.events).toEqual([expect.objectContaining({ projectId: PROJECT_ID, payload: expect.objectContaining({ projectRevision: 3 }) })]);
+    expect(runtime.handle({ name: "project.revision.get", projectId: PROJECT_ID })).toMatchObject({ revision: 3 });
+
+    expect(runtime.handle({ name: "job.markInterruptedExpiredLeases", now: new Date(START_MS + 3_000).toISOString() })).toMatchObject({
+      jobs: [],
+      events: []
+    });
+    expect(runtime.handle({ name: "project.revision.get", projectId: PROJECT_ID })).toMatchObject({ revision: 3 });
   });
 });
 
@@ -83,7 +91,15 @@ function createRuntime(clock: { now: number }): StorageWorkerRuntime {
 function enqueueAndClaim(runtime: StorageWorkerRuntime, jobId: string): StorageClaimStartResult {
   runtime.handle({
     name: "job.enqueue",
-    job: { id: jobId, projectId: PROJECT_ID, operation: "research_loop", createdAt: START, queuedAt: START, payload: { projectRevision: 1 } }
+    job: {
+      id: jobId,
+      projectId: PROJECT_ID,
+      operation: "research_loop",
+      expectedProjectRevision: 0,
+      createdAt: START,
+      queuedAt: START,
+      payload: { projectRevision: 1 }
+    }
   });
   const claimed = runtime.handle({
     name: "job.claimAndStart",
@@ -131,6 +147,7 @@ function prepareDatabase(path: string): void {
         updatedAt: START
       })
     );
+    db.prepare("insert into project_revision_heads(project_id,revision,last_receipt_id,updated_at) values(?,0,null,?)").run(PROJECT_ID, START);
   } finally {
     db.close();
   }

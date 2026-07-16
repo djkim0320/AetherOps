@@ -7,11 +7,24 @@ import { IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE } from "../runtime/storage/v2/jobEr
 import type { StorageWorkerCommand } from "../runtime/storage/worker/typedProtocol.js";
 import { StorageWorkerClient, StorageWorkerRuntime } from "../runtime/storage/worker/typedRuntime.js";
 import { DurableJobRuntime } from "./durableJobRuntime.js";
-import type { DurableRuntimeTimer } from "./durableRuntimeConfig.js";
+import {
+  deferred,
+  DurableJobRuntimeTestSupport,
+  flushTurns,
+  manualTimer,
+  timeout,
+  waitForCheckpoint,
+  waitUntil,
+  waitUntilAsync
+} from "./durableJobRuntimeTestSupport.js";
 import { migrateStorageV2Schema } from "../runtime/storage/v2/schema.js";
 
 let root: string | undefined;
 let runtime: DurableJobRuntime | undefined;
+const support = new DurableJobRuntimeTestSupport(
+  () => runtime,
+  () => root
+);
 
 afterEach(async () => {
   await runtime?.close().catch(() => undefined);
@@ -26,9 +39,9 @@ describe("DurableJobRuntime recovery", () => {
     runtime = new DurableJobRuntime(databasePath, 1);
     await runtime.initialize();
 
-    await expect(
-      runtime.enqueue({ projectId: "project-missing", kind: "chat_reply", projectRevision: 1, idempotencyKey: "missing", payload: {} })
-    ).rejects.toThrow(/handler.*registered/i);
+    await expect(support.enqueueCurrent({ projectId: "project-missing", kind: "chat_reply", idempotencyKey: "missing", payload: {} })).rejects.toThrow(
+      /handler.*registered/i
+    );
   });
 
   it("keeps a project active until its handler returns even after the handler commits completion", async () => {
@@ -40,18 +53,18 @@ describe("DurableJobRuntime recovery", () => {
     runtime.registerHandler("chat_reply", async (job, request) => {
       const label = (request as { label: string }).label;
       if (label === "first") {
-        await runtime?.finish(job.id, 1);
+        await support.finishCurrent(job);
         firstCommitted.resolve();
         await firstMayReturn.promise;
       } else {
         secondStarted = true;
-        await runtime?.finish(job.id, 1);
+        await support.finishCurrent(job);
       }
     });
     await runtime.initialize();
-    await runtime.enqueue({ projectId: "project-one", kind: "chat_reply", projectRevision: 1, idempotencyKey: "first", payload: { label: "first" } });
+    await support.enqueueCurrent({ projectId: "project-one", kind: "chat_reply", idempotencyKey: "first", payload: { label: "first" } });
     await firstCommitted.promise;
-    await runtime.enqueue({ projectId: "project-one", kind: "chat_reply", projectRevision: 1, idempotencyKey: "second", payload: { label: "second" } });
+    await support.enqueueCurrent({ projectId: "project-one", kind: "chat_reply", idempotencyKey: "second", payload: { label: "second" } });
 
     await flushTurns(20);
     expect(secondStarted).toBe(false);
@@ -70,7 +83,8 @@ describe("DurableJobRuntime recovery", () => {
     seed.exec("begin immediate");
     for (let index = 0; index < 1_001; index += 1) {
       const suffix = String(index).padStart(4, "0");
-      insert.run(`job-${suffix}`, `project-${suffix}`, `key-${suffix}`, queuedAt, queuedAt, queuedAt, JSON.stringify({ projectRevision: 1 }));
+      support.seedProjectProjection(seed, `project-${suffix}`, queuedAt);
+      insert.run(`job-${suffix}`, `project-${suffix}`, `key-${suffix}`, queuedAt, queuedAt, queuedAt, JSON.stringify({ projectRevision: 0 }));
     }
     seed.exec("commit");
     seed.close();
@@ -80,7 +94,7 @@ describe("DurableJobRuntime recovery", () => {
     const firstThousand = deferred<void>();
     runtime.registerHandler("chat_reply", async (job) => {
       handled += 1;
-      await runtime?.finish(job.id, 1);
+      await support.finishCurrent(job);
       if (handled === 1_000) firstThousand.resolve();
     });
     await runtime.initialize();
@@ -110,13 +124,12 @@ describe("DurableJobRuntime recovery", () => {
     runtime.registerHandler("chat_reply", async (job) => {
       started.resolve();
       await release.promise;
-      await runtime?.finish(job.id, 2);
+      await support.finishCurrent(job);
     });
     await runtime.initialize();
-    const receipt = await runtime.enqueue({
+    const receipt = await support.enqueueCurrent({
       projectId: "project-close",
       kind: "chat_reply",
-      projectRevision: 1,
       idempotencyKey: "close-key",
       payload: {}
     });
@@ -167,10 +180,9 @@ describe("DurableJobRuntime recovery", () => {
       handlerRan = true;
     });
     await runtime.initialize();
-    const receipt = await runtime.enqueue({
+    const receipt = await support.enqueueCurrent({
       projectId: "project-close-claim",
       kind: "chat_reply",
-      projectRevision: 1,
       idempotencyKey: "close-claim-key",
       payload: {}
     });
@@ -194,20 +206,19 @@ describe("DurableJobRuntime recovery", () => {
     const databasePath = createDatabase("terminal-receipt");
     runtime = new DurableJobRuntime(databasePath, 1);
     runtime.registerHandler("chat_reply", async (job) => {
-      await runtime?.finish(job.id, 7);
+      await support.finishCurrent(job);
     });
     await runtime.initialize();
     const input = {
       projectId: "project-terminal",
       kind: "chat_reply" as const,
-      projectRevision: 7,
       idempotencyKey: "terminal-key",
       payload: { message: "same" }
     };
-    const first = await runtime.enqueue(input);
+    const first = await support.enqueueCurrent(input);
     await waitUntilAsync(async () => (await runtime?.get(first.jobId))?.status === "completed");
 
-    const replay = await runtime.enqueue(input);
+    const replay = await support.enqueueCurrent(input);
     expect(replay).toMatchObject({ jobId: first.jobId, status: "completed" });
     expect(replay).not.toHaveProperty("queuePosition");
   });
@@ -216,16 +227,17 @@ describe("DurableJobRuntime recovery", () => {
     const databasePath = createDatabase("step-checkpoint");
     const seed = new DatabaseSync(databasePath);
     const now = new Date().toISOString();
+    support.seedProjectProjection(seed, "project-step", now);
     seed
       .prepare(
         `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key,
          queued_at, created_at, updated_at, payload) values (?, ?, 'research_loop', 'running', 0, 1, ?, ?, ?, ?, ?)`
       )
-      .run("job-step", "project-step", "step-key", now, now, now, JSON.stringify({ projectRevision: 3 }));
+      .run("job-step", "project-step", "step-key", now, now, now, JSON.stringify({ projectRevision: 0 }));
     seed.close();
     runtime = new DurableJobRuntime(databasePath, 1);
 
-    await expect(runtime.commitCheckpoint({ projectId: "project-step", jobId: "job-step", step: "EXECUTE_TOOLS", projectRevision: 3 })).rejects.toThrow(
+    await expect(runtime.commitCheckpoint({ projectId: "project-step", jobId: "job-step", step: "EXECUTE_TOOLS", projectRevision: 0 })).rejects.toThrow(
       /active lease fence/
     );
     await expect(runtime.latestCommittedCheckpoint("job-step")).resolves.toBeUndefined();
@@ -238,6 +250,7 @@ describe("DurableJobRuntime recovery", () => {
     const seed = new DatabaseSync(databasePath);
     migrateStorageV2Schema(seed);
     const now = new Date().toISOString();
+    support.seedProjectProjection(seed, "project-recovered", now);
     seed
       .prepare(
         `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key, queued_at, created_at, updated_at, payload)
@@ -251,7 +264,7 @@ describe("DurableJobRuntime recovery", () => {
         now,
         now,
         now,
-        JSON.stringify({ kind: "chat_reply", projectRevision: 1, currentStep: "PLAN_RESEARCH", request: { content: "persisted" } })
+        JSON.stringify({ kind: "chat_reply", projectRevision: 0, currentStep: "PLAN_RESEARCH", request: { content: "persisted" } })
       );
     seed.close();
 
@@ -262,7 +275,7 @@ describe("DurableJobRuntime recovery", () => {
     });
     runtime.registerHandler("chat_reply", async (job, request) => {
       expect(request).toEqual({ content: "persisted" });
-      await runtime.finish(job.id, 2);
+      await support.finishCurrent(job);
       resolveHandled();
     });
     await runtime.initialize();
@@ -292,31 +305,29 @@ describe("DurableJobRuntime recovery", () => {
       const label = String((request as { label?: string }).label);
       started.push(label);
       if (label === "a-1") await firstGate;
-      await runtime?.finish(job.id, 1);
+      await support.finishCurrent(job);
     });
     await runtime.initialize();
 
-    const first = await runtime.enqueue({
+    const first = await support.enqueueCurrent({
       projectId: "project-a",
       kind: "chat_reply",
-      projectRevision: 1,
       currentStep: "PLAN_RESEARCH",
       idempotencyKey: "a-1",
       payload: { label: "a-1" }
     });
-    const duplicate = await runtime.enqueue({
+    const duplicate = await support.enqueueCurrent({
       projectId: "project-a",
       kind: "chat_reply",
-      projectRevision: 99,
       currentStep: "FINALIZE_OUTPUT",
       idempotencyKey: "a-1",
       payload: { label: "a-1" }
     });
-    await expect(
-      runtime.enqueue({ projectId: "project-a", kind: "chat_reply", projectRevision: 1, idempotencyKey: "a-1", payload: { label: "changed" } })
-    ).rejects.toThrow(IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE);
-    await runtime.enqueue({ projectId: "project-a", kind: "chat_reply", projectRevision: 1, idempotencyKey: "a-2", payload: { label: "a-2" } });
-    await runtime.enqueue({ projectId: "project-b", kind: "chat_reply", projectRevision: 1, idempotencyKey: "b-1", payload: { label: "b-1" } });
+    await expect(support.enqueueCurrent({ projectId: "project-a", kind: "chat_reply", idempotencyKey: "a-1", payload: { label: "changed" } })).rejects.toThrow(
+      IDEMPOTENCY_CONFLICT_PUBLIC_MESSAGE
+    );
+    await support.enqueueCurrent({ projectId: "project-a", kind: "chat_reply", idempotencyKey: "a-2", payload: { label: "a-2" } });
+    await support.enqueueCurrent({ projectId: "project-b", kind: "chat_reply", idempotencyKey: "b-1", payload: { label: "b-1" } });
 
     expect(duplicate.jobId).toBe(first.jobId);
     await waitUntil(() => started.includes("a-1") && started.includes("b-1"));
@@ -326,7 +337,7 @@ describe("DurableJobRuntime recovery", () => {
     expect(started.filter((label) => label === "a-1")).toHaveLength(1);
   });
 
-  it("serializes simultaneous enqueues for one project without duplicate execution or events", async () => {
+  it("rejects stale simultaneous enqueues, then serializes current-revision retries without duplicate execution", async () => {
     const databasePath = createDatabase("simultaneous-enqueue");
     runtime = new DurableJobRuntime(databasePath, 4);
     const firstStarted = deferred<void>();
@@ -350,24 +361,39 @@ describe("DurableJobRuntime recovery", () => {
         firstStarted.resolve();
         await releaseFirst.promise;
       }
-      await runtime?.finish(job.id, 1);
+      await support.finishCurrent(job);
       active -= 1;
     });
     await runtime.initialize();
 
-    const receiptsPromise = Promise.all(
+    const expectedProjectRevision = await support.ensureProject("project-simultaneous");
+    const simultaneous = await Promise.allSettled(
       Array.from({ length: 12 }, (_, index) =>
         runtime?.enqueue({
           projectId: "project-simultaneous",
           kind: "chat_reply",
-          projectRevision: 1,
+          projectRevision: expectedProjectRevision,
           idempotencyKey: `simultaneous-${index}`,
           payload: { index }
         })
       )
     );
+    expect(simultaneous.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(simultaneous.filter((result) => result.status === "rejected").map((result) => result.reason)).toEqual(
+      Array.from({ length: 11 }, () => expect.objectContaining({ code: "REVISION_CONFLICT" }))
+    );
     await firstStarted.promise;
-    const receipts = await receiptsPromise;
+    const receipts = [];
+    for (let index = 0; index < 12; index += 1) {
+      receipts.push(
+        await support.enqueueCurrent({
+          projectId: "project-simultaneous",
+          kind: "chat_reply",
+          idempotencyKey: `simultaneous-${index}`,
+          payload: { index }
+        })
+      );
+    }
     await flushTurns(8);
     expect(maxActive).toBe(1);
     expect(executed.size).toBe(1);
@@ -395,6 +421,7 @@ describe("DurableJobRuntime recovery", () => {
     const databasePath = createDatabase("expired");
     const seed = new DatabaseSync(databasePath);
     const now = new Date().toISOString();
+    support.seedProjectProjection(seed, "project-expired", now);
     seed
       .prepare(
         `insert into jobs (id, project_id, operation, status, priority, attempt, idempotency_key, lease_owner, lease_expires_at, queued_at, started_at, created_at, updated_at, payload)
@@ -411,7 +438,7 @@ describe("DurableJobRuntime recovery", () => {
         now,
         now,
         now,
-        JSON.stringify({ kind: "chat_reply", projectRevision: 1 })
+        JSON.stringify({ kind: "chat_reply", projectRevision: 0 })
       );
     seed.close();
 
@@ -451,17 +478,17 @@ describe("DurableJobRuntime recovery", () => {
         queuedAt: now
       };
       await runtime?.recordToolAttemptAndEvent({
-        projectRevision: 3,
+        projectRevision: await support.currentRevision(job.projectId),
         toolName: "WebFetchTool",
         attempt: { ...attempt, status: "queued" }
       });
       await runtime?.recordToolAttemptAndEvent({
-        projectRevision: 3,
+        projectRevision: await support.currentRevision(job.projectId),
         toolName: "WebFetchTool",
         attempt: { ...attempt, status: "running", startedAt: now }
       });
       await runtime?.recordToolAttemptAndEvent({
-        projectRevision: 3,
+        projectRevision: await support.currentRevision(job.projectId),
         toolName: "WebFetchTool",
         attempt: {
           ...attempt,
@@ -472,13 +499,12 @@ describe("DurableJobRuntime recovery", () => {
           completedAt: now
         }
       });
-      await runtime?.finish(job.id, 3);
+      await support.finishCurrent(job);
     });
     await runtime.initialize();
-    const receipt = await runtime.enqueue({
+    const receipt = await support.enqueueCurrent({
       projectId: "project-trace",
       kind: "research_loop",
-      projectRevision: 3,
       idempotencyKey: "trace-key",
       requestHash: "request-hash",
       payload: {}
@@ -525,72 +551,4 @@ function createDatabase(label: string): string {
   migrateStorageV2Schema(db);
   db.close();
   return databasePath;
-}
-
-function timeout(ms: number): Promise<never> {
-  return new Promise((_, reject) => setTimeout(() => reject(new Error("Durable job handler timed out.")), ms));
-}
-
-async function waitForCheckpoint(databasePath: string): Promise<void> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const db = new DatabaseSync(databasePath, { readOnly: true });
-    const row = db.prepare("select count(*) as count from checkpoints where job_id=?").get("job-recovered") as { count: number };
-    db.close();
-    if (row.count === 1) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("Completed checkpoint was not committed.");
-}
-
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("Durable runtime condition timed out.");
-}
-
-async function waitUntilAsync(predicate: () => Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("Durable async runtime condition timed out.");
-}
-
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
-    resolve = next;
-  });
-  return { promise, resolve };
-}
-
-async function flushTurns(count: number): Promise<void> {
-  for (let index = 0; index < count; index += 1) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-}
-
-function manualTimer(): DurableRuntimeTimer & { fireDelay(delayMs: number): void; hasDelay(delayMs: number): boolean } {
-  const scheduled = new Map<object, { callback: () => void; delayMs: number }>();
-  return {
-    setTimeout(callback, delayMs) {
-      const handle = {} as ReturnType<typeof setTimeout>;
-      scheduled.set(handle, { callback, delayMs });
-      return handle;
-    },
-    clearTimeout(handle) {
-      scheduled.delete(handle);
-    },
-    fireDelay(delayMs) {
-      const entry = [...scheduled.entries()].find(([, value]) => value.delayMs === delayMs);
-      if (!entry) throw new Error(`No ${delayMs}ms timer is pending.`);
-      scheduled.delete(entry[0]);
-      entry[1].callback();
-    },
-    hasDelay(delayMs) {
-      return [...scheduled.values()].some((entry) => entry.delayMs === delayMs);
-    }
-  };
 }

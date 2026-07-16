@@ -10,9 +10,14 @@ import { migrateStorageV2Schema } from "../runtime/storage/v2/schema.js";
 import type { StorageToolOutputLink } from "../runtime/storage/v2/traceTypes.js";
 import type { StorageCheckpoint, StorageStepAttempt } from "../runtime/storage/v2/types.js";
 import { DurableJobRuntime } from "./durableJobRuntime.js";
+import { DurableJobRuntimeTestSupport } from "./durableJobRuntimeTestSupport.js";
 
 let root: string | undefined;
 let runtime: DurableJobRuntime | undefined;
+const support = new DurableJobRuntimeTestSupport(
+  () => runtime,
+  () => root
+);
 
 afterEach(async () => {
   await runtime?.close().catch(() => undefined);
@@ -101,7 +106,7 @@ describe("durable control completion races", () => {
         }
       });
       await runtime?.recordToolOutput(output);
-      await runtime?.finish(job.id, 2, [
+      await runtime?.finish(job.id, await support.currentRevision(job.projectId), [
         {
           link: { ...output, promoted: true, promotedAt: occurredAt },
           artifact: { name: `${control}-result.json`, kind: "engineering_result" }
@@ -112,10 +117,9 @@ describe("durable control completion races", () => {
     const other = new DurableJobRuntime(databasePath, 1);
     await other.initialize();
     try {
-      const receipt = await runtime.enqueue({
+      const receipt = await support.enqueueCurrent({
         projectId: `project-cross-runtime-${control}`,
         kind: "research_loop",
-        projectRevision: 2,
         currentStep: "EXECUTE_TOOLS",
         idempotencyKey: `cross-runtime-${control}`,
         payload: {}
@@ -126,8 +130,8 @@ describe("durable control completion races", () => {
           throw new Error(`Durable job reached unexpected terminal status before the completed-step transition gate: ${status}`);
         })
       ]);
-      if (control === "pause") await other.requestPause(receipt.jobId, 2);
-      else await other.requestAbort(receipt.jobId, 2);
+      if (control === "pause") await other.requestPause(receipt.jobId);
+      else await other.requestAbort(receipt.jobId);
       releaseTransition.resolve();
       await terminalCommitted.promise;
 

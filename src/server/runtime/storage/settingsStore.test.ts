@@ -23,6 +23,40 @@ describe("JsonAppSettingsStore", () => {
     });
   });
 
+  it("defaults only missing persisted Codex fields", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const settingsPath = join(tempRoot, "settings.json");
+    writeFileSync(settingsPath, JSON.stringify({ codex: { model: "gpt-5.6-sol" }, updatedAt: "2026-07-10T00:00:00.000Z" }), "utf8");
+
+    await expect(new JsonAppSettingsStore(settingsPath).getSettings()).resolves.toMatchObject({
+      codex: { model: "gpt-5.6-sol", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 600_000 }
+    });
+  });
+
+  it("fails closed for explicit null, array, and invalid Codex timeout values", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
+    const cases = [
+      { name: "null", codex: null, error: "Codex settings must be an object" },
+      { name: "array", codex: [], error: "Unsupported Codex model" },
+      {
+        name: "null-timeout",
+        codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: null, taskTimeoutMs: 600_000 },
+        error: "Codex timeoutMs must be an integer"
+      },
+      {
+        name: "out-of-range-task-timeout",
+        codex: { model: "gpt-5.6", reasoningEffort: "xhigh", timeoutMs: 180_000, taskTimeoutMs: 900_001 },
+        error: "Codex taskTimeoutMs must be an integer"
+      }
+    ];
+
+    for (const testCase of cases) {
+      const settingsPath = join(tempRoot, `${testCase.name}.json`);
+      writeFileSync(settingsPath, JSON.stringify({ codex: testCase.codex, updatedAt: "2026-07-10T00:00:00.000Z" }), "utf8");
+      await expect(new JsonAppSettingsStore(settingsPath).getSettings()).rejects.toThrow(testCase.error);
+    }
+  });
+
   it("fails closed for unsupported persisted Codex models after migration", async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "aetherops-settings-"));
     const settingsPath = join(tempRoot, "settings.json");

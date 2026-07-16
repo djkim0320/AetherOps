@@ -1,6 +1,15 @@
 import { DatabaseSync } from "node:sqlite";
 import { loadV2FtsSql, loadV2OperationalMigrationSql } from "./sqlite.mjs";
+import { sha256Hex } from "./hash.mjs";
 import { sanitizeLegacyJobPolicies } from "./v2JobPolicySanitizer.mjs";
+import {
+  assertColumnsForInspection,
+  assertForeignKeysForInspection,
+  assertIndexesForInspection,
+  assertTriggersForInspection,
+  columnNames,
+  tableExists
+} from "./operationalSchemaInspection.mjs";
 import {
   TOOL_SIDE_EFFECT_COLUMNS,
   TOOL_SIDE_EFFECT_FOREIGN_KEYS,
@@ -8,6 +17,9 @@ import {
   TOOL_SIDE_EFFECT_TABLE,
   TOOL_SIDE_EFFECT_TRIGGERS
 } from "./operationalToolSideEffectSchema.mjs";
+import { inspectEngineeringBaselineSchema } from "./operationalEngineeringBaselineSchema.mjs";
+import { inspectProjectRevisionSchema } from "./operationalProjectRevisionSchema.mjs";
+import { inspectProjectMutationSchema } from "./operationalProjectMutationSchema.mjs";
 
 const BASE_TABLES = ["storage_v2_meta", "projects_v2", "jobs", "checkpoints"];
 const TRACE_TABLES = ["llm_invocations", "tool_decisions", "tool_attempts", "tool_output_links", "network_audits", "codex_cli_executions"];
@@ -186,6 +198,9 @@ export function upgradeOperationalSchema(dbPath) {
       if (!before.installedVersions.includes(9)) db.exec(sql.terminalAttestation);
       if (!before.installedVersions.includes(10)) db.exec(sql.ownership);
       if (!before.installedVersions.includes(11)) db.exec(sql.toolSideEffects);
+      if (!before.installedVersions.includes(12)) db.exec(sql.engineeringBaselines);
+      if (!before.installedVersions.includes(13)) db.exec(sql.projectRevisions);
+      if (!before.installedVersions.includes(14)) db.exec(sql.projectMutations);
       db.exec(loadV2FtsSql());
       assertMigrationLedger(db, expected);
       const foreignKeys = db.prepare("pragma foreign_key_check").all();
@@ -256,6 +271,9 @@ function inspectOperationalSchemaDatabase(db) {
   assertIndexesForInspection(db, TOOL_SIDE_EFFECT_TABLE, TOOL_SIDE_EFFECT_INDEXES, errors);
   assertForeignKeysForInspection(db, TOOL_SIDE_EFFECT_TABLE, TOOL_SIDE_EFFECT_FOREIGN_KEYS, errors);
   assertTriggersForInspection(db, TOOL_SIDE_EFFECT_TRIGGERS, errors);
+  inspectEngineeringBaselineSchema(db, errors);
+  inspectProjectRevisionSchema(db, errors);
+  inspectProjectMutationSchema(db, errors);
   const lineageSql = tableSql(db, "run_job_links");
   if (!lineageSql?.includes("link_kind") || !lineageSql.includes("'bootstrap'")) errors.push("Run-state bootstrap lineage constraint is missing.");
   return {
@@ -276,10 +294,23 @@ function expectedMigrations(sql) {
       migrations.set(Number(match[1]), { name: match[2], checksum: match[3] });
     }
   }
-  for (const version of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+  for (const version of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
     if (!migrations.has(version)) throw new Error(`Could not extract operational migration ${version} from the runtime schema.`);
   }
+  assertMigrationSourceChecksum(sql.engineeringBaselines, migrations.get(12), 12);
+  assertMigrationSourceChecksum(sql.projectRevisions, migrations.get(13), 13);
+  assertMigrationSourceChecksum(sql.projectMutations, migrations.get(14), 14);
   return new Map([...migrations].sort(([left], [right]) => left - right));
+}
+
+function assertMigrationSourceChecksum(source, descriptor, version) {
+  if (!descriptor || source.split(descriptor.checksum).length !== 2) {
+    throw new Error(`Operational migration ${version} checksum literal is missing or ambiguous.`);
+  }
+  const actual = sha256Hex(source.replace(descriptor.checksum, "<checksum>"));
+  if (actual !== descriptor.checksum) {
+    throw new Error(`Operational migration ${version} source checksum mismatch: expected ${descriptor.checksum}, computed ${actual}.`);
+  }
 }
 
 function addMissingTraceColumns(db) {
@@ -323,44 +354,6 @@ function addColumnUnlessPresent(db, table, name, definition) {
   if (!columnNames(db, table).has(name)) db.exec(`alter table ${table} add column ${name} ${definition}`);
 }
 
-function assertColumnsForInspection(db, table, required, errors) {
-  if (!tableExists(db, table)) return;
-  const columns = columnNames(db, table);
-  for (const name of required) if (!columns.has(name)) errors.push(`Operational column is missing: ${table}.${name}`);
-}
-
-function assertIndexesForInspection(db, table, required, errors) {
-  if (!tableExists(db, table)) return;
-  const indexes = new Set(
-    db
-      .prepare(`pragma index_list(${table})`)
-      .all()
-      .map((row) => String(row.name))
-  );
-  for (const name of required) if (!indexes.has(name)) errors.push(`Operational index is missing: ${name}`);
-}
-
-function assertTriggersForInspection(db, required, errors) {
-  const triggers = new Set(
-    db
-      .prepare("select name from sqlite_master where type='trigger'")
-      .all()
-      .map((row) => String(row.name))
-  );
-  for (const name of required) if (!triggers.has(name)) errors.push(`Operational trigger is missing: ${name}`);
-}
-
-function assertForeignKeysForInspection(db, table, required, errors) {
-  if (!tableExists(db, table)) return;
-  const targets = new Set(
-    db
-      .prepare(`pragma foreign_key_list(${table})`)
-      .all()
-      .map((row) => String(row.table))
-  );
-  for (const target of required) if (!targets.has(target)) errors.push(`Operational foreign key is missing: ${table}->${target}`);
-}
-
 function readSchemaVersion(db) {
   if (!tableExists(db, "storage_v2_meta")) return undefined;
   return String(db.prepare("select value from storage_v2_meta where key='schema_version'").get()?.value ?? "") || undefined;
@@ -374,19 +367,6 @@ function readLedger(db) {
     .map((row) => ({ version: Number(row.version), name: String(row.name), checksum: String(row.checksum_sha256) }));
 }
 
-function tableExists(db, name) {
-  return Boolean(db.prepare("select 1 from sqlite_master where type='table' and name=?").get(name));
-}
-
 function tableSql(db, name) {
   return db.prepare("select sql from sqlite_master where type='table' and name=?").get(name)?.sql;
-}
-
-function columnNames(db, table) {
-  return new Set(
-    db
-      .prepare(`pragma table_info(${table})`)
-      .all()
-      .map((row) => String(row.name))
-  );
 }

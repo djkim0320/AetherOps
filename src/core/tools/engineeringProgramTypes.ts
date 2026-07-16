@@ -49,6 +49,11 @@ export interface XfoilWasmPolarSummary {
   runtime: "webxfoil-wasm";
   runtimeVersion: string;
   runtimeLicense: "GPL-2.0-or-later";
+  geometryContentHash: string;
+  geometryPointCount: number;
+  geometryReceiptVersion: "webxfoil-paneled-airfoil-v1";
+  polarResultHash: string;
+  polarResultReceiptVersion: "webxfoil-polar-result-v1";
   sourceKind: "artifact" | "source" | "direct-url" | "naca";
   sourceLabel: string;
   sourceUrl?: string;

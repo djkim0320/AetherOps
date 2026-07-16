@@ -98,7 +98,7 @@ export interface ToolExecutionContext {
   idempotencyKey?: string;
   allowCodexCli?: boolean;
   effectiveCapabilities?: CapabilityPolicy;
-  authorizeAction?: (action: { name: string; requiredCapabilities: CapabilityKind[] }) => Promise<CapabilityPolicy>;
+  authorizeAction?: (action: { name: string; requiredCapabilities: CapabilityKind[]; inputs: Record<string, unknown> }) => Promise<CapabilityPolicy>;
   toolPolicy?: {
     allowCodexCli: boolean;
     sourceAccess: ResearchSourceAccessPolicy;

@@ -1,9 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
-import type { StorageJobEvent } from "../runtime/storage/v2/types.js";
+import type { StorageJobEvent, StorageJobEventInput } from "../runtime/storage/v2/types.js";
+import type { StorageToolAttempt } from "../runtime/storage/v2/traceTypes.js";
 import { DurableJobTraceRuntime } from "./durableJobTraceRuntime.js";
 
 describe("DurableJobTraceRuntime publish boundary", () => {
+  it("publishes each committed sequence at most once per batch", () => {
+    const runtime = new DurableJobTraceRuntime({ request: vi.fn() } as unknown as StorageWorkerClient);
+    const observed: number[] = [];
+    const first = event();
+    const second = { ...event(), sequence: 2, eventId: "event-2" };
+    runtime.subscribe((value) => observed.push(value.id));
+
+    runtime.publishStoredEvents([first, { ...first }, second]);
+
+    expect(observed).toEqual([1, 2]);
+  });
+
   it("keeps the committed event replayable when an in-memory subscriber throws", async () => {
     const stored = event();
     const request = vi.fn((command: { name: string }) => Promise.resolve(command.name === "event.after" ? [stored] : stored));
@@ -16,14 +29,22 @@ describe("DurableJobTraceRuntime publish boundary", () => {
     runtime.subscribe((value) => observed.push(value.id));
 
     await expect(
-      runtime.appendEvent({
-        projectId: "project-1",
-        projectRevision: 2,
-        occurredAt: stored.createdAt,
-        type: "run.status.changed",
-        data: { jobId: "job-1", status: "running" }
-      })
+      runtime.appendEvent(
+        {
+          projectId: "project-1",
+          projectRevision: 2,
+          occurredAt: stored.createdAt,
+          type: "run.status.changed",
+          data: { jobId: "job-1", status: "running" }
+        },
+        `event:${"a".repeat(64)}`,
+        "b".repeat(64)
+      )
     ).resolves.toMatchObject({ id: 1 });
+    expect(request).toHaveBeenNthCalledWith(1, {
+      name: "event.append",
+      event: expect.objectContaining({ eventId: `event:${"a".repeat(64)}`, payload: expect.objectContaining({ mutationHash: "b".repeat(64) }) })
+    });
     expect(publishFailure).toHaveBeenCalledOnce();
     expect(observed).toEqual([1]);
     await expect(runtime.eventsAfter("project-1")).resolves.toEqual([expect.objectContaining({ id: 1 })]);
@@ -71,6 +92,65 @@ describe("DurableJobTraceRuntime publish boundary", () => {
         createdAt: stored.createdAt
       })
     ).rejects.toThrow(/active lease fence/);
+  });
+
+  it("uses attempt id and status as the stable event identity in the atomic trace write", async () => {
+    const eventInputs: StorageJobEventInput[] = [];
+    let sequence = 0;
+    const request = vi.fn((command: unknown) => {
+      const transaction = command as {
+        commands: [{ attempt: StorageToolAttempt }, { event: StorageJobEventInput }];
+      };
+      const attempt = transaction.commands[0].attempt;
+      const input = transaction.commands[1].event;
+      eventInputs.push(input);
+      sequence += 1;
+      return Promise.resolve([
+        attempt,
+        {
+          sequence,
+          eventId: String(input.eventId),
+          projectId: input.projectId,
+          jobId: input.jobId,
+          type: input.type,
+          payload: input.payload,
+          createdAt: String(input.createdAt)
+        } satisfies StorageJobEvent
+      ]);
+    });
+    const runtime = new DurableJobTraceRuntime({ request } as unknown as StorageWorkerClient, vi.fn(), () => ({
+      jobId: "job-1",
+      attempt: 1,
+      leaseOwner: "worker-1",
+      leaseGeneration: 1
+    }));
+    const queued: StorageToolAttempt = {
+      id: "attempt-1",
+      projectId: "project-1",
+      jobId: "job-1",
+      decisionId: "decision-1",
+      ordinal: 0,
+      status: "queued",
+      inputHash: "c".repeat(64),
+      dependsOnAttemptIds: [],
+      queuedAt: "2026-07-16T00:00:00.000Z"
+    };
+
+    await runtime.recordToolAttemptAndEvent({ attempt: queued, projectRevision: 1, toolName: "WebFetchTool" });
+    await runtime.recordToolAttemptAndEvent({ attempt: { ...queued }, projectRevision: 1, toolName: "WebFetchTool" });
+    await runtime.recordToolAttemptAndEvent({
+      attempt: { ...queued, status: "running", startedAt: "2026-07-16T00:00:01.000Z" },
+      projectRevision: 2,
+      toolName: "WebFetchTool"
+    });
+
+    expect(eventInputs[0]?.eventId).toBe(eventInputs[1]?.eventId);
+    expect(eventInputs[2]?.eventId).not.toBe(eventInputs[0]?.eventId);
+    expect(eventInputs.map((input) => input.eventId)).toEqual([
+      expect.stringMatching(/^event:[a-f0-9]{64}$/),
+      expect.stringMatching(/^event:[a-f0-9]{64}$/),
+      expect.stringMatching(/^event:[a-f0-9]{64}$/)
+    ]);
   });
 
   it("redacts untrusted provider diagnostics before building a storage command", async () => {

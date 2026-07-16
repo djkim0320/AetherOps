@@ -22,6 +22,7 @@ export function meshSummaryArtifact(input: ResearchToolInput, summary: MeshSumma
     metadata: {
       traceabilityKind: "tool_observation",
       generatedBy: "EngineeringProgramTool",
+      program: "modeling",
       canSupportHypothesis: false
     },
     createdAt
@@ -97,7 +98,14 @@ export function xfoilWasmPolarArtifact(input: ResearchToolInput, summary: XfoilW
       traceabilityKind: "tool_observation",
       generatedBy: "EngineeringProgramTool",
       program: "xfoil-wasm",
+      runtime: summary.runtime,
+      runtimeVersion: summary.runtimeVersion,
       runtimeLicense: summary.runtimeLicense,
+      geometryContentHash: summary.geometryContentHash,
+      geometryPointCount: summary.geometryPointCount,
+      geometryReceiptVersion: summary.geometryReceiptVersion,
+      polarResultHash: summary.polarResultHash,
+      polarResultReceiptVersion: summary.polarResultReceiptVersion,
       canSupportHypothesis: true
     },
     createdAt
@@ -131,6 +139,11 @@ export function xfoilWasmPolarEvidence(input: ResearchToolInput, summary: XfoilW
       runtime: summary.runtime,
       runtimeVersion: summary.runtimeVersion,
       runtimeLicense: summary.runtimeLicense,
+      geometryContentHash: summary.geometryContentHash,
+      geometryPointCount: summary.geometryPointCount,
+      geometryReceiptVersion: summary.geometryReceiptVersion,
+      polarResultHash: summary.polarResultHash,
+      polarResultReceiptVersion: summary.polarResultReceiptVersion,
       airfoil: summary.airfoil,
       sourceKind: summary.sourceKind,
       sourceUrl: summary.sourceUrl,

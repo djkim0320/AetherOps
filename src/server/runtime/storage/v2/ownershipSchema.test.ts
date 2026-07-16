@@ -97,6 +97,7 @@ function seedProject(path: string, id: string, projectRoot: string, payloadId = 
       value.updatedAt,
       JSON.stringify(value)
     );
+    db.prepare("insert into project_revision_heads(project_id,revision,last_receipt_id,updated_at) values(?,0,null,?)").run(id, value.updatedAt);
   } finally {
     db.close();
   }

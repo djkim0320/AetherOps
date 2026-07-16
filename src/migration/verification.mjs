@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { collectFileEntries } from "./files.mjs";
 import { stableJsonHash } from "./hash.mjs";
 import { inspectSqliteFile } from "./sqlite.mjs";
+import { DatabaseSync } from "node:sqlite";
 
 export function verifyBackupManifest(manifest) {
   const errors = [];
@@ -35,7 +36,7 @@ export function verifyTargetManifest(targetRoot, manifest, options = {}) {
   if (db.foreignKeyViolations?.length) errors.push("Target SQLite has foreign-key violations.");
   if (db.semanticReadback?.invalidJson?.length) errors.push("Target SQLite semantic readback found invalid JSON.");
   if (db.semanticReadback?.idMismatches?.length) errors.push("Target SQLite semantic readback found row/data ID mismatches.");
-  compareDatabaseSummary(manifest?.targetDbSummary?.verification, db, options.allowDatabaseChanges ? baselineChanges : errors);
+  compareDatabaseSummary(manifest?.targetDbSummary?.verification, db, errors, options.allowDatabaseChanges ? baselineChanges : errors);
   const actualFiles = collectFileEntries(targetRoot, { skipRelativePrefixes: ["manifest.json", "manifest.json.sha256"] });
   const mutablePaths = new Set(runtimePolicy.mutableSqlite.map((entry) => canonicalPath(entry.relativePath)));
   compareFileEntries(
@@ -65,18 +66,20 @@ export function verifyManifestDigest(manifestPath, digestPath, expectedDigest, s
   return { ok: errors.length === 0, errors, actual };
 }
 
-function compareDatabaseSummary(expected, actual, errors) {
+function compareDatabaseSummary(expected, actual, structuralErrors, dataChanges) {
   if (!expected) {
-    errors.push("Target manifest has no database verification baseline.");
+    structuralErrors.push("Target manifest has no database verification baseline.");
     return;
   }
-  if (expected.schemaFingerprint !== actual.schemaFingerprint) errors.push("Target schema fingerprint changed.");
-  if (expected.canonicalJsonHash !== actual.canonicalJsonHash) errors.push("Target canonical JSON hash changed.");
-  if (expected.rowIdHash !== actual.rowIdHash) errors.push("Target row ID-set hash changed.");
-  if (expected.semanticReadbackHash !== actual.semanticReadback?.hash) errors.push("Target semantic snapshot readback changed.");
+  if (expected.schemaFingerprint !== actual.schemaFingerprint) structuralErrors.push("Target schema fingerprint changed.");
+  if (expected.canonicalJsonHash !== actual.canonicalJsonHash) dataChanges.push("Target canonical JSON hash changed.");
+  if (expected.rowIdHash !== actual.rowIdHash) dataChanges.push("Target row ID-set hash changed.");
+  if (expected.semanticReadbackHash !== actual.semanticReadback?.hash) dataChanges.push("Target semantic snapshot readback changed.");
   const expectedTables = new Map((expected.tables ?? []).map((table) => [table.name, table]));
   const actualTables = new Map((actual.tables ?? []).map((table) => [table.name, table]));
-  if (expectedTables.size !== actualTables.size) errors.push("Target table set changed.");
+  if (expectedTables.size !== actualTables.size || [...expectedTables.keys()].some((name) => !actualTables.has(name))) {
+    structuralErrors.push("Target table set changed.");
+  }
   for (const [name, table] of expectedTables) {
     const found = actualTables.get(name);
     if (
@@ -86,7 +89,7 @@ function compareDatabaseSummary(expected, actual, errors) {
       table.idSetHash !== found.idSetHash ||
       table.canonicalJsonHash !== found.canonicalJsonHash
     ) {
-      errors.push(`Target table row hashes changed: ${name}`);
+      dataChanges.push(`Target table row hashes changed: ${name}`);
     }
   }
 }
@@ -118,7 +121,8 @@ function readRuntimePolicy(manifest) {
   const policy = manifest?.runtimePolicy;
   return {
     mutableSqlite: Array.isArray(policy?.mutableSqlite) ? policy.mutableSqlite : [],
-    mutableFilePrefixes: Array.isArray(policy?.mutableFilePrefixes) ? policy.mutableFilePrefixes.map(canonicalPath) : []
+    mutableFilePrefixes: Array.isArray(policy?.mutableFilePrefixes) ? policy.mutableFilePrefixes.map(canonicalPath) : [],
+    contentAddressedFiles: Array.isArray(policy?.contentAddressedFiles) ? policy.contentAddressedFiles : []
   };
 }
 
@@ -158,7 +162,105 @@ function validateRuntimeFiles(targetRoot, actualFiles, expectedFiles, policy) {
     const path = canonicalPath(file.relativePath);
     if (isAllowedRuntimePath(path, policy) && !baselinePaths.has(path)) addedFiles.push(`runtime file present: ${path} (${file.rawSha256})`);
   }
+  const contentAddressed = validateContentAddressedFiles(targetRoot, actualFiles, policy.contentAddressedFiles);
+  errors.push(...contentAddressed.errors);
+  addedFiles.push(...contentAddressed.notices);
   return { ok: errors.length === 0, errors, addedFiles, databaseReports };
+}
+
+function validateContentAddressedFiles(targetRoot, actualFiles, definitions) {
+  const errors = [];
+  const notices = [];
+  const actualByPath = new Map(actualFiles.map((entry) => [canonicalPath(entry.relativePath), entry]));
+  for (const definition of definitions) {
+    const prefix = canonicalPrefix(definition?.prefix);
+    const database = safeSqlIdentifier(definition?.database, true);
+    if (!prefix || !database || !Array.isArray(definition?.references)) {
+      errors.push("Runtime content-addressed storage policy is malformed.");
+      continue;
+    }
+    const files = actualFiles.filter((entry) => canonicalPath(entry.relativePath).startsWith(prefix));
+    for (const file of files) {
+      const path = canonicalPath(file.relativePath);
+      const match = path.slice(prefix.length).match(/^([a-f0-9]{2})\/([a-f0-9]{64})$/);
+      if (!match || match[1] !== match[2]?.slice(0, 2) || file.rawSha256 !== match[2]) {
+        errors.push(`Runtime content-addressed file identity is invalid: ${path}`);
+      }
+    }
+    const dbPath = join(targetRoot, database);
+    if (!existsSync(dbPath)) {
+      errors.push(`Runtime content-addressed reference database is missing: ${database}`);
+      continue;
+    }
+    const referenced = new Set();
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const installedVersions = readInstalledMigrationVersions(db);
+      for (const reference of definition.references) {
+        const table = safeSqlIdentifier(reference?.table);
+        const locatorColumn = safeSqlIdentifier(reference?.locatorColumn);
+        const hashColumn = safeSqlIdentifier(reference?.hashColumn);
+        const byteLengthColumn = safeSqlIdentifier(reference?.byteLengthColumn);
+        const introducedInVersion = Number(reference?.introducedInVersion);
+        if (!table || !locatorColumn || !hashColumn || !byteLengthColumn || !Number.isSafeInteger(introducedInVersion) || introducedInVersion < 1) {
+          errors.push("Runtime content-addressed reference policy is malformed.");
+          continue;
+        }
+        if (!installedVersions.has(introducedInVersion)) continue;
+        if (!db.prepare("select 1 from sqlite_master where type='table' and name=?").get(table)) {
+          errors.push(`Runtime content-addressed reference table is missing: ${table}`);
+          continue;
+        }
+        const rows = db.prepare(`select ${locatorColumn} locator,${hashColumn} hash,${byteLengthColumn} byte_length from ${table}`).all();
+        for (const row of rows) {
+          const locator = canonicalPath(row.locator);
+          const hash = String(row.hash ?? "");
+          const byteLength = Number(row.byte_length);
+          const expectedPath = `${prefix}${hash.slice(0, 2)}/${hash}`;
+          if (!/^[a-f0-9]{64}$/.test(hash) || locator !== expectedPath || !Number.isSafeInteger(byteLength) || byteLength < 0) {
+            errors.push(`Runtime content-addressed reference is malformed: ${table}`);
+            continue;
+          }
+          const file = actualByPath.get(locator);
+          if (!file || file.rawSha256 !== hash || file.size !== byteLength) {
+            errors.push(`Runtime content-addressed reference readback failed: ${table}:${locator}`);
+            continue;
+          }
+          referenced.add(locator);
+        }
+      }
+    } finally {
+      db.close();
+    }
+    for (const file of files) {
+      const path = canonicalPath(file.relativePath);
+      if (!referenced.has(path)) notices.push(`runtime unreferenced CAS object pending bounded cleanup: ${path} (${file.rawSha256})`);
+    }
+  }
+  return { errors, notices };
+}
+
+function readInstalledMigrationVersions(db) {
+  const hasLedger = db.prepare("select 1 from sqlite_master where type='table' and name='schema_migrations'").get();
+  if (!hasLedger) return new Set();
+  return new Set(
+    db
+      .prepare("select version from schema_migrations")
+      .all()
+      .map((row) => Number(row.version))
+  );
+}
+
+function canonicalPrefix(value) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const normalized = canonicalPath(value);
+  return normalized.endsWith("/") ? normalized : `${normalized}/`;
+}
+
+function safeSqlIdentifier(value, allowDot = false) {
+  if (typeof value !== "string") return undefined;
+  const pattern = allowDot ? /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/ : /^[A-Za-z_][A-Za-z0-9_]*$/;
+  return pattern.test(value) ? value : undefined;
 }
 
 function canonicalPath(path) {

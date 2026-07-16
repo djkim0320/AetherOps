@@ -1,14 +1,6 @@
 import { isMainThread, parentPort, workerData, type MessagePort } from "node:worker_threads";
 import { StorageV2Database, type StorageV2RepositorySet } from "../v2/index.js";
-import {
-  claimAndStart,
-  commitStep,
-  enqueueJob,
-  interruptExpiredLeases,
-  quarantineStep,
-  requestControl,
-  transitionTerminal
-} from "../v2/jobAtomicOperations.js";
+import * as JobAtomic from "../v2/jobAtomicOperations.js";
 import { commitCanonicalBudget, commitCanonicalRevisionPlan, commitCanonicalStep, transitionCanonicalTerminal } from "../v2/runStateAtomicOperations.js";
 import { verifyToolPostcondition } from "../v2/toolPostconditionVerifier.js";
 import { verifyCanonicalTerminal } from "../v2/terminalReceiptVerifier.js";
@@ -26,16 +18,21 @@ import { assertFencedWriteScope } from "./fencedWriteScope.js";
 import { executeFencedWrite } from "./fencedWriteDispatch.js";
 import { isStorageWorkerRequest, serializeWorkerError } from "./workerMessageSupport.js";
 import { isTraceReadCommand, StorageRuntimeDiagnostics, traceReadResultRows, type StorageRuntimeDiagnosticsOptions } from "./storageRuntimeDiagnostics.js";
+import type { StorageTerminalTransitionResult } from "../v2/jobAtomicTypes.js";
+import { TerminalCasFinalizeError, type StorageTerminalCasObject } from "../v2/terminalCasStore.js";
+import { storageTerminalCasPromotionReceipts } from "../v2/terminalCasPromotionReceipts.js";
+import { commitProjectSnapshot } from "../v2/projectSnapshotAtomic.js";
+import { lookupEnqueueReceipt } from "../v2/jobEnqueueAtomic.js";
+import { activateEngineeringBaselineAtomically } from "../v2/engineeringBaselineActivationAtomic.js";
+import { withTerminalCasPostCommitWarning } from "./terminalCasPostCommitWarning.js";
+import { dispatchProjectMutationCommand, isProjectMutationCommand } from "./projectMutationDispatch.js";
 export * from "./typedProtocol.js";
 export { createStorageWorkerClient, StorageWorkerClient, type StorageWorkerClientOptions } from "./typedClient.js";
-export interface StorageWorkerRuntimeOptions extends StorageRuntimeDiagnosticsOptions {
-  leaseClock?: () => number;
-}
+export type StorageWorkerRuntimeOptions = StorageRuntimeDiagnosticsOptions & { leaseClock?: () => number };
 export class StorageWorkerRuntime {
   private readonly storage: StorageV2Database;
   private readonly diagnostics: StorageRuntimeDiagnostics;
   private closed = false;
-
   constructor(init: StorageWorkerInit, options: StorageWorkerRuntimeOptions = {}) {
     this.storage = new StorageV2Database(init, options.leaseClock ? { leaseClock: options.leaseClock } : {});
     this.diagnostics = new StorageRuntimeDiagnostics(options);
@@ -43,6 +40,7 @@ export class StorageWorkerRuntime {
 
   handle(command: StorageWorkerCommand): unknown {
     if (this.closed && command.name !== "close") throw new Error("Storage worker runtime is closed.");
+    if (isProjectMutationCommand(command)) return this.transaction((repositories) => dispatchProjectMutationCommand(command, repositories));
     switch (command.name) {
       case "fencedTransaction":
         return this.transaction((repositories) => {
@@ -53,21 +51,37 @@ export class StorageWorkerRuntime {
           });
         });
       case "job.enqueue":
-        return this.transaction((repositories) => enqueueJob(repositories, command.job, command.project, command.capabilityAudits));
+        return this.transaction((repositories) => JobAtomic.enqueueJob(repositories, command.job, command.project, command.capabilityAudits));
+      case "project.snapshot.commit":
+        return this.transaction((repositories) => commitProjectSnapshot(repositories, command.input));
+      case "engineering.baseline.activate":
+        return this.transaction((repositories) => activateEngineeringBaselineAtomically(repositories, command));
+      case "engineering.artifact.read":
+        return this.transaction((repositories) => repositories.engineering.readArtifact(command.input));
+      case "engineering.cas.abort":
+        return this.transaction((repositories) => {
+          const job = repositories.jobs.assertFence(command.fence);
+          for (const claim of command.claims) {
+            if (claim.owner.jobId !== job.id || claim.owner.projectId !== job.projectId) {
+              throw new Error("Engineering CAS claim owner does not match the active fenced job.");
+            }
+          }
+          return repositories.engineering.abortCasClaims(command.claims);
+        });
       case "capability.recordSet":
         return this.transaction((repositories) => recordCapabilityAuditSet(repositories, command.audits, command.project));
       case "job.claimAndStart":
-        return this.transaction((repositories) => claimAndStart(repositories, command.options));
+        return this.transaction((repositories) => JobAtomic.claimAndStart(repositories, command.options));
       case "job.requestControl":
-        return this.transaction((repositories) => requestControl(repositories, command.input));
+        return this.transaction((repositories) => JobAtomic.requestControl(repositories, command.input));
       case "job.markInterruptedExpiredLeases":
-        return this.transaction((repositories) => interruptExpiredLeases(repositories, command.now));
+        return this.transaction((repositories) => JobAtomic.interruptExpiredLeases(repositories, command.now));
       case "job.transitionTerminal":
-        return this.transaction((repositories) => transitionTerminal(repositories, command.input));
+        return this.transitionTerminal(command.input);
       case "job.commitStep":
-        return this.transaction((repositories) => commitStep(repositories, command.input));
+        return this.transaction((repositories) => JobAtomic.commitStep(repositories, command.input));
       case "job.quarantineStep":
-        return this.transaction((repositories) => quarantineStep(repositories, command.input));
+        return this.transaction((repositories) => JobAtomic.quarantineStep(repositories, command.input));
       case "canonical.commitStep":
         return this.transaction((repositories) => commitCanonicalStep(repositories, command.input));
       case "canonical.commitBudget":
@@ -75,7 +89,7 @@ export class StorageWorkerRuntime {
       case "canonical.commitPlan":
         return this.transaction((repositories) => commitCanonicalRevisionPlan(repositories, command.input));
       case "canonical.transitionTerminal":
-        return this.transaction((repositories) => transitionCanonicalTerminal(repositories, command.input));
+        return this.transitionCanonicalTerminal(command.input);
       case "canonical.verifyTerminal":
         return this.verifyCanonicalTerminal(command.input);
       case "toolPostcondition.verify":
@@ -95,6 +109,79 @@ export class StorageWorkerRuntime {
     const result = this.transaction((repositories) => verifyCanonicalTerminal(repositories, input));
     this.storage.repositories.terminalAttestations.finalize(result.attestations);
     return result;
+  }
+
+  private transitionTerminal(input: Parameters<typeof JobAtomic.transitionTerminal>[1]): ReturnType<typeof JobAtomic.transitionTerminal> {
+    const receipts = storageTerminalCasPromotionReceipts(input.promotions);
+    this.storage.repositories.engineering.verifyCasObjects(receipts.legacy);
+    if (!receipts.claims.length) {
+      const result = this.transaction((repositories) => JobAtomic.transitionTerminal(repositories, input));
+      return this.finalizeLegacyPromotions(result, receipts.legacy);
+    }
+    const durableReplay =
+      this.storage.repositories.jobs.get(input.fence.jobId)?.status === input.status
+        ? this.transaction((repositories) => JobAtomic.transitionTerminal(repositories, input))
+        : undefined;
+    const committed = this.storage.repositories.engineering.commitCasClaims(
+      receipts.claims,
+      () => {
+        const result = durableReplay ?? this.transaction((repositories) => JobAtomic.transitionTerminal(repositories, input));
+        return { result, disposition: result.job.status === "completed" ? ("finalize" as const) : ("abort" as const) };
+      },
+      Boolean(durableReplay)
+    );
+    const result = this.finalizeLegacyPromotions(committed.result, receipts.legacy);
+    return committed.postCommitError
+      ? withTerminalCasPostCommitWarning(
+          result,
+          committed.postCommitError,
+          committed.result.job.status === "completed" ? "finalize" : "abort",
+          receipts.claims.length
+        )
+      : result;
+  }
+
+  private transitionCanonicalTerminal(input: Parameters<typeof transitionCanonicalTerminal>[1]): ReturnType<typeof transitionCanonicalTerminal> {
+    const receipts = storageTerminalCasPromotionReceipts(input.terminal.promotions);
+    this.storage.repositories.engineering.verifyCasObjects(receipts.legacy);
+    if (!receipts.claims.length) {
+      const result = this.transaction((repositories) => transitionCanonicalTerminal(repositories, input));
+      const terminal = this.finalizeLegacyPromotions(result.terminal, receipts.legacy);
+      return terminal === result.terminal ? result : { ...result, terminal };
+    }
+    const durableReplay =
+      this.storage.repositories.jobs.get(input.terminal.fence.jobId)?.status === input.terminal.status
+        ? this.transaction((repositories) => transitionCanonicalTerminal(repositories, input))
+        : undefined;
+    const committed = this.storage.repositories.engineering.commitCasClaims(
+      receipts.claims,
+      () => {
+        const result = durableReplay ?? this.transaction((repositories) => transitionCanonicalTerminal(repositories, input));
+        return { result, disposition: result.terminal.job.status === "completed" ? ("finalize" as const) : ("abort" as const) };
+      },
+      Boolean(durableReplay)
+    );
+    let terminal = this.finalizeLegacyPromotions(committed.result.terminal, receipts.legacy);
+    if (committed.postCommitError) {
+      terminal = withTerminalCasPostCommitWarning(
+        terminal,
+        committed.postCommitError,
+        committed.result.terminal.job.status === "completed" ? "finalize" : "abort",
+        receipts.claims.length
+      );
+    }
+    return terminal === committed.result.terminal ? committed.result : { ...committed.result, terminal };
+  }
+
+  private finalizeLegacyPromotions(result: StorageTerminalTransitionResult, objects: readonly StorageTerminalCasObject[]): StorageTerminalTransitionResult {
+    if (!objects.length) return result;
+    try {
+      this.storage.repositories.engineering.finalizeCasObjects(objects);
+      return result;
+    } catch (error) {
+      const failure = error instanceof TerminalCasFinalizeError ? error : new TerminalCasFinalizeError("integrity", error);
+      return withTerminalCasPostCommitWarning(result, failure, "finalize", objects.length);
+    }
   }
 
   private handleBase(command: StorageWorkerBaseCommand, repositories: StorageV2RepositorySet): unknown {
@@ -122,6 +209,8 @@ export class StorageWorkerRuntime {
         return repositories.projects.get(command.projectId);
       case "project.list":
         return repositories.projects.list();
+      case "project.revision.get":
+        return repositories.projectRevisions.current(command.projectId);
       case "record.upsert":
         return repositories.records.upsert(command.record, command.embedding);
       case "record.get":
@@ -140,10 +229,22 @@ export class StorageWorkerRuntime {
         return repositories.memory.search(command.query, command.options);
       case "embedding.getByOwner":
         return repositories.embeddings.getByOwner(command.ownerTable, command.ownerId);
+      case "engineering.baseline.get":
+        return repositories.engineering.get(command.projectId, command.baselineId);
+      case "engineering.baseline.active":
+        return repositories.engineering.getActive(command.projectId);
+      case "engineering.baseline.list":
+        return repositories.engineering.list(command.projectId, command.limit);
+      case "engineering.promotion.get":
+        return repositories.engineering.getPromotion(command.projectId, command.promotionId);
+      case "engineering.promotion.listJob":
+        return repositories.engineering.listPromotionsForJob(command.jobId, command.limit);
       case "job.get":
         return repositories.jobs.get(command.jobId);
       case "job.lookupIdempotency":
         return repositories.jobs.getByIdempotencyRequest(command.projectId, command.idempotencyKey, command.requestHash);
+      case "job.lookupEnqueueReceipt":
+        return lookupEnqueueReceipt(repositories, command.projectId, command.idempotencyKey, command.requestHash);
       case "job.listProject":
         return repositories.jobs.listProject(command.projectId, { status: command.status, cursor: command.cursor, limit: command.limit });
       case "job.latestProjectExecution": {
@@ -160,7 +261,9 @@ export class StorageWorkerRuntime {
         return repositories.jobs.queuePosition(command.jobId);
       case "event.append":
         if (command.event.jobId) throw new Error("Job events require an active fenced transaction.");
-        return repositories.events.append(command.event);
+        return this.transaction((transactionRepositories) => transactionRepositories.events.append(command.event));
+      case "event.get":
+        return repositories.events.get(command.eventId);
       case "event.after":
         return repositories.events.after(command.projectId, command.lastEventId, command.limit);
       case "checkpoint.get":

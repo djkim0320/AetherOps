@@ -10,13 +10,14 @@ export function enqueueJob(
   project?: StorageProjectPayload,
   capabilityAudits: StorageCapabilityAudit[] = []
 ): StorageEnqueueJobResult {
-  const existing = input.idempotencyKey ? repositories.jobs.getByIdempotencyRequest(input.projectId, input.idempotencyKey, input.requestHash) : undefined;
-  if (existing) return replayReceipt(repositories, existing);
+  const replay = lookupEnqueueReceipt(repositories, input.projectId, input.idempotencyKey, input.requestHash);
+  if (replay) return replay;
   assertEnqueueAudits(input, capabilityAudits);
   if (project) {
     if (!isProjectOwner(project, input.projectId)) throw new StorageOwnershipConflictError();
     repositories.projects.upsert(project);
   }
+  repositories.projectRevisions.assertCurrent(input.projectId, requiredExpectedProjectRevision(input));
   const job = repositories.jobs.enqueue(input);
   const eventId = stableId("event", job.id, "queued");
   if (job.id !== input.id) return replayReceipt(repositories, job);
@@ -30,6 +31,16 @@ export function enqueueJob(
     payload: { projectRevision: requiredProjectRevision(job), data: { jobId: job.id, status: "queued" } }
   });
   return { job, event, capabilityAudits: persistedAudits };
+}
+
+export function lookupEnqueueReceipt(
+  repositories: StorageV2RepositorySet,
+  projectId: string,
+  idempotencyKey: string | undefined,
+  requestHash: string | undefined
+): StorageEnqueueJobResult | undefined {
+  const existing = idempotencyKey ? repositories.jobs.getByIdempotencyRequest(projectId, idempotencyKey, requestHash) : undefined;
+  return existing ? replayReceipt(repositories, existing) : undefined;
 }
 
 function replayReceipt(repositories: StorageV2RepositorySet, job: StorageJob): StorageEnqueueJobResult {
@@ -70,10 +81,16 @@ function assertEnqueueAudits(input: StorageJobInput, audits: StorageCapabilityAu
   }
 }
 
-function requiredProjectRevision(job: StorageJob): number {
+function requiredProjectRevision(job: Pick<StorageJob, "id" | "payload">): number {
   const payload = job.payload && typeof job.payload === "object" && !Array.isArray(job.payload) ? (job.payload as Record<string, unknown>) : undefined;
   const revision = payload?.projectRevision;
   if (!Number.isInteger(revision) || Number(revision) < 0) throw new Error(`Durable job is missing a valid project revision: ${job.id}`);
+  return Number(revision);
+}
+
+function requiredExpectedProjectRevision(input: StorageJobInput): number {
+  const revision = input.expectedProjectRevision;
+  if (!Number.isSafeInteger(revision) || Number(revision) < 0) throw new Error(`Durable enqueue is missing its expected project revision: ${input.id}.`);
   return Number(revision);
 }
 

@@ -14,6 +14,7 @@ export interface DurableCanonicalCheckpointCommitInput {
   step: string;
   projectRevision: number;
   requireContextPack?: boolean;
+  checkpointData?: Record<string, unknown>;
   prepareRevision(input: { checkpointId: string; recordedAt: string }): Promise<CanonicalRevisionPlan>;
 }
 
@@ -41,7 +42,7 @@ export async function commitDurableCanonicalCheckpoint(
       step: {
         fence: active.fence,
         ...completedStep,
-        ...(contextPack ? { checkpointData: contextCheckpointData(completedStep.checkpointData, contextPack.id) } : {}),
+        ...(contextPack ? { checkpointData: contextCheckpointData(completedStep.checkpointData, contextPack.id, input.checkpointData) } : {}),
         projectRevision: input.projectRevision,
         occurredAt: recordedAt
       },
@@ -53,13 +54,17 @@ export async function commitDurableCanonicalCheckpoint(
   });
 }
 
-function contextCheckpointData(value: unknown, contextPackId: string): Record<string, unknown> {
+function contextCheckpointData(value: unknown, contextPackId: string, additional: Record<string, unknown> | undefined): Record<string, unknown> {
   if (isRecord(value) && value.canonicalContextPackId !== undefined && value.canonicalContextPackId !== contextPackId) {
     throw new Error("Checkpoint metadata attempted to replace its canonical ContextPack binding.");
+  }
+  if (additional?.canonicalContextPackId !== undefined && additional.canonicalContextPackId !== contextPackId) {
+    throw new Error("Additional checkpoint metadata attempted to replace its canonical ContextPack binding.");
   }
   return {
     phase: "step_completed",
     ...(isRecord(value) ? value : value === undefined ? {} : { stepData: value }),
+    ...additional,
     canonicalContextPackId: contextPackId
   };
 }

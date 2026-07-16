@@ -5,7 +5,6 @@ import {
   buildBackupManifest,
   buildSettingsArchive,
   buildTargetManifest,
-  buildWarnings,
   cleanupPath,
   compareTargetAgainstPointer,
   copySnapshotEntries,
@@ -26,38 +25,9 @@ import { forwardUpgradeAppliedTarget } from "./forwardUpgrade.mjs";
 import { forwardUpgradeJournalPath, recoverPendingForwardUpgrade } from "./forwardUpgradeRecovery.mjs";
 import { inspectOperationalSchema } from "./operationalSchema.mjs";
 import { acquireStorageOwnerLock } from "./storageOwnerLock.mjs";
-
-export function inspectMigration(context) {
-  const source = discoverSourceState(context.dataRoot);
-  const current = readCurrentPointer(context.migrationRoot);
-  const activeTarget = current?.targetRoot ? inspectTargetState(current.targetRoot) : undefined;
-  const operationalSchema = current?.targetDbPath && existsSync(current.targetDbPath) ? inspectOperationalSchemaSafe(current.targetDbPath) : undefined;
-  const requiredBytes = estimateRequiredBytes(source);
-  const availableBytes = getAvailableBytes(context.dataRoot);
-  const verified = Boolean(
-    current && activeTarget && current.status === "applied" && compareTargetAgainstPointer(current, activeTarget) && operationalSchema?.ready
-  );
-  const ready = source.errors.length === 0 && availableBytes >= requiredBytes;
-  return {
-    ok: source.errors.length === 0,
-    command: "check",
-    dataRoot: context.dataRoot,
-    migrationRoot: context.migrationRoot,
-    status: verified ? "applied" : ready ? "needs-apply" : "needs-attention",
-    verified,
-    source,
-    current,
-    activeTarget,
-    operationalSchema,
-    freeSpaceBytes: availableBytes,
-    requiredSpaceBytes: requiredBytes,
-    exitCode: source.errors.length === 0 ? 0 : 1,
-    warnings: [
-      ...buildWarnings(source, availableBytes, requiredBytes, current, activeTarget),
-      ...(operationalSchema && !operationalSchema.ready ? [...operationalSchema.errors, ...operationalSchema.conflicts] : [])
-    ]
-  };
-}
+import { inspectLegacyProjectMutationSchema, upgradeLegacyProjectMutationSchema } from "./legacyProjectMutationSchema.mjs";
+import { inspectProjectMutationCrossDatabase } from "./projectMutationCrossDatabase.mjs";
+export { inspectMigration } from "./inspectionCommand.mjs";
 
 export function applyMigration(context) {
   const release = acquireMigrationLock(context.migrationRoot, "apply");
@@ -101,7 +71,7 @@ function applyWhileLocked(context) {
 
   const current = readCurrentPointer(context.migrationRoot);
   if (current?.status === "applied") {
-    const verification = verifyAppliedTarget(current, { allowDatabaseChanges: true });
+    const verification = verifyAppliedTarget(current, { allowDatabaseChanges: true, allowLegacySchemaUpgrade: true });
     if (verification.ok) {
       let schemaUpgrade;
       try {
@@ -163,7 +133,17 @@ function applyWhileLocked(context) {
   const targetDbPath = join(stagingRoot, "storage.sqlite");
   const targetDbSummary = migrateV1AppDbToV2(join(context.dataRoot, "aetherops.sqlite"), targetDbPath);
   const legacySource = join(context.dataRoot, "aetherops.sqlite");
-  if (existsSync(legacySource)) copyFileSync(legacySource, join(stagingRoot, "legacy-research.sqlite"));
+  const legacyTarget = join(stagingRoot, "legacy-research.sqlite");
+  if (existsSync(legacySource)) copyFileSync(legacySource, legacyTarget);
+  const legacyMutationSchema = upgradeLegacyProjectMutationSchema(legacyTarget);
+  const projectMutationCrossDatabase = inspectProjectMutationCrossDatabase(targetDbPath, legacyTarget);
+  if (!projectMutationCrossDatabase.ready) {
+    throw new Error(
+      `Staged project mutation cross-database verification failed: ${[...projectMutationCrossDatabase.errors, ...projectMutationCrossDatabase.conflicts].join(
+        "; "
+      )}`
+    );
+  }
   const settingsArchive = buildSettingsArchive(source.settings);
   writeJsonFile(join(stagingRoot, "settings.archive.json"), settingsArchive);
   const targetFiles = collectFileEntries(stagingRoot);
@@ -202,6 +182,8 @@ function applyWhileLocked(context) {
     source,
     backupManifest,
     targetManifest,
+    legacyMutationSchema,
+    projectMutationCrossDatabase,
     current: installedPointer,
     settingsMigration,
     activeTarget: inspectTargetState(targetRoot)
@@ -222,6 +204,11 @@ export function verifyMigration(context) {
     const errors = [...operationalSchema.errors, ...operationalSchema.conflicts];
     return { ...failure("verify", context, errors.join("; "), "mismatch"), source, current, verification, operationalSchema };
   }
+  const legacyMutationSchema = inspectLegacyProjectMutationSchema(join(current.targetRoot, "legacy-research.sqlite"));
+  if (!legacyMutationSchema.ready) {
+    const errors = [...legacyMutationSchema.errors, ...legacyMutationSchema.conflicts];
+    return { ...failure("verify", context, errors.join("; "), "mismatch"), source, current, verification, operationalSchema, legacyMutationSchema };
+  }
   return {
     ok: true,
     command: "verify",
@@ -233,7 +220,9 @@ export function verifyMigration(context) {
     current,
     target: inspectTargetState(current.targetRoot),
     verification,
-    operationalSchema
+    operationalSchema,
+    legacyMutationSchema,
+    projectMutationCrossDatabase: verification.projectMutationCrossDatabase
   };
 }
 
@@ -319,7 +308,19 @@ function verifyAppliedTarget(current, options = {}) {
   }
   const targetVerification = verifyTargetManifest(current.targetRoot, manifest, options);
   errors.push(...targetVerification.errors);
-  return { ok: errors.length === 0, errors, baselineChanges: targetVerification.baselineChanges ?? [] };
+  const legacyMutationSchema = inspectLegacyProjectMutationSchema(join(current.targetRoot, "legacy-research.sqlite"));
+  errors.push(...legacyMutationSchema.conflicts);
+  if (!options.allowLegacySchemaUpgrade) errors.push(...legacyMutationSchema.errors);
+  const projectMutationCrossDatabase = inspectProjectMutationCrossDatabase(current.targetDbPath, join(current.targetRoot, "legacy-research.sqlite"));
+  errors.push(...projectMutationCrossDatabase.conflicts);
+  if (!options.allowLegacySchemaUpgrade) errors.push(...projectMutationCrossDatabase.errors);
+  return {
+    ok: errors.length === 0,
+    errors,
+    baselineChanges: targetVerification.baselineChanges ?? [],
+    legacyMutationSchema,
+    projectMutationCrossDatabase
+  };
 }
 
 function buildCurrentPointer(context, attemptId, source, backupManifestPath, backupSha, targetRoot, manifestSha) {

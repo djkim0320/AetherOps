@@ -72,6 +72,7 @@ export function prepareDatabase(path: string): void {
         updatedAt: NOW
       })
     );
+    db.prepare("insert into project_revision_heads (project_id,revision,last_receipt_id,updated_at) values (?,0,null,?)").run(PROJECT_ID, NOW);
   } finally {
     db.close();
   }
@@ -101,6 +102,11 @@ export async function claim(client: StorageWorkerClient, jobId: string, leaseOwn
   });
   if (!result || result.job.id !== jobId) throw new Error(`Expected durable claim for ${jobId}.`);
   return result;
+}
+
+export async function currentProjectRevision(client: StorageWorkerClient): Promise<number> {
+  const head = await client.request<{ revision: number }>({ name: "project.revision.get", projectId: PROJECT_ID });
+  return head.revision;
 }
 
 export function expireLease(path: string, jobId: string): void {
@@ -154,6 +160,7 @@ export function jobInput(id: string, resumesJobId?: string, resumeCheckpointId?:
     id,
     projectId: PROJECT_ID,
     operation: "research_loop",
+    expectedProjectRevision: 0,
     createdAt: NOW,
     queuedAt: NOW,
     payload: {
@@ -169,8 +176,10 @@ export function jobInput(id: string, resumesJobId?: string, resumeCheckpointId?:
 }
 
 export function enqueueJob(client: StorageWorkerClient, job: StorageJobInput): Promise<unknown> {
-  const capabilityAudits = jobCapabilityAudits(job);
-  return client.request({ name: "job.enqueue", job, ...(capabilityAudits ? { capabilityAudits } : {}) });
+  return client.request<{ revision: number }>({ name: "project.revision.get", projectId: job.projectId }).then((head) => {
+    const capabilityAudits = jobCapabilityAudits(job);
+    return client.request({ name: "job.enqueue", job: { ...job, expectedProjectRevision: head.revision }, ...(capabilityAudits ? { capabilityAudits } : {}) });
+  });
 }
 
 function jobCapabilityAudits(job: StorageJobInput): StorageCapabilityAudit[] | undefined {

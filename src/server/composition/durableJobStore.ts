@@ -45,6 +45,7 @@ export async function enqueueDurableJob(dependencies: DurableJobStoreDependencie
       id: jobId,
       projectId: input.projectId,
       operation: input.kind,
+      expectedProjectRevision: input.projectRevision,
       payload: persistedPayload(input),
       idempotencyKey: input.idempotencyKey,
       requestHash,
@@ -58,7 +59,7 @@ export async function enqueueDurableJob(dependencies: DurableJobStoreDependencie
   const stored = result.job;
   if (result.event) dependencies.publish(result.event);
   if (stored.status === "queued") dependencies.schedule(stored.projectId);
-  return durableReceipt(dependencies.client, stored);
+  return durableReceipt(dependencies.client, result);
 }
 
 export async function findIdempotentDurableReceipt(
@@ -67,22 +68,32 @@ export async function findIdempotentDurableReceipt(
   idempotencyKey: string,
   requestHash: string
 ): Promise<DurableJobReceipt | undefined> {
-  const stored = await client.request<StorageJob | undefined>({ name: "job.lookupIdempotency", projectId, idempotencyKey, requestHash });
+  const stored = await client.request<StorageEnqueueJobResult | undefined>({ name: "job.lookupEnqueueReceipt", projectId, idempotencyKey, requestHash });
   return stored ? durableReceipt(client, stored) : undefined;
 }
 
-async function durableReceipt(client: StorageWorkerClient, stored: StorageJob): Promise<DurableJobReceipt> {
-  const record = toDurableJobRecord(stored);
-  const queuePosition = stored.status === "queued" ? await client.request<number>({ name: "job.queuePosition", jobId: stored.id }) : undefined;
+async function durableReceipt(client: StorageWorkerClient, result: StorageEnqueueJobResult): Promise<DurableJobReceipt> {
+  const record = toDurableJobRecord(result.job);
+  const event = result.event;
+  if (!event) throw new Error(`Durable enqueue receipt is missing its committed event: ${record.id}.`);
+  const projectRevision = committedEventRevision(event);
+  const queuePosition = result.job.status === "queued" ? await client.request<number>({ name: "job.queuePosition", jobId: result.job.id }) : undefined;
   return {
     jobId: record.id,
     projectId: record.projectId,
     kind: record.kind,
     status: record.status,
     ...(queuePosition === undefined ? {} : { queuePosition }),
-    acceptedAt: record.createdAt,
-    projectRevision: record.projectRevision
+    acceptedAt: event.createdAt,
+    projectRevision
   };
+}
+
+function committedEventRevision(event: StorageJobEvent): number {
+  const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? (event.payload as Record<string, unknown>) : undefined;
+  const revision = payload?.projectRevision;
+  if (!Number.isSafeInteger(revision) || Number(revision) < 1) throw new Error(`Durable enqueue event has an invalid project revision: ${event.eventId}.`);
+  return Number(revision);
 }
 
 export async function getDurableJob(client: StorageWorkerClient, jobId: string): Promise<DurableJobRecord | undefined> {

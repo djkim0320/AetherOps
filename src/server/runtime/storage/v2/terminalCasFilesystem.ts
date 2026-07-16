@@ -109,6 +109,30 @@ export function boundedTerminalFiles(root: string, maximum: number, realRoot: st
   return files;
 }
 
+export function boundedMatchingTerminalFiles(
+  root: string,
+  maximum: number,
+  realRoot: string,
+  matches: (path: string) => boolean
+): { files: string[]; complete: boolean } {
+  const pending = [root];
+  const files: string[] = [];
+  while (pending.length) {
+    const directory = pending.pop()!;
+    assertTerminalRealDirectory(directory, realRoot);
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error("Canonical terminal CAS contains a symbolic-link path component.");
+      if (entry.isDirectory()) pending.push(path);
+      else if (entry.isFile() && matches(path)) {
+        files.push(path);
+        if (files.length > maximum) return { files: files.slice(0, maximum), complete: false };
+      }
+    }
+  }
+  return { files, complete: true };
+}
+
 export function secureTerminalDirectoryTree(base: string, segments: string[], create: boolean): string {
   if (!existsSync(base)) {
     if (!create) throw new Error("Canonical terminal CAS directory is unavailable.");

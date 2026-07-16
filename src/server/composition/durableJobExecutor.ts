@@ -1,6 +1,6 @@
 import type { JobKind, JobStatus } from "../../contracts/api-v2/jobs.js";
 import type { StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
-import type { StorageTerminalTransitionResult } from "../runtime/storage/v2/jobAtomicTypes.js";
+import type { StoragePostCommitReconciliationWarning, StorageTerminalTransitionResult } from "../runtime/storage/v2/jobAtomicTypes.js";
 import type { StorageClaimStartResult, StorageJob, StorageJobEvent } from "../runtime/storage/v2/types.js";
 import { durableFailureFrom } from "./durableFailure.js";
 import { DurableJobExecutionContext, type DurableJobExecutionScope, type DurableTerminalOutcome } from "./durableJobExecutionContext.js";
@@ -11,6 +11,7 @@ import { startDurableLeaseRenewal, type DurableLeaseRenewal } from "./durableLea
 import { runtimeNow, type ResolvedDurableRuntimeConfig } from "./durableRuntimeConfig.js";
 import { DurableRuntimeDiagnostics } from "./durableRuntimeDiagnostics.js";
 import { transitionDurableCanonicalTerminal } from "./durableCanonicalTerminalTransition.js";
+import { storageTerminalCasPromotionReceipts } from "../runtime/storage/v2/terminalCasPromotionReceipts.js";
 
 interface DurableJobExecutorDependencies {
   client: StorageWorkerClient;
@@ -21,6 +22,7 @@ interface DurableJobExecutorDependencies {
   diagnostics: DurableRuntimeDiagnostics;
   canWrite(): boolean;
   logFailure(error: unknown, jobId?: string, projectId?: string, diagnosticId?: string): void;
+  recordPostCommitWarning(warning: StoragePostCommitReconciliationWarning, jobId: string, projectId: string): void;
 }
 
 export class DurableJobExecutor {
@@ -72,7 +74,10 @@ export class DurableJobExecutor {
         await this.persistOutcome(scope, scope.outcome);
       });
     } catch (error) {
-      await this.dependencies.execution.run(scope, () => this.handleExecutionFailure(scope, error));
+      await this.dependencies.execution.run(scope, async () => {
+        await this.abortPendingOutcomeClaims(scope);
+        await this.handleExecutionFailure(scope, error);
+      });
     } finally {
       try {
         await renewal.stop();
@@ -96,18 +101,19 @@ export class DurableJobExecutor {
       scope.leaseLost = true;
       scope.controller.abort(new Error("Durable runtime shutdown grace expired."));
       try {
+        const projectRevision = await this.currentProjectRevision(scope.job.projectId);
         const result = await this.dependencies.client.request<StorageTerminalTransitionResult>({
           name: "job.transitionTerminal",
           input: {
             ...interruptedStep,
             fence: scope.fence,
             status: "interrupted",
-            projectRevision: scope.job.projectRevision,
+            projectRevision,
             reason: "서버 종료로 작업이 중단되었습니다.",
             occurredAt: runtimeNow(this.dependencies.config)
           }
         });
-        this.publishEvents(result.events);
+        this.publishTerminalResult(result, scope.job.id, scope.job.projectId);
       } catch (error) {
         if (isLeaseLost(error)) {
           this.dependencies.diagnostics.recordStaleWriteRejection();
@@ -133,18 +139,19 @@ export class DurableJobExecutor {
     const job = toDurableJobRecord(claimed.job);
     const interruptedStep = job.currentStep ? { quarantinedStep: { step: job.currentStep, error: terminalMessage("interrupted") } } : {};
     try {
+      const projectRevision = await this.currentProjectRevision(job.projectId);
       const result = await this.dependencies.client.request<StorageTerminalTransitionResult>({
         name: "job.transitionTerminal",
         input: {
           ...interruptedStep,
           fence: claimed.fence,
           status: "interrupted",
-          projectRevision: job.projectRevision,
+          projectRevision,
           reason: "서버 종료로 작업이 시작되기 전에 중단되었습니다.",
           occurredAt: runtimeNow(this.dependencies.config)
         }
       });
-      this.publishEvents(result.events);
+      this.publishTerminalResult(result, claimed.job.id, claimed.job.projectId);
     } catch (error) {
       if (isLeaseLost(error)) {
         this.dependencies.diagnostics.recordStaleWriteRejection();
@@ -156,6 +163,7 @@ export class DurableJobExecutor {
   private async persistOutcome(scope: DurableJobExecutionScope, outcome: DurableTerminalOutcome): Promise<void> {
     if (scope.leaseLost) throw leaseLostError(scope.job.id);
     const occurredAt = runtimeNow(this.dependencies.config);
+    const projectRevision = await this.currentProjectRevision(scope.job.projectId);
     const completedStep =
       scope.job.currentStep && outcome.status === "completed" ? await this.dependencies.trace.completedStep(scope.job.id, scope.job.currentStep) : undefined;
     const quarantinedStep =
@@ -164,9 +172,10 @@ export class DurableJobExecutor {
         : undefined;
     const terminalInput = {
       status: outcome.status,
-      projectRevision: outcome.projectRevision,
+      projectRevision,
       ...(outcome.reason ? { reason: outcome.reason } : {}),
       ...(outcome.promotions ? { promotions: outcome.promotions } : {}),
+      ...(outcome.snapshotChange ? { snapshotChange: { ...outcome.snapshotChange, snapshotVersion: projectRevision } } : {}),
       ...(completedStep ? { completedStep } : {}),
       ...(quarantinedStep ? { quarantinedStep } : {})
     };
@@ -182,7 +191,7 @@ export class DurableJobExecutor {
           name: "job.transitionTerminal",
           input: { fence: scope.fence, ...terminalInput, occurredAt }
         });
-    this.publishEvents(result.events);
+    this.publishTerminalResult(result, scope.job.id, scope.job.projectId);
   }
 
   private async handleExecutionFailure(scope: DurableJobExecutionScope, error: unknown): Promise<void> {
@@ -215,6 +224,17 @@ export class DurableJobExecutor {
     }
   }
 
+  private async abortPendingOutcomeClaims(scope: DurableJobExecutionScope): Promise<void> {
+    if (scope.leaseLost) return;
+    const claims = storageTerminalCasPromotionReceipts(scope.outcome?.promotions).claims;
+    if (!claims.length) return;
+    try {
+      await this.dependencies.client.request({ name: "engineering.cas.abort", fence: scope.fence, claims });
+    } catch (error) {
+      this.dependencies.logFailure(error, scope.job.id, scope.job.projectId);
+    }
+  }
+
   private async renewLease(scope: DurableJobExecutionScope): Promise<void> {
     const job = await this.dependencies.client.request<StorageJob>({
       name: "job.renewLease",
@@ -238,6 +258,12 @@ export class DurableJobExecutor {
     this.dependencies.logFailure(error, scope.job.id, scope.job.projectId);
   }
 
+  private async currentProjectRevision(projectId: string): Promise<number> {
+    const head = await this.dependencies.client.request<{ revision: number } | undefined>({ name: "project.revision.get", projectId });
+    if (!head || !Number.isSafeInteger(head.revision) || head.revision < 0) throw new Error(`Durable project revision is unavailable: ${projectId}.`);
+    return head.revision;
+  }
+
   private applyRequestedControl(scope: DurableJobExecutionScope): void {
     const control = this.requestedControls.get(scope.job.id);
     if (!control || scope.outcome) return;
@@ -256,6 +282,15 @@ export class DurableJobExecutor {
       seen.add(event.sequence);
       this.dependencies.trace.publishStoredEvent(event);
     }
+  }
+
+  private publishTerminalResult(result: StorageTerminalTransitionResult, jobId: string, projectId: string): void {
+    let blockedByIntegrity = false;
+    for (const warning of result.postCommitWarnings ?? []) {
+      this.dependencies.recordPostCommitWarning(warning, jobId, projectId);
+      if (warning.severity === "error") blockedByIntegrity = true;
+    }
+    if (!blockedByIntegrity) this.publishEvents(result.events);
   }
 }
 

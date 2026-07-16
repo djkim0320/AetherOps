@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import type { ToolExecutionStatusEvent } from "../../core/tools/researchToolTypes.js";
 import { getToolDescriptor } from "../../core/tools/toolDescriptors.js";
 import type { StorageOutputPromotion } from "../runtime/storage/v2/jobAtomicTypes.js";
+import { engineeringPromotionReceiptHash } from "../runtime/storage/v2/engineeringBaselineRepository.js";
+import type { StorageEngineeringPromotionDraft, StorageEngineeringResultPromotion } from "../runtime/storage/v2/engineeringBaselineTypes.js";
+import type { StorageTerminalCasClaimOwner, StorageTerminalCasObject } from "../runtime/storage/v2/terminalCasStore.js";
 import type { StorageToolAttempt, StorageToolOutputLink } from "../runtime/storage/v2/traceTypes.js";
 import { assertToolAttemptOutputPromotionAllowed } from "../runtime/storage/v2/toolPostcondition.js";
 import type { DurableJobRuntime } from "./durableJobRuntime.js";
@@ -9,9 +12,11 @@ import type { DurableJobRecord } from "./durableJobTypes.js";
 import { durableJobRequestHash } from "./durableJobRequestHash.js";
 import { durableToolAttemptIdentity } from "./durableToolAttemptIdentity.js";
 import { redactTraceText } from "../runtime/security/traceSanitizer.js";
+import { engineeringPromotionDraftKey } from "./durableEngineeringPromotionDrafts.js";
 
 interface AttemptState {
   attempt: StorageToolAttempt;
+  originAttemptId: string;
   toolName: string;
   outputs: NonNullable<ToolExecutionStatusEvent["outputs"]>;
   outputLinks: StorageToolOutputLink[];
@@ -87,7 +92,7 @@ export class DurableToolExecutionAdapter {
     const outputs = event.outputs ?? previous?.outputs ?? [];
     const outputLinks =
       event.status === "completed" ? preserveOutputLinks(this.job, attemptId, outputs, event.occurredAt, previous?.outputLinks) : (previous?.outputLinks ?? []);
-    this.attempts.set(attemptId, { attempt, toolName: event.toolName, outputs, outputLinks });
+    this.attempts.set(attemptId, { attempt, originAttemptId: event.attemptId, toolName: event.toolName, outputs, outputLinks });
     const projectRevision = await this.readProjectRevision();
     await this.runtime.recordToolAttemptAndEvent({ attempt, projectRevision, toolName: event.toolName });
     if (event.status === "completed") await this.recordUnpromotedOutputs(outputLinks);
@@ -119,11 +124,15 @@ export class DurableToolExecutionAdapter {
         projectRevision,
         verifiedAt: event.occurredAt
       });
-      this.attempts.set(attemptId, { attempt: verified, toolName: event.toolName, outputs, outputLinks });
+      this.attempts.set(attemptId, { attempt: verified, originAttemptId: event.attemptId, toolName: event.toolName, outputs, outputLinks });
     }
   };
 
-  completedOutputPromotions(promotedAt = new Date().toISOString()): StorageOutputPromotion[] {
+  completedOutputPromotions(
+    promotedAt = new Date().toISOString(),
+    engineeringDrafts: ReadonlyMap<string, StorageEngineeringPromotionDraft> = new Map(),
+    engineeringClaims: ReadonlyMap<string, StorageTerminalCasObject> = new Map()
+  ): StorageOutputPromotion[] {
     const promotions: StorageOutputPromotion[] = [];
     for (const state of [...this.attempts.values()].sort((left, right) => left.attempt.ordinal - right.attempt.ordinal)) {
       if (state.attempt.status !== "completed") continue;
@@ -136,13 +145,46 @@ export class DurableToolExecutionAdapter {
         const output = outputs.get(outputIdentity(originalLink.outputKind, originalLink.outputId));
         if (!output) throw new Error(`Completed output metadata is missing for ${originalLink.id}.`);
         const link = { ...originalLink, promoted: true, promotedAt };
+        const draftKey = engineeringPromotionDraftKey(state.originAttemptId, originalLink.outputKind as "artifact" | "evidence", output.id);
+        const draft = originalLink.outputKind === "artifact" || originalLink.outputKind === "evidence" ? engineeringDrafts.get(draftKey) : undefined;
+        const engineering = engineeringPromotion(state, link, output.id, promotedAt, draft);
+        const pendingCasObject = engineering ? engineeringClaims.get(draftKey) : undefined;
+        if (pendingCasObject && (!engineering || !matchesEngineeringArtifact(pendingCasObject, engineering))) {
+          throw new Error(`Engineering output ${output.id} pending CAS claim does not match its promotion receipt.`);
+        }
         promotions.push({
           link,
-          ...(output.kind === "artifact" ? { artifact: { name: output.name ?? output.id, kind: output.artifactKind ?? "artifact" } } : {})
+          ...(output.kind === "artifact" ? { artifact: { name: output.name ?? output.id, kind: output.artifactKind ?? "artifact" } } : {}),
+          ...(engineering ? { engineering } : {}),
+          ...(pendingCasObject ? { pendingCasObject } : {})
         });
       }
     }
     return promotions;
+  }
+
+  completedOutputClaimOwners(): ReadonlyMap<string, StorageTerminalCasClaimOwner> {
+    const owners = new Map<string, StorageTerminalCasClaimOwner>();
+    for (const state of this.attempts.values()) {
+      if (state.attempt.status !== "completed") continue;
+      for (const link of state.outputLinks) {
+        if (link.outputKind !== "artifact" && link.outputKind !== "evidence") continue;
+        const key = engineeringPromotionDraftKey(state.originAttemptId, link.outputKind, link.outputId);
+        const owner: StorageTerminalCasClaimOwner = {
+          projectId: link.projectId,
+          jobId: link.jobId,
+          attemptId: link.attemptId,
+          outputKind: link.outputKind,
+          outputId: link.outputId
+        };
+        const previous = owners.get(key);
+        if (previous && !sameClaimOwner(previous, owner)) {
+          throw new Error(`Engineering output ${link.outputId} has conflicting durable CAS claim owners.`);
+        }
+        owners.set(key, owner);
+      }
+    }
+    return owners;
   }
 
   private async ensureDecision(event: ToolExecutionStatusEvent, decisionId: string): Promise<void> {
@@ -178,6 +220,66 @@ export class DurableToolExecutionAdapter {
   private async recordUnpromotedOutputs(links: StorageToolOutputLink[]): Promise<void> {
     for (const link of links) await this.runtime.recordToolOutput(link);
   }
+}
+
+function sameClaimOwner(left: StorageTerminalCasClaimOwner, right: StorageTerminalCasClaimOwner): boolean {
+  return (
+    left.projectId === right.projectId &&
+    left.jobId === right.jobId &&
+    left.attemptId === right.attemptId &&
+    left.outputKind === right.outputKind &&
+    left.outputId === right.outputId
+  );
+}
+
+function matchesEngineeringArtifact(object: StorageTerminalCasObject, promotion: StorageEngineeringResultPromotion): boolean {
+  return (
+    Boolean(object.pendingClaimId) &&
+    object.casLocator === promotion.artifact.casLocator &&
+    object.casHash === promotion.artifact.sha256 &&
+    object.byteLength === promotion.artifact.byteLength
+  );
+}
+
+function engineeringPromotion(
+  state: AttemptState,
+  link: StorageToolOutputLink,
+  outputId: string,
+  promotedAt: string,
+  draft: StorageEngineeringPromotionDraft | undefined
+): StorageEngineeringResultPromotion | undefined {
+  const required = state.toolName === "EngineeringProgramTool" || state.toolName === "CodexCliTool";
+  if (!required) {
+    if (draft) throw new Error(`Non-engineering output ${outputId} cannot attach an engineering promotion draft.`);
+    return undefined;
+  }
+  if (!draft) throw new Error(`Engineering output ${outputId} is missing its baseline-bound promotion draft.`);
+  const postcondition = state.attempt.postconditionReceipt;
+  const toolVersion = state.attempt.descriptorVersion;
+  if (state.attempt.postconditionDisposition !== "applied" || !postcondition || !toolVersion) {
+    throw new Error(`Engineering output ${outputId} has no verified tool execution receipt.`);
+  }
+  const body: StorageEngineeringResultPromotion = {
+    ...draft,
+    id: traceId("engineering-promotion", link.id, draft.baselineDependencyHash, draft.artifact.sha256),
+    schemaVersion: 1,
+    projectId: link.projectId,
+    jobId: link.jobId,
+    attemptId: link.attemptId,
+    outputLinkId: link.id,
+    outputId,
+    tool: {
+      name: state.toolName,
+      version: toolVersion,
+      executionMedia: draft.executionMedia,
+      receiptHash: postcondition.receiptHash
+    },
+    postcondition: "passed",
+    postconditionReceiptHash: postcondition.receiptHash,
+    promotedAt,
+    receiptHash: ""
+  };
+  return { ...body, receiptHash: engineeringPromotionReceiptHash(body) };
 }
 
 function outputLink(

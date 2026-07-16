@@ -222,14 +222,18 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const verifiedAt = new Date(baseMs + 2_000).toISOString();
   const actionRoot = options.stagingRef?.(root, jobId, executionId, actionId) ?? join(root, "staging", "jobs", jobId, executionId, "actions", actionId);
   const stagingRef = relative(root, actionRoot).split(sep).join("/");
+  const projectRoot = join(root, "project");
+  mkdirSync(projectRoot);
 
   await client.request({
     name: "job.enqueue",
     capabilityAudits: capabilityAudits(projectId, jobId, createdAt),
+    project: { id: projectId, projectRoot, topic: projectId, status: "active", createdAt, updatedAt: createdAt },
     job: {
       id: jobId,
       projectId,
       operation: "research_loop",
+      expectedProjectRevision: 0,
       createdAt,
       queuedAt: createdAt,
       payload: { projectRevision: 1 },

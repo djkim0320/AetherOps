@@ -1,6 +1,8 @@
 import { nowIso } from "../shared/ids.js";
+import { engineeringPromotionRuntimeReceiptSupport, type EngineeringBaselineTarget } from "../aerospace/engineeringBaselineCompatibility.js";
 import type {
   AppSettings,
+  EngineeringProgramRequest,
   EngineeringProgramCapability,
   EngineeringProgramPreflightResult,
   EngineeringProgramTarget,
@@ -8,6 +10,25 @@ import type {
 } from "../shared/types.js";
 import type { ResearchTool, ResearchToolExecutionContext, ResearchToolResult } from "./researchToolTypes.js";
 export type { MeshSummary } from "./engineeringProgramTypes.js";
+
+export function engineeringProgramPromotionTarget(request: EngineeringProgramRequest): EngineeringBaselineTarget | "all" {
+  switch (request.kind) {
+    case "xfoil-wasm-polar":
+      return "webxfoil";
+    case "xfoil-polar":
+      return "xfoil";
+    case "su2-case-run":
+      return "su2";
+    case "openvsp-analysis-run":
+      return "openvsp";
+    case "xflr5-analysis-run":
+      return "xflr5";
+    case "mesh-inspect":
+      return "mesh";
+    case "toolchain-check":
+      return request.target === "xfoil-wasm" ? "webxfoil" : request.target === "modeling" ? "mesh" : (request.target ?? "all");
+  }
+}
 
 export type EngineeringProgramExecutor = (
   input: ResearchToolInput,
@@ -34,7 +55,7 @@ export function hasExecutableEngineeringTool(settings: AppSettings): boolean {
 export function describeEngineeringProgramCapabilities(settings: AppSettings): EngineeringProgramCapability[] {
   const tools = settings.engineeringTools;
   const enabled = tools.enabled;
-  const ready = {
+  const runtimeReady = {
     xfoil: enabled && Boolean(tools.xfoil.enabled && tools.xfoil.command?.trim()),
     xfoilWasm: settings.allowCodeExecution,
     modeling: enabled && Boolean(tools.modeling.enabled && tools.modeling.artifactRoot?.trim()),
@@ -42,15 +63,23 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
     openVsp: enabled && Boolean(tools.openVsp.enabled && tools.openVsp.command?.trim()),
     xflr5: enabled && Boolean(tools.xflr5.enabled && tools.xflr5.command?.trim())
   };
+  const ready = {
+    xfoil: runtimeReady.xfoil && promotionSupported("xfoil"),
+    xfoilWasm: runtimeReady.xfoilWasm,
+    modeling: runtimeReady.modeling && promotionSupported("mesh"),
+    su2: runtimeReady.su2 && promotionSupported("su2"),
+    openVsp: runtimeReady.openVsp && promotionSupported("openvsp"),
+    xflr5: runtimeReady.xflr5 && promotionSupported("xflr5")
+  };
   const capabilities: EngineeringProgramCapability[] = [
     capability(
       "toolchain-check",
       "all",
-      Object.values(ready).some(Boolean),
+      false,
       ["kind"],
       ["target", "reason"],
       "Probe configured engineering targets.",
-      "No engineering target is configured."
+      engineeringPromotionRuntimeReceiptSupport("all").reason ?? "All-target engineering probes are NOT_READY."
     ),
     capability(
       "mesh-inspect",
@@ -59,7 +88,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       ["kind", "artifactPath"],
       ["reason"],
       "Inspect a validated project mesh artifact.",
-      "Modeling artifact root is not configured."
+      promotionBlockedReason("mesh", runtimeReady.modeling, "Modeling artifact root is not configured.")
     ),
     capability(
       "xfoil-polar",
@@ -68,7 +97,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       ["kind", "naca or artifactPath"],
       ["reynolds", "mach", "alphaStart", "alphaEnd", "alphaStep", "transition", "reason"],
       "Run the embedded native XFOIL executable.",
-      "Embedded XFOIL is not configured."
+      promotionBlockedReason("xfoil", runtimeReady.xfoil, "Embedded XFOIL is not configured.")
     ),
     capability(
       "xfoil-wasm-polar",
@@ -86,7 +115,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       ["kind", "target", "cfdRunSpec"],
       ["outputFileName", "reason"],
       "Run a validated SU2 case.",
-      "SU2 is not configured."
+      promotionBlockedReason("su2", runtimeReady.su2, "SU2 is not configured.")
     ),
     capability(
       "openvsp-analysis-run",
@@ -95,7 +124,7 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       ["kind", "target", "cfdRunSpec"],
       ["outputFileName", "reason"],
       "Run a validated OpenVSP analysis.",
-      "OpenVSP is not configured."
+      promotionBlockedReason("openvsp", runtimeReady.openVsp, "OpenVSP is not configured.")
     ),
     capability(
       "xflr5-analysis-run",
@@ -104,10 +133,18 @@ export function describeEngineeringProgramCapabilities(settings: AppSettings): E
       ["kind", "target", "cfdRunSpec"],
       ["outputFileName", "reason"],
       "Run a validated XFLR5 analysis.",
-      "XFLR5 is not configured."
+      promotionBlockedReason("xflr5", runtimeReady.xflr5, "XFLR5 is not configured.")
     )
   ];
   return capabilities.map((item) => (item.ready ? { ...item, blockedReason: undefined } : item));
+}
+
+function promotionBlockedReason(target: EngineeringBaselineTarget, runtimeReady: boolean, unavailableReason: string): string {
+  return runtimeReady ? (engineeringPromotionRuntimeReceiptSupport(target).reason ?? unavailableReason) : unavailableReason;
+}
+
+function promotionSupported(target: EngineeringBaselineTarget): boolean {
+  return engineeringPromotionRuntimeReceiptSupport(target).supported;
 }
 
 function capability(

@@ -8,6 +8,9 @@ import { assertStorageTerminalReceiptV8SchemaReady, migrateStorageTerminalReceip
 import { assertStorageTerminalAttestationV9SchemaReady, migrateStorageTerminalAttestationV9Schema } from "./terminalAttestationSchema.js";
 import { assertStorageOwnershipV10SchemaReady, migrateStorageOwnershipV10Schema } from "./ownershipSchema.js";
 import { assertStorageToolSideEffectV11SchemaReady, migrateStorageToolSideEffectV11Schema } from "./toolSideEffectReservationSchema.js";
+import { assertStorageEngineeringBaselineV12SchemaReady, migrateStorageEngineeringBaselineV12Schema } from "./engineeringBaselineSchema.js";
+import { assertStorageProjectRevisionV13SchemaReady, migrateStorageProjectRevisionV13Schema } from "./projectRevisionSchema.js";
+import { assertStorageProjectMutationV14SchemaReady, migrateStorageProjectMutationV14Schema } from "./projectMutationSchema.js";
 
 export const STORAGE_V2_SCHEMA_VERSION = 2;
 
@@ -294,6 +297,9 @@ export function migrateStorageV2Schema(db: DatabaseSync, options: StorageV2Migra
   migrateStorageTerminalAttestationV9Schema(db);
   migrateStorageOwnershipV10Schema(db);
   migrateStorageToolSideEffectV11Schema(db);
+  migrateStorageEngineeringBaselineV12Schema(db);
+  migrateStorageProjectRevisionV13Schema(db);
+  migrateStorageProjectMutationV14Schema(db);
   blockLegacyResearchJobsRequiringReplan(db);
   createFtsTables(db);
   db.prepare(
@@ -334,6 +340,9 @@ export function assertStorageV2SchemaReady(db: DatabaseSync): void {
   assertStorageTerminalAttestationV9SchemaReady(db);
   assertStorageOwnershipV10SchemaReady(db);
   assertStorageToolSideEffectV11SchemaReady(db);
+  assertStorageEngineeringBaselineV12SchemaReady(db);
+  assertStorageProjectRevisionV13SchemaReady(db);
+  assertStorageProjectMutationV14SchemaReady(db);
 }
 
 function createFtsTables(db: DatabaseSync): void {

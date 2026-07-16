@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,8 +8,20 @@ import { LeaseLostError } from "./leaseFence.js";
 import { createStorageV2Repositories } from "./repositories.js";
 import { migrateStorageV2Schema } from "./schema.js";
 import { STORAGE_JOB_MIGRATION_CHECKSUM, STORAGE_JOB_SCHEMA_VERSION } from "./jobSchema.js";
-import { fencedAttemptCommands } from "./traceTestFixtures.js";
-import type { StorageClaimStartResult, StorageJob, StorageLeaseFence } from "./types.js";
+import {
+  claimStorageTestJob,
+  enqueueStorageTestResearchJob,
+  saveStorageTestFencedToolAttempt,
+  stableStorageTestId,
+  storageTestClaimOptions as claimOptions,
+  storageTestFenceOf as fenceOf,
+  storageTestProjectHead,
+  storageTestProjectRevision,
+  storageTestPromotedArtifactLink as promotedArtifactLink,
+  storageTestToolAttempt as toolAttempt,
+  upsertStorageTestProject
+} from "./storageWorkerTestSupport.js";
+import type { StorageClaimStartResult, StorageJob } from "./types.js";
 
 let root: string | undefined;
 let runtime: StorageWorkerRuntime | undefined;
@@ -47,14 +58,21 @@ describe("durable job storage fencing", () => {
       queuedAt: "2026-07-14T00:00:00.000Z",
       payload: { projectRevision: 9, currentStep: "EXECUTE_TOOLS" }
     };
-    const first = runtime?.handle({ name: "job.enqueue", job: input }) as { job: StorageJob; event?: { type: string; payload: unknown } };
-    const retry = runtime?.handle({ name: "job.enqueue", job: { ...input, id: "job-enqueue-retry" } }) as {
+    upsertStorageTestProject(runtime, root, input.projectId, "2026-07-14T00:00:00.000Z");
+    const expectedProjectRevision = storageTestProjectRevision(runtime, input.projectId);
+    const first = runtime?.handle({ name: "job.enqueue", job: { ...input, expectedProjectRevision } }) as {
+      job: StorageJob;
+      event?: { type: string; payload: unknown };
+    };
+    const committedHead = storageTestProjectHead(runtime, input.projectId);
+    const retry = runtime?.handle({ name: "job.enqueue", job: { ...input, id: "job-enqueue-retry", expectedProjectRevision } }) as {
       job: StorageJob;
       event?: { sequence: number };
     };
     expect(first).toMatchObject({ job: { id: "job-enqueue", status: "queued" }, event: { type: "run.status.changed" } });
     expect(retry.job.id).toBe("job-enqueue");
     expect(retry.event?.sequence).toBe((first.event as { sequence: number }).sequence);
+    expect(storageTestProjectHead(runtime, input.projectId)).toEqual(committedHead);
     expect(runtime?.handle({ name: "event.after", projectId: "project-enqueue" })).toHaveLength(1);
   });
 
@@ -76,9 +94,11 @@ describe("durable job storage fencing", () => {
     createRuntime();
     enqueue({ id: "job-metadata", projectId: "project-metadata", projectRevision: 44 });
     const claimed = claim("project-metadata");
-    expect(claimed.event.payload).toMatchObject({ projectRevision: 44 });
+    expect(claimed.event.payload).toMatchObject({ projectRevision: 2 });
     expect(claimed.stepAttempt).toMatchObject({ step: "EXECUTE_TOOLS" });
 
+    upsertStorageTestProject(runtime, root, "project-invalid-metadata", "2026-07-14T00:00:00.000Z");
+    const expectedProjectRevision = storageTestProjectRevision(runtime, "project-invalid-metadata");
     expect(() =>
       runtime?.handle({
         name: "job.enqueue",
@@ -86,6 +106,7 @@ describe("durable job storage fencing", () => {
           id: "job-invalid-metadata",
           projectId: "project-invalid-metadata",
           operation: "research_loop",
+          expectedProjectRevision,
           queuedAt: "2026-07-14T00:00:00.000Z",
           createdAt: "2026-07-14T00:00:00.000Z",
           payload: { currentStep: "EXECUTE_TOOLS" }
@@ -100,7 +121,7 @@ describe("durable job storage fencing", () => {
     enqueue({ id: "job-rollback", projectId: "project-rollback", projectRevision: 45 });
     const db = new DatabaseSync(path);
     db.prepare("insert into job_events (event_id,project_id,job_id,type,created_at,payload) values (?,?,?,?,?,?)").run(
-      stableTestId("event", "job-rollback", "1", "running"),
+      stableStorageTestId("event", "job-rollback", "1", "running"),
       "project-rollback",
       "job-rollback",
       "run.status.changed",
@@ -159,22 +180,27 @@ describe("durable job storage fencing", () => {
   it("fences every late writer after an expired job is replaced in the same project lane", () => {
     createRuntime();
     enqueue({ id: "job-a-expired", projectId: "project-race", projectRevision: 1 });
-    const jobA = claimAt("project-race", "2026-07-14T00:00:01.000Z", "2026-07-14T00:01:00.000Z");
+    const jobA = claimStorageTestJob(runtime, "project-race", "2026-07-14T00:00:01.000Z", "2026-07-14T00:01:00.000Z");
     saveFencedToolAttempt(jobA.job, toolAttempt(jobA.job, "attempt-a-output", "completed"));
     saveFencedToolAttempt(jobA.job, toolAttempt(jobA.job, "attempt-a-active", "running"));
     leaseNowMs = Date.parse("2026-07-14T00:02:00.000Z");
     runtime?.handle({ name: "job.markInterruptedExpiredLeases", now: "2026-07-14T00:02:00.000Z" });
 
     enqueue({ id: "job-b-successor", projectId: "project-race", projectRevision: 2, queuedAt: "2026-07-14T00:02:01.000Z" });
-    const jobB = claimAt("project-race", "2026-07-14T00:02:02.000Z", "2026-07-14T00:03:00.000Z");
+    const jobB = claimStorageTestJob(runtime, "project-race", "2026-07-14T00:02:02.000Z", "2026-07-14T00:03:00.000Z");
     runtime?.handle({
       name: "job.commitStep",
       input: { fence: fenceOf(jobB.job), step: "EXECUTE_TOOLS", projectRevision: 2, occurredAt: "2026-07-14T00:02:03.000Z" }
     });
-    runtime?.handle({
+    const completedB = runtime?.handle({
       name: "job.transitionTerminal",
-      input: { fence: fenceOf(jobB.job), status: "completed", projectRevision: 2, occurredAt: "2026-07-14T00:02:04.000Z" }
-    });
+      input: {
+        fence: fenceOf(jobB.job),
+        status: "completed",
+        projectRevision: storageTestProjectRevision(runtime, jobB.job.projectId),
+        occurredAt: "2026-07-14T00:02:04.000Z"
+      }
+    }) as { job: StorageJob; event: { payload: { projectRevision: number } } };
 
     const fenceA = fenceOf(jobA.job);
     const lateAt = "2026-07-14T00:02:05.000Z";
@@ -228,7 +254,11 @@ describe("durable job storage fencing", () => {
     for (const write of lateWrites) expect(write).toThrow(LeaseLostError);
 
     expect(runtime?.handle({ name: "job.get", jobId: "job-a-expired" })).toMatchObject({ status: "interrupted" });
-    expect(runtime?.handle({ name: "job.get", jobId: "job-b-successor" })).toMatchObject({ status: "completed", result: { projectRevision: 2 } });
+    expect(completedB.job.result).toEqual({ projectRevision: completedB.event.payload.projectRevision });
+    expect(runtime?.handle({ name: "job.get", jobId: "job-b-successor" })).toMatchObject({
+      status: "completed",
+      result: { projectRevision: completedB.event.payload.projectRevision }
+    });
     expect(runtime?.handle({ name: "checkpoint.listForJob", jobId: "job-a-expired" })).toEqual([]);
     expect(runtime?.handle({ name: "checkpoint.listStepAttempts", jobId: "job-a-expired" })).toEqual([
       expect.objectContaining({ status: "interrupted", error: "Worker lease expired." })
@@ -249,19 +279,37 @@ describe("durable job storage fencing", () => {
     const input = {
       fence: fenceOf(claimed.job),
       status: "completed" as const,
-      projectRevision: 7,
+      projectRevision: storageTestProjectRevision(runtime, claimed.job.projectId),
       occurredAt: "2026-07-14T00:00:02.000Z"
     };
 
-    const first = runtime?.handle({ name: "job.transitionTerminal", input }) as { job: StorageJob };
-    const second = runtime?.handle({ name: "job.transitionTerminal", input }) as { job: StorageJob };
+    const first = runtime?.handle({ name: "job.transitionTerminal", input }) as {
+      job: StorageJob;
+      event: { payload: { projectRevision: number } };
+    };
+    const committedHead = storageTestProjectHead(runtime, claimed.job.projectId);
+    const second = runtime?.handle({ name: "job.transitionTerminal", input }) as {
+      job: StorageJob;
+      event: { payload: { projectRevision: number } };
+    };
 
     expect(first.job.status).toBe("completed");
     expect(second.job.status).toBe("completed");
+    expect(first.job.result).toEqual({ projectRevision: first.event.payload.projectRevision });
+    expect(second.event).toEqual(first.event);
+    expect(storageTestProjectHead(runtime, claimed.job.projectId)).toEqual(committedHead);
     expect(runtime?.handle({ name: "event.after", projectId: "project-terminal" })).toHaveLength(3);
-    expect(() => runtime?.handle({ name: "job.transitionTerminal", input: { ...input, status: "failed", reason: "conflicting failure" } })).toThrow(
-      /transition/i
-    );
+    expect(() =>
+      runtime?.handle({
+        name: "job.transitionTerminal",
+        input: {
+          ...input,
+          status: "failed",
+          projectRevision: storageTestProjectRevision(runtime, claimed.job.projectId),
+          reason: "conflicting failure"
+        }
+      })
+    ).toThrow(/transition/i);
   });
 
   it("atomically records completed and quarantined step dispositions", () => {
@@ -282,7 +330,13 @@ describe("durable job storage fencing", () => {
 
     runtime?.handle({
       name: "job.transitionTerminal",
-      input: { fence: fenceOf(completed.job), status: "failed", projectRevision: 3, reason: "forced", occurredAt: "2026-07-14T00:00:04.000Z" }
+      input: {
+        fence: fenceOf(completed.job),
+        status: "failed",
+        projectRevision: storageTestProjectRevision(runtime, completed.job.projectId),
+        reason: "forced",
+        occurredAt: "2026-07-14T00:00:04.000Z"
+      }
     });
     enqueue({ id: "job-quarantine-step", projectId: "project-step" });
     const failed = claim("project-step");
@@ -303,32 +357,36 @@ describe("durable job storage fencing", () => {
     createRuntime();
     enqueue({ id: "job-pause", projectId: "project-control", projectRevision: 11 });
     const running = claim("project-control");
+    const pauseProjectRevision = storageTestProjectRevision(runtime, running.job.projectId);
     const paused = runtime?.handle({
       name: "job.requestControl",
-      input: { jobId: running.job.id, control: "pause", projectRevision: 11, occurredAt: "2026-07-14T00:00:02.000Z" }
-    }) as { job: StorageJob; event: { type: string; payload: unknown } };
+      input: { jobId: running.job.id, control: "pause", projectRevision: pauseProjectRevision, occurredAt: "2026-07-14T00:00:02.000Z" }
+    }) as { job: StorageJob; event: { sequence: number; type: string; payload: unknown } };
     expect(paused).toMatchObject({ job: { status: "pause_requested" }, event: { type: "run.status.changed" } });
+    const pauseHead = storageTestProjectHead(runtime, running.job.projectId);
 
-    expect(() =>
-      runtime?.handle({
-        name: "job.requestControl",
-        input: { jobId: running.job.id, control: "pause", projectRevision: 11, occurredAt: "2026-07-14T00:00:03.000Z" }
-      })
-    ).toThrow(/transition|running/i);
+    const pauseRetry = runtime?.handle({
+      name: "job.requestControl",
+      input: { jobId: running.job.id, control: "pause", projectRevision: pauseProjectRevision, occurredAt: "2026-07-14T00:00:03.000Z" }
+    }) as { event: { sequence: number } };
+    expect(pauseRetry.event.sequence).toBe(paused.event.sequence);
+    expect(storageTestProjectHead(runtime, running.job.projectId)).toEqual(pauseHead);
 
     enqueue({ id: "job-cancel", projectId: "project-cancel", projectRevision: 12 });
+    const cancelProjectRevision = storageTestProjectRevision(runtime, "project-cancel");
     const cancelled = runtime?.handle({
       name: "job.requestControl",
-      input: { jobId: "job-cancel", control: "cancel", projectRevision: 12, occurredAt: "2026-07-14T00:00:04.000Z" }
-    }) as { job: StorageJob; event: { type: string } };
+      input: { jobId: "job-cancel", control: "cancel", projectRevision: cancelProjectRevision, occurredAt: "2026-07-14T00:00:04.000Z" }
+    }) as { job: StorageJob; event: { sequence: number; type: string } };
     expect(cancelled).toMatchObject({ job: { status: "aborted" }, event: { type: "run.status.changed" } });
     expect(runtime?.handle({ name: "event.after", projectId: "project-cancel" })).toHaveLength(2);
-    expect(() =>
-      runtime?.handle({
-        name: "job.requestControl",
-        input: { jobId: "job-cancel", control: "cancel", projectRevision: 12, occurredAt: "2026-07-14T00:00:05.000Z" }
-      })
-    ).toThrow(/transition|cancel/i);
+    const cancelHead = storageTestProjectHead(runtime, "project-cancel");
+    const cancelRetry = runtime?.handle({
+      name: "job.requestControl",
+      input: { jobId: "job-cancel", control: "cancel", projectRevision: cancelProjectRevision, occurredAt: "2026-07-14T00:00:05.000Z" }
+    }) as { event: { sequence: number } };
+    expect(cancelRetry.event.sequence).toBe(cancelled.event.sequence);
+    expect(storageTestProjectHead(runtime, "project-cancel")).toEqual(cancelHead);
   });
 
   it("atomically interrupts expired leases and appends one durable event per job", () => {
@@ -365,7 +423,7 @@ describe("durable job storage fencing", () => {
       input: {
         fence: fenceOf(running.job),
         status: "completed",
-        projectRevision: 31,
+        projectRevision: storageTestProjectRevision(runtime, running.job.projectId),
         occurredAt: "2026-07-14T00:00:06.000Z",
         promotions: [
           {
@@ -389,7 +447,7 @@ describe("durable job storage fencing", () => {
         input: {
           fence: fenceOf(reject.job),
           status: "completed",
-          projectRevision: 32,
+          projectRevision: storageTestProjectRevision(runtime, reject.job.projectId),
           occurredAt: "2026-07-14T00:00:07.000Z",
           promotions: [{ link: promotedArtifactLink(reject.job, "attempt-running", "artifact-invalid") }]
         }
@@ -462,11 +520,21 @@ describe("durable queue discovery", () => {
     enqueue({ id: "job-aborted-b", projectId: "project-filter", queuedAt: "2026-07-13T00:00:01.000Z" });
     runtime?.handle({
       name: "job.requestControl",
-      input: { jobId: "job-aborted-a", control: "cancel", projectRevision: 1, occurredAt: "2026-07-13T00:00:02.000Z" }
+      input: {
+        jobId: "job-aborted-a",
+        control: "cancel",
+        projectRevision: storageTestProjectRevision(runtime, "project-filter"),
+        occurredAt: "2026-07-13T00:00:02.000Z"
+      }
     });
     runtime?.handle({
       name: "job.requestControl",
-      input: { jobId: "job-aborted-b", control: "cancel", projectRevision: 1, occurredAt: "2026-07-13T00:00:03.000Z" }
+      input: {
+        jobId: "job-aborted-b",
+        control: "cancel",
+        projectRevision: storageTestProjectRevision(runtime, "project-filter"),
+        occurredAt: "2026-07-13T00:00:03.000Z"
+      }
     });
     const queuedAt = "2026-07-14T00:00:00.000Z";
     for (const id of ["job-c", "job-a", "job-b"]) enqueue({ id, projectId: "project-filter", queuedAt });
@@ -517,83 +585,13 @@ function createRuntime(): string {
 }
 
 function enqueue(input: { id: string; projectId: string; priority?: number; queuedAt?: string; projectRevision?: number }): StorageJob {
-  const now = input.queuedAt ?? "2026-07-14T00:00:00.000Z";
-  const result = runtime?.handle({
-    name: "job.enqueue",
-    job: {
-      id: input.id,
-      projectId: input.projectId,
-      priority: input.priority,
-      operation: "research_loop",
-      idempotencyKey: input.id,
-      createdAt: now,
-      queuedAt: now,
-      payload: { currentStep: "EXECUTE_TOOLS", projectRevision: input.projectRevision ?? 1 }
-    }
-  }) as { job: StorageJob };
-  return result.job;
+  return enqueueStorageTestResearchJob(runtime, root, input);
 }
 
 function claim(projectId: string): StorageClaimStartResult {
-  return claimAt(projectId, "2026-07-14T00:00:01.000Z", "2026-07-14T00:01:00.000Z");
-}
-
-function claimAt(projectId: string, now: string, leaseExpiresAt: string): StorageClaimStartResult {
-  const value = runtime?.handle({ name: "job.claimAndStart", options: { projectId, leaseOwner: "worker-a", leaseExpiresAt, now } });
-  if (!value) throw new Error(`Expected a claim for ${projectId}.`);
-  return value as StorageClaimStartResult;
-}
-
-function claimOptions(projectId: string) {
-  return {
-    projectId,
-    leaseOwner: "worker-a",
-    leaseExpiresAt: "2026-07-14T00:01:00.000Z",
-    now: "2026-07-14T00:00:01.000Z"
-  };
-}
-
-function fenceOf(job: StorageJob): StorageLeaseFence {
-  if (!job.leaseOwner) throw new Error("Claimed job is missing its lease owner.");
-  return { jobId: job.id, attempt: job.attempt, leaseOwner: job.leaseOwner, leaseGeneration: job.leaseGeneration };
-}
-
-function toolAttempt(job: StorageJob, id: string, status: "running" | "completed") {
-  return {
-    id,
-    projectId: job.projectId,
-    jobId: job.id,
-    decisionId: `decision-${id}`,
-    ordinal: 0,
-    status,
-    inputHash: "a".repeat(64),
-    outputHash: status === "completed" ? "b".repeat(64) : undefined,
-    terminalCause: status === "completed" ? "completed" : undefined,
-    dependsOnAttemptIds: [],
-    queuedAt: "2026-07-14T00:00:01.000Z",
-    startedAt: "2026-07-14T00:00:02.000Z",
-    completedAt: status === "completed" ? "2026-07-14T00:00:03.000Z" : undefined
-  };
-}
-
-function promotedArtifactLink(job: StorageJob, attemptId: string, outputId: string) {
-  return {
-    id: `link-${outputId}`,
-    projectId: job.projectId,
-    jobId: job.id,
-    attemptId,
-    outputKind: "artifact" as const,
-    outputId,
-    promoted: true,
-    createdAt: "2026-07-14T00:00:05.000Z",
-    promotedAt: "2026-07-14T00:00:06.000Z"
-  };
+  return claimStorageTestJob(runtime, projectId);
 }
 
 function saveFencedToolAttempt(job: StorageJob, attempt: ReturnType<typeof toolAttempt>): void {
-  runtime?.handle({ name: "fencedTransaction", fence: fenceOf(job), commands: fencedAttemptCommands(job, attempt) });
-}
-
-function stableTestId(prefix: string, ...parts: string[]): string {
-  return `${prefix}-${createHash("sha256").update(parts.join("\u0000")).digest("hex")}`;
+  saveStorageTestFencedToolAttempt(runtime, job, attempt);
 }

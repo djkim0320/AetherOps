@@ -2,6 +2,8 @@ import type { AetherOpsOrchestrator } from "../../../core/orchestration/orchestr
 import type { AppSettingsStore } from "../../runtime/storage/settingsStore.js";
 import type { DurableJobRuntime } from "../../composition/durableJobRuntime.js";
 import type { CodexCliReadiness } from "../../runtime/codex/codexCliReadiness.js";
+import type { ProjectMutationSagaCoordinator } from "../../composition/projectMutationSagaCoordinator.js";
+import type { CapabilityMutationGate } from "./capabilityMutationGate.js";
 
 export interface RpcHandlerContext {
   appRoot: string;
@@ -26,6 +28,8 @@ export interface RpcHandlerContext {
       }
     | undefined;
   orchestrator: AetherOpsOrchestrator;
+  capabilityMutations: CapabilityMutationGate;
+  projectMutations: ProjectMutationSagaCoordinator;
   settingsStore: AppSettingsStore;
   events: DurableJobRuntime;
   jobs: DurableJobRuntime;

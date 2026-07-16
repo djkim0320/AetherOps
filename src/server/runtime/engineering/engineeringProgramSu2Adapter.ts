@@ -35,12 +35,7 @@ export async function runSu2Case(request: EngineeringProgramRequest, settings: A
     throw new Error("SU2 case execution requires an embedded executable, configured case root, and explicit config file.");
   }
   const config = su2Config(settings);
-  if (!config.runArgsTemplate.length) {
-    throw new Error("SU2 runArgsTemplate is not configured; AetherOps will not invent solver command arguments.");
-  }
-  if (!config.runArgsTemplate.some((arg) => arg.includes("{config}"))) {
-    throw new Error("SU2 runArgsTemplate must include {config}; AetherOps will not infer an implicit SU2 config file.");
-  }
+  validateSu2RunArgsTemplate(config.runArgsTemplate);
   const cfdRunSpec = validateCfdRunSpecForTarget(request.cfdRunSpec, "su2", settings);
   const su2Case = validateSu2CaseConfig(config.caseRoot, config.configFile);
   const tempRoot = mkdtempSync(joinTempRoot());
@@ -82,6 +77,15 @@ export async function runSu2Case(request: EngineeringProgramRequest, settings: A
     };
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+export function validateSu2RunArgsTemplate(runArgsTemplate: readonly string[]): void {
+  if (!runArgsTemplate.length) {
+    throw new Error("SU2 runArgsTemplate is not configured; AetherOps will not invent solver command arguments.");
+  }
+  if (!runArgsTemplate.some((arg) => arg.includes("{config}"))) {
+    throw new Error("SU2 runArgsTemplate must include {config}; AetherOps will not infer an implicit SU2 config file.");
   }
 }
 

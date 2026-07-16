@@ -5,7 +5,7 @@ export function printDoctorResult(result) {
     `Node.js: ${result.nodeVersion} (${result.engine})`,
     `npm: ${result.npmVersion || "unknown"}`,
     `Data root: ${result.dataRoot}`,
-    `Server port: ${result.port} (${result.portAvailable ? "available" : "occupied"})`,
+    `Server port: ${result.port} (${result.portStatus ?? (result.portAvailable ? "available" : "occupied")})`,
     `Settings: ${result.settings}`,
     `Codex orchestrator: ${result.codex}`,
     `Codex CLI sandbox: ${result.codexSandboxStatus} (${result.codexSandboxMode})`,

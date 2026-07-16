@@ -41,6 +41,7 @@ describe("autonomy offline storage worker", () => {
       id: "job-offline",
       projectId: "project-offline",
       operation: "research",
+      expectedProjectRevision: 0,
       idempotencyKey: "offline-idempotency",
       requestHash: "sha256:offline",
       requestedCapabilities: { agent: true, engineering: true, search: false },

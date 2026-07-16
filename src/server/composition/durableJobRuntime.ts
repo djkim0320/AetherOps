@@ -1,21 +1,9 @@
 import type { JobKind, JobStatus } from "../../contracts/api-v2/jobs.js";
 import type { SseEvent } from "../../contracts/api-v2/events.js";
 import { createStorageWorkerClient, type StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
-import type { StorageJobControlResult, StorageOutputPromotion } from "../runtime/storage/v2/jobAtomicTypes.js";
-import type {
-  StorageCapabilityAudit,
-  StorageCheckpoint,
-  StorageClaimStartResult,
-  StorageJobEvent,
-  StorageProjectPayload
-} from "../runtime/storage/v2/types.js";
-import type {
-  StorageLlmInvocation,
-  StorageNetworkAudit,
-  StorageToolAttempt,
-  StorageToolDecision,
-  StorageToolOutputLink
-} from "../runtime/storage/v2/traceTypes.js";
+import type { StorageJobControlResult, StorageOutputPromotion, StorageProjectSnapshotChange } from "../runtime/storage/v2/jobAtomicTypes.js";
+import type { StorageCapabilityAudit, StorageCheckpoint, StorageClaimStartResult, StorageProjectPayload } from "../runtime/storage/v2/types.js";
+import type * as Trace from "../runtime/storage/v2/traceTypes.js";
 import type * as CS from "../runtime/storage/v2/runStateTypes.js";
 import type { StorageCanonicalTerminalVerifyInput, StorageCanonicalTerminalVerifyResult } from "../runtime/storage/v2/terminalReceiptTypes.js";
 import { fencedCanonicalStorageWrite, fencedCanonicalTaskContractWrite } from "./durableCanonicalStorageWrite.js";
@@ -50,20 +38,17 @@ import type {
 } from "./durableJobTypes.js";
 import { DurableProjectLaneScheduler } from "./durableProjectLaneScheduler.js";
 import { resolveDurableRuntimeConfig, runtimeNow, type DurableJobRuntimeOptions, type ResolvedDurableRuntimeConfig } from "./durableRuntimeConfig.js";
-import {
-  collectDurableOperationalDiagnostics,
-  DurableRuntimeDiagnostics,
-  type DurableOperationalDiagnosticSnapshot,
-  type DurableRuntimeDiagnosticSnapshot
-} from "./durableRuntimeDiagnostics.js";
+import { collectDurableOperationalDiagnostics, DurableRuntimeDiagnostics, type DurableOperationalDiagnosticSnapshot } from "./durableRuntimeDiagnostics.js";
 import { SseRuntimeDiagnostics } from "./sseRuntimeDiagnostics.js";
 import { waitForActiveRuns } from "./durableRuntimeShutdown.js";
 import { logDurableRuntimeFailure } from "./durableRuntimeFailureLogger.js";
+import { handleDurablePostCommitWarning } from "./durablePostCommitWarning.js";
 import { discoverDurableRunnableProjects, sweepDurableExpiredLeases } from "./durableJobRecovery.js";
 import { DurableTerminalAttestedLeaseRuntime } from "./durableTerminalAttestedLeaseRuntime.js";
 import { DurableRuntimeAdmissionError, type DurableRuntimeAdmissionState } from "./durableRuntimeAdmission.js";
+import { DurableEngineeringStorage } from "./durableEngineeringStorage.js";
+import { DurableProjectMutationStorage } from "./durableProjectMutationStorage.js";
 
-type RuntimeState = DurableRuntimeAdmissionState;
 export class DurableJobRuntime {
   private readonly client: StorageWorkerClient;
   private readonly config: ResolvedDurableRuntimeConfig;
@@ -74,9 +59,11 @@ export class DurableJobRuntime {
   private readonly trace: DurableJobTraceRuntime;
   private readonly executor: DurableJobExecutor;
   private readonly lanes: DurableProjectLaneScheduler;
+  readonly engineering: DurableEngineeringStorage;
+  readonly projectMutations: DurableProjectMutationStorage;
   readonly terminalOutputs: DurableTerminalAttestedLeaseRuntime;
   private readonly diagnosticCountersSince: string;
-  private state: RuntimeState = "new";
+  private state: DurableRuntimeAdmissionState = "new";
   private leaseSweepTimer?: ReturnType<typeof setTimeout>;
   private closePromise?: Promise<void>;
   constructor(databasePath: string, options: number | DurableJobRuntimeOptions = 4) {
@@ -94,6 +81,13 @@ export class DurableJobRuntime {
         ...(resolvedOptions.dataRoot ? { dataRoot: resolvedOptions.dataRoot } : {})
       });
     this.trace = new DurableJobTraceRuntime(this.client, undefined, () => this.execution.current()?.fence, resolvedOptions.dataRoot);
+    this.projectMutations = new DurableProjectMutationStorage(this.client, (event) => void this.trace.publishStoredEvent(event));
+    this.engineering = new DurableEngineeringStorage(
+      this.client,
+      () => this.assertRunning(),
+      (event) => void this.trace.publishStoredEvent(event),
+      (jobId) => this.execution.require(jobId).fence
+    );
     this.terminalOutputs = new DurableTerminalAttestedLeaseRuntime(this.client);
     this.executor = new DurableJobExecutor({
       client: this.client,
@@ -103,7 +97,12 @@ export class DurableJobRuntime {
       handlers: this.handlers,
       diagnostics: this.diagnostics,
       canWrite: () => this.state !== "closing_storage" && this.state !== "closed",
-      logFailure: (error, jobId, projectId, diagnosticId) => this.logFailure(error, jobId, projectId, diagnosticId)
+      logFailure: (error, jobId, projectId, diagnosticId) => this.logFailure(error, jobId, projectId, diagnosticId),
+      recordPostCommitWarning: (warning, jobId, projectId) =>
+        handleDurablePostCommitWarning(warning, { jobId, projectId }, () => {
+          this.beginDrain();
+          this.executor.interruptAll();
+        })
     });
     this.lanes = new DurableProjectLaneScheduler({
       concurrency: this.config.concurrency,
@@ -119,7 +118,7 @@ export class DurableJobRuntime {
     const recovered = await discoverDurableRunnableProjects(this.client);
     this.diagnostics.recordRecoveryProjects(new Set([...sweep.projectIds, ...recovered]).size);
     this.state = "running";
-    for (const projectId of [...sweep.projectIds, ...recovered]) this.schedule(projectId);
+    for (const projectId of [...sweep.projectIds, ...recovered]) this.lanes.schedule(projectId);
     this.scheduleLeaseSweep();
   }
   registerHandler(kind: JobKind, handler: DurableJobHandler): void {
@@ -133,7 +132,7 @@ export class DurableJobRuntime {
         config: this.config,
         assertAccepting: () => this.assertRunning(),
         hasHandler: (kind) => this.handlers.has(kind),
-        schedule: (projectId) => this.schedule(projectId),
+        schedule: (projectId) => this.lanes.schedule(projectId),
         publish: (event) => void this.trace.publishStoredEvent(event)
       },
       input
@@ -167,9 +166,10 @@ export class DurableJobRuntime {
     jobId: string,
     projectRevision: number,
     promotions?: StorageOutputPromotion[],
-    canonicalTransition?: DurableCanonicalTerminalTransition
+    canonicalTransition?: DurableCanonicalTerminalTransition,
+    snapshotChange?: StorageProjectSnapshotChange
   ): Promise<DurableJobRecord> {
-    return this.settle(jobId, "completed", projectRevision, undefined, promotions, canonicalTransition);
+    return this.settle(jobId, "completed", projectRevision, undefined, promotions, canonicalTransition, snapshotChange);
   }
   bindCanonicalTransition(jobId: string, transition: DurableCanonicalTerminalTransition): void {
     this.execution.bindCanonicalTransition(jobId, transition);
@@ -180,43 +180,45 @@ export class DurableJobRuntime {
     projectRevision: number,
     reason?: string,
     promotions?: StorageOutputPromotion[],
-    canonicalTransition?: DurableCanonicalTerminalTransition
+    canonicalTransition?: DurableCanonicalTerminalTransition,
+    snapshotChange?: StorageProjectSnapshotChange
   ): Promise<DurableJobRecord> {
     const outcome: DurableTerminalOutcome = {
       status,
       projectRevision,
       ...(reason ? { reason: publicTerminalReason(status, reason) } : {}),
       ...(promotions?.length ? { promotions } : {}),
+      ...(snapshotChange ? { snapshotChange } : {}),
       ...(canonicalTransition ? { canonicalTransition } : {})
     };
     return this.execution.settle(jobId, outcome);
   }
-  async appendEvent(event: Omit<SseEvent, "id">): Promise<SseEvent> {
-    return this.trace.appendEvent(event);
+  async appendEvent(event: Omit<SseEvent, "id">, internalEventId?: string, internalMutationHash?: string): Promise<SseEvent> {
+    return this.trace.appendEvent(event, internalEventId, internalMutationHash);
   }
-  saveLlmInvocation(value: StorageLlmInvocation): Promise<StorageLlmInvocation> {
+  saveLlmInvocation(value: Trace.StorageLlmInvocation): Promise<Trace.StorageLlmInvocation> {
     return this.trace.saveLlmInvocation(value);
   }
-  recordToolDecision(value: StorageToolDecision): Promise<StorageToolDecision> {
+  recordToolDecision(value: Trace.StorageToolDecision): Promise<Trace.StorageToolDecision> {
     return this.trace.recordToolDecision(value);
   }
-  recordToolAttemptAndEvent(input: { attempt: StorageToolAttempt; projectRevision: number; toolName: string }): Promise<StorageToolAttempt> {
+  recordToolAttemptAndEvent(input: { attempt: Trace.StorageToolAttempt; projectRevision: number; toolName: string }): Promise<Trace.StorageToolAttempt> {
     return this.trace.recordToolAttemptAndEvent(input);
   }
-  verifyToolPostcondition(input: { jobId: string; attemptId: string; projectRevision: number; verifiedAt: string }): Promise<StorageToolAttempt> {
+  verifyToolPostcondition(input: { jobId: string; attemptId: string; projectRevision: number; verifiedAt: string }): Promise<Trace.StorageToolAttempt> {
     return this.trace.verifyToolPostcondition(input);
   }
   verifyCanonicalTerminal(input: Omit<StorageCanonicalTerminalVerifyInput, "fence">): Promise<StorageCanonicalTerminalVerifyResult> {
     const active = this.execution.require(input.owner.jobId);
     return this.client.request({ name: "canonical.verifyTerminal", input: { ...input, fence: active.fence } });
   }
-  recordToolOutput(value: StorageToolOutputLink): Promise<StorageToolOutputLink> {
+  recordToolOutput(value: Trace.StorageToolOutputLink): Promise<Trace.StorageToolOutputLink> {
     return this.trace.recordToolOutput(value);
   }
   saveCodexCliExecution(value: import("../runtime/storage/v2/traceTypes.js").StorageCodexCliExecution) {
     return this.trace.saveCodexCliExecution(value);
   }
-  recordNetworkAudit(value: StorageNetworkAudit): Promise<StorageNetworkAudit> {
+  recordNetworkAudit(value: Trace.StorageNetworkAudit): Promise<Trace.StorageNetworkAudit> {
     return this.trace.recordNetworkAudit(value);
   }
   commitCheckpoint(input: { projectId: string; jobId: string; step: string; projectRevision: number }): Promise<StorageCheckpoint> {
@@ -264,10 +266,10 @@ export class DurableJobRuntime {
   getCanonicalResumeContextPack(owner: CS.StorageRunOwnership, predecessorJobId: string, contextPackId: string): Promise<CS.StorageContextPack | undefined> {
     return this.client.request({ name: "contextPack.getResumeBound", owner, predecessorJobId, contextPackId });
   }
-  listCanonicalToolAttempts(jobId: string, limit = 1_000): Promise<StorageToolAttempt[]> {
+  listCanonicalToolAttempts(jobId: string, limit = 1_000): Promise<Trace.StorageToolAttempt[]> {
     return this.client.request({ name: "trace.attempt.listJob", jobId, limit });
   }
-  listCanonicalLlmInvocations(jobId: string, limit = 1_000): Promise<StorageLlmInvocation[]> {
+  listCanonicalLlmInvocations(jobId: string, limit = 1_000): Promise<Trace.StorageLlmInvocation[]> {
     return this.client.request({ name: "trace.llm.listJob", jobId, limit });
   }
   async recordCapabilityAudits(audits: StorageCapabilityAudit[], project?: StorageProjectPayload): Promise<void> {
@@ -276,14 +278,20 @@ export class DurableJobRuntime {
   async syncProject(project: StorageProjectPayload): Promise<void> {
     await syncDurableProject(this.client, project);
   }
+  getProjectRevision(projectId: string): Promise<number | undefined> {
+    return this.trace.getProjectRevision(projectId);
+  }
+  getProjectRevisionHead(projectId: string) {
+    return this.trace.getProjectRevisionHead(projectId);
+  }
+  commitProjectSnapshot(input: Parameters<DurableJobTraceRuntime["commitProjectSnapshot"]>[0]) {
+    return this.trace.commitProjectSnapshot(input);
+  }
   eventsAfter(projectId: string, lastEventId?: string | number, limit = 200, signal?: AbortSignal): Promise<SseEvent[]> {
     return this.trace.eventsAfter(projectId, lastEventId, limit, signal);
   }
   subscribe(listener: (event: SseEvent) => void): () => void {
     return this.trace.subscribe(listener);
-  }
-  diagnosticSnapshot(): DurableRuntimeDiagnosticSnapshot {
-    return this.diagnostics.snapshot();
   }
   async operationalDiagnostics(queueProjectLimit = 100): Promise<DurableOperationalDiagnosticSnapshot> {
     const sampledAtMs = this.config.clock.now();
@@ -309,9 +317,6 @@ export class DurableJobRuntime {
       this.leaseSweepTimer = undefined;
     }
   }
-  private schedule(projectId: string): void {
-    this.lanes.schedule(projectId);
-  }
   private async drainProject(projectId: string): Promise<boolean> {
     if (this.state !== "running") return false;
     const now = runtimeNow(this.config);
@@ -336,29 +341,31 @@ export class DurableJobRuntime {
   private async requestControl(jobId: string, control: DurableJobControl, projectRevision?: number): Promise<DurableJobRecord> {
     const current = await this.get(jobId);
     if (!current) throw new Error(`Durable job not found: ${jobId}`);
+    const expectedProjectRevision = projectRevision ?? (await this.getProjectRevision(current.projectId));
+    if (expectedProjectRevision === undefined) throw new Error(`Durable project revision is unavailable: ${current.projectId}.`);
     const result = await this.client.request<StorageJobControlResult>({
       name: "job.requestControl",
       input: {
         jobId,
         control: control === "abort" ? "cancel" : "pause",
-        projectRevision: projectRevision ?? current.projectRevision,
+        projectRevision: expectedProjectRevision,
         occurredAt: runtimeNow(this.config)
       }
     });
     this.trace.publishStoredEvent(result.event);
     if (["pause_requested", "cancel_requested"].includes(result.job.status)) this.executor.interrupt(jobId, control);
-    else this.schedule(result.job.projectId);
+    else this.lanes.schedule(result.job.projectId);
     return toDurableJobRecord(result.job);
   }
   private sweepExpiredLeases() {
-    return sweepDurableExpiredLeases(this.client, runtimeNow(this.config), (events) => this.publishEvents(events));
+    return sweepDurableExpiredLeases(this.client, runtimeNow(this.config), (events) => this.trace.publishStoredEvents(events));
   }
   private scheduleLeaseSweep(): void {
     if (this.state !== "running") return;
     this.leaseSweepTimer = this.config.timer.setTimeout(() => {
       this.leaseSweepTimer = undefined;
       void this.sweepExpiredLeases()
-        .then((result) => result.projectIds.forEach((projectId) => this.schedule(projectId)))
+        .then((result) => result.projectIds.forEach((projectId) => this.lanes.schedule(projectId)))
         .catch((error) => this.logFailure(error))
         .finally(() => this.scheduleLeaseSweep());
     }, this.config.leaseSweepMs);
@@ -382,17 +389,10 @@ export class DurableJobRuntime {
       this.state = "closed";
     }
   }
-  private publishEvents(events: StorageJobEvent[]): void {
-    const seen = new Set<number>();
-    for (const event of events)
-      if (!seen.has(event.sequence)) {
-        seen.add(event.sequence);
-        this.trace.publishStoredEvent(event);
-      }
-  }
   private assertRunning(): void {
     if (this.state !== "running") throw new DurableRuntimeAdmissionError(this.state);
   }
+
   private logFailure(error: unknown, jobId?: string, projectId?: string, diagnosticId?: string): void {
     logDurableRuntimeFailure(error, { jobId, projectId, diagnosticId });
   }

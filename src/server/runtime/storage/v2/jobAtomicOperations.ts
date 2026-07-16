@@ -6,15 +6,16 @@ import { assertNoActiveToolAttempts, interruptTerminalToolAttempts } from "./job
 import type { StorageV2RepositorySet } from "./repositories.js";
 import type {
   StorageExpiredLeaseSweepResult,
-  StorageJobControlInput,
-  StorageJobControlResult,
   StorageOutputPromotion,
+  StorageProjectSnapshotChange,
   StorageTerminalTransitionInput,
   StorageTerminalTransitionResult
 } from "./jobAtomicTypes.js";
 import type { StorageClaimStartOptions, StorageClaimStartResult, StorageJobEvent, StorageJob, StorageLeaseFence, StorageStepAttempt } from "./types.js";
 import type { StorageToolOutputLink } from "./traceTypes.js";
+import { assertToolAttemptOutputPromotionAllowed } from "./toolPostcondition.js";
 export { enqueueJob } from "./jobEnqueueAtomic.js";
+export { requestControl } from "./jobControlOperations.js";
 export { commitStep, quarantineStep, storageStepCheckpointId } from "./jobStepOperations.js";
 export function claimAndStart(repositories: StorageV2RepositorySet, options: StorageClaimStartOptions): StorageClaimStartResult | undefined {
   const job = repositories.jobs.claimNext(options);
@@ -37,6 +38,7 @@ export function claimAndStart(repositories: StorageV2RepositorySet, options: Sto
 
 export function transitionTerminal(repositories: StorageV2RepositorySet, input: StorageTerminalTransitionInput): StorageTerminalTransitionResult {
   const occurredAt = input.occurredAt ?? new Date().toISOString();
+  assertSnapshotChange(input);
   if (input.completedStep && input.quarantinedStep) {
     throw new Error("A terminal transition cannot commit and quarantine a step at the same time.");
   }
@@ -79,26 +81,33 @@ export function transitionTerminal(repositories: StorageV2RepositorySet, input: 
       ...(stepDisposition ? { stepDisposition } : {})
     };
   }
+  repositories.projectRevisions.assertCurrent(before.projectId, input.projectRevision);
+  const committedProjectRevision = repositories.projectRevisions.allocate(before.projectId);
+  const committedInput: StorageTerminalTransitionInput = {
+    ...resolvedInput,
+    projectRevision: committedProjectRevision,
+    ...(resolvedInput.snapshotChange ? { snapshotChange: { ...resolvedInput.snapshotChange, snapshotVersion: committedProjectRevision } } : {})
+  };
   let toolSettlementEvents: StorageJobEvent[] = [];
   if (resolution.status !== "completed") {
     toolSettlementEvents = interruptTerminalToolAttempts(
       repositories,
       before,
-      input.projectRevision,
+      committedProjectRevision,
       occurredAt,
       resolution.reason ?? `Durable job settled as ${resolution.status}.`,
       `job_${resolution.status}`
     ).events;
   }
-  const stepDisposition = hasTerminalStep(input) ? recordTerminalStepTransition(repositories, before, resolvedInput, resolution.stepDisposition) : undefined;
+  const stepDisposition = hasTerminalStep(input) ? recordTerminalStepTransition(repositories, before, committedInput, resolution.stepDisposition) : undefined;
   const promoted =
     resolution.status === "completed"
-      ? (input.promotions ?? []).map((promotion) => promoteTerminalOutput(repositories, input.fence, promotion, input.projectRevision, occurredAt))
+      ? (input.promotions ?? []).map((promotion) => promoteTerminalOutput(repositories, input.fence, promotion, committedProjectRevision, occurredAt))
       : [];
   if (resolution.status === "completed") assertNoActiveToolAttempts(repositories, before.id);
   const job = repositories.jobs.transitionFenced(input.fence, {
     status: resolution.status,
-    result: { projectRevision: input.projectRevision },
+    result: { projectRevision: committedProjectRevision },
     error: resolution.reason,
     ...(resolution.status === "blocked" && resolution.reason ? { blockedReason: resolution.reason } : {}),
     ...(resolution.status === "failed" && resolution.reason ? { failureReason: resolution.reason } : {}),
@@ -111,10 +120,24 @@ export function transitionTerminal(repositories: StorageV2RepositorySet, input: 
     type: "run.status.changed",
     createdAt: occurredAt,
     payload: {
-      projectRevision: input.projectRevision,
+      projectRevision: committedProjectRevision,
+      snapshotChange: committedInput.snapshotChange ?? null,
       data: { jobId: job.id, status: resolution.status, previousStatus: before.status, ...(resolution.reason ? { reason: resolution.reason } : {}) }
     }
   });
+  const snapshotEvent = committedInput.snapshotChange
+    ? repositories.events.append({
+        eventId: terminalSnapshotEventId(job.id, input.fence.attempt, committedInput.snapshotChange.reason),
+        projectId: job.projectId,
+        jobId: job.id,
+        type: "project.snapshot.changed",
+        createdAt: occurredAt,
+        payload: {
+          projectRevision: committedProjectRevision,
+          data: { snapshotVersion: committedInput.snapshotChange.snapshotVersion, reason: committedInput.snapshotChange.reason }
+        }
+      })
+    : undefined;
   return {
     job,
     event,
@@ -122,7 +145,8 @@ export function transitionTerminal(repositories: StorageV2RepositorySet, input: 
       ...toolSettlementEvents,
       ...(stepDisposition ? [stepDisposition.event] : []),
       ...promoted.flatMap((entry) => (entry.event ? [entry.event] : [])),
-      event
+      event,
+      ...(snapshotEvent ? [snapshotEvent] : [])
     ],
     links: promoted.map((entry) => entry.link),
     ...(stepDisposition ? { stepDisposition } : {})
@@ -137,6 +161,12 @@ function readTerminalRetry(repositories: StorageV2RepositorySet, job: StorageJob
     if (!link || link.id !== promotion.link.id || link.jobId !== job.id || link.projectId !== job.projectId || !link.promoted) {
       throw new Error(`Completed job promotion retry does not match durable output ${promotion.link.outputId}.`);
     }
+    if (promotion.engineering) {
+      const receipt = repositories.engineering.getPromotion(job.projectId, promotion.engineering.id);
+      if (!receipt || receipt.outputLinkId !== link.id || receipt.receiptHash !== promotion.engineering.receiptHash) {
+        throw new Error(`Completed engineering promotion retry does not match durable receipt ${promotion.engineering.id}.`);
+      }
+    }
     return link;
   });
   const artifactEvents = (input.promotions ?? []).flatMap((promotion) => {
@@ -149,35 +179,69 @@ function readTerminalRetry(repositories: StorageV2RepositorySet, job: StorageJob
   if (!event) throw new Error(`Completed job terminal event is missing for ${job.id}.`);
   const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? (event.payload as Record<string, unknown>) : undefined;
   const data = payload?.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? (payload.data as Record<string, unknown>) : undefined;
-  if (payload?.projectRevision !== input.projectRevision || data?.jobId !== job.id || data?.status !== input.status || data?.reason !== input.reason) {
+  const storedSnapshotChange = payload?.snapshotChange;
+  const snapshotIdentityMatches = input.snapshotChange
+    ? snapshotChangeReason(storedSnapshotChange) === input.snapshotChange.reason
+    : storedSnapshotChange === undefined || storedSnapshotChange === null;
+  if (data?.jobId !== job.id || data?.status !== input.status || data?.reason !== input.reason || !snapshotIdentityMatches) {
     throw new Error(`Completed job terminal retry does not match durable event ${event.eventId}.`);
   }
-  return { job, event, events: [...artifactEvents, event], links };
+  const snapshotEvent = input.snapshotChange
+    ? (repositories.events.get(terminalSnapshotEventId(job.id, input.fence.attempt, input.snapshotChange.reason)) ??
+      repositories.events.get(
+        stableId("event", job.id, String(input.fence.attempt), `snapshot-${input.snapshotChange.snapshotVersion}-${input.snapshotChange.reason}`)
+      ))
+    : undefined;
+  if (input.snapshotChange && !snapshotEvent) throw new Error(`Completed job snapshot event is missing for ${job.id}.`);
+  if (input.snapshotChange && snapshotEvent) {
+    const snapshotPayload =
+      snapshotEvent.payload && typeof snapshotEvent.payload === "object" && !Array.isArray(snapshotEvent.payload)
+        ? (snapshotEvent.payload as Record<string, unknown>)
+        : undefined;
+    const snapshotData =
+      snapshotPayload?.data && typeof snapshotPayload.data === "object" && !Array.isArray(snapshotPayload.data)
+        ? (snapshotPayload.data as Record<string, unknown>)
+        : undefined;
+    if (snapshotEvent.projectId !== job.projectId || snapshotEvent.jobId !== job.id || snapshotData?.reason !== input.snapshotChange.reason) {
+      throw new Error(`Completed job snapshot event does not match terminal input for ${job.id}.`);
+    }
+  }
+  return { job, event, events: [...artifactEvents, event, ...(snapshotEvent ? [snapshotEvent] : [])], links };
 }
 
-export function requestControl(repositories: StorageV2RepositorySet, input: StorageJobControlInput): StorageJobControlResult {
-  const occurredAt = input.occurredAt ?? new Date().toISOString();
-  const before = requiredJob(repositories, input.jobId);
-  const job = input.control === "pause" ? repositories.jobs.requestPause(input.jobId, occurredAt) : repositories.jobs.requestCancel(input.jobId, occurredAt);
-  const event = repositories.events.append({
-    eventId: stableId("event", job.id, String(job.attempt), `control-${input.control}-${job.status}`),
-    projectId: job.projectId,
-    jobId: job.id,
-    type: "run.status.changed",
-    createdAt: occurredAt,
-    payload: {
-      projectRevision: input.projectRevision,
-      data: { jobId: job.id, status: job.status, previousStatus: before.status, reason: `${input.control}_requested` }
-    }
-  });
-  return { job, event };
+function snapshotChangeReason(value: unknown): unknown {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>).reason : undefined;
+}
+
+function terminalSnapshotEventId(jobId: string, attempt: number, reason: StorageProjectSnapshotChange["reason"]): string {
+  return stableId("event", jobId, String(attempt), `snapshot-${reason}`);
+}
+
+function assertSnapshotChange(input: StorageTerminalTransitionInput): void {
+  if (!input.snapshotChange) return;
+  if (!Number.isInteger(input.snapshotChange.snapshotVersion) || input.snapshotChange.snapshotVersion < 0) {
+    throw new Error("A terminal snapshot change requires a non-negative integer snapshot version.");
+  }
+  if (input.snapshotChange.snapshotVersion !== input.projectRevision) {
+    throw new Error("A terminal snapshot version must match the committed project revision.");
+  }
+  if (!(
+    input.snapshotChange.reason === "project_updated" ||
+    input.snapshotChange.reason === "job_changed" ||
+    input.snapshotChange.reason === "resync_required"
+  )) {
+    throw new Error("A terminal snapshot change has an unsupported reason.");
+  }
 }
 
 export function interruptExpiredLeases(repositories: StorageV2RepositorySet, now = new Date().toISOString()): StorageExpiredLeaseSweepResult {
-  const jobs = repositories.jobs.markInterruptedExpiredLeases(now);
-  const events = jobs.flatMap((job) => {
+  const interrupted = repositories.jobs.markInterruptedExpiredLeases(now);
+  const jobs: StorageJob[] = [];
+  const events = interrupted.flatMap((interruptedJob) => {
+    const projectRevision = repositories.projectRevisions.allocate(interruptedJob.projectId);
+    const job = repositories.jobs.recordInterruptedProjectRevision(interruptedJob.id, projectRevision, now);
+    jobs.push(job);
     repositories.checkpoints.interruptRunningStepAttempts(job.id, now, "Worker lease expired.");
-    const projectRevision = requiredProjectRevision(job);
     const settlement = interruptTerminalToolAttempts(repositories, job, projectRevision, now, "Worker lease expired.", "lease_expired");
     const event = repositories.events.append({
       eventId: stableId("event", job.id, String(job.attempt), String(job.leaseGeneration), "lease-expired"),
@@ -209,6 +273,34 @@ function promoteTerminalOutput(
     throw new Error("A promoted output must originate from a completed tool attempt for the fenced job.");
   }
   const link = repositories.trace.recordOutputLink(promotion.link);
+  const decision = repositories.trace.getToolDecision(attempt.decisionId);
+  assertToolAttemptOutputPromotionAllowed(attempt);
+  const requiresEngineeringReceipt = decision?.toolName === "EngineeringProgramTool" || decision?.toolName === "CodexCliTool";
+  if (requiresEngineeringReceipt && !promotion.engineering) {
+    throw new Error("Engineering output promotion requires a persisted baseline and artifact receipt.");
+  }
+  if (!requiresEngineeringReceipt && promotion.engineering) {
+    throw new Error("A non-engineering tool output cannot attach an engineering promotion receipt.");
+  }
+  if (promotion.engineering) {
+    const engineering = promotion.engineering;
+    if (
+      !decision ||
+      engineering.projectId !== link.projectId ||
+      engineering.jobId !== link.jobId ||
+      engineering.attemptId !== link.attemptId ||
+      engineering.outputLinkId !== link.id ||
+      engineering.outputId !== link.outputId ||
+      engineering.promotedAt !== link.promotedAt ||
+      engineering.tool.name !== decision.toolName ||
+      engineering.tool.version !== attempt.descriptorVersion ||
+      engineering.tool.receiptHash !== attempt.postconditionReceipt?.receiptHash ||
+      engineering.postconditionReceiptHash !== attempt.postconditionReceipt?.receiptHash
+    ) {
+      throw new Error("Engineering promotion receipt does not match its atomic output and tool origin.");
+    }
+    repositories.engineering.recordPromotion(engineering);
+  }
   if (link.outputKind !== "artifact") return { link };
   if (!promotion.artifact) throw new Error("A promoted artifact requires public artifact metadata.");
   const event = repositories.events.append({
@@ -236,12 +328,6 @@ function runningStepAttempt(job: StorageJob, step: string, startedAt: string): S
     workerId: job.leaseOwner,
     startedAt
   };
-}
-
-function requiredJob(repositories: StorageV2RepositorySet, jobId: string): StorageJob {
-  const job = repositories.jobs.get(jobId);
-  if (!job) throw new Error(`Storage job not found: ${jobId}`);
-  return job;
 }
 
 function requiredProjectRevision(job: StorageJob): number {

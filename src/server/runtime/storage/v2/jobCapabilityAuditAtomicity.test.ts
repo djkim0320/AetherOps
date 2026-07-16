@@ -65,7 +65,14 @@ describe("atomic job authorization receipt", () => {
 
   it("commits job, queued event, and audits once and returns the same receipt on idempotent retry", () => {
     const path = createRuntime();
-    const first = runtime!.handle({ name: "job.enqueue", job: job("job-first"), capabilityAudits: audits("job-first", "audit-first") }) as {
+    const projectRoot = join(root!, "job-audit-project");
+    mkdirSync(projectRoot);
+    const first = runtime!.handle({
+      name: "job.enqueue",
+      job: job("job-first"),
+      project: projectProjection(projectRoot, "Job audit project", "2026-07-14T00:00:00.000Z"),
+      capabilityAudits: audits("job-first", "audit-first")
+    }) as {
       job: { id: string };
       event: { sequence: number };
       capabilityAudits: StorageCapabilityAudit[];
@@ -173,6 +180,7 @@ function job(id: string): StorageJobInput {
     id,
     projectId: "project-job-audit",
     operation: "research_loop",
+    expectedProjectRevision: 0,
     idempotencyKey: "atomic-audit-key",
     requestHash: "atomic-audit-request-hash",
     requestedCapabilities: { agent: true, engineering: false, search: false },

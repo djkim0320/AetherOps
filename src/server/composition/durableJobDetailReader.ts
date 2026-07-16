@@ -1,5 +1,6 @@
 import type { StorageWorkerClient } from "../runtime/storage/worker/typedRuntime.js";
 import type { StorageTraceCategory, StorageTracePage, StorageTraceSummary } from "../runtime/storage/v2/traceTypes.js";
+import type { StorageEngineeringResultPromotion } from "../runtime/storage/v2/engineeringBaselineTypes.js";
 import { STORAGE_TRACE_CATEGORIES } from "../runtime/storage/v2/traceTypes.js";
 import {
   DURABLE_TRACE_MAX_RECORDS,
@@ -15,8 +16,13 @@ import {
 export async function readDurableJobDetail(client: StorageWorkerClient, job: DurableJobRecord, request?: DurableTracePageRequest): Promise<DurableJobDetail> {
   assertTracePageRequest(request);
   const summaryRequest = client.request<StorageTraceSummary>({ name: "trace.summaryJob", jobId: job.id });
+  const engineeringPromotionsRequest = client.request<StorageEngineeringResultPromotion[]>({
+    name: "engineering.promotion.listJob",
+    jobId: job.id,
+    limit: 200
+  });
   const pageRequests = STORAGE_TRACE_CATEGORIES.map((category) => readCategoryPage(client, job.id, category, request));
-  const [summary, pages] = await Promise.all([summaryRequest, Promise.all(pageRequests)]);
+  const [summary, engineeringPromotions, pages] = await Promise.all([summaryRequest, engineeringPromotionsRequest, Promise.all(pageRequests)]);
   const byCategory = Object.fromEntries(pages.map((page) => [page.category, page])) as TracePageRecord;
   const tracePages = pageMetadata(byCategory);
   const returned = STORAGE_TRACE_CATEGORIES.reduce((total, category) => total + byCategory[category].items.length, 0);
@@ -34,6 +40,7 @@ export async function readDurableJobDetail(client: StorageWorkerClient, job: Dur
       total: summary.total,
       truncated: returned < summary.total || STORAGE_TRACE_CATEGORIES.some((category) => byCategory[category].truncated)
     },
+    engineeringPromotions,
     trace: {
       llmInvocations: byCategory.llmInvocations.items,
       toolDecisions: byCategory.toolDecisions.items,

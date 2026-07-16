@@ -89,19 +89,21 @@ export abstract class SqliteStoreBase {
     return this.db.prepare(`select id, data from ${table}`).all() as JsonRecord[];
   }
   protected allFrom(db: DatabaseSync, table: string): JsonRecord[] {
-    return db.prepare(`select id, project_id, created_at, data from ${table} order by created_at asc`).all() as JsonRecord[];
+    return db.prepare(`select id, project_id, created_at, data from ${table} order by created_at asc, id asc`).all() as JsonRecord[];
   }
   protected allParsedFrom<T>(db: DatabaseSync, table: string): T[] {
     return this.allFrom(db, table).map((row) => this.parse<T>(row));
   }
   protected byProject<T>(table: string, projectId: string): T[] {
     return (
-      this.db.prepare(`select id, project_id, created_at, data from ${table} where project_id = ? order by created_at asc`).all(projectId) as JsonRecord[]
+      this.db
+        .prepare(`select id, project_id, created_at, data from ${table} where project_id = ? order by created_at asc, id asc`)
+        .all(projectId) as JsonRecord[]
     ).map((row) => this.parse<T>(row));
   }
 
   protected byProjectOrGlobalVisible<T extends ScopedProjectItem>(table: string, projectId: string): T[] {
-    return (this.db.prepare(`select id, project_id, created_at, data from ${table} order by created_at asc`).all() as JsonRecord[])
+    return (this.db.prepare(`select id, project_id, created_at, data from ${table} order by created_at asc, id asc`).all() as JsonRecord[])
       .map((row) => this.parse<T>(row))
       .filter((item) => item.projectId === projectId || item.workspaceProjectId === projectId || normalizeMemoryScope(item.memoryScope) === "global");
   }

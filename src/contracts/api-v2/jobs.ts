@@ -128,7 +128,8 @@ export const ChatEnqueueParamsSchema = EnqueueBaseSchema.extend({
 export const LoopStartParamsSchema = ResearchEnqueueBaseSchema;
 export const LoopResumeParamsSchema = ResearchEnqueueBaseSchema.extend({
   interruptedJobId: EntityIdSchema,
-  checkpointId: EntityIdSchema.optional()
+  checkpointId: EntityIdSchema.optional(),
+  expectedProjectRevision: RevisionSchema
 }).strict();
 
 const JobControlParamsSchema = z
@@ -273,6 +274,12 @@ export const ToolOutputTraceSchema = z
     outputKind: z.enum(["source", "evidence", "artifact"]),
     outputId: EntityIdSchema,
     promoted: z.boolean(),
+    engineeringPromotionId: EntityIdSchema.optional(),
+    baselineId: EntityIdSchema.optional(),
+    baselineRevision: z.number().int().positive().optional(),
+    engineeringStatus: z.enum(["current", "stale"]).optional(),
+    staleAt: TimestampSchema.optional(),
+    staleReason: z.string().trim().min(1).max(500).optional(),
     createdAt: TimestampSchema,
     promotedAt: TimestampSchema.optional()
   })

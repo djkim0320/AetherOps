@@ -13,6 +13,8 @@ import {
   cleanupRunStateStorageWorkerFixture,
   countRows,
   createDatabasePath,
+  currentProjectRevision,
+  enqueueJob,
   fencedWrite,
   interruptJob,
   jobInput,
@@ -130,7 +132,7 @@ describe("canonical run-state atomic storage worker operations", () => {
     const step = {
       fence: claimed.fence,
       step: "EXECUTE_TOOLS",
-      projectRevision: 2,
+      projectRevision: await currentProjectRevision(client),
       occurredAt: "2026-07-14T00:02:00.000Z",
       checkpointData: {
         phase: "execute_tools_completed",
@@ -226,7 +228,7 @@ describe("canonical run-state atomic storage worker operations", () => {
         terminal: {
           fence: claimed.fence,
           status: "blocked",
-          projectRevision: 2,
+          projectRevision: await currentProjectRevision(client),
           reason: "Canonical resource budget exceeded: inputTokens.",
           occurredAt: "2026-07-14T00:01:31.000Z"
         },
@@ -266,7 +268,12 @@ describe("canonical run-state atomic storage worker operations", () => {
     await initial.request({
       name: "canonical.commitStep",
       input: {
-        step: { fence: initialClaim.fence, step: checkpointStep, projectRevision: 2, occurredAt: "2026-07-14T00:01:30.000Z" },
+        step: {
+          fence: initialClaim.fence,
+          step: checkpointStep,
+          projectRevision: await currentProjectRevision(initial),
+          occurredAt: "2026-07-14T00:01:30.000Z"
+        },
         owner: { projectId: PROJECT_ID, runId: RUN_ID, jobId: predecessorJobId },
         finalState: { revision: 2, stateHash: checkpointRevision.stateHash },
         exactReplay: false,
@@ -282,7 +289,7 @@ describe("canonical run-state atomic storage worker operations", () => {
 
     const client = worker(path);
     const jobId = "job-worker-canonical-plan-resume";
-    await client.request({ name: "job.enqueue", job: jobInput(jobId, predecessorJobId, checkpointId) });
+    await enqueueJob(client, jobInput(jobId, predecessorJobId, checkpointId));
     const claimed = await claim(client, jobId, "worker-canonical-plan-resume", "2026-07-14T00:02:00.000Z");
     const revision2 = canonical.decisionRevision(blockedRevision, jobId, "resume:plan-authorization", "2026-07-14T00:02:01.000Z", jobId);
     const clearanceDecisionId = `clearance:${storageCanonicalHasher
@@ -358,7 +365,7 @@ describe("canonical run-state atomic storage worker operations", () => {
     const terminal = {
       fence: claimed.fence,
       status: "completed" as const,
-      projectRevision: 3,
+      projectRevision: await currentProjectRevision(client),
       occurredAt: "2026-07-14T00:03:00.000Z",
       completedStep: {
         step: "FINALIZE",
@@ -499,7 +506,12 @@ describe("canonical run-state atomic storage worker operations", () => {
     await initial.request({
       name: "canonical.commitStep",
       input: {
-        step: { fence: initialClaim.fence, step: predecessorStep, projectRevision: 2, occurredAt: "2026-07-14T00:02:00.000Z" },
+        step: {
+          fence: initialClaim.fence,
+          step: predecessorStep,
+          projectRevision: await currentProjectRevision(initial),
+          occurredAt: "2026-07-14T00:02:00.000Z"
+        },
         owner: { projectId: PROJECT_ID, runId: RUN_ID, jobId: initialJobId },
         finalState: { revision: 2, stateHash: revision2.stateHash },
         exactReplay: false,
@@ -512,7 +524,7 @@ describe("canonical run-state atomic storage worker operations", () => {
 
     const resumed = worker(path);
     const resumedJobId = "job-worker-canonical-successor";
-    await resumed.request({ name: "job.enqueue", job: jobInput(resumedJobId, initialJobId, predecessorCheckpointId) });
+    await enqueueJob(resumed, jobInput(resumedJobId, initialJobId, predecessorCheckpointId));
     const resumedClaim = await claim(resumed, resumedJobId, "worker-canonical-successor", "2026-07-14T00:02:01.000Z");
     const resumeRevision = canonical.decisionRevision(revision2, resumedJobId, "resume:successor-authorization", "2026-07-14T00:02:30.000Z", resumedJobId);
     await resumed.request({
@@ -532,7 +544,12 @@ describe("canonical run-state atomic storage worker operations", () => {
       resumed.request({
         name: "canonical.commitStep",
         input: {
-          step: { fence: resumedClaim.fence, step: successorStep, projectRevision: 3, occurredAt: "2026-07-14T00:03:00.000Z" },
+          step: {
+            fence: resumedClaim.fence,
+            step: successorStep,
+            projectRevision: await currentProjectRevision(resumed),
+            occurredAt: "2026-07-14T00:03:00.000Z"
+          },
           owner: { projectId: PROJECT_ID, runId: RUN_ID, jobId: resumedJobId },
           finalState: { revision: 4, stateHash: revision3.stateHash },
           exactReplay: false,

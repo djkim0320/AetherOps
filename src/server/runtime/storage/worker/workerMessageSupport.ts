@@ -10,6 +10,8 @@ import {
 import { IDEMPOTENCY_CONFLICT_CODE, IdempotencyConflictError } from "../v2/jobErrors.js";
 import { SIDE_EFFECT_RESERVATION_CONFLICT_CODE, SideEffectReservationConflictError } from "../v2/toolSideEffectReservationTypes.js";
 import { LeaseLostError } from "../v2/leaseFence.js";
+import { ENGINEERING_ARTIFACT_NOT_CURRENT_CODE, EngineeringArtifactNotCurrentError } from "../v2/engineeringBaselineTypes.js";
+import { PROJECT_MUTATION_RESERVATION_CONFLICT_CODE, ProjectMutationReservationConflictError } from "../v2/projectMutationTypes.js";
 import {
   STORAGE_IMMUTABLE_CONFLICT_CODE,
   STORAGE_OWNERSHIP_CONFLICT_CODE,
@@ -44,9 +46,11 @@ export function serializeWorkerError(error: unknown): StorageWorkerErrorPayload 
   if (error instanceof SideEffectReservationConflictError) {
     return { name: error.name, message: error.message, code: error.code };
   }
+  if (error instanceof ProjectMutationReservationConflictError) return { name: error.name, message: error.message, code: error.code };
   if (error instanceof StorageRevisionConflictError || error instanceof StorageOwnershipConflictError || error instanceof StorageImmutableConflictError) {
     return { name: error.name, message: error.message, code: error.code };
   }
+  if (error instanceof EngineeringArtifactNotCurrentError) return { name: error.name, message: error.message, code: error.code };
   if (error instanceof LeaseLostError) return { name: error.name, message: error.message, code: error.code };
   if (error instanceof Error) return { name: safeErrorName(error.name), message: safeWorkerMessage(error) };
   return { name: "StorageWorkerError", message: "Storage worker command failed." };
@@ -55,9 +59,11 @@ export function serializeWorkerError(error: unknown): StorageWorkerErrorPayload 
 export function workerError(error: StorageWorkerErrorPayload): Error {
   if (error.code === IDEMPOTENCY_CONFLICT_CODE) return new IdempotencyConflictError();
   if (error.code === SIDE_EFFECT_RESERVATION_CONFLICT_CODE) return new SideEffectReservationConflictError();
+  if (error.code === PROJECT_MUTATION_RESERVATION_CONFLICT_CODE) return new ProjectMutationReservationConflictError();
   if (error.code === STORAGE_REVISION_CONFLICT_CODE) return new StorageRevisionConflictError(null, null);
   if (error.code === STORAGE_OWNERSHIP_CONFLICT_CODE) return new StorageOwnershipConflictError();
   if (error.code === STORAGE_IMMUTABLE_CONFLICT_CODE) return new StorageImmutableConflictError();
+  if (error.code === ENGINEERING_ARTIFACT_NOT_CURRENT_CODE) return new EngineeringArtifactNotCurrentError(error.message);
   if (error.code === "LEASE_LOST") {
     const next = new LeaseLostError("redacted");
     next.message = error.message;

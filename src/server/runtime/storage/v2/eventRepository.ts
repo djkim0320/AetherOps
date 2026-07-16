@@ -2,14 +2,20 @@ import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import type { StorageJobEvent, StorageJobEventInput } from "./types.js";
 import { createStorageId, json, normalizeLimit, nowIso, parseLastEventId, requiredEvent, rowToEvent, type Row } from "./repositorySupport.js";
+import { ProjectRevisionRepository } from "./projectRevisionRepository.js";
 
 export class EventRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly projectRevisions = new ProjectRevisionRepository(db)
+  ) {}
   append(input: StorageJobEventInput): StorageJobEvent {
     const eventId = input.eventId ?? createStorageId("event");
+    const createdAt = input.createdAt ?? nowIso();
+    if (this.projectRevisions.enabled) return this.projectRevisions.appendEvent(input, eventId, createdAt);
     this.db
       .prepare("insert into job_events (event_id, project_id, job_id, type, created_at, payload) values (?, ?, ?, ?, ?, ?) on conflict(event_id) do nothing")
-      .run(eventId, input.projectId, input.jobId ?? null, input.type, input.createdAt ?? nowIso(), json(input.payload ?? null));
+      .run(eventId, input.projectId, input.jobId ?? null, input.type, createdAt, json(input.payload ?? null));
     const row = this.db.prepare("select * from job_events where event_id = ?").get(eventId) as Row | undefined;
     const stored = requiredEvent(row ? rowToEvent(row) : undefined, eventId);
     if (

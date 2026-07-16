@@ -17,6 +17,7 @@ import {
   contextPack,
   countRows,
   createDatabasePath,
+  currentProjectRevision,
   enqueueJob,
   expireLease,
   fencedWrite,
@@ -139,7 +140,7 @@ describe("canonical run-state real storage worker lifecycle", () => {
       input: {
         fence: terminalClaim.fence,
         status: "failed",
-        projectRevision: 1,
+        projectRevision: await currentProjectRevision(terminal),
         reason: "terminal fence test",
         occurredAt: "2026-07-14T00:00:03.000Z"
       }

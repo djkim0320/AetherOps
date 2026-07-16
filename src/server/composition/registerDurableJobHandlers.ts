@@ -9,7 +9,6 @@ import type { AetherOpsOrchestrator } from "../../core/orchestration/orchestrato
 import { LlmAccessUnavailableError } from "../../core/providers/llm.js";
 import type { ToolExecutionContext } from "../../core/tools/researchToolTypes.js";
 import { RuntimeRequirementError } from "../../core/tools/runtimeRequirements.js";
-import { computeProjectRevision } from "../http/v2/common.js";
 import { emitChatMessageAppended } from "../http/v2/eventEmitters.js";
 import type { AppSettingsStore } from "../runtime/storage/settingsStore.js";
 import { CanonicalRunRuntime } from "./canonicalRunRuntime.js";
@@ -19,6 +18,7 @@ import { executeDurableEngineeringJob } from "./durableEngineeringJobHandler.js"
 import type { DurableJobRuntime } from "./durableJobRuntime.js";
 import type { DurableJobRecord } from "./durableJobTypes.js";
 import { createDurableLlmExecution, registerDurableResearchLoopHandler } from "./registerDurableResearchLoopHandler.js";
+import { requireDurableProjectRevision } from "./durableProjectRevision.js";
 
 export { toStorageLlmInvocation, toStorageRunningLlmInvocation } from "./registerDurableResearchLoopHandler.js";
 export { toProgramRequest } from "./durableEngineeringJobHandler.js";
@@ -40,12 +40,20 @@ export function registerDurableJobHandlers(deps: HandlerDependencies): void {
   deps.jobs.registerHandler("chat_reply", async (job, request) => {
     const input = request as { sessionId: string; content: string; clientMutationId: string };
     try {
-      const snapshot = await deps.orchestrator.sendChatMessage(job.projectId, input.sessionId, input.content, createDurableLlmExecution(job, deps.jobs));
-      await emitChatMessageAppended(deps.events, job.projectId, computeProjectRevision(snapshot), input.sessionId, input.content, input.clientMutationId);
-      await deps.jobs.finish(job.id, computeProjectRevision(snapshot));
+      await deps.orchestrator.sendChatMessage(job.projectId, input.sessionId, input.content, createDurableLlmExecution(job, deps.jobs));
+      await emitChatMessageAppended(
+        deps.events,
+        job.projectId,
+        await requireDurableProjectRevision(deps.jobs, job.projectId),
+        input.sessionId,
+        input.content,
+        input.clientMutationId,
+        job.createdAt
+      );
+      await deps.jobs.finish(job.id, await requireDurableProjectRevision(deps.jobs, job.projectId));
     } catch (error) {
       if (error instanceof LlmAccessUnavailableError) {
-        const revision = computeProjectRevision(await deps.orchestrator.getSnapshot(job.projectId));
+        const revision = await requireDurableProjectRevision(deps.jobs, job.projectId);
         await deps.jobs.settle(job.id, "blocked", revision, error.message);
         return;
       }
@@ -56,9 +64,12 @@ export function registerDurableJobHandlers(deps: HandlerDependencies): void {
   registerDurableResearchLoopHandler(deps, canonicalRuntime, canonicalHasher, (job) => createActionAuthorizer(deps, job));
 
   deps.jobs.registerHandler("engineering_run", async (job, request, context) => {
-    const input = request as { requests: EngineeringRequest[] };
+    const input = request as {
+      requests: EngineeringRequest[];
+      configurationBaseline: { id: string; revision: number; contentHash: string };
+    };
     try {
-      const completed = await executeDurableEngineeringJob(job, input.requests, context, {
+      const completed = await executeDurableEngineeringJob(job, input.requests, input.configurationBaseline, context, {
         dataRoot: deps.dataRoot,
         orchestrator: deps.orchestrator,
         settingsStore: deps.settingsStore,
@@ -72,7 +83,7 @@ export function registerDurableJobHandlers(deps: HandlerDependencies): void {
       context.signal.throwIfAborted();
       const reason = engineeringBlockedReason(error);
       if (!reason) throw error;
-      const revision = computeProjectRevision(await deps.orchestrator.getSnapshot(job.projectId));
+      const revision = await requireDurableProjectRevision(deps.jobs, job.projectId);
       await deps.jobs.settle(job.id, "blocked", revision, reason);
     }
   });

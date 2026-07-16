@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { migrateStorageV2Schema } from "../v2/schema.js";
+import { storageTestProjectRevision, upsertStorageTestProject } from "../v2/storageWorkerTestSupport.js";
 import { StorageWorkerRuntime } from "./typedRuntime.js";
 
 describe("storage runtime diagnostics", () => {
@@ -22,7 +23,17 @@ describe("storage runtime diagnostics", () => {
     );
 
     try {
-      runtime.handle({ name: "job.enqueue", job: { id: "job-queued", projectId: "project-1", operation: "chat_reply", payload: { projectRevision: 1 } } });
+      upsertStorageTestProject(runtime, root, "project-1", "2026-07-14T00:00:00.000Z");
+      runtime.handle({
+        name: "job.enqueue",
+        job: {
+          id: "job-queued",
+          projectId: "project-1",
+          operation: "chat_reply",
+          expectedProjectRevision: storageTestProjectRevision(runtime, "project-1"),
+          payload: { projectRevision: 1 }
+        }
+      });
       runtime.handle({ name: "trace.summaryJob", jobId: "job-trace" });
       runtime.handle({ name: "trace.pageJob", jobId: "job-trace", category: "outputs", limit: 2 });
 

@@ -9,13 +9,20 @@ import { sha256Hex, stableJsonHash } from "./hash.mjs";
 import { inspectOperationalSchema, upgradeOperationalSchema } from "./operationalSchema.mjs";
 import { checkpointSqliteFile, inspectSqliteFile } from "./sqlite.mjs";
 import { verifyManifestDigest, verifyTargetManifest } from "./verification.mjs";
+import { buildRuntimePolicy } from "./cliState.mjs";
+import { inspectLegacyProjectMutationSchema, upgradeLegacyProjectMutationSchema } from "./legacyProjectMutationSchema.mjs";
+import { inspectProjectMutationCrossDatabase } from "./projectMutationCrossDatabase.mjs";
 
 export function forwardUpgradeAppliedTarget(context, current, baselineChanges = []) {
   const schema = inspectOperationalSchema(current.targetDbPath);
+  const legacyDbPath = join(current.targetRoot, "legacy-research.sqlite");
+  const legacySchema = inspectLegacyProjectMutationSchema(legacyDbPath);
   if (schema.conflicts.length) throw new Error(`Existing v2 operational schema is incompatible: ${schema.conflicts.join("; ")}`);
-  if (schema.ready) return { changed: false, current, schema };
+  if (legacySchema.conflicts.length) throw new Error(`Existing v2 legacy schema is incompatible: ${legacySchema.conflicts.join("; ")}`);
+  if (schema.ready && legacySchema.ready) return { changed: false, current, schema, legacySchema };
 
   checkpointSqliteFile(current.targetDbPath);
+  checkpointSqliteFile(legacyDbPath);
   const attemptId = `forward-${Date.now().toString(36)}-${process.pid.toString(36)}`;
   const backupRoot = join(context.migrationRoot, "backups", attemptId, "target-before-upgrade");
   const backupManifestPath = join(context.migrationRoot, "backups", attemptId, "target-manifest.json");
@@ -30,16 +37,26 @@ export function forwardUpgradeAppliedTarget(context, current, baselineChanges = 
   const readbackBaseline = buildForwardReadbackBaseline(current.targetDbPath, {
     normalizeLegacyActiveJobs: !schema.installedVersions.includes(4)
   });
+  const legacyReadbackBaseline = existsSync(legacyDbPath) ? buildForwardReadbackBaseline(legacyDbPath) : undefined;
   copyFileEntries(sourceEntries, current.targetRoot, backupRoot);
   const backup = writeTargetBackup(backupRoot, backupManifestPath, current, sourceEntries, beforeDatabase, attemptId);
   copyFileEntries(sourceEntries, current.targetRoot, stagingRoot);
 
   const stagedDbPath = join(stagingRoot, "storage.sqlite");
   const databaseUpgrade = upgradeOperationalSchema(stagedDbPath);
+  const stagedLegacyDbPath = join(stagingRoot, "legacy-research.sqlite");
+  const legacyDatabaseUpgrade = upgradeLegacyProjectMutationSchema(stagedLegacyDbPath);
   checkpointSqliteFile(stagedDbPath);
+  checkpointSqliteFile(stagedLegacyDbPath);
   const afterDatabase = inspectSqliteFile(stagedDbPath);
   const preservation = verifyForwardReadbackBaseline(stagedDbPath, readbackBaseline);
+  const legacyPreservation = legacyReadbackBaseline
+    ? verifyForwardReadbackBaseline(stagedLegacyDbPath, legacyReadbackBaseline)
+    : { ok: true, errors: [], preservedTables: [], hash: stableJsonHash([]) };
+  const projectMutationCrossDatabase = inspectProjectMutationCrossDatabase(stagedDbPath, stagedLegacyDbPath);
   const readback = verifyForwardUpgradeReadback(afterDatabase, preservation);
+  readback.errors.push(...legacyPreservation.errors, ...projectMutationCrossDatabase.errors, ...projectMutationCrossDatabase.conflicts);
+  readback.ok = readback.errors.length === 0;
   if (!readback.ok) throw new Error(`Forward migration readback verification failed: ${readback.errors.join("; ")}`);
 
   const existingManifest = readJson(join(stagingRoot, "manifest.json"));
@@ -56,7 +73,10 @@ export function forwardUpgradeAppliedTarget(context, current, baselineChanges = 
     backupManifestSha256: backup.manifestSha256,
     beforeDatabaseSha256: beforeDatabase.rawSha256,
     afterDatabaseSha256: afterDatabase.rawSha256,
-    readbackHash: preservation.hash
+    readbackHash: preservation.hash,
+    legacyReadbackHash: legacyPreservation.hash,
+    legacySchemaVersion: legacyDatabaseUpgrade.after.currentVersion,
+    projectMutationCrossDatabaseHash: projectMutationCrossDatabase.readbackHash
   };
   const nextManifest = buildForwardManifest(existingManifest, current, targetFiles, afterDatabase, forwardUpgrade);
   const manifestPath = join(stagingRoot, "manifest.json");
@@ -90,6 +110,14 @@ export function forwardUpgradeAppliedTarget(context, current, baselineChanges = 
   try {
     replacement = replaceDirectoryAtomically(stagingRoot, current.targetRoot, attemptId);
     assertVerified(verifyTargetManifest(current.targetRoot, nextManifest), "Forward installed target verification failed");
+    const installedCrossDatabase = inspectProjectMutationCrossDatabase(current.targetDbPath, join(current.targetRoot, "legacy-research.sqlite"));
+    if (!installedCrossDatabase.ready) {
+      throw new Error(
+        `Forward installed project mutation cross-database verification failed: ${[...installedCrossDatabase.errors, ...installedCrossDatabase.conflicts].join(
+          "; "
+        )}`
+      );
+    }
     writeJsonFileAtomic(join(context.migrationRoot, "current.json"), nextCurrent, attemptId);
     activated = true;
     finishForwardUpgradeJournal(context);
@@ -102,11 +130,22 @@ export function forwardUpgradeAppliedTarget(context, current, baselineChanges = 
     }
     throw error;
   }
-  return { changed: true, current: nextCurrent, schema: databaseUpgrade.after, databaseUpgrade, backup, readback, forwardUpgrade };
+  return {
+    changed: true,
+    current: nextCurrent,
+    schema: databaseUpgrade.after,
+    legacySchema: legacyDatabaseUpgrade.after,
+    databaseUpgrade,
+    legacyDatabaseUpgrade,
+    backup,
+    readback,
+    forwardUpgrade
+  };
 }
 
 function assertSourceTargetUnchanged(current, sourceEntries, beforeDatabase) {
   checkpointSqliteFile(current.targetDbPath);
+  checkpointSqliteFile(join(current.targetRoot, "legacy-research.sqlite"));
   const actualDatabase = inspectSqliteFile(current.targetDbPath);
   const databaseChanged =
     actualDatabase.schemaFingerprint !== beforeDatabase.schemaFingerprint ||
@@ -158,6 +197,7 @@ function buildForwardManifest(existing, current, targetFiles, database, forwardU
   const withoutHash = {
     ...existing,
     targetFiles,
+    runtimePolicy: buildRuntimePolicy(),
     targetDbSummary,
     targetSchemaFingerprint: database.schemaFingerprint,
     schemaFingerprint: database.schemaFingerprint,

@@ -7,11 +7,16 @@ import { migrateStorageV2Schema } from "../runtime/storage/v2/schema.js";
 import type { StorageWorkerCommand } from "../runtime/storage/worker/typedProtocol.js";
 import { StorageWorkerClient, StorageWorkerRuntime } from "../runtime/storage/worker/typedRuntime.js";
 import { DurableJobRuntime } from "./durableJobRuntime.js";
+import { DurableJobRuntimeTestSupport } from "./durableJobRuntimeTestSupport.js";
 import type { DurableRuntimeTimer } from "./durableRuntimeConfig.js";
 
 const LEASE_NOW_MS = Date.parse("2026-07-14T00:00:00.000Z");
 let root: string | undefined;
 let runtime: DurableJobRuntime | undefined;
+const support = new DurableJobRuntimeTestSupport(
+  () => runtime,
+  () => root
+);
 
 afterEach(async () => {
   await runtime?.close().catch(() => undefined);
@@ -40,13 +45,12 @@ describe("DurableJobRuntime cross-runtime control", () => {
     runtime.registerHandler("chat_reply", async (job, _request, context) => {
       started.resolve();
       await Promise.race([observeAbort(context.signal, abortObserved), cleanupRelease.promise]);
-      await runtime?.finish(job.id, 1);
+      await support.finishCurrent(job);
     });
     await runtime.initialize();
-    const receipt = await runtime.enqueue({
+    const receipt = await support.enqueueCurrent({
       projectId: "project-control",
       kind: "chat_reply",
-      projectRevision: 1,
       idempotencyKey: "control-key",
       payload: {}
     });
@@ -55,7 +59,7 @@ describe("DurableJobRuntime cross-runtime control", () => {
     const other = new DurableJobRuntime(databasePath, { concurrency: 1, clock, storageClient: inProcessStorageClient(databasePath) });
     try {
       await other.initialize();
-      await other.requestAbort(receipt.jobId, 1);
+      await other.requestAbort(receipt.jobId);
       timer.fireDelay(10);
       await abortObserved.promise;
       await waitUntil(async () => (await runtime?.get(receipt.jobId))?.status === "aborted");

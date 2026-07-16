@@ -264,6 +264,25 @@ export class JobRepository {
     });
   }
 
+  recordInterruptedProjectRevision(jobId: string, projectRevision: number, updatedAt: string): StorageJob {
+    if (!Number.isSafeInteger(projectRevision) || projectRevision < 1) {
+      throw new Error(`Interrupted durable job has an invalid committed project revision: ${jobId}.`);
+    }
+    const current = requiredJob(this.get(jobId), jobId);
+    if (current.status !== "interrupted" || current.error !== "Worker lease expired.") {
+      throw new Error(`Only an expired-lease interruption can record its committed project revision: ${jobId}.`);
+    }
+    const previous = current.result && typeof current.result === "object" && !Array.isArray(current.result) ? current.result : {};
+    const changed = this.db
+      .prepare(
+        `update jobs set result=?,updated_at=? where id=? and status='interrupted' and attempt=? and lease_generation=?
+         and error='Worker lease expired.'`
+      )
+      .run(json({ ...previous, projectRevision }), updatedAt, current.id, current.attempt, current.leaseGeneration);
+    if (Number(changed.changes) !== 1) throw new Error(`Expired durable job revision update raced for ${jobId}.`);
+    return requiredJob(this.get(jobId), jobId);
+  }
+
   renewLease(fence: StorageLeaseFence, leaseExpiresAt: string, occurredAt = nowIso()): StorageJob {
     const leaseCheckedAt = this.leaseNowIso();
     assertFutureLease(leaseExpiresAt, leaseCheckedAt);

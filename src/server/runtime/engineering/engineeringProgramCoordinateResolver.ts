@@ -7,6 +7,19 @@ import type { AirfoilCoordinateInput, AirfoilCoordinateResolutionPorts } from ".
 import { createDefaultPublicUrlPolicy } from "./publicUrlPolicy.js";
 import { resolveConfiguredModelingRoot, resolveInsideRoot } from "./engineeringProgramMeshAdapter.js";
 
+export const WEBXFOIL_GEOMETRY_RECEIPT_VERSION = "webxfoil-paneled-airfoil-v1" as const;
+
+interface AirfoilCoordinatePoint {
+  x: number;
+  y: number;
+}
+
+export interface WebXfoilGeometryReceipt {
+  contentHash: string;
+  pointCount: number;
+  version: typeof WEBXFOIL_GEOMETRY_RECEIPT_VERSION;
+}
+
 export async function resolveWasmAirfoilInput(
   request: EngineeringProgramRequest,
   settings: AppSettings,
@@ -65,7 +78,26 @@ export async function resolveWasmAirfoilInput(
 }
 
 export function validateAirfoilCoordinateText(text: string): { pointCount: number; xMin: number; xMax: number; yMin: number; yMax: number } {
-  const points: Array<{ x: number; y: number }> = [];
+  const points = parseAirfoilCoordinatePoints(text);
+  return validateAirfoilCoordinatePoints(points);
+}
+
+/** Hashes the canonical coordinates emitted by the same post-PANE WebXFOIL run that produced the polar. */
+export function createWebXfoilGeometryReceipt(text: string): WebXfoilGeometryReceipt {
+  const points = parseAirfoilCoordinatePoints(text);
+  validateAirfoilCoordinatePoints(points);
+  const canonical = `${WEBXFOIL_GEOMETRY_RECEIPT_VERSION}\n${points
+    .map((point) => `${canonicalCoordinate(point.x)},${canonicalCoordinate(point.y)}`)
+    .join("\n")}\n`;
+  return {
+    contentHash: createHash("sha256").update(canonical, "utf8").digest("hex"),
+    pointCount: points.length,
+    version: WEBXFOIL_GEOMETRY_RECEIPT_VERSION
+  };
+}
+
+function parseAirfoilCoordinatePoints(text: string): AirfoilCoordinatePoint[] {
+  const points: AirfoilCoordinatePoint[] = [];
   for (const line of text.split(/\r?\n/)) {
     const parts = line.trim().split(/[\s,]+/);
     if (parts.length < 2) continue;
@@ -75,6 +107,16 @@ export function validateAirfoilCoordinateText(text: string): { pointCount: numbe
     if (Math.abs(x) > 2 || Math.abs(y) > 2) continue;
     points.push({ x, y });
   }
+  return points;
+}
+
+function validateAirfoilCoordinatePoints(points: readonly AirfoilCoordinatePoint[]): {
+  pointCount: number;
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+} {
   if (points.length < 10) {
     throw new Error(`Airfoil coordinate file must contain at least 10 finite coordinate pairs; found ${points.length}.`);
   }
@@ -91,6 +133,10 @@ export function validateAirfoilCoordinateText(text: string): { pointCount: numbe
     throw new Error("Airfoil coordinate file does not contain a usable thickness/camber range.");
   }
   return { pointCount: points.length, xMin, xMax, yMin, yMax };
+}
+
+function canonicalCoordinate(value: number): string {
+  return (Object.is(value, -0) ? 0 : value).toExponential(16);
 }
 
 function findFetchedAirfoilSource(input: ResearchToolInput, sourceUrl?: string): AirfoilCoordinateInput | undefined {

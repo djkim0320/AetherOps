@@ -225,6 +225,7 @@ export class DeterministicCodexCliAdapter implements CodexCliAdapter {
         bytes: 1
       })),
       trace: {
+        cliVersion: "0.144.1",
         model: request.settings.model,
         reasoningEffort: request.settings.reasoningEffort,
         sandboxProfile: "aetherops-codex-workspace-v1",

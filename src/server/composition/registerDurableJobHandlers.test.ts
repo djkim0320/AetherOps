@@ -158,6 +158,7 @@ describe("durable engineering job request dispatch", () => {
       settle: vi.fn(),
       bindCanonicalTransition: vi.fn(),
       get: vi.fn(async (jobId: string) => (jobId === rootJob.id ? rootJob : undefined)),
+      getProjectRevision: vi.fn(async () => activeJob.projectRevision),
       getCheckpoint: vi.fn(async () => predecessorCheckpoint),
       listCanonicalToolAttempts: vi.fn(async () => []),
       listCanonicalLlmInvocations: vi.fn(async () => []),

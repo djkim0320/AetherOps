@@ -116,27 +116,42 @@ export function normalizePersisted(settings: PersistedSettings): PersistedSettin
 }
 
 export function normalizeCodexSettings(value: unknown, legacyLlm?: unknown, legacyTaskTimeoutMs?: unknown): AppSettings["codex"] {
-  if (value !== undefined && (!value || typeof value !== "object")) throw new Error("AetherOps Codex settings must be an object.");
-  const input = (value ?? normalizeLegacyCodexSettings(legacyLlm)) as Record<string, unknown>;
-  const legacyTaskTimeout = validTimeout(legacyTaskTimeoutMs);
+  const input = codexSettingsRecord(value === undefined ? normalizeLegacyCodexSettings(legacyLlm) : value);
   const candidate = {
-    model: input.model ?? DEFAULT_CODEX_MODEL,
-    reasoningEffort: input.reasoningEffort ?? DEFAULT_CODEX_REASONING_EFFORT,
-    timeoutMs: input.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS,
-    taskTimeoutMs: input.taskTimeoutMs ?? Math.max(DEFAULT_CODEX_TASK_TIMEOUT_MS, legacyTaskTimeout ?? 0)
+    model: input.model === undefined ? DEFAULT_CODEX_MODEL : input.model,
+    reasoningEffort: input.reasoningEffort === undefined ? DEFAULT_CODEX_REASONING_EFFORT : input.reasoningEffort,
+    timeoutMs: input.timeoutMs === undefined ? DEFAULT_CODEX_TIMEOUT_MS : input.timeoutMs,
+    taskTimeoutMs: input.taskTimeoutMs === undefined ? inheritedTaskTimeout(legacyTaskTimeoutMs) : input.taskTimeoutMs
   };
   assertCodexSettings(candidate);
   return candidate;
 }
 
-function normalizeLegacyCodexSettings(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object") return {};
-  const legacy = value as Record<string, unknown>;
+function normalizeLegacyCodexSettings(value: unknown): unknown {
+  if (value === undefined) return {};
+  const legacy = codexSettingsRecord(value);
   return {
     model: legacy.model,
     reasoningEffort: legacy.reasoningEffort,
     timeoutMs: legacy.timeoutMs
   };
+}
+
+function codexSettingsRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) assertCodexSettings(value);
+  return value as Record<string, unknown>;
+}
+
+function inheritedTaskTimeout(value: unknown): number {
+  if (value === undefined) return DEFAULT_CODEX_TASK_TIMEOUT_MS;
+  const candidate = {
+    model: DEFAULT_CODEX_MODEL,
+    reasoningEffort: DEFAULT_CODEX_REASONING_EFFORT,
+    timeoutMs: DEFAULT_CODEX_TIMEOUT_MS,
+    taskTimeoutMs: value
+  };
+  assertCodexSettings(candidate);
+  return Math.max(DEFAULT_CODEX_TASK_TIMEOUT_MS, candidate.taskTimeoutMs);
 }
 
 export function normalizeBrowserUse(settings: unknown): AppSettings["browserUse"] {
@@ -261,10 +276,6 @@ function normalizeArgList(value: unknown, fallback: string[]): string[] {
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
-}
-
-function validTimeout(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1_000 && value <= 900_000 ? value : undefined;
 }
 
 function normalizeStrictBoolean(value: unknown, fallback: boolean, field: string): boolean {

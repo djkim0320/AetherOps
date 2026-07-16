@@ -5,9 +5,9 @@ import {
   PRODUCTION_ADAPTER_PATHS,
   PRODUCTION_ADAPTER_PATTERN,
   REQUIRED_SCRIPTS,
-  canListen,
   collectMissingScripts,
   forbiddenProductionAdapterLines,
+  inspectListenPort,
   scanTextForPattern,
   satisfiesNodeEngine
 } from "./lib/checks.mjs";
@@ -26,7 +26,8 @@ const recommendations = [];
 
 const engine = satisfiesNodeEngine(process.versions.node, packageJson.engines?.node ?? ">=22.16.0") ? "pass" : "fail";
 const missingScripts = collectMissingScripts(REQUIRED_SCRIPTS, packageJson.scripts ?? {});
-const portAvailable = Number.isFinite(port) && port > 0 ? await canListen(port) : false;
+const portAssessment = await inspectListenPort(port);
+const portAvailable = portAssessment.available;
 const forbiddenAdapters = forbiddenProductionAdapterLines(
   scanTextForPattern(PRODUCTION_ADAPTER_PATTERN, PRODUCTION_ADAPTER_PATHS).join("\n"),
   /README\.md:.*(policy|synthetic|substitute|adapter|none)/i
@@ -47,11 +48,15 @@ const fts5 = assessFts5();
 const capabilities = capabilitySettings(settings);
 const canonicalApiOnly = canonicalApiViolations.length === 0;
 const codexOnlySource = apiLlmViolations.length === 0;
-const offlineReady = engine === "pass" && fts5.ready && !missingScripts.length && !forbiddenAdapters.length && canonicalApiOnly && codexOnlySource;
-const liveReady = offlineReady && persisted.present && codex.ready && embedding.ready && capabilities.agent && (!capabilities.search || search.ready);
+const offlineReady =
+  engine === "pass" && portAvailable && fts5.ready && !missingScripts.length && !forbiddenAdapters.length && canonicalApiOnly && codexOnlySource;
+const liveReady = offlineReady && persisted.present && codex.available && embedding.ready && capabilities.agent && (!capabilities.search || search.ready);
 
 if (!persisted.present) recommendations.push("Create settings through the application before running live checks.");
-if (!codex.ready) recommendations.push(`Codex orchestrator is not ready (${codex.status}); account model access remains unchecked offline.`);
+if (!portAvailable) recommendations.push(`Choose a valid available loopback server port (current status: ${portAssessment.status}).`);
+if (!codex.ready) recommendations.push(`Codex orchestrator is not locally ready (${codex.status}).`);
+else if (codex.access === "not_checked") recommendations.push("Codex OAuth is locally ready, but account model access was not checked by the offline doctor.");
+else if (codex.access === "unavailable") recommendations.push("The configured Codex model is unavailable to the authenticated account.");
 if (!embedding.ready) recommendations.push("Configure a real remote embedding provider and encrypted API key.");
 if (capabilities.search && !search.ready) recommendations.push("Search capability is enabled but its provider is not ready.");
 if (!fts5.ready) recommendations.push("Install a Node 22 build with SQLite FTS5 support.");
@@ -66,10 +71,18 @@ const result = {
   dataRoot,
   port,
   portAvailable,
+  portStatus: portAssessment.status,
   settings: persisted.present ? "present" : "missing",
   codex: codex.status,
+  codexConfigured: codex.configured,
+  codexConfigurationSource: codex.configurationSource,
+  codexSettingsValid: codex.settingsValid,
+  codexModel: codex.model,
+  codexReasoningEffort: codex.reasoningEffort,
+  codexDefaultsApplied: codex.defaultsApplied,
   codexCatalog: codex.catalog,
   codexAccess: codex.access,
+  codexAvailable: codex.available,
   codexAuthenticated: codex.authenticated,
   codexCliAvailable: codex.cliAvailable,
   codexSandboxReady: codex.sandboxReady,

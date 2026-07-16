@@ -37,7 +37,7 @@ describe("CodexCliProcessRunner", () => {
       enforcePermissionPreflight: false
     });
     const result = await runner.run(request(root, (stage) => stages.push(stage)));
-    expect(result).toMatchObject({ exitCode: 0, eventCount: 2, terminationReason: "completed" });
+    expect(result).toMatchObject({ cliVersion: "0.144.1", exitCode: 0, eventCount: 2, terminationReason: "completed" });
     expect(JSON.parse(result.lastMessage)).toMatchObject({ summary: "done" });
     expect(stages).toEqual(expect.arrayContaining(["resolving_cli", "authenticating", "running", "tool_activity", "validating_output", "terminal"]));
     expect(await readFile(join(root, "final.json"), "utf8")).toContain("result.json");

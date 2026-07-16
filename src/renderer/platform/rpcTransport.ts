@@ -18,13 +18,15 @@ export class RpcClientError extends Error {
 
 export async function callRpc<T>(method: string, params: unknown, resultSchema: z.ZodType<T>): Promise<T> {
   const request = RpcRequestV2Schema.parse({ requestId: crypto.randomUUID(), method, params });
-  const response = await fetch(endpoint, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify(request)
-  });
-  const payload = await readJson(response);
+  const body = JSON.stringify(request);
+  let response: Response;
+  let payload: unknown;
+  try {
+    ({ response, payload } = await send(body));
+  } catch (error) {
+    if (!retryableMutationMethods.has(method) || !isTransportFailure(error)) throw error;
+    ({ response, payload } = await send(body));
+  }
   const failure = RpcErrorResponseSchema.safeParse(payload);
   if (failure.success) {
     throw new RpcClientError(failure.data.error.message, failure.data.error.code, failure.data.error.details);
@@ -33,6 +35,22 @@ export async function callRpc<T>(method: string, params: unknown, resultSchema: 
     throw new RpcClientError(`${method} failed with HTTP ${response.status}.`);
   }
   return resultSchema.parse((payload as { result: unknown }).result);
+}
+
+const retryableMutationMethods = new Set(["projects.create", "projects.update", "sessions.create", "sessions.delete"]);
+
+async function send(body: string): Promise<{ response: Response; payload: unknown }> {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+    body
+  });
+  return { response, payload: await readJson(response) };
+}
+
+function isTransportFailure(error: unknown): boolean {
+  return error instanceof TypeError && error.name !== "AbortError";
 }
 
 export function projectEventsUrl(projectId: string): string {

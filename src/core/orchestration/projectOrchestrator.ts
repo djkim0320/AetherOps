@@ -222,7 +222,7 @@ export abstract class ProjectOrchestrator extends OrchestratorRuntime {
       const settings = settingsWithProjectArtifactRoot(await this.getSettings(), activeSnapshot.project);
       const executableTools = this.executableToolNames(activeSnapshot, settings, execution?.toolPolicy);
       const effectiveCapabilities = execution?.authorizeAction
-        ? await execution.authorizeAction({ name: "research-planner", requiredCapabilities: ["agent"] })
+        ? await execution.authorizeAction({ name: "research-planner", requiredCapabilities: ["agent"], inputs: {} })
         : execution?.effectiveCapabilities;
       await this.moveProject(projectId, ResearchLoopStep.PlanResearch);
       const plan = await this.planner.plan({

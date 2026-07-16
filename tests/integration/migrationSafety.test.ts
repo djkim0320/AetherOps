@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { applyMigration, inspectMigration, rollbackMigration, verifyMigration } from "../../src/migration/commands.mjs";
@@ -94,7 +95,7 @@ describe("migration safety", () => {
     const verified = verifyMigration(context);
     const after = snapshotWriteState(context.dataRoot);
     expect(checked.ok).toBe(true);
-    expect(verified.ok).toBe(true);
+    expect(verified, JSON.stringify(verified, null, 2)).toMatchObject({ ok: true });
     expect(after).toEqual(before);
 
     const manifest = JSON.parse(readFileSync(join(context.migrationRoot, "v2", "manifest.json"), "utf8"));
@@ -207,6 +208,65 @@ describe("migration safety", () => {
     expect(verifyMigration(context)).toMatchObject({ ok: true, status: "verified-with-v2-changes" });
     writeFileSync(join(targetRoot, "unexpected.bin"), "not declared", "utf8");
     expect(verifyMigration(context)).toMatchObject({ ok: false, status: "mismatch" });
+  });
+
+  it("rejects operational schema drift even when runtime row changes are allowed", () => {
+    const context = createContext("runtime-schema-drift");
+    expect(applyMigration(context).ok).toBe(true);
+    const targetDb = join(context.migrationRoot, "v2", "storage.sqlite");
+    const db = new DatabaseSync(targetDb);
+    db.prepare("insert into storage_v2_meta (key, value, updated_at) values (?, ?, datetime('now'))").run("runtime-row", "allowed");
+    db.exec("create table unauthorized_runtime_table (id text primary key)");
+    db.close();
+
+    expect(verifyMigration(context)).toMatchObject({
+      ok: false,
+      status: "mismatch",
+      error: expect.stringMatching(/schema fingerprint|table set/i)
+    });
+  });
+
+  it("rejects same-name operational trigger definition drift", () => {
+    const context = createContext("runtime-trigger-drift");
+    expect(applyMigration(context).ok).toBe(true);
+    const targetDb = join(context.migrationRoot, "v2", "storage.sqlite");
+    const db = new DatabaseSync(targetDb);
+    db.exec(`
+      drop trigger trg_engineering_promotions_stale_only;
+      create trigger trg_engineering_promotions_stale_only before update on engineering_result_promotions
+        begin select 1; end;
+    `);
+    expect(db.prepare("select count(*) count from sqlite_master where type='trigger' and name=?").get("trg_engineering_promotions_stale_only")).toEqual({
+      count: 1
+    });
+    db.close();
+
+    expect(verifyMigration(context)).toMatchObject({
+      ok: false,
+      status: "mismatch",
+      error: expect.stringMatching(/schema fingerprint/i)
+    });
+  });
+
+  it("accepts only hash-addressed runtime CAS bytes and reports unreferenced objects for bounded startup cleanup", () => {
+    const context = createContext("runtime-cas-policy");
+    expect(applyMigration(context).ok).toBe(true);
+    const bytes = Buffer.from("uncommitted but hash-valid CAS bytes", "utf8");
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const directory = join(context.migrationRoot, "v2", "terminal-cas", "sha256", hash.slice(0, 2));
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, hash);
+    writeFileSync(path, bytes);
+
+    const valid = verifyMigration(context);
+    expect(valid).toMatchObject({ ok: true, status: "verified-with-v2-changes" });
+    expect(valid.verification.baselineChanges).toEqual(expect.arrayContaining([expect.stringMatching(/unreferenced CAS object pending bounded cleanup/)]));
+    writeFileSync(path, "tampered bytes", "utf8");
+    expect(verifyMigration(context)).toMatchObject({
+      ok: false,
+      status: "mismatch",
+      error: expect.stringMatching(/content-addressed file identity is invalid/)
+    });
   });
 });
 

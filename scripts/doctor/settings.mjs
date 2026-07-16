@@ -13,7 +13,50 @@ export function hasEncryptedSecret(value) {
 }
 
 export function codexSettings(settings) {
-  return settings.codex ?? settings.openCodeLlm ?? {};
+  const root = record(settings);
+  if (!root) return undefined;
+  if (Object.hasOwn(root, "codex")) return root.codex;
+  if (Object.hasOwn(root, "openCodeLlm")) return root.openCodeLlm;
+  return undefined;
+}
+
+export function normalizedCodexSettings(settings) {
+  const root = record(settings);
+  const persisted = codexSettings(settings);
+  const configured = Boolean(root && (Object.hasOwn(root, "codex") || Object.hasOwn(root, "openCodeLlm")));
+  const source = root && Object.hasOwn(root, "codex") ? "codex" : root && Object.hasOwn(root, "openCodeLlm") ? "legacy" : "default";
+  const value = record(persisted);
+  const structurallyValid = Boolean(root) && (!configured || Boolean(value));
+  const defaultsApplied = {
+    model: structurallyValid && value?.model === undefined,
+    reasoningEffort: structurallyValid && value?.reasoningEffort === undefined,
+    timeoutMs: structurallyValid && value?.timeoutMs === undefined,
+    taskTimeoutMs: structurallyValid && value?.taskTimeoutMs === undefined
+  };
+  const legacyTaskTimeout = source === "legacy" ? validTimeout(record(root?.openCode)?.timeoutMs) : undefined;
+  return {
+    ...(value ?? {}),
+    model: defaultOnlyWhenMissing(value?.model, "gpt-5.6"),
+    reasoningEffort: defaultOnlyWhenMissing(value?.reasoningEffort, "xhigh"),
+    timeoutMs: defaultOnlyWhenMissing(value?.timeoutMs, 180_000),
+    taskTimeoutMs: defaultOnlyWhenMissing(value?.taskTimeoutMs, Math.max(600_000, legacyTaskTimeout ?? 0)),
+    configured,
+    configurationSource: source,
+    structurallyValid,
+    defaultsApplied
+  };
+}
+
+function defaultOnlyWhenMissing(value, fallback) {
+  return value === undefined ? fallback : value;
+}
+
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+}
+
+function validTimeout(value) {
+  return Number.isInteger(value) && value >= 1_000 && value <= 900_000 ? value : undefined;
 }
 
 export function capabilitySettings(settings) {

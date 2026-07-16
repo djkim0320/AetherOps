@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe("applied v2 target forward migration", () => {
-  it("backs up and atomically upgrades a populated old-v2 target through v10", () => {
+  it("backs up and atomically upgrades a populated old-v2 target through v14", () => {
     const fixture = createAppliedOldV2Target("populated");
     expect(verifyMigration(fixture.context)).toMatchObject({ ok: false, status: "mismatch" });
     expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: false, installedVersions: [] });
@@ -37,19 +37,19 @@ describe("applied v2 target forward migration", () => {
 
     const upgraded = applyMigration(fixture.context);
 
-    expect(upgraded).toMatchObject({
+    expect(upgraded, JSON.stringify(upgraded, null, 2)).toMatchObject({
       ok: true,
       applied: true,
       status: "schema-upgraded",
       schemaUpgrade: {
         changed: true,
-        databaseUpgrade: { appliedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
+        databaseUpgrade: { appliedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] }
       }
     });
     expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({
       ready: true,
-      currentVersion: 11,
-      installedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+      currentVersion: 14,
+      installedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     });
     const readback = new DatabaseSync(fixture.targetDbPath, { readOnly: true });
     try {
@@ -249,7 +249,7 @@ describe("applied v2 target forward migration", () => {
     expect(applyMigration(fixture.context)).toMatchObject({ ok: true, status: "schema-upgraded" });
   });
 
-  it("continues a representative populated v4 target through v5-v11", () => {
+  it("continues a representative populated v4 target through v5-v14", () => {
     const fixture = createAppliedOldV2Target("partial-v4");
     const db = new DatabaseSync(fixture.targetDbPath);
     try {
@@ -276,9 +276,9 @@ describe("applied v2 target forward migration", () => {
     expect(applyMigration(fixture.context)).toMatchObject({
       ok: true,
       status: "schema-upgraded",
-      schemaUpgrade: { databaseUpgrade: { appliedVersions: [5, 6, 7, 8, 9, 10, 11] } }
+      schemaUpgrade: { databaseUpgrade: { appliedVersions: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14] } }
     });
-    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, installedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11] });
+    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, installedVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] });
   });
 
   it("upgrades an otherwise current v8 target through attestation, ownership, and side-effect ledgers", () => {
@@ -297,9 +297,17 @@ describe("applied v2 target forward migration", () => {
         drop trigger trg_tool_output_links_owner_update;
         drop trigger trg_tool_side_effect_reservations_owner_insert;
         drop trigger trg_tool_side_effect_reservations_owner_update;
+        drop table engineering_artifact_read_receipts;
+        drop table engineering_result_promotions;
+        drop table engineering_active_baselines;
+        drop table engineering_configuration_baselines;
+        drop table project_revision_heads;
+        drop table project_revision_event_links;
+        drop table project_revision_receipts;
+        drop table project_mutation_journal;
         drop table tool_side_effect_reservations;
         drop table canonical_terminal_result_attestations;
-        delete from schema_migrations where version in (9,10,11);
+        delete from schema_migrations where version in (9,10,11,12,13,14);
       `);
     } finally {
       db.close();
@@ -311,9 +319,43 @@ describe("applied v2 target forward migration", () => {
     expect(applyMigration(fixture.context)).toMatchObject({
       ok: true,
       status: "schema-upgraded",
-      schemaUpgrade: { databaseUpgrade: { appliedVersions: [9, 10, 11] } }
+      schemaUpgrade: { databaseUpgrade: { appliedVersions: [9, 10, 11, 12, 13, 14] } }
     });
-    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, currentVersion: 11 });
+    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: true, currentVersion: 14 });
+  });
+
+  it("upgrades a populated v11 target through the engineering baseline migration without changing a second apply", () => {
+    const fixture = createAppliedOldV2Target("partial-v11");
+    expect(applyMigration(fixture.context)).toMatchObject({ ok: true, status: "schema-upgraded" });
+    const db = new DatabaseSync(fixture.targetDbPath);
+    try {
+      db.exec(`
+        drop table engineering_artifact_read_receipts;
+        drop table engineering_result_promotions;
+        drop table engineering_active_baselines;
+        drop table engineering_configuration_baselines;
+        drop table project_revision_heads;
+        drop table project_revision_event_links;
+        drop table project_revision_receipts;
+        drop table project_mutation_journal;
+        delete from schema_migrations where version in (12,13,14);
+      `);
+    } finally {
+      db.close();
+    }
+    const current = readJson<Record<string, unknown>>(join(fixture.context.migrationRoot, "current.json"));
+    rebaselineTargetManifest(fixture.targetRoot, join(fixture.context.migrationRoot, "current.json"), current);
+
+    expect(inspectOperationalSchema(fixture.targetDbPath)).toMatchObject({ ready: false, currentVersion: 11 });
+    expect(applyMigration(fixture.context)).toMatchObject({
+      ok: true,
+      status: "schema-upgraded",
+      schemaUpgrade: { databaseUpgrade: { appliedVersions: [12, 13, 14] } }
+    });
+    expect(verifyMigration(fixture.context)).toMatchObject({ ok: true, status: "verified" });
+    const beforeReapply = snapshotTarget(fixture.context);
+    expect(applyMigration(fixture.context)).toMatchObject({ ok: true, status: "already-applied", applied: false });
+    expect(snapshotTarget(fixture.context)).toEqual(beforeReapply);
   });
 
   it("leaves the active target and pointer byte-identical when a staged partial migration fails", () => {

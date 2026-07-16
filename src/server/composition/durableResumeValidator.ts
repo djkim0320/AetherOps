@@ -13,6 +13,7 @@ import type { EnqueueDurableJob } from "./durableJobTypes.js";
 import { assertToolAttemptResumeSafe } from "./durableSideEffectPolicy.js";
 import { observeCanonicalBudget, type CanonicalBudgetTracePort } from "./canonicalBudgetAccounting.js";
 import type { DurableJobRecord } from "./durableJobTypes.js";
+import { assertCheckpointEngineeringBaselineBinding, assertCheckpointFreeEngineeringBaselineBinding } from "./durableResumeEngineeringBaseline.js";
 
 const MAX_TRACE_ATTEMPTS = 1_000;
 const MAX_RESUME_LINEAGE = 64;
@@ -51,6 +52,7 @@ export async function assertDurableResumeSource(client: StorageWorkerClient, inp
     conflict("Resume requires the latest committed checkpoint from a compatible paused, interrupted, blocked, or failed source job.");
   }
   const lineage = await loadResumeLineage(client, source, input);
+  if (input.kind === "research_loop") assertCheckpointEngineeringBaselineBinding(checkpoint, lineage, input, failBaselineValidation);
   const trace = await readLineageTrace(client, lineage);
   assertLlmInvocationSetSafe(trace.llmInvocations);
   assertAttemptSetSafe(trace.attempts);
@@ -95,6 +97,7 @@ async function assertCheckpointFreeBootstrap(client: StorageWorkerClient, input:
   ) {
     conflict("Checkpoint-free resume requires a directly interrupted root job before its first durable checkpoint.");
   }
+  assertCheckpointFreeEngineeringBaselineBinding(source, input, failBaselineValidation);
   try {
     parseCanonicalInitializationAnchor(sourceRequest.canonicalInitializationAnchor, { sha256Canonical: durableJobRequestHash });
   } catch (error) {
@@ -358,6 +361,10 @@ function checkpointFreeStateReady(state: StorageRunStateRevision | undefined, pr
   } catch {
     return false;
   }
+}
+
+function failBaselineValidation(code: "CONFLICT" | "NOT_READY", message: string): never {
+  return code === "CONFLICT" ? conflict(message) : notReady(message);
 }
 
 function invalid(message: string, cause?: unknown): never {

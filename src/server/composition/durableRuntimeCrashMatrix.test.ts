@@ -5,10 +5,15 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { migrateStorageV2Schema } from "../runtime/storage/v2/schema.js";
 import { DurableJobRuntime } from "./durableJobRuntime.js";
+import { DurableJobRuntimeTestSupport } from "./durableJobRuntimeTestSupport.js";
 import type { DurableRuntimeTimer } from "./durableRuntimeConfig.js";
 
 let root: string | undefined;
 let runtime: DurableJobRuntime | undefined;
+const support = new DurableJobRuntimeTestSupport(
+  () => runtime,
+  () => root
+);
 
 afterEach(async () => {
   await runtime?.close().catch(() => undefined);
@@ -27,13 +32,12 @@ describe("durable runtime crash boundaries", () => {
     runtime.registerHandler("chat_reply", async (job) => {
       started.resolve();
       await release.promise;
-      await runtime?.finish(job.id, 4);
+      await support.finishCurrent(job);
     });
     await runtime.initialize();
-    const receipt = await runtime.enqueue({
+    const receipt = await support.enqueueCurrent({
       projectId: "project-close-return",
       kind: "chat_reply",
-      projectRevision: 4,
       currentStep: "EXECUTE_TOOLS",
       idempotencyKey: "close-return",
       payload: { operation: "deterministic" }

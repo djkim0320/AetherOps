@@ -85,15 +85,20 @@ function input(): FixedWingConceptInput {
       id: baselineId,
       projectId,
       revision: 1,
+      status: "active",
       geometryHash: sha("concept-geometry-v1"),
       massPropertiesHash: sha("concept-mass-v1"),
       atmosphereModelId: "isa-1976-troposphere",
+      unitConventionId: "si-v1",
+      coordinateConventionId: "aetherops-aircraft-axes-v1",
       solverVersions: { analytical: "1.0.0" },
       materialRevisionIds: [],
       sourceRevisionIds: ["source:fixture"],
       equationVersionIds: ["concept-equations@1.0.0"],
+      contentHash: sha("concept-baseline-v1"),
       createdAt: "2026-07-15T00:00:00.000Z",
-      provenanceId: "fixture:concept-baseline"
+      createdBy: "fixture:concept-study",
+      provenance: [{ id: "fixture:concept-baseline" }]
     },
     sources: [
       {

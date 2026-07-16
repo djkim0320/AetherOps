@@ -16,6 +16,7 @@ import {
   claim,
   cleanupRunStateStorageWorkerFixture,
   createDatabasePath,
+  currentProjectRevision,
   fencedWrite,
   jobInput,
   removeClient,
@@ -51,9 +52,7 @@ const authorityCanonical = createCanonicalRunFixture({
   createdAt: NOW,
   additionalAcceptanceCriteria: [{ id: "criterion-persisted-result", description: ACCEPTANCE_DESCRIPTION, verifierKind: "deterministic" }]
 });
-
 afterEach(cleanupRunStateStorageWorkerFixture);
-
 describe("canonical terminal persisted-result authority", () => {
   it("rejects forged resource hashes, validation receipts, and dangling or mismatched output links", async () => {
     const run = await prepareRun("terminal-persisted-adversarial");
@@ -278,12 +277,12 @@ describe("canonical terminal persisted-result authority", () => {
     );
   });
 });
-
 interface PreparedRun {
   path: string;
   client: ReturnType<typeof worker>;
   jobId: string;
   claimed: StorageClaimStartResult;
+  terminalProjectRevision: number;
   owner: { projectId: string; runId: string; jobId: string };
   completedStep: StorageCompletedStepInput;
   artifactHash: string;
@@ -331,6 +330,7 @@ async function prepareRun(label: string, includeDataRoot = true): Promise<Prepar
     client,
     jobId,
     claimed,
+    terminalProjectRevision: await currentProjectRevision(client),
     owner: { projectId: PROJECT_ID, runId: RUN_ID, jobId },
     completedStep: {
       step: "FINALIZE",
@@ -557,7 +557,7 @@ function terminalTransitionInput(run: PreparedRun, verification: StorageCanonica
     terminal: {
       fence: run.claimed.fence,
       status: "completed" as const,
-      projectRevision: 3,
+      projectRevision: run.terminalProjectRevision,
       occurredAt: VERIFIED_AT,
       completedStep: run.completedStep,
       promotions: [

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { JobStatus } from "../../contracts/api-v2/jobs.js";
 import type { StorageLeaseFence } from "../runtime/storage/v2/types.js";
-import type { StorageOutputPromotion } from "../runtime/storage/v2/jobAtomicTypes.js";
+import type { StorageOutputPromotion, StorageProjectSnapshotChange } from "../runtime/storage/v2/jobAtomicTypes.js";
 import type { DurableJobRecord } from "./durableJobTypes.js";
 import type { DurableCanonicalTerminalTransition } from "./durableCanonicalTerminalTransition.js";
 
@@ -12,6 +12,7 @@ export interface DurableTerminalOutcome {
   projectRevision: number;
   reason?: string;
   promotions?: StorageOutputPromotion[];
+  snapshotChange?: StorageProjectSnapshotChange;
   canonicalTransition?: DurableCanonicalTerminalTransition;
 }
 
@@ -79,7 +80,8 @@ function sameOutcome(left: DurableTerminalOutcome, right: DurableTerminalOutcome
     left.projectRevision === right.projectRevision &&
     left.reason === right.reason &&
     left.canonicalTransition === right.canonicalTransition &&
-    JSON.stringify(left.promotions ?? []) === JSON.stringify(right.promotions ?? [])
+    JSON.stringify(left.promotions ?? []) === JSON.stringify(right.promotions ?? []) &&
+    JSON.stringify(left.snapshotChange ?? null) === JSON.stringify(right.snapshotChange ?? null)
   );
 }
 

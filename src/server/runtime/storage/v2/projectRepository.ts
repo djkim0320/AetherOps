@@ -4,7 +4,8 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Row } from "./repositorySupport.js";
 import type { StorageProjectPayload } from "./types.js";
 import { StorageImmutableConflictError } from "./runStateErrors.js";
-import { json, optionalString, parseJson, recordOf, requiredString, shortProjectId } from "./repositorySupport.js";
+import { ProjectMutationReservationConflictError } from "./projectMutationTypes.js";
+import { json, optionalString, parseJson, recordOf, requiredString, runAtomically, shortProjectId } from "./repositorySupport.js";
 
 export class ProjectRepository {
   constructor(private readonly db: DatabaseSync) {}
@@ -39,32 +40,43 @@ export class ProjectRepository {
     const updatedAt = requiredString(data.updatedAt, "project.updatedAt");
     const currentStep = optionalString(data.currentStep);
     const shortId = optionalString(data.shortId) ?? shortProjectId(id);
+    this.assertNoPreparedMutation(id);
     const serializedProject = json(project);
     assertBoundedProject(serializedProject, projectRoot);
     this.assertRootOwnership(id, projectRoot);
     this.assertMonotonicProjection(id, updatedAt, serializedProject);
 
-    this.db
-      .prepare(
+    return runAtomically(this.db, () => {
+      this.db
+        .prepare(
+          `
+          insert into projects_v2 (id, short_id, project_root, topic, status, current_step, created_at, updated_at, data)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          on conflict(id) do update set
+            short_id = excluded.short_id,
+            project_root = excluded.project_root,
+            topic = excluded.topic,
+            status = excluded.status,
+            current_step = excluded.current_step,
+            updated_at = excluded.updated_at,
+            data = excluded.data
+          where excluded.updated_at > projects_v2.updated_at
+            or (excluded.updated_at = projects_v2.updated_at and excluded.data = projects_v2.data)
         `
-        insert into projects_v2 (id, short_id, project_root, topic, status, current_step, created_at, updated_at, data)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        on conflict(id) do update set
-          short_id = excluded.short_id,
-          project_root = excluded.project_root,
-          topic = excluded.topic,
-          status = excluded.status,
-          current_step = excluded.current_step,
-          updated_at = excluded.updated_at,
-          data = excluded.data
-        where excluded.updated_at > projects_v2.updated_at
-          or (excluded.updated_at = projects_v2.updated_at and excluded.data = projects_v2.data)
-      `
-      )
-      .run(id, shortId, projectRoot, topic, status, currentStep ?? null, createdAt, updatedAt, serializedProject);
-    const stored = this.get(id);
-    if (!stored || json(stored) !== serializedProject) throw new StorageImmutableConflictError();
-    return stored;
+        )
+        .run(id, shortId, projectRoot, topic, status, currentStep ?? null, createdAt, updatedAt, serializedProject);
+      this.ensureRevisionHead(id, updatedAt);
+      const stored = this.get(id);
+      if (!stored || json(stored) !== serializedProject) throw new StorageImmutableConflictError();
+      return stored;
+    });
+  }
+
+  private assertNoPreparedMutation(projectId: string): void {
+    if (!this.db.prepare("select 1 from sqlite_master where type='table' and name='project_mutation_journal'").get()) return;
+    if (this.db.prepare("select 1 from project_mutation_journal where project_id=? and state in ('prepared','legacy_applied') limit 1").get(projectId)) {
+      throw new ProjectMutationReservationConflictError();
+    }
   }
 
   get(projectId: string): StorageProjectPayload | undefined {
@@ -98,6 +110,13 @@ export class ProjectRepository {
     if (!Number.isFinite(storedTime) || incomingTime < storedTime || (incomingTime === storedTime && row.data !== serializedProject)) {
       throw new StorageImmutableConflictError();
     }
+  }
+
+  private ensureRevisionHead(projectId: string, updatedAt: string): void {
+    if (!this.db.prepare("select 1 from sqlite_master where type='table' and name='project_revision_heads'").get()) return;
+    this.db
+      .prepare("insert into project_revision_heads (project_id,revision,last_receipt_id,updated_at) values (?,0,null,?) on conflict(project_id) do nothing")
+      .run(projectId, updatedAt);
   }
 }
 

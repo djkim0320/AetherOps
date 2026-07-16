@@ -1,11 +1,13 @@
 import { excerpt, boundedNumber, boundedPositiveNumber, requestWithCfdSpecDefaults, safeOutputFileName } from "./engineeringProgramRequestValidator.js";
 import { parseXfoilPolarRows } from "./engineeringProgramXfoilAdapter.js";
-import { resolveWasmAirfoilInput } from "./engineeringProgramCoordinateResolver.js";
+import { createWebXfoilGeometryReceipt, resolveWasmAirfoilInput } from "./engineeringProgramCoordinateResolver.js";
 import type { AirfoilCoordinateResolutionPorts } from "../../../core/tools/engineeringProgramTypes.js";
 import type { AppSettings, EngineeringProgramRequest, ResearchToolInput } from "../../../core/shared/types.js";
 import { normalizeNacaSeries } from "../../../core/tools/airfoilIdentity.js";
 import type { XfoilWasmPolarSummary } from "../../../core/tools/engineeringProgramTypes.js";
 import { assertValidWebXfoilResult } from "./webXfoilResultValidation.js";
+import { BUNDLED_WEBXFOIL_RUNTIME, BUNDLED_WEBXFOIL_VERSION } from "./engineeringRuntimeVersions.js";
+import { createWebXfoilPolarResultReceipt } from "./webXfoilPolarResultReceipt.js";
 
 export function hasConfiguredXfoilWasm(settings: AppSettings): boolean {
   return settings.allowCodeExecution;
@@ -56,8 +58,9 @@ export async function runXfoilWasmPolar(
       airfoil = `NACA ${series}`;
     }
 
+    const geometryPath = "/work/aetherops-paneled-airfoil.dat";
     const polarPath = "xfoil-wasm-polar.txt";
-    session.add("PANE").oper().add("ITER 160").add(`VISC ${reynolds}`).add(`MACH ${mach}`);
+    session.add("PANE").add(`SAVE ${geometryPath}`).oper().add("ITER 160").add(`VISC ${reynolds}`).add(`MACH ${mach}`);
     if (transition.mode === "forced") {
       session.add("VPAR").add(`XTR ${transition.upperXOverC} ${transition.lowerXOverC}`).blank();
     }
@@ -66,6 +69,7 @@ export async function runXfoilWasmPolar(
     signal?.throwIfAborted();
     const result = xfoil.run(session.toString(), { workDir: "/work", files: session.files, scalarKeys: ["CL", "CD", "Cm", "a"] });
     signal?.throwIfAborted();
+    const geometryReceipt = createWebXfoilGeometryReceipt(String(xfoil.readFile(geometryPath, "utf8")));
     const polarText = String(xfoil.readFile(`/work/${polarPath}`, "utf8"));
     const rows = parseXfoilPolarRows(polarText);
     if (!rows.length) {
@@ -77,11 +81,39 @@ export async function runXfoilWasmPolar(
       hasConvergenceFail: Boolean(result.output.hasConvergenceFail)
     };
     assertValidWebXfoilResult({ alphaStart, alphaEnd, alphaStep, rows, convergence });
+    const transitionLocations =
+      transition.mode === "forced"
+        ? {
+            upperXOverC: transition.upperXOverC,
+            lowerXOverC: transition.lowerXOverC,
+            sourceEvidenceId: transition.sourceEvidenceId
+          }
+        : undefined;
+    const polarResultReceipt = createWebXfoilPolarResultReceipt({
+      runtimeVersion: BUNDLED_WEBXFOIL_VERSION,
+      geometry: geometryReceipt,
+      request: {
+        reynolds,
+        mach,
+        alphaStart,
+        alphaEnd,
+        alphaStep,
+        transition: transition.mode,
+        ...(transitionLocations ? { transitionLocations } : {})
+      },
+      rows,
+      convergence
+    });
     return {
       airfoil,
-      runtime: "webxfoil-wasm",
-      runtimeVersion: "0.1.1",
+      runtime: BUNDLED_WEBXFOIL_RUNTIME,
+      runtimeVersion: BUNDLED_WEBXFOIL_VERSION,
       runtimeLicense: "GPL-2.0-or-later",
+      geometryContentHash: geometryReceipt.contentHash,
+      geometryPointCount: geometryReceipt.pointCount,
+      geometryReceiptVersion: geometryReceipt.version,
+      polarResultHash: polarResultReceipt.contentHash,
+      polarResultReceiptVersion: polarResultReceipt.version,
       sourceKind: coordinateInput.sourceKind,
       sourceLabel: coordinateInput.label,
       sourceUrl: coordinateInput.sourceUrl,
@@ -93,15 +125,7 @@ export async function runXfoilWasmPolar(
       alphaEnd,
       alphaStep,
       transition: transition.mode,
-      ...(transition.mode === "forced"
-        ? {
-            transitionLocations: {
-              upperXOverC: transition.upperXOverC,
-              lowerXOverC: transition.lowerXOverC,
-              sourceEvidenceId: transition.sourceEvidenceId
-            }
-          }
-        : {}),
+      ...(transitionLocations ? { transitionLocations } : {}),
       rowCount: rows.length,
       rows,
       stdoutExcerpt: excerpt(result.raw.stdout),

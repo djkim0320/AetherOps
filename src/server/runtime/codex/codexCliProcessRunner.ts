@@ -66,6 +66,7 @@ export class CodexCliProcessRunner {
       if (!lastMessage) throw new CodexCliError("INVALID_OUTPUT", "Codex CLI produced an empty final output file.");
       await emitStage(request, "terminal");
       return {
+        cliVersion: resolution.version,
         exitCode: 0,
         durationMs: Date.now() - started,
         eventCount: events.length,

@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Hash-pinned third-party license payloads must remain byte-for-byte stable on
+# Windows runners. Git must never apply checkout newline conversion to them.
+sbom/licenses/** -text
+
+# Generated web assets and solver fixtures are distributed exactly as built.
+internal/ui/assets/** -text
+evals/tool-smoke/** -text

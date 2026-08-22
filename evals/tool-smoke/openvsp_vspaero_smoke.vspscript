@@ -1,0 +1,79 @@
+void main()
+{
+    VSPRenew();
+
+    string wing = AddGeom( "WING" );
+    SetGeomName( wing, "AetherOpsSmokeWing" );
+    SetParmVal( wing, "Sym_Planar_Flag", "Sym", SYM_XZ );
+    SetDriverGroup( wing, 1, SPAN_WSECT_DRIVER, TAPER_WSECT_DRIVER, ROOTC_WSECT_DRIVER );
+    SetParmVal( wing, "SectTess_U", "XSec_1", 16 );
+    SetParmVal( wing, "Span", "XSec_1", 5.0 );
+    SetParmVal( wing, "Taper", "XSec_1", 0.5 );
+    SetParmVal( wing, "Root_Chord", "XSec_1", 2.0 );
+    SetParmVal( wing, "Sweep", "XSec_1", 10.0 );
+    SetParmVal( wing, "Sweep_Location", "XSec_1", 0.25 );
+    Update();
+
+    WriteVSPFile( "aetherops_smoke_wing.vsp3", SET_ALL );
+
+    string comp_geom = "VSPAEROComputeGeometry";
+    SetAnalysisInputDefaults( comp_geom );
+    string comp_geom_results = ExecAnalysis( comp_geom );
+
+    string sweep = "VSPAEROSweep";
+    SetAnalysisInputDefaults( sweep );
+
+    array<double> sref( 1, 15.0 );
+    array<double> bref( 1, 10.0 );
+    array<double> cref( 1, 1.5 );
+    SetDoubleAnalysisInput( sweep, "Sref", sref );
+    SetDoubleAnalysisInput( sweep, "bref", bref );
+    SetDoubleAnalysisInput( sweep, "cref", cref );
+
+    array<double> mach_start( 1, 0.10 );
+    array<double> mach_end( 1, 0.10 );
+    array<int> mach_points( 1, 1 );
+    SetDoubleAnalysisInput( sweep, "MachStart", mach_start );
+    SetDoubleAnalysisInput( sweep, "MachEnd", mach_end );
+    SetIntAnalysisInput( sweep, "MachNpts", mach_points );
+
+    array<double> alpha_start( 1, 0.0 );
+    array<double> alpha_end( 1, 4.0 );
+    array<int> alpha_points( 1, 3 );
+    SetDoubleAnalysisInput( sweep, "AlphaStart", alpha_start );
+    SetDoubleAnalysisInput( sweep, "AlphaEnd", alpha_end );
+    SetIntAnalysisInput( sweep, "AlphaNpts", alpha_points );
+
+    string results = ExecAnalysis( sweep );
+    WriteResultsCSVFile( results, "aetherops_smoke_results.csv" );
+
+    array<string> sweep_results = GetStringResults( results, "ResultsVec" );
+    Print( "AETHEROPS_SMOKE_RESULT_COUNT=" + sweep_results.length() );
+    const uint expected_cases = 3;
+    if ( sweep_results.length() < expected_cases )
+    {
+        Print( "AETHEROPS_SMOKE_ERROR=expected at least three VSPAERO history results" );
+    }
+    for ( uint i = 0; i < expected_cases && i < sweep_results.length(); i++ )
+    {
+        array<double> alpha = GetDoubleResults( sweep_results[i], "Alpha" );
+        array<double> cl = GetDoubleResults( sweep_results[i], "CLtot" );
+        array<double> cd = GetDoubleResults( sweep_results[i], "CDtot" );
+        if ( alpha.length() > 0 && cl.length() > 0 && cd.length() > 0 )
+        {
+            Print( "AETHEROPS_SMOKE_ALPHA=" + alpha[alpha.length() - 1]
+                + ",CL=" + cl[cl.length() - 1]
+                + ",CD=" + cd[cd.length() - 1] );
+        }
+        else
+        {
+            Print( "AETHEROPS_SMOKE_ERROR=incomplete aerodynamic result" );
+        }
+    }
+
+    while ( GetNumTotalErrors() > 0 )
+    {
+        ErrorObj err = PopLastError();
+        Print( "AETHEROPS_SMOKE_ERROR=" + err.GetErrorString() );
+    }
+}

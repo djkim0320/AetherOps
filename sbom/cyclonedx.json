@@ -1,0 +1,5272 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:863d6912-f3b9-4a72-a6ed-fb2b43429191",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "AetherOps",
+      "version": "0.1.0-alpha.1",
+      "purl": "pkg:github/djkim0320/Aether-claw@v0.1.0-alpha.1"
+    },
+    "properties": [
+      {
+        "name": "aetherops:development-set:frontend-build-dev-dependencies",
+        "value": "distributed=false;count=138"
+      },
+      {
+        "name": "aetherops:development-set:go-nonproduction-module-graph",
+        "value": "distributed=false;count=21"
+      },
+      {
+        "name": "aetherops:development-set:go-toolchain",
+        "value": "distributed=false;count=not-applicable"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "github.com/dustin/go-humanize",
+      "version": "v1.0.1",
+      "purl": "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/dustin/go-humanize/@v/v1.0.1.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "transitive"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/github.com-dustin-go-humanize-v1.0.1.txt:sha256:9d695aa5c417f9dbdf6c7856a152e8981e37cd00fabcf6edce7667d040230550"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/mattn/go-isatty",
+      "version": "v0.0.24",
+      "purl": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/mattn/go-isatty/@v/v0.0.24.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "transitive"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/github.com-mattn-go-isatty-v0.0.24.txt:sha256:9dfc58668f101d3fe47f6d1295234ab90e57593f7949ea72d8f4c698d7d27944"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/ncruces/go-strftime",
+      "version": "v1.0.0",
+      "purl": "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/ncruces/go-strftime/@v/v1.0.0.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "transitive"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/github.com-ncruces-go-strftime-v1.0.0.txt:sha256:e8396d9deb9ce329b8ee51d4719f0de74f0c98f3daeb43392822d3c7b2f81387"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/remyoudompheng/bigfft",
+      "version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "purl": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/remyoudompheng/bigfft/@v/v0.0.0-20230129092748-24d4a6f8daec.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "transitive"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/github.com-remyoudompheng-bigfft-v0.0.0-20230129092748-24d4a6f8daec.txt:sha256:219cc0661adf8cebfd54b709848068d0bc31587fc1283bb42b8ef6bc047d654f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/razvandimescu/gopdf",
+      "version": "v0.10.0",
+      "purl": "pkg:golang/github.com/razvandimescu/gopdf@v0.10.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/razvandimescu/gopdf/@v/v0.10.0.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "direct"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:Z7Htqh0ymlWc3W8zpZ6PdEWpfYBye+Al7TdTRpRlVXQ="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/github.com-razvandimescu-gopdf-v0.10.0.txt:sha256:58b3d44a415aa95897ca9d10cf9f90aae52eb2493c2f23be088a4c0ad6257021"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/robfig/cron/v3",
+      "version": "v3.0.1",
+      "purl": "pkg:golang/github.com/robfig/cron/v3@v3.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/robfig/cron/v3/@v/v3.0.1.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "direct"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/github.com-robfig-cron-v3-v3.0.1.txt:sha256:9f1d3c7dca4fbf4c12a5449202514c8ff1147834eb01e9a7da10bbd674a50387"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/wailsapp/go-webview2",
+      "version": "v1.0.23",
+      "purl": "pkg:golang/github.com/wailsapp/go-webview2@v1.0.23",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/wailsapp/go-webview2/@v/v1.0.23.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "direct"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:jmv8qhz1lHibCc79bMM/a/FqOnnzOGEisLav+a0b9P0="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/github.com-wailsapp-go-webview2-v1.0.23.txt:sha256:9ab5f0f3d7c559c2e089a75b777d1496433e5f7d84857b0f7f5293a7d28147ff"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "golang.org/x/sys",
+      "version": "v0.47.0",
+      "purl": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/golang.org/x/sys/@v/v0.47.0.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "direct"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/golang.org-x-sys-v0.47.0.txt:sha256:69e13d4b96b7fa55d3210d3f27fd7b70239f74298c891549874067d5ef4750d9"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "modernc.org/libc",
+      "version": "v1.74.4",
+      "purl": "pkg:golang/modernc.org/libc@v1.74.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/modernc.org/libc/@v/v1.74.4.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "transitive"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:fX1Omw4o2/1C2iRkkIsrQTasJQldLhRmuPreXLoWs9k="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/modernc.org-libc-v1.74.4.txt:sha256:70d40e8d0c4ec7b71230bb495499d64a9f2e42cbc35d924a57b57e6fe21547aa"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "modernc.org/mathutil",
+      "version": "v1.7.1",
+      "purl": "pkg:golang/modernc.org/mathutil@v1.7.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/modernc.org/mathutil/@v/v1.7.1.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "transitive"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:GCZVGXdaN8gTqB1Mf/usp1Y/hSqgI2vAGGP4jZMCxOU="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/modernc.org-mathutil-v1.7.1.txt:sha256:518ccf9ccccd2ee8e13c0fa15251cbc08fc865251369933b007d2faa33d4e2a4"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "modernc.org/memory",
+      "version": "v1.11.0",
+      "purl": "pkg:golang/modernc.org/memory@v1.11.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/modernc.org/memory/@v/v1.11.0.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "transitive"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:o4QC8aMQzmcwCK3t3Ux/ZHmwFPzE6hf2Y5LbkRs+hbI="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/modernc.org-memory-v1.11.0.txt:sha256:c8e9b5d5d565f73132ac6625250d56141f5a089be59df53965013e91565b4612"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "modernc.org/sqlite",
+      "version": "v1.56.0",
+      "purl": "pkg:golang/modernc.org/sqlite@v1.56.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/modernc.org/sqlite/@v/v1.56.0.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "direct"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "gomod-h1:h1:/D8e2RfFqoy/Zc6PuC76U28zFwmI/sYx1Kjm4yEn9e0="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/go/modernc.org-sqlite-v1.56.0.txt:sha256:e665b5c61fda666b03f53ed6724c3d3534f20a6c9894dbe99030c0e07414a8e4"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "preact",
+      "version": "10.26.4",
+      "purl": "pkg:npm/preact@10.26.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/preact/-/preact-10.26.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-production"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "npm-sri:sha512-KJhO7LBFTjP71d83trW+Ilnjbo+ySsaAgCfXOXUlmGzJ4ygYPWmysm77yg4emwfmoz3b22yvH5IsVFHbhUaH5w=="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/npm/preact-10.26.4.txt:sha256:5544df580d65b6f3141cba6dfb788f9df8656e948dd049f939477235be49ef62"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cytoscape",
+      "version": "3.34.0",
+      "purl": "pkg:npm/cytoscape@3.34.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/cytoscape/-/cytoscape-3.34.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-production"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "npm-sri:sha512-62rNSrioXw93uliKFBwjukeQyeWwH2PqDrTac31r2P6464u3AUvTk0xS4LVvT251g7IgkFunrI48ZEZGjywSOg=="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/npm/cytoscape-3.34.0.txt:sha256:0970043cf6bec5d59de143ff8710793e96ccb94575388037adb7f73e3f901867"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "Node.js",
+      "version": "24.19.0",
+      "purl": "pkg:generic/node.js@24.19.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "managed-runtime"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73"
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "runtime/versions/node/24.19.0/LICENSE:sha256:d9c4eeda951d6d08f4aa1316b61aafcf67e6da5f79b18f8edeb56fa6abdc038c"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "@openai/codex",
+      "version": "0.146.1",
+      "purl": "pkg:npm/%40openai/codex@0.146.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.146.1.tgz"
+        },
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.146.1-win32-x64.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "managed-runtime"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "npm-sri:sha512-f51R56E/G15soLhf5l5pWUiM+mGHK0NdLozOtzjRoAa+bA20hgWrkyxE/fpwCnuGQM6XNdktHYtK9xQ7bPIbTA=="
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "npm-sri:sha512-FfiNJysKpHkJ08Kn+571r701dgoZVZjqNUxrEZ/JJyu5hIzNTs4XBllAX6ynHkF8G9NebPEtaJz72zxbol/JPg=="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/common/Apache-2.0.txt:sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "chrome-devtools-mcp",
+      "version": "1.6.0",
+      "purl": "pkg:npm/chrome-devtools-mcp@1.6.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/chrome-devtools-mcp/-/chrome-devtools-mcp-1.6.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "managed-runtime"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "npm-sri:sha512-VZX6f/OjQSYhy2BGGRs+y3LsrsAQAz/HwZCWKBLVyST/4r/3zjVEjjVW7gMCVbRDuspnVdcp5hQDPrQ5UFrdZw=="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "runtime/versions/chrome-devtools-mcp/1.6.0/node_modules/chrome-devtools-mcp/LICENSE:sha256:58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "runtime/versions/chrome-devtools-mcp/1.6.0/node_modules/chrome-devtools-mcp/build/src/third_party/THIRD_PARTY_NOTICES:sha256:d0fe4b928d895253c6912a71ca4fa0139c9481c84de121e890760e9772f1276b"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "oxigraph",
+      "version": "0.5.9",
+      "purl": "pkg:npm/oxigraph@0.5.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/oxigraph/-/oxigraph-0.5.9.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "knowledge-sidecar-runtime"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "npm-sri:sha512-Oyxo/NE9imMvTPcK/TkQmAPALnJOns0XBk/r90SjnWg1fwBPSSZaNlVQ8YDKqeXHD2QISe1FfIVQtbgpKulqCQ=="
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/common/Apache-2.0.txt:sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "OpenVSP",
+      "version": "3.50.4",
+      "purl": "pkg:generic/openvsp@3.50.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "LicenseRef-NOSA-1.3"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://openvsp.org/zips/old/windows/OpenVSP-3.50.4-win64-Python3.13.zip"
+        },
+        {
+          "type": "distribution",
+          "url": "https://github.com/OpenVSP/OpenVSP/archive/refs/tags/OpenVSP_3.50.4.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "engineering-runtime"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:bd8cf75fe19c15eb13f941b07c315e92e04584d6ee94308f7d466adf67f0bc7c"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:20d191aac46bcc8369dbbe72baa9cdfd4ffe155083cdca8bdf726e508236288b"
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "sbom/licenses/runtime/openvsp-3.50.4-NOSA-1.3.txt:sha256:7987e17506f27b2d38a965314fd78a8f356dc2563cd52f783aa5aecf2a244090"
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "runtime/licenses/openvsp/3.50.4/LICENSE.txt:sha256:e4412fe27818ba6314bf45ef990adb6fb4e9f4001a27d163d42a58b1e18ceac0"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bd8cf75fe19c15eb13f941b07c315e92e04584d6ee94308f7d466adf67f0bc7c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "20d191aac46bcc8369dbbe72baa9cdfd4ffe155083cdca8bdf726e508236288b"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "Gmsh",
+      "version": "4.14.1",
+      "purl": "pkg:generic/gmsh@4.14.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "GPL-2.0-or-later"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://gmsh.info/bin/Windows/gmsh-4.14.1-Windows64.zip"
+        },
+        {
+          "type": "distribution",
+          "url": "https://gmsh.info/src/gmsh-4.14.1-source.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "engineering-runtime"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:b3464b7e170f39639bc74b47334e7eab5cb44fa9317d16ff0c55b42bb04a1b80"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:300cbb74b6fb88062aba70b1f5f31a8980177a4af415221a16ec8c0aa1d72afd"
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "runtime/licenses/gmsh/4.14.1/LICENSE.txt:sha256:7fefa67a6c607068a33ba27e0a18aaf8596aa051f7cf2abcca094a3a484c5870"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b3464b7e170f39639bc74b47334e7eab5cb44fa9317d16ff0c55b42bb04a1b80"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "300cbb74b6fb88062aba70b1f5f31a8980177a4af415221a16ec8c0aa1d72afd"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "XFOIL",
+      "version": "6.99",
+      "purl": "pkg:generic/xfoil@6.99",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "GPL-2.0-only"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://web.mit.edu/drela/Public/web/xfoil/XFOIL6.99.zip"
+        },
+        {
+          "type": "distribution",
+          "url": "https://web.mit.edu/drela/Public/web/xfoil/xfoil6.99.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "engineering-runtime"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:e13e8fe5cc38d8ac2626e9d3b17643bdcfaa63791619f042afdaa7cd103bcb08"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:5c0250643f52ce0e75d7338ae2504ce7907f2d49a30f921826717b8ac12ebe40"
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "runtime/licenses/xfoil/6.99/GPL-2.0.txt:sha256:e6d6a009505e345fe949e1310334fcb0747f28dae2856759de102ab66b722cb4"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e13e8fe5cc38d8ac2626e9d3b17643bdcfaa63791619f042afdaa7cd103bcb08"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5c0250643f52ce0e75d7338ae2504ce7907f2d49a30f921826717b8ac12ebe40"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "SU2",
+      "version": "8.5.0",
+      "purl": "pkg:generic/su2@8.5.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "LGPL-2.1-only"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/su2code/SU2/releases/download/v8.5.0/SU2-v8.5.0-win64-omp.zip"
+        },
+        {
+          "type": "distribution",
+          "url": "https://github.com/su2code/SU2/archive/12eb826f049ef7f67df974dfcb44cf36ee07c0f8.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "engineering-runtime"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "true"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:4466fe21aedb5e0bad57afd45f829acbdec6ec79fe8c3f8954ddea06a4b4bc11"
+        },
+        {
+          "name": "aetherops:source-receipt",
+          "value": "SHA-256:8c5318c925225453b03a0dd86451a93320fe90b9857f0abf70021d21b66e8e55"
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "runtime/licenses/su2/8.5.0/LICENSE.md:sha256:46ae25afd571da3e3761ff82ace5dc26b0b66cf514243379ac026ce094ba32cf"
+        },
+        {
+          "name": "aetherops:license-payload",
+          "value": "runtime/licenses/su2/8.5.0/COPYING.txt:sha256:b3aa400aca6d2ba1f0bd03bd98d03d1fe7489a3bbb26969d72016360af8a5c9d"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4466fe21aedb5e0bad57afd45f829acbdec6ec79fe8c3f8954ddea06a4b4bc11"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8c5318c925225453b03a0dd86451a93320fe90b9857f0abf70021d21b66e8e55"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/code-frame",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/code-frame@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/compat-data",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/compat-data@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-locTkQyKvwIEgBzVrn8693ebc97F2U8ZHjbXwDXJ5Fn2TCpNwTlKcaKLkdHop5c/icOFE7qt7Q9JC5hnKNa6Gg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/core",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/core@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/core/-/core-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-RgHBCvtjbOK2gXSNBNIkNoEc9qoVEtau3hj8gEqKQuL3HZAibKarWFEI3Lfm6EYKkLalOh8eSrj9b+ch9H/VBA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/generator",
+      "version": "7.29.8",
+      "purl": "pkg:npm/%40babel/generator@7.29.8",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/generator/-/generator-7.29.8.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-gZbepsdh3WDtgZKWL+vTPh71LSBrm/Y4/QDZBVCcYfmeTEEuoOYwlSy+G1StfJg+/Zy550u/3TATbm7qDbbMtg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-annotate-as-pure",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-annotate-as-pure@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-annotate-as-pure/-/helper-annotate-as-pure-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-OoK6239jHPuSQOoS0kfTVKn0b/rVTk0seKq4Gd2UMLtmOVLjDC0ki3e+c90Trqv2gMfvJFqkiljrr568+qddiw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-compilation-targets",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-compilation-targets@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-compilation-targets/-/helper-compilation-targets-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-wem6WaBj4NaVYVdNhLPPVacES6ZJ+KBBfSkTMD3YZxbP3rm3Di85tJU5ljaUNhaOynt+Aj0xruhYuzQBt8n71g=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-globals",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-globals@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-globals/-/helper-globals-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-3nQVUAtvkKH9zahfWgw96Jc/uFOmjACE1kQz82E2lqWmHBgjzbNlsC22nuQTfahmWeQtTq5nQ/4Nnd2A1wj4zA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-module-imports",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-module-imports@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-module-imports/-/helper-module-imports-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-ejHwrQQYcm9xnTivShn2IDOlIzInN34AXskvq9QicvCtEzq1Vzclu/tKF8Jq1Cg8JG2GL6/EmjgsCT7lXepE3g=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-module-transforms",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-module-transforms@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-module-transforms/-/helper-module-transforms-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-UPUVSyXbOh627KiCIGQSgwWzGeBKLkaJ9PJEdrngIwMSzxLR4jS4+f1f1jb7VzBbg8nFLaYotvVPFCTqdrmTAg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-plugin-utils",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-plugin-utils@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-plugin-utils/-/helper-plugin-utils-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-G7sHYigPY17oO5SYWnfD/0MTBwVR781S/JI643e/JhUYgVgWE/61SoW3NH9KWUKyKq5LVh3npif99Wkt6j86Jw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-string-parser",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-string-parser@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Pb5ijPrZ89GDH8223L4UP8i6QApWxs04RbPQJTeWDV0/keR2E36MeKnyr6LYmUUvqRRI+Iv87SuF1W6ErINzYw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-validator-identifier",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-validator-identifier@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-validator-option",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-validator-option@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helper-validator-option/-/helper-validator-option-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-N9ZErrD+yW5geCDtBqnOoxmR8+tNKiGuxKlDpuJxfsqpa2dFcexaziGAE/qoHLiDDreVNMupxGmSoNlyvsA3gw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helpers",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helpers@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/helpers/-/helpers-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-1k2lAGRMfHTcwuNYcCNUmaUffmQv8KWMfh2iJUUeRlwlwH4FdNG7mfPI10NPfLHJFThE4Tyr4mv7kTNZOiPuBg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/parser",
+      "version": "7.29.8",
+      "purl": "pkg:npm/%40babel/parser@7.29.8",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/parser/-/parser-7.29.8.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-E8lTAYNB1KW+FH+VGJuZM1ioAx2E6oVlvQFRrf5P8ZZmsiJXYAD9vTFV7yyEURNzgh1dFqMZuO6tUwcARbqFCA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/plugin-syntax-jsx",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/plugin-syntax-jsx@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/plugin-syntax-jsx/-/plugin-syntax-jsx-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-TSu8+mHCoEaaCDEZ0I3+6mvTBYR4PCxQwf2z9/r5Tbztv6NaLR3B9thGTTxX2WGuGHJqRiAbKPeGTJ5XWXVg6A=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/plugin-transform-react-jsx-development",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/plugin-transform-react-jsx-development@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/plugin-transform-react-jsx-development/-/plugin-transform-react-jsx-development-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Xfy3UVMF04+ypnFbkhvfqtmvwfe92qwQdbGZVonhE+6v35GzlofmOnA1szaZqzb9xYWr0nl1e5EMmzi0DNON1g=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/plugin-transform-react-jsx",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/plugin-transform-react-jsx@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/plugin-transform-react-jsx/-/plugin-transform-react-jsx-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-WsZulLVBUHXVj2cUcPVx6UE21TpalB6bHbSFErKT0Ib++ax24jjXe73FqlWvdylFOjiuPHYi6VCcgRad1ItN+A=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/template",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/template@7.29.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/template/-/template-7.29.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-puq+Gf35oI24FeN11LkoUQFqv9uwNeWpxXZi/Ji3rRIoKAzKnxRaZ+Gkj0vKS9ZCiTESfng1N9LyOyXvo+m+Gg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/traverse",
+      "version": "7.29.8",
+      "purl": "pkg:npm/%40babel/traverse@7.29.8",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/traverse/-/traverse-7.29.8.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-I5z7H3bf/41ktsNVLtpN0wAa336HkqIHQ5BuPLEhTkt1jVSyZpeNKIzTgEWmlxjdg81R0IgUCcaE+Ok3NvrfZg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/types",
+      "version": "7.29.8",
+      "purl": "pkg:npm/%40babel/types@7.29.8",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@babel/types/-/types-7.29.8.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/aix-ppc64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/aix-ppc64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/android-arm64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/android-arm64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/android-arm64/-/android-arm64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-6AAmLG7zwD1Z159jCKPvAxZd4y/VTO0VkprYy+3N2FtJ8+BQWFXU+OxARIwA46c5tdD9SsKGZ/1ocqBS/gAKHg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/android-arm",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/android-arm@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/android-arm/-/android-arm-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-VJ+sKvNA/GE7Ccacc9Cha7bpS8nyzVv0jdVgwNDaR4gDMC/2TTRc33Ip8qrNYUcpkOHUT5OZ0bUcNNVZQ9RLlg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/android-x64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/android-x64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/android-x64/-/android-x64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-5jbb+2hhDHx5phYR2By8GTWEzn6I9UqR11Kwf22iKbNpYrsmRB18aX/9ivc5cabcUiAT/wM+YIZ6SG9QO6a8kg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/darwin-arm64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/darwin-arm64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-N3zl+lxHCifgIlcMUP5016ESkeQjLj/959RxxNYIthIg+CQHInujFuXeWbWMgnTo4cp5XVHqFPmpyu9J65C1Yg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/darwin-x64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/darwin-x64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-HQ9ka4Kx21qHXwtlTUVbKJOAnmG1ipXhdWTmNXiPzPfWKpXqASVcWdnf2bnL73wgjNrFXAa3yYvBSd9pzfEIpA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/freebsd-arm64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/freebsd-arm64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/freebsd-arm64/-/freebsd-arm64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-gA0Bx759+7Jve03K1S0vkOu5Lg/85dou3EseOGUes8flVOGxbhDDh/iZaoek11Y8mtyKPGF3vP8XhnkDEAmzeg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/freebsd-x64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/freebsd-x64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/freebsd-x64/-/freebsd-x64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-TGbO26Yw2xsHzxtbVFGEXBFH0FRAP7gtcPE7P5yP7wGy7cXK2oO7RyOhL5NLiqTlBh47XhmIUXuGciXEqYFfBQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-arm64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-arm64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-8bwX7a8FghIgrupcxb4aUmYDLp8pX06rGh5HqDT7bB+8Rdells6mHvrFHHW2JAOPZUbnjUpKTLg6ECyzvas2AQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-arm",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-arm@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-arm/-/linux-arm-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-lPDGyC1JPDou8kGcywY0YILzWlhhnRjdof3UlcoqYmS9El818LLfJJc3PXXgZHrHCAKs/Z2SeZtDJr5MrkxtOw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-ia32",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-ia32@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-ia32/-/linux-ia32-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-0y9KrdVnbMM2/vG8KfU0byhUN+EFCny9+8g202gYqSSVMonbsCfLjUO+rCci7pM0WBEtz+oK/PIwHkzxkyharA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-loong64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-loong64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-loong64/-/linux-loong64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-h///Lr5a9rib/v1GGqXVGzjL4TMvVTv+s1DPoxQdz7l/AYv6LDSxdIwzxkrPW438oUXiDtwM10o9PmwS/6Z0Ng=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-mips64el",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-mips64el@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-mips64el/-/linux-mips64el-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-iyRrM1Pzy9GFMDLsXn1iHUm18nhKnNMWscjmp4+hpafcZjrr2WbT//d20xaGljXDBYHqRcl8HnxbX6uaA/eGVw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-ppc64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-ppc64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-ppc64/-/linux-ppc64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-9meM/lRXxMi5PSUqEXRCtVjEZBGwB7P/D4yT8UG/mwIdze2aV4Vo6U5gD3+RsoHXKkHCfSxZKzmDssVlRj1QQA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-riscv64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-riscv64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-riscv64/-/linux-riscv64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Zr7KR4hgKUpWAwb1f3o5ygT04MzqVrGEGXGLnj15YQDJErYu/BGg+wmFlIDOdJp0PmB0lLvxFIOXZgFRrdjR0w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-s390x",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-s390x@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-s390x/-/linux-s390x-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-MsKncOcgTNvdtiISc/jZs/Zf8d0cl/t3gYWX8J9ubBnVOwlk65UIEEvgBORTiljloIWnBzLs4qhzPkJcitIzIg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-x64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/linux-x64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-uqZMTLr/zR/ed4jIGnwSLkaHmPjOjJvnm6TVVitAa08SLS9Z0VM8wIRx7gWbJB5/J54YuIMInDquWyYvQLZkgw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/netbsd-arm64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/netbsd-arm64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/netbsd-arm64/-/netbsd-arm64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-xXwcTq4GhRM7J9A8Gv5boanHhRa/Q9KLVmcyXHCTaM4wKfIpWkdXiMog/KsnxzJ0A1+nD+zoecuzqPmCRyBGjg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/netbsd-x64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/netbsd-x64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Ld5pTlzPy3YwGec4OuHh1aCVCRvOXdH8DgRjfDy/oumVovmuSzWfnSJg+VtakB9Cm0gxNO9BzWkj6mtO1FMXkQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/openbsd-arm64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/openbsd-arm64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/openbsd-arm64/-/openbsd-arm64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-fF96T6KsBo/pkQI950FARU9apGNTSlZGsv1jZBAlcLL1MLjLNIWPBkj5NlSz8aAzYKg+eNqknrUJ24QBybeR5A=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/openbsd-x64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/openbsd-x64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/openbsd-x64/-/openbsd-x64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-MZyXUkZHjQxUvzK7rN8DJ3SRmrVrke8ZyRusHlP+kuwqTcfWLyqMOE3sScPPyeIXN/mDJIfGXvcMqCgYKekoQw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/openharmony-arm64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/openharmony-arm64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/openharmony-arm64/-/openharmony-arm64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-rm0YWsqUSRrjncSXGA7Zv78Nbnw4XL6/dzr20cyrQf7ZmRcsovpcRBdhD43Nuk3y7XIoW2OxMVvwuRvk9XdASg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/sunos-x64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/sunos-x64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/sunos-x64/-/sunos-x64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-3wGSCDyuTHQUzt0nV7bocDy72r2lI33QL3gkDNGkod22EsYl04sMf0qLb8luNKTOmgF/eDEDP5BFNwoBKH441w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/win32-arm64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/win32-arm64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-rMmLrur64A7+DKlnSuwqUdRKyd3UE7oPJZmnljqEptesKM8wx9J8gx5u0+9Pq0fQQW8vqeKebwNXdfOyP+8Bsg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/win32-ia32",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/win32-ia32@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/win32-ia32/-/win32-ia32-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-HkqnmmBoCbCwxUKKNPBixiWDGCpQGVsrQfJoVGYLPT41XWF8lHuE5N6WhVia2n4o5QK5M4tYr21827fNhi4byQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/win32-x64",
+      "version": "0.25.12",
+      "purl": "pkg:npm/%40esbuild/win32-x64@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/win32-x64/-/win32-x64-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-alJC0uCZpTFrSL0CCDjcgleBXPnCrEAhTBILpeAp7M/OFgoqtAetfBzX0xM00MUsVVPpVjlPuMbREqnZCXaTnA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@jridgewell/gen-mapping",
+      "version": "0.3.13",
+      "purl": "pkg:npm/%40jridgewell/gen-mapping@0.3.13",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@jridgewell/gen-mapping/-/gen-mapping-0.3.13.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@jridgewell/remapping",
+      "version": "2.3.5",
+      "purl": "pkg:npm/%40jridgewell/remapping@2.3.5",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@jridgewell/remapping/-/remapping-2.3.5.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-LI9u/+laYG4Ds1TDKSJW2YPrIlcVYOwi2fUC6xB43lueCjgxV4lffOCZCtYFiH6TNOX+tQKXx97T4IKHbhyHEQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@jridgewell/resolve-uri",
+      "version": "3.1.2",
+      "purl": "pkg:npm/%40jridgewell/resolve-uri@3.1.2",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@jridgewell/sourcemap-codec",
+      "version": "1.5.5",
+      "purl": "pkg:npm/%40jridgewell/sourcemap-codec@1.5.5",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.5.5.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@jridgewell/trace-mapping",
+      "version": "0.3.31",
+      "purl": "pkg:npm/%40jridgewell/trace-mapping@0.3.31",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@napi-rs/lzma-linux-x64-gnu",
+      "version": "1.5.1",
+      "purl": "pkg:npm/%40napi-rs/lzma-linux-x64-gnu@1.5.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@napi-rs/lzma-linux-x64-gnu/-/lzma-linux-x64-gnu-1.5.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@preact/preset-vite",
+      "version": "2.10.1",
+      "purl": "pkg:npm/%40preact/preset-vite@2.10.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@preact/preset-vite/-/preset-vite-2.10.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-59lyGBXNfZIr5OOuBUB4/IB8AqF/ULbvYnyItgK/2BJnsGJqaeaJobRVtMp1129obHQuj8oZ/dVxB9inmH8Xig=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@prefresh/babel-plugin",
+      "version": "0.5.3",
+      "purl": "pkg:npm/%40prefresh/babel-plugin@0.5.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@prefresh/babel-plugin/-/babel-plugin-0.5.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-57LX2SHs4BX2s1IwCjNzTE2OJeEepRCNf1VTEpbNcUyHfMO68eeOWGDIt4ob9aYlW6PEWZ1SuwNikuoIXANDtQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@prefresh/core",
+      "version": "1.5.10",
+      "purl": "pkg:npm/%40prefresh/core@1.5.10",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@prefresh/core/-/core-1.5.10.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-7yPTFbG56sutaFu8krp3B4a200KOFUvrtlllKWRuLjsYXo9UUucHOZRcer+gtgMkFTpv6ob8TGcTwA32bSwa1w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@prefresh/utils",
+      "version": "1.2.1",
+      "purl": "pkg:npm/%40prefresh/utils@1.2.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@prefresh/utils/-/utils-1.2.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-vq/sIuN5nYfYzvyayXI4C2QkprfNaHUQ9ZX+3xLD8nL3rWyzpxOm1+K7RtMbhd+66QcaISViK7amjnheQ/4WZw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@prefresh/vite",
+      "version": "2.4.12",
+      "purl": "pkg:npm/%40prefresh/vite@2.4.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@prefresh/vite/-/vite-2.4.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-FY1fzXpUjiuosznMV0YM7XAOPZjB5FIdWS0W24+XnlxYkt9hNAwwsiKYn+cuTEoMtD/ZVazS5QVssBr9YhpCQA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/pluginutils",
+      "version": "4.2.1",
+      "purl": "pkg:npm/%40rollup/pluginutils@4.2.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/pluginutils/-/pluginutils-4.2.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-iKnFXr7NkdZAIHiIWE+BX5ULi/ucVFYWD6TbAV+rZctiRTY2PL6tsIKhoIOaoskiWAkgu+VsbXgUVDNLHf+InQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-android-arm-eabi",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-android-arm-eabi@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-android-arm-eabi/-/rollup-android-arm-eabi-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-RrPokAb7dmbxFoeO3TloqHyOjgye8RkBhSqmp4aJMIex4c9r46ZstPnleDQOq1t46VOVjwIuwNogIqbodV1Vvg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-android-arm64",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-android-arm64@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-android-arm64/-/rollup-android-arm64-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-JKuJc+pnpks2pjy7L/N3v/cAkZxYlnmuZoD840ldbMI5KDbC4iO9NKwPKYdjYFCMAIIlBzYSFHxIJVYzRo2/8A=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-darwin-arm64",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-darwin-arm64@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-darwin-arm64/-/rollup-darwin-arm64-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-krw5uS2STmvJ02x0uTXHbqQNuz+9eZ1iw+qXk9dmW2gvV4jV7O2hEoOnuhFrpOPiel1mBFtqbxYZZtC46hXLOw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-darwin-x64",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-darwin-x64@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-darwin-x64/-/rollup-darwin-x64-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-wsTxtgApb4PrOsNJIm0FZ1h3WvCC+k9uxLJ4ad75hgoS4NiRes2SoJFlDAyMwiUY8IssDqGcHbXuN0sx1tfF1A=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-freebsd-arm64",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-freebsd-arm64@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-freebsd-arm64/-/rollup-freebsd-arm64-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-GUOnQlyZe3yAXhWOtOMsn5Qkrv5E5mZXa0thbARWi5Ei2szlVXJFQhddZ4HbAzh8q92w5twp+CQvs/eFanz9YQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-freebsd-x64",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-freebsd-x64@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-freebsd-x64/-/rollup-freebsd-x64-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-/Y7f3QuxjzPKsjA/rfEDa3+0vXqyjmJ50Ln8dPpCmWkKTrUoWHG1cWhTqaAMLob2m2nESWuC7yGrREz019Ztqg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-arm-gnueabihf",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-arm-gnueabihf@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-arm-gnueabihf/-/rollup-linux-arm-gnueabihf-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-81wiiX3v7aqy+T+bT61TJ78yJjRquqFFTTbAPt08imfQQzkPIW8t6aJbkTagtCCrXMNc9D66+geqlK7ydLPNqA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-arm-musleabihf",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-arm-musleabihf@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-arm-musleabihf/-/rollup-linux-arm-musleabihf-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-9kmDIvNZqdoHOBZgNtpTBeLWYO/LVipM3H/j62P8848/l/VPEQL6N3uxU9pvP1oZAsXyC2MEnFP3ovRjo7WYNQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-arm64-gnu",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-arm64-gnu@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-arm64-gnu/-/rollup-linux-arm64-gnu-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-CcnXHWnXg69g+DX5VWL3FHts3qMRN2uVEHX+BZvGLdd07/gXkn3ePjYtO1LDJvxkGKVHMclKBRa1QUTH+6toYQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-arm64-musl",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-arm64-musl@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-arm64-musl/-/rollup-linux-arm64-musl-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-iFOibiHnTRuhrWLlRsOQFdZJJIa7S8OwkneJr4ocALP16u5yk6lWLINFwhHaEqBFMsKDUZofLkGos7+CPzGB3g=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-loong64-gnu",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-loong64-gnu@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-loong64-gnu/-/rollup-linux-loong64-gnu-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-XnWYMI7euHlb5a871xPja+Gm7DRCFU+FGRrtS2sMq9N8FvqtpagUy6gD4YOemC5MRk9xbh8+jYMEJbigFQwsgA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-loong64-musl",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-loong64-musl@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-loong64-musl/-/rollup-linux-loong64-musl-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-qGDAlO0U8xedCcsdRm9oaoQY8DAx/QT7uIxJWhCdx0ceIWX783UC9QSYkdpzAe29wNiVfp24+bZdQmn49o45SQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-ppc64-gnu",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-ppc64-gnu@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-ppc64-gnu/-/rollup-linux-ppc64-gnu-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-ru4H6ezD7ysA5EiEK6qkkaEb4modH8CTej6kUy/gQi20u3kB3G7Zn8snXXkeJSCOFKG/rbPPtM/+9Wgas1961w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-ppc64-musl",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-ppc64-musl@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-ppc64-musl/-/rollup-linux-ppc64-musl-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-2W4MO5WQVJnbJaZdvDb9rhBDuFU1nKIepPFpJUBsTh2k1YY2g+ODViaWuyOAjQ5cOP7NvrvLzt3wvHOoiAvc7w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-riscv64-gnu",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-riscv64-gnu@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-riscv64-gnu/-/rollup-linux-riscv64-gnu-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-+fxjfuoAmVMCYV5QyjoIpu0cp5DOiOTeqYFk1AVaxGr+/ravWLX89XfQmptsoWcaVy/TGf2hexzbUOrCQIL1CQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-riscv64-musl",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-riscv64-musl@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-riscv64-musl/-/rollup-linux-riscv64-musl-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-jTn8JfHGL4djjFxPuM06LmNUJDsst2jeVlsd9OmIH6zc5sC9K6rIuO4YajXatLUpBmBKl6b35ro1QZocLi+tcA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-s390x-gnu",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-s390x-gnu@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-s390x-gnu/-/rollup-linux-s390x-gnu-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-oCJCJL4pXsoDcP2QZ+JVlPTIRc6266zsIaeJJsWImmF7HO0W8nb6HuSgZlMWxJwaPf8ehbSw8yo0EUw925hKsA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-x64-gnu",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-x64-gnu@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-W69hukhZ3KKNRCaMIEzKvcFye42hh0FE1+YoYaf5+Ikacuftoco6yO/xouz0hc5d5W/s3yBro5jRiuEE/Q5vUw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-linux-x64-musl",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-linux-x64-musl@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-linux-x64-musl/-/rollup-linux-x64-musl-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-qiXbGG2jkjXhzXpsFZSR2Xpb8DN/UaxYsbb/STbuR/6fpaDgRmmaq1B/LmtF2wQFOFOSsK2jdE0RZ3a0zHn4QA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-openbsd-x64",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-openbsd-x64@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-openbsd-x64/-/rollup-openbsd-x64-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-nWeM//hxv8mIo6jD7Hu4o48DVmV9pbV6gsKaWU+4NFyqHoPKwrkRiZGLKUhOBk8qNmDmpwFtPKg80Bo/Tn4xiQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-openharmony-arm64",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-openharmony-arm64@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-openharmony-arm64/-/rollup-openharmony-arm64-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-s62SQ/vgsRSvMwDkOEfTqfgASF0f26ZNaQuTA6Aok5lrikf89yI2W0gFHvZb2Jpgc6N8JnOKZgCK2iciO3CsxQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-win32-arm64-msvc",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-win32-arm64-msvc@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-win32-arm64-msvc/-/rollup-win32-arm64-msvc-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-J6wGf8TVGbXJq+HH+ttTvrcfNKPbuZecV6KT1B8I18BC5IURUh5kl4Yl5OEP5eFIUoI5BWxCsyYMhFsDx8kekw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-win32-ia32-msvc",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-win32-ia32-msvc@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-win32-ia32-msvc/-/rollup-win32-ia32-msvc-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-zmfrQd/0wu6oJs8Vq8KwY/YtsKSsLtKe/HwAP4Wqy8LhWjeT55fHRAkOhYQ12wI3ayS4Tt12d5CDRD7N96SAYQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-win32-x64-gnu",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-win32-x64-gnu@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-win32-x64-gnu/-/rollup-win32-x64-gnu-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-qPzHqdj9rfUD+w79dtE07zi/kFwKyCJqplp5K5ygeLTp7jLpAoc16OAH39HSmRC9UpozaecsleI8uAdEj6v2yw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rollup/rollup-win32-x64-msvc",
+      "version": "4.62.4",
+      "purl": "pkg:npm/%40rollup/rollup-win32-x64-msvc@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-zD6NdeWEByGE9QF9vCrlJ5YQB4oq9q91kPZS37Jwj5hOkvR1lTBSpsKhKDw4IJtbQ35LsTS1HD9DZYGKIshU1Q=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@types/estree",
+      "version": "1.0.9",
+      "purl": "pkg:npm/%40types/estree@1.0.9",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@types/node",
+      "version": "22.15.3",
+      "purl": "pkg:npm/%40types/node@22.15.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/node/-/node-22.15.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-lX7HFZeHf4QG/J7tBZqrCAXwz9J5RD56Y6MpP0eJkka8p+K0RY/yBTW7CYFJ4VGCclxqOLKmiGP5juQc6MKgcw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "babel-plugin-transform-hook-names",
+      "version": "1.0.2",
+      "purl": "pkg:npm/babel-plugin-transform-hook-names@1.0.2",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/babel-plugin-transform-hook-names/-/babel-plugin-transform-hook-names-1.0.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-5gafyjyyBTTdX/tQQ0hRgu4AhNHG/hqWi0ZZmg2xvs2FgRkJXzDNKBZCyoYqgFkovfDrgM8OoKg8karoUvWeCw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "baseline-browser-mapping",
+      "version": "2.11.12",
+      "purl": "pkg:npm/baseline-browser-mapping@2.11.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.11.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-r7WnVImvVCeFpf2DOXfy41aPWzeNg3H/A2X4dKmy1QL0MSyyk/e7z8ihJ3N6Nn2PsdhkVlqnEfnUE4a05P2aTA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "boolbase",
+      "version": "1.0.0",
+      "purl": "pkg:npm/boolbase@1.0.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/boolbase/-/boolbase-1.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "browserslist",
+      "version": "4.28.7",
+      "purl": "pkg:npm/browserslist@4.28.7",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/browserslist/-/browserslist-4.28.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-JxV13hNrFxqjOc8alRbq9dK1MM79NEXYpma2B2J4wAtpWS5zIEIKqWPGCl7N4o7Uc7B7itylh7SuDujATRyyTw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "caniuse-lite",
+      "version": "1.0.30001806",
+      "purl": "pkg:npm/caniuse-lite@1.0.30001806",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "CC-BY-4.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001806.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-72Cuvd95zbSYPKq6Fhg8eDJRlzgWDf7/mtoZv6Qe/DYNCEBdNxoA3+rZAU2ZhGCpZlns3EssFavaZomckT5Uuw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "convert-source-map",
+      "version": "2.0.0",
+      "purl": "pkg:npm/convert-source-map@2.0.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "css-select",
+      "version": "5.2.2",
+      "purl": "pkg:npm/css-select@5.2.2",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/css-select/-/css-select-5.2.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-TizTzUddG/xYLA3NXodFM0fSbNizXjOKhqiQQwvhlspadZokn1KDy0NZFS0wuEubIYAV5/c1/lAr0TaaFXEXzw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "css-what",
+      "version": "6.2.2",
+      "purl": "pkg:npm/css-what@6.2.2",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/css-what/-/css-what-6.2.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-u/O3vwbptzhMs3L1fQE82ZSLHQQfto5gyZzwteVIEyeaY5Fc7R4dapF/BvRoSYFeqfBk4m0V1Vafq5Pjv25wvA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "debug",
+      "version": "4.4.3",
+      "purl": "pkg:npm/debug@4.4.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "dom-serializer",
+      "version": "2.0.0",
+      "purl": "pkg:npm/dom-serializer@2.0.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/dom-serializer/-/dom-serializer-2.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "domelementtype",
+      "version": "2.3.0",
+      "purl": "pkg:npm/domelementtype@2.3.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/domelementtype/-/domelementtype-2.3.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-OLETBj6w0OsagBwdXnPdN0cnMfF9opN69co+7ZrbfPGrdpPVNBUj02spi6B1N7wChLQiPn4CSH/zJvXw56gmHw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "domhandler",
+      "version": "5.0.3",
+      "purl": "pkg:npm/domhandler@5.0.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/domhandler/-/domhandler-5.0.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "domutils",
+      "version": "3.2.2",
+      "purl": "pkg:npm/domutils@3.2.2",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/domutils/-/domutils-3.2.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "electron-to-chromium",
+      "version": "1.5.401",
+      "purl": "pkg:npm/electron-to-chromium@1.5.401",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.401.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-H6ViHN68nGYlChEvlIU67fn8O2/tpbWQPwck98yaJmh+08LSvHiydzDQ6oXNccLU3kNRVIRS9A4mA7CG+i6fLQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "entities",
+      "version": "4.5.0",
+      "purl": "pkg:npm/entities@4.5.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/entities/-/entities-4.5.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "esbuild",
+      "version": "0.25.12",
+      "purl": "pkg:npm/esbuild@0.25.12",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/esbuild/-/esbuild-0.25.12.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-bbPBYYrtZbkt6Os6FiTLCTFxvq4tt3JKall1vRwshA3fdVztsLAatFaZobhkBC8/BrPetoa0oksYoKXoG4ryJg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "escalade",
+      "version": "3.2.0",
+      "purl": "pkg:npm/escalade@3.2.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-WUj2qlxaQtO4g6Pq5c29GTcWGDyd8itL8zTlipgECz3JesAiiOKotd8JU6otB3PACgG6xkJUyVhboMS+bje/jA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "estree-walker",
+      "version": "2.0.2",
+      "purl": "pkg:npm/estree-walker@2.0.2",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/estree-walker/-/estree-walker-2.0.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Rfkk/Mp/DL7JVje3u18FxFujQlTNR2q6QfMSMB7AvCBx91NGj/ba3kCfza0f6dVDbw7YlRf/nDrn7pQrCCyQ/w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fdir",
+      "version": "6.5.0",
+      "purl": "pkg:npm/fdir@6.5.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fsevents",
+      "version": "2.3.3",
+      "purl": "pkg:npm/fsevents@2.3.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "gensync",
+      "version": "1.0.0-beta.2",
+      "purl": "pkg:npm/gensync@1.0.0-beta.2",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/gensync/-/gensync-1.0.0-beta.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "he",
+      "version": "1.2.0",
+      "purl": "pkg:npm/he@1.2.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/he/-/he-1.2.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-F/1DnUGPopORZi0ni+CvrCgHQ5FyEAHRLSApuYWMmrbSwoN2Mn/7k+Gl38gJnR7yyDZk6WLXwiGod1JOWNDKGw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "js-tokens",
+      "version": "4.0.0",
+      "purl": "pkg:npm/js-tokens@4.0.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "jsesc",
+      "version": "3.1.0",
+      "purl": "pkg:npm/jsesc@3.1.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/jsesc/-/jsesc-3.1.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "json5",
+      "version": "2.2.3",
+      "purl": "pkg:npm/json5@2.2.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/json5/-/json5-2.2.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "kolorist",
+      "version": "1.8.0",
+      "purl": "pkg:npm/kolorist@1.8.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/kolorist/-/kolorist-1.8.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Y+60/zizpJ3HRH8DCss+q95yr6145JXZo46OTpFvDZWLfRCE4qChOyk1b26nMaNpfHHgxagk9dXT5OP0Tfe+dQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lru-cache",
+      "version": "5.1.1",
+      "purl": "pkg:npm/lru-cache@5.1.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/lru-cache/-/lru-cache-5.1.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "magic-string",
+      "version": "0.30.21",
+      "purl": "pkg:npm/magic-string@0.30.21",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ms",
+      "version": "2.1.3",
+      "purl": "pkg:npm/ms@2.1.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nanoid",
+      "version": "3.3.18",
+      "purl": "pkg:npm/nanoid@3.3.18",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "node-html-parser",
+      "version": "6.1.13",
+      "purl": "pkg:npm/node-html-parser@6.1.13",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/node-html-parser/-/node-html-parser-6.1.13.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-qIsTMOY4C/dAa5Q5vsobRpOOvPfC4pB61UVW2uSwZNUp0QU/jCekTal1vMmbO0DgdHeLUJpv/ARmDqErVxA3Sg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "node-releases",
+      "version": "2.0.52",
+      "purl": "pkg:npm/node-releases@2.0.52",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.52.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-MRlTqhAfoMx/4mhEbPo3Hi02g9LJZaJkka69V6h67Cb1gjrAG0jsTE4CZX1eptNx+VCAwJmfpnDIF4P0Nh1A7A=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nth-check",
+      "version": "2.1.1",
+      "purl": "pkg:npm/nth-check@2.1.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/nth-check/-/nth-check-2.1.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "picocolors",
+      "version": "1.1.1",
+      "purl": "pkg:npm/picocolors@1.1.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "picomatch",
+      "version": "2.3.2",
+      "purl": "pkg:npm/picomatch@2.3.2",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "picomatch",
+      "version": "4.0.5",
+      "purl": "pkg:npm/picomatch@4.0.5",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "postcss",
+      "version": "8.5.25",
+      "purl": "pkg:npm/postcss@8.5.25",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/postcss/-/postcss-8.5.25.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-DTPx3RWSSnWyzLxQnlH0rJP+EW5ekl16ZU4/psbIhA0e53kJfdgaN5vKM+xP7yJtXVu+nfdVFmlgFDEKAe4Pyw=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rollup",
+      "version": "4.62.4",
+      "purl": "pkg:npm/rollup@4.62.4",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/rollup/-/rollup-4.62.4.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-RXOqwaPsBGjMNMa4sQjDjHieHEZDFoj/Rdr46l2MU5DfEs16wHJPC2RPTPHWhNl+M3aI472LLqFkFKut4SblOg=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "semver",
+      "version": "6.3.1",
+      "purl": "pkg:npm/semver@6.3.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/semver/-/semver-6.3.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "simple-code-frame",
+      "version": "1.3.0",
+      "purl": "pkg:npm/simple-code-frame@1.3.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/simple-code-frame/-/simple-code-frame-1.3.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-MB4pQmETUBlNs62BBeRjIFGeuy/x6gGKh7+eRUemn1rCFhqo7K+4slPqsyizCbcbYLnaYqaoZ2FWsZ/jN06D8w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "source-map-js",
+      "version": "1.2.1",
+      "purl": "pkg:npm/source-map-js@1.2.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "source-map",
+      "version": "0.7.6",
+      "purl": "pkg:npm/source-map@0.7.6",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/source-map/-/source-map-0.7.6.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "stack-trace",
+      "version": "1.0.0",
+      "purl": "pkg:npm/stack-trace@1.0.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/stack-trace/-/stack-trace-1.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-H6D7134xi6qONvh7ZHKgviXf+rd3vhGBSvebPZCaUkd8zvQ+7PtDw6CljPTe4cXWNf2IKZGNqw6VJXSb9IgBpA=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tinyglobby",
+      "version": "0.2.17",
+      "purl": "pkg:npm/tinyglobby@0.2.17",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typescript",
+      "version": "5.8.3",
+      "purl": "pkg:npm/typescript@5.8.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/typescript/-/typescript-5.8.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "undici-types",
+      "version": "6.21.0",
+      "purl": "pkg:npm/undici-types@6.21.0",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "update-browserslist-db",
+      "version": "1.2.3",
+      "purl": "pkg:npm/update-browserslist-db@1.2.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.2.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "vite-prerender-plugin",
+      "version": "0.5.13",
+      "purl": "pkg:npm/vite-prerender-plugin@0.5.13",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/vite-prerender-plugin/-/vite-prerender-plugin-0.5.13.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-IKSpYkzDBsKAxa05naRbj7GvNVMSdww/Z/E89oO3xndz+gWnOBOKOAbEXv7qDhktY/j3vHgJmoV1pPzqU2tx9g=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "vite",
+      "version": "6.4.3",
+      "purl": "pkg:npm/vite@6.4.3",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/vite/-/vite-6.4.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A=="
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "yallist",
+      "version": "3.1.1",
+      "purl": "pkg:npm/yallist@3.1.1",
+      "scope": "excluded",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/yallist/-/yallist-3.1.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "aetherops:dependency-kind",
+          "value": "frontend-build-dev"
+        },
+        {
+          "name": "aetherops:distributed",
+          "value": "false"
+        },
+        {
+          "name": "aetherops:npm-integrity",
+          "value": "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="
+        }
+      ]
+    }
+  ]
+}

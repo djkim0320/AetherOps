@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.5
+          cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            tools/knowledge-sidecar/package-lock.json
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+      - name: Frontend audit
+        working-directory: frontend
+        run: npm audit --audit-level=high
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm test
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+      - name: Knowledge sidecar install
+        working-directory: tools/knowledge-sidecar
+        run: npm ci --ignore-scripts
+      - name: Knowledge sidecar audit
+        working-directory: tools/knowledge-sidecar
+        run: npm audit --audit-level=high
+      - name: Knowledge sidecar tests
+        working-directory: tools/knowledge-sidecar
+        run: npm test
+      - name: Dependency boundary
+        shell: pwsh
+        run: ./tools/dependency-check.ps1
+      - name: Package trust parser tests
+        shell: pwsh
+        run: ./tools/package-trust-test.ps1
+      - name: Package content identity tests
+        shell: pwsh
+        run: ./tools/package-content-test.ps1
+      - name: Third-party notice policy
+        shell: pwsh
+        run: ./tools/notices-check.ps1
+      - name: Go module verification
+        run: go mod verify
+      - name: Go module tidiness
+        shell: pwsh
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Go tests
+        run: go test ./...
+      - name: Go vet
+        run: go vet ./...
+      - name: Reproducible SBOM
+        shell: pwsh
+        run: |
+          ./tools/sbom.ps1
+          git diff --exit-code -- sbom
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build Windows executable
+        shell: pwsh
+        run: |
+          go build -trimpath -ldflags '-s -w -H=windowsgui' -o build/aetherops.exe ./cmd/aetherops
+          Copy-Item -LiteralPath runtime-manifest.json -Destination build/runtime-manifest.json

@@ -1,0 +1,40 @@
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+
+# Managed developer/runtime payloads
+.tools/
+.runtime/
+.runtime-cache/
+.runtime-staging/
+.runtime.previous-*/
+dist/
+build/
+coverage/
+output/
+tmp/
+.playwright-cli/
+
+# Frontend dependencies and output
+frontend/node_modules/
+frontend/dist/
+tools/knowledge-sidecar/node_modules/
+
+# Go output
+*.exe
+*.test
+*.out
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local application data
+.aetherops-data/
+
+# Editors and operating system
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

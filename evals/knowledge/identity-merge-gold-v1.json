@@ -1,0 +1,208 @@
+{
+  "schema_version": "aetherops-knowledge-identity-gold-v1",
+  "minimum_precision_percent": 99.0,
+  "normalization_cases": [
+    {
+      "id": "english-case-and-whitespace",
+      "input": "  SU2\tSolver\n",
+      "expected": "su2 solver"
+    },
+    {
+      "id": "korean-whitespace",
+      "input": "  \uc591\ub825   \uacc4\uc218  ",
+      "expected": "\uc591\ub825 \uacc4\uc218"
+    },
+    {
+      "id": "mixed-korean-english",
+      "input": "  NACA 0012   \uc5d0\uc5b4\ud3ec\uc77c ",
+      "expected": "naca 0012 \uc5d0\uc5b4\ud3ec\uc77c"
+    }
+  ],
+  "identity_cases": [
+    {
+      "id": "merge-english-canonical",
+      "existing_entities": [
+        {"id": "entity-su2", "class_key": "software", "canonical_name": "SU2", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-su2", "type": "software", "canonical_name": "SU2", "aliases": []},
+      "expected_decision": "merge",
+      "expected_entity_id": "entity-su2"
+    },
+    {
+      "id": "merge-english-unique-alias",
+      "existing_entities": [
+        {"id": "entity-su2", "class_key": "software", "canonical_name": "SU2", "aliases": [{"value": "Stanford University Unstructured", "language": "en"}]}
+      ],
+      "incoming": {"id": "candidate-solver", "type": "software", "canonical_name": "Stanford University Unstructured", "aliases": []},
+      "expected_decision": "merge",
+      "expected_entity_id": "entity-su2"
+    },
+    {
+      "id": "merge-korean-canonical",
+      "existing_entities": [
+        {"id": "entity-wing-geometry", "class_key": "concept", "canonical_name": "\ub0a0\uac1c \ud615\uc0c1", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-wing", "type": "concept", "canonical_name": "\ub0a0\uac1c \ud615\uc0c1", "aliases": []},
+      "expected_decision": "merge",
+      "expected_entity_id": "entity-wing-geometry"
+    },
+    {
+      "id": "merge-korean-unique-alias",
+      "existing_entities": [
+        {"id": "entity-cl", "class_key": "measurement", "canonical_name": "Lift coefficient", "aliases": [{"value": "\uc591\ub825 \uacc4\uc218", "language": "ko"}]}
+      ],
+      "incoming": {"id": "candidate-cl", "type": "measurement", "canonical_name": "\uc591\ub825 \uacc4\uc218", "aliases": []},
+      "expected_decision": "merge",
+      "expected_entity_id": "entity-cl"
+    },
+    {
+      "id": "merge-mixed-unique-alias",
+      "existing_entities": [
+        {"id": "entity-naca0012", "class_key": "geometry", "canonical_name": "NACA 0012 Airfoil", "aliases": [{"value": "NACA 0012 \uc5d0\uc5b4\ud3ec\uc77c", "language": "ko"}]}
+      ],
+      "incoming": {"id": "candidate-naca", "type": "geometry", "canonical_name": "NACA 0012 \uc5d0\uc5b4\ud3ec\uc77c", "aliases": []},
+      "expected_decision": "merge",
+      "expected_entity_id": "entity-naca0012"
+    },
+    {
+      "id": "merge-exact-identifier",
+      "existing_entities": [
+        {"id": "doi-10.1000-aether", "class_key": "concept", "canonical_name": "Aether reference", "aliases": []}
+      ],
+      "incoming": {"id": "doi-10.1000-aether", "type": "concept", "canonical_name": "Aether reference", "aliases": []},
+      "expected_decision": "merge",
+      "expected_entity_id": "doi-10.1000-aether"
+    },
+    {
+      "id": "no-merge-translation",
+      "existing_entities": [
+        {"id": "entity-wing", "class_key": "concept", "canonical_name": "Wing", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-wing-ko", "type": "concept", "canonical_name": "\ub0a0\uac1c", "aliases": []},
+      "expected_decision": "no_merge"
+    },
+    {
+      "id": "no-merge-uncurated-abbreviation",
+      "existing_entities": [
+        {"id": "entity-cfd", "class_key": "concept", "canonical_name": "Computational Fluid Dynamics", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-cfd", "type": "concept", "canonical_name": "CFD", "aliases": []},
+      "expected_decision": "no_merge"
+    },
+    {
+      "id": "no-merge-similar-designation",
+      "existing_entities": [
+        {"id": "entity-naca0012", "class_key": "geometry", "canonical_name": "NACA 0012", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-naca0015", "type": "geometry", "canonical_name": "NACA 0015", "aliases": []},
+      "expected_decision": "no_merge"
+    },
+    {
+      "id": "no-merge-korean-internal-spacing",
+      "existing_entities": [
+        {"id": "entity-cl", "class_key": "measurement", "canonical_name": "\uc591\ub825 \uacc4\uc218", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-cl", "type": "measurement", "canonical_name": "\uc591\ub825\uacc4\uc218", "aliases": []},
+      "expected_decision": "no_merge"
+    },
+    {
+      "id": "no-merge-unicode-compatibility-form",
+      "existing_entities": [
+        {"id": "entity-su2", "class_key": "software", "canonical_name": "SU2", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-fullwidth", "type": "software", "canonical_name": "\uff33\uff35\uff12", "aliases": []},
+      "expected_decision": "no_merge"
+    },
+    {
+      "id": "reject-ambiguous-exact-alias",
+      "existing_entities": [
+        {"id": "entity-solver-a", "class_key": "software", "canonical_name": "Solver A", "aliases": [{"value": "Solver", "language": "en"}]},
+        {"id": "entity-solver-b", "class_key": "software", "canonical_name": "Solver B", "aliases": [{"value": "Solver", "language": "en"}]}
+      ],
+      "incoming": {"id": "candidate-solver", "type": "software", "canonical_name": "Solver", "aliases": []},
+      "expected_decision": "reject"
+    },
+    {
+      "id": "reject-class-mismatch",
+      "existing_entities": [
+        {"id": "entity-su2", "class_key": "software", "canonical_name": "SU2", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-su2-concept", "type": "concept", "canonical_name": "SU2", "aliases": []},
+      "expected_decision": "reject"
+    },
+    {
+      "id": "reject-new-uncurated-alias",
+      "existing_entities": [
+        {"id": "entity-su2", "class_key": "software", "canonical_name": "SU2", "aliases": [{"value": "SU2 solver", "language": "en"}]}
+      ],
+      "incoming": {"id": "candidate-su2", "type": "software", "canonical_name": "SU2", "aliases": [{"value": "New solver name", "language": "en"}]},
+      "expected_decision": "reject"
+    },
+    {
+      "id": "merge-versioned-tool-alias",
+      "existing_entities": [
+        {"id": "entity-openvsp", "class_key": "software", "canonical_name": "OpenVSP", "aliases": [{"value": "OpenVSP 3.42", "language": "en"}]}
+      ],
+      "incoming": {"id": "candidate-openvsp", "type": "software", "canonical_name": "OpenVSP 3.42", "aliases": []},
+      "expected_decision": "merge",
+      "expected_entity_id": "entity-openvsp"
+    },
+    {
+      "id": "merge-korean-technical-alias",
+      "existing_entities": [
+        {"id": "entity-cfd", "class_key": "concept", "canonical_name": "Computational Fluid Dynamics", "aliases": [{"value": "\uc804\uc0b0 \uc720\uccb4 \uc5ed\ud559", "language": "ko"}]}
+      ],
+      "incoming": {"id": "candidate-cfd-ko", "type": "concept", "canonical_name": "\uc804\uc0b0 \uc720\uccb4 \uc5ed\ud559", "aliases": []},
+      "expected_decision": "merge",
+      "expected_entity_id": "entity-cfd"
+    },
+    {
+      "id": "no-merge-plural-similarity",
+      "existing_entities": [
+        {"id": "entity-wing", "class_key": "concept", "canonical_name": "Wing", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-wings", "type": "concept", "canonical_name": "Wings", "aliases": []},
+      "expected_decision": "no_merge"
+    },
+    {
+      "id": "no-merge-punctuation-variation",
+      "existing_entities": [
+        {"id": "entity-ld", "class_key": "measurement", "canonical_name": "Lift-to-drag ratio", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-ld", "type": "measurement", "canonical_name": "Lift to drag ratio", "aliases": []},
+      "expected_decision": "no_merge"
+    },
+    {
+      "id": "reject-exact-id-canonical-conflict",
+      "existing_entities": [
+        {"id": "entity-gmsh", "class_key": "software", "canonical_name": "Gmsh", "aliases": []}
+      ],
+      "incoming": {"id": "entity-gmsh", "type": "software", "canonical_name": "Gmsh fork", "aliases": []},
+      "expected_decision": "reject"
+    },
+    {
+      "id": "reject-exact-name-with-new-korean-alias",
+      "existing_entities": [
+        {"id": "entity-gmsh", "class_key": "software", "canonical_name": "Gmsh", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-gmsh", "type": "software", "canonical_name": "Gmsh", "aliases": [{"value": "\uaca9\uc790 \uc0dd\uc131\uae30", "language": "ko"}]},
+      "expected_decision": "reject"
+    },
+    {
+      "id": "no-merge-case-variation",
+      "existing_entities": [
+        {"id": "entity-su2", "class_key": "software", "canonical_name": "SU2", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-su2-lower", "type": "software", "canonical_name": "su2", "aliases": []},
+      "expected_decision": "no_merge"
+    },
+    {
+      "id": "no-merge-whitespace-variation",
+      "existing_entities": [
+        {"id": "entity-su2", "class_key": "software", "canonical_name": "SU2", "aliases": []}
+      ],
+      "incoming": {"id": "candidate-su2-spaced", "type": "software", "canonical_name": " SU2 ", "aliases": []},
+      "expected_decision": "no_merge"
+    }
+  ]
+}

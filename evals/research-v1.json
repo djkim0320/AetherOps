@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "name": "aetherops-research-v1",
+  "releaseGate": {
+    "requiredCases": 12,
+    "requiredPasses": 12,
+    "qualityPolicy": {
+      "citationIntegrityPercent": 100,
+      "maxCriticalErrors": 0,
+      "minimumAverageScore": 4,
+      "minimumAxisScore": 3
+    }
+  },
+  "cases": [
+    {
+      "id": "general-01",
+      "mode": "general",
+      "question": "대한민국의 2026년 상반기 생성형 AI 관련 주요 정부 정책 변화를 공식 자료 중심으로 비교하고, 중소기업이 지금 준비할 일을 정리해줘.",
+      "requirements": ["공식 원문 우선", "발표일과 시행일 구분", "불확실한 향후 일정 명시"]
+    },
+    {
+      "id": "general-02",
+      "mode": "general",
+      "question": "서울에서 부산까지 2박 3일 대중교통 여행을 계획할 때 비용, 이동 시간, 예약 리스크를 비교해 현실적인 일정안을 만들어줘.",
+      "requirements": ["현재 운영사·공식 시간표 확인", "가격 확인 시점 표기", "예약 불가 상황의 대안 분리"]
+    },
+    {
+      "id": "general-03",
+      "mode": "general",
+      "question": "재택근무와 사무실 근무가 지식노동 생산성에 미치는 영향을 최근 연구로 검토하고, 조직이 시험할 수 있는 정책을 제안해줘.",
+      "requirements": ["동료심사 연구 우선", "상반된 결과 포함", "인과와 상관 구분"]
+    },
+    {
+      "id": "general-04",
+      "mode": "general",
+      "question": "한국어·영어를 함께 쓰는 개인 지식관리 시스템에서 검색 품질을 높이는 실용적인 문서 작성 규칙을 근거와 함께 정리해줘.",
+      "requirements": ["검색·정보검색 연구 포함", "검증 가능한 실천 항목", "제품 홍보성 출처와 연구 구분"]
+    },
+    {
+      "id": "general-05",
+      "mode": "general",
+      "question": "2026년 기준 가정용 태양광과 배터리 도입 여부를 판단하는 데 필요한 비용·수명·정책 변수를 한국 상황에 맞춰 설명해줘.",
+      "requirements": ["공식 정책·요금 자료 확인", "지역·주택별 차이", "단일 수익률로 과도하게 일반화하지 않기"]
+    },
+    {
+      "id": "general-06",
+      "mode": "general",
+      "question": "온라인 정보의 신뢰성을 비전문가가 평가할 수 있는 체크리스트를 만들고, 각 항목이 왜 필요한지 연구와 사례로 뒷받침해줘.",
+      "requirements": ["출처 다양성", "반례 또는 한계 포함", "재현 가능한 확인 절차"]
+    },
+    {
+      "id": "engineering-01",
+      "mode": "engineering",
+      "question": "SQLite WAL 모드에서 단일 프로세스 데스크톱 앱의 충돌 내구성을 설계하라. synchronous=FULL, 체크포인트, fsync, 원자적 파일 이동의 보장과 한계를 공식 문서와 소스 기준으로 설명해줘.",
+      "requirements": ["SQLite 공식 문서 우선", "Windows 파일시스템 의미 구분", "장애 지점별 복구 표"]
+    },
+    {
+      "id": "engineering-02",
+      "mode": "engineering",
+      "question": "Windows WebView2에서 신뢰 UI와 인터넷 콘텐츠를 격리하면서 인터넷 인스턴스만 CDP로 자동화하는 설계를 검토하고, 공격면과 검증 절차를 제시해줘.",
+      "requirements": ["Microsoft 공식 문서·API 계약", "User Data Folder와 Environment 경계", "Gate 0 재현 절차"]
+    },
+    {
+      "id": "engineering-03",
+      "mode": "engineering",
+      "question": "5만 개의 1536차원 float32 임베딩을 데스크톱에서 정확 검색할 때 멀티코어 brute-force와 ANN의 성능·복잡성·품질 트레이드오프를 분석해줘.",
+      "requirements": ["메모리 계산 재현", "벤치마크 가정 명시", "정확도와 지연 분리"]
+    },
+    {
+      "id": "engineering-04",
+      "mode": "engineering",
+      "question": "stdio JSONL 기반 Codex App Server 클라이언트에서 동시 요청, 알림, 승인 요청, 프로세스 충돌을 안전하게 처리하는 상태 모델을 공식 프로토콜 기준으로 설계해줘.",
+      "requirements": ["안정 API만 사용", "재전송 금지 지점", "요청 ID·turn 완료 경쟁 조건 분석"]
+    },
+    {
+      "id": "engineering-05",
+      "mode": "engineering",
+      "question": "SQLite FTS5와 OpenAI 임베딩 정확 검색을 RRF로 결합하는 한국어·영어 혼합 RAG 검색기를 설계하고, 색인 교체와 손상 검증 절차를 제안해줘.",
+      "requirements": ["공식 FTS5·OpenAI 문서", "결정론적 청킹", "shadow index 원자 교체"]
+    },
+    {
+      "id": "engineering-06",
+      "mode": "engineering",
+      "question": "Windows 데스크톱 에이전트의 외부 런타임 업데이트를 공급망 공격과 중단에 견디게 설계하라. 해시, 서명, npm SRI, 후보 격리, 명시적 롤백을 포함해줘.",
+      "requirements": ["공식 배포 검증 수단", "키·서명 실패 처리", "부분 다운로드와 재시작 장애 주입"]
+    }
+  ]
+}

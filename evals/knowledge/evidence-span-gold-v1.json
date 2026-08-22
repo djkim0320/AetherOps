@@ -1,0 +1,51 @@
+{
+  "schema_version": "aetherops-knowledge-evidence-span-gold-v1",
+  "minimum_accuracy_percent": 98.0,
+  "cases": [
+    {"id": "en-ascii", "raw_text": "  Lift coefficient is 0.82 at Mach 0.3.  ", "excerpt": "Lift coefficient", "byte_start": 2, "byte_end": 18, "span_sha256": "2ab7f65b89f81f46978560a00a25e4fe70959c493c8a1b848476646549e09289", "expected_chunk_ordinal": 0},
+    {"id": "ko-basic", "raw_text": "  \uc591\ub825\uacc4\uc218\ub294 0.82\uc774\ub2e4.  ", "excerpt": "\uc591\ub825\uacc4\uc218", "byte_start": 2, "byte_end": 14, "span_sha256": "cae98dfc7b43a281df408874177a9b5b0ae9b6491940e7c0bde69c4e3d10ffc4", "expected_chunk_ordinal": 0},
+    {"id": "mixed-solver", "raw_text": "Solver SU2\ub294 \uaca9\uc790 Gmsh\ub97c \uc0ac\uc6a9\ud55c\ub2e4.", "excerpt": "SU2\ub294 \uaca9\uc790 Gmsh", "byte_start": 7, "byte_end": 25, "span_sha256": "f65c51062fa9a8149fe311774c21fe636474ed6f4fbbaf669c7b097a7d58751c", "expected_chunk_ordinal": 0},
+    {"id": "ko-emoji-suffix", "raw_text": "\uac80\uc99d \uc0c1\ud0dc \u2705 passed", "excerpt": "\u2705 passed", "byte_start": 14, "byte_end": 24, "span_sha256": "19889f97f9d913c43e665e8ba01c9e99f4b3d04f6078122233061144b80d0975", "expected_chunk_ordinal": 0},
+    {"id": "latin-composed", "raw_text": "Caf\u00e9\uc640 cafe\u0301\ub294 \ub2e4\ub978 UTF-8 \ud45c\ud604\uc774\ub2e4.", "excerpt": "Caf\u00e9", "byte_start": 0, "byte_end": 5, "span_sha256": "73473dcc12b763085904a5279d048c4d5b3b008c46f1f32443b99de04aa83a14", "expected_chunk_ordinal": 0},
+    {"id": "crlf-before-korean", "raw_text": "Header\r\n\uc555\ub825\uc740 101325 Pa\uc774\ub2e4.", "excerpt": "\uc555\ub825\uc740 101325 Pa", "byte_start": 8, "byte_end": 27, "span_sha256": "bb165fe3a8e1a58a973eec2644ac5b624c14661b8e7fa080636d4f700d27291d", "expected_chunk_ordinal": 0},
+    {"id": "tabs-trimmed", "raw_text": "\t\tDrag coefficient Cd = 0.021\n", "excerpt": "Drag coefficient", "byte_start": 2, "byte_end": 18, "span_sha256": "db82efe0960a8b1e92bc1fd5beb923a7584be14c993fcc2bff56ab8b848ee4b2", "expected_chunk_ordinal": 0},
+    {"id": "en-internal-spaces", "raw_text": "Wing   span = 10 m", "excerpt": "Wing   span", "byte_start": 0, "byte_end": 11, "span_sha256": "5cbc120dd10a64bcd78e65ee9cc19e3a7911144bd70aa29bb763322028f60cbf", "expected_chunk_ordinal": 0},
+    {"id": "ko-punctuation", "raw_text": "\uacb0\ub860: \ud56d\uacf5\uae30 \ub0a0\uac1c\ub294 \uc548\uc815\uc801\uc774\ub2e4.", "excerpt": "\ud56d\uacf5\uae30 \ub0a0\uac1c", "byte_start": 8, "byte_end": 24, "span_sha256": "e661bb2dc9259cd136c89bb74a98b77e8683ef93dfb514a4dd8eebe3360cafa6", "expected_chunk_ordinal": 0},
+    {"id": "emoji-prefix", "raw_text": "\ud83d\ude80 \ucd94\ub825 \uacb0\uacfc: nominal", "excerpt": "\ucd94\ub825 \uacb0\uacfc", "byte_start": 5, "byte_end": 18, "span_sha256": "0b9ab26661a7c4cd73f54a81dd06ed1472593a8f4a4ad43c66c369c0919cfea5", "expected_chunk_ordinal": 0},
+    {"id": "english-symbols", "raw_text": "Result [CL/CD] = 42.7; status=valid", "excerpt": "[CL/CD] = 42.7", "byte_start": 7, "byte_end": 21, "span_sha256": "ff3c63af6fb60450ccb6321f0d231f926cea0590230ab8c1631e117fde0b19f3", "expected_chunk_ordinal": 0},
+    {"id": "ko-parentheses", "raw_text": "\uc870\uac74(Mach 0.30)\uc5d0\uc11c \ud56d\ub825 \uacc4\uc218\ub97c \uacc4\uc0b0\ud588\ub2e4.", "excerpt": "\ud56d\ub825 \uacc4\uc218", "byte_start": 24, "byte_end": 37, "span_sha256": "67b4baa21ddf00fd09cf78fd9ce7601a5c098844c5f5fb35348bb7efe8bd6145", "expected_chunk_ordinal": 0},
+    {
+      "id": "mixed-second-overlap-window",
+      "segments": [
+        {"text": "  ", "repeat": 1},
+        {"text": "\uac00", "repeat": 4050},
+        {"text": "\r\n", "repeat": 1},
+        {"text": "SU2 \uacf5\ub825 \uacb0\uacfc", "repeat": 1},
+        {"text": "\ub098", "repeat": 500},
+        {"text": "  ", "repeat": 1}
+      ],
+      "excerpt": "SU2 \uacf5\ub825 \uacb0\uacfc",
+      "byte_start": 12154,
+      "byte_end": 12171,
+      "span_sha256": "6f28370ed900b596aff6ae86d4ef828c10fa703c01e27ed3fe5a7dab67ca4fa3",
+      "expected_chunk_ordinal": 1
+    },
+    {"id": "en-em-dash", "raw_text": "Pressure\u2014temperature coupling", "excerpt": "temperature coupling", "byte_start": 11, "byte_end": 31, "span_sha256": "12c779b4f27865912b20dd16e74d73d0eac4a354418234b242900eb79e002444", "expected_chunk_ordinal": 0},
+    {"id": "ko-units", "raw_text": "\uc18d\ub3c4\ub294 340 m/s\uc774\uba70 Mach 1.0\uc774\ub2e4.", "excerpt": "340 m/s", "byte_start": 10, "byte_end": 17, "span_sha256": "79110fab308ac1a3db8c7dd8d73c1f92a2328e5a22bff6883e2d8223f5c0e7e9", "expected_chunk_ordinal": 0},
+    {"id": "lf-before", "raw_text": "alpha\nbeta coefficient", "excerpt": "beta coefficient", "byte_start": 6, "byte_end": 22, "span_sha256": "4c07ece852f10ff2fb8fff9b58c664643168ed1c4f9dada06fe64a2a3dffac41", "expected_chunk_ordinal": 0},
+    {"id": "ko-curly-quotes", "raw_text": "\ubaa8\ub378 \u201c\ub0a0\uac1c\u201d \uac80\uc99d", "excerpt": "\u201c\ub0a0\uac1c\u201d", "byte_start": 7, "byte_end": 19, "span_sha256": "172d646890a6de1ed44e86ff9922683648125c9311946e4138815fa7e80b3469", "expected_chunk_ordinal": 0},
+    {"id": "combining-mark", "raw_text": "composed Caf\u00e9 and decomposed cafe\u0301", "excerpt": "cafe\u0301", "byte_start": 30, "byte_end": 36, "span_sha256": "81ef060bcd98adc7824eb5c1ada83c32491b16018e11e79f00ab9d09e04b015a", "expected_chunk_ordinal": 0},
+    {"id": "second-occurrence", "raw_text": "lift then lift coefficient", "excerpt": "lift coefficient", "byte_start": 10, "byte_end": 26, "span_sha256": "d4f5da568c8c0e8d16ca2d284ab1afceda839d41aba636eae4d2d930dbcddbbc", "expected_chunk_ordinal": 0},
+    {
+      "id": "crlf-crossing-fail-closed",
+      "raw_text": "first\r\nsecond",
+      "excerpt": "first\r\nsecond",
+      "byte_start": 0,
+      "byte_end": 13,
+      "span_sha256": "d930e679a8ca94308fb7400eea7b82500cc7ea08eff0c1484e065e4a5f6145d0",
+      "expected_chunk_ordinal": 0,
+      "expected_decision": "reject",
+      "expected_error_contains": "changes under deterministic chunk normalization"
+    }
+  ]
+}

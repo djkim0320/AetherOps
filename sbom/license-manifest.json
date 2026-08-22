@@ -1,0 +1,256 @@
+{
+  "schema": 1,
+  "product": "AetherOps",
+  "version": "0.1.0-alpha.1",
+  "reviewed_at": "2026-08-22",
+  "policy": {
+    "production_license_rule": "Every distributed third-party component must have a reviewed, non-empty SPDX expression other than NOASSERTION and at least one hash-pinned license payload and source receipt.",
+    "first_party_license": "NONE",
+    "runtime_payload_root": "runtime",
+    "checked_in_payload_root": "sbom/licenses"
+  },
+  "inputs": [
+    {"path": "go.mod", "sha256": "5704eea6fbceb806f44c2fd2516ab16e68a149104df0d256371358e8023ea5ca"},
+    {"path": "go.sum", "sha256": "82282537670798aa0f13a6dc9a885c4ca14720b6d1cfda5ef4e6693da167466c"},
+    {"path": "frontend/package-lock.json", "sha256": "aebf1937133f082ac4867f6c2752e89cbb0eb89cb93bdbc68e5a3954aaa12a96"},
+    {"path": "tools/knowledge-sidecar/package-lock.json", "sha256": "6d22563834e02e0f3fbf255d96f59e47cb50c579e1273a5deec2d3310de6ab7a"},
+    {"path": "runtime-manifest.json", "sha256": "3ba3fa62db8bebd0f2c531808165baad1af5f8e4c3252fe8b037f702ea6e5317"}
+  ],
+  "production": [
+    {
+      "id": "go-github.com-dustin-go-humanize",
+      "ecosystem": "go", "name": "github.com/dustin/go-humanize", "version": "v1.0.1",
+      "purl": "pkg:golang/github.com/dustin/go-humanize@v1.0.1", "dependency_kind": "transitive", "distributed": true,
+      "license_expression": "MIT", "notice_token": "github.com/dustin/go-humanize v1.0.1",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=", "url": "https://proxy.golang.org/github.com/dustin/go-humanize/@v/v1.0.1.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/github.com-dustin-go-humanize-v1.0.1.txt", "sha256": "9d695aa5c417f9dbdf6c7856a152e8981e37cd00fabcf6edce7667d040230550", "bytes": 1137}]
+    },
+    {
+      "id": "go-github.com-mattn-go-isatty",
+      "ecosystem": "go", "name": "github.com/mattn/go-isatty", "version": "v0.0.24",
+      "purl": "pkg:golang/github.com/mattn/go-isatty@v0.0.24", "dependency_kind": "transitive", "distributed": true,
+      "license_expression": "MIT", "notice_token": "github.com/mattn/go-isatty v0.0.24",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=", "url": "https://proxy.golang.org/github.com/mattn/go-isatty/@v/v0.0.24.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/github.com-mattn-go-isatty-v0.0.24.txt", "sha256": "9dfc58668f101d3fe47f6d1295234ab90e57593f7949ea72d8f4c698d7d27944", "bytes": 1100}]
+    },
+    {
+      "id": "go-github.com-ncruces-go-strftime",
+      "ecosystem": "go", "name": "github.com/ncruces/go-strftime", "version": "v1.0.0",
+      "purl": "pkg:golang/github.com/ncruces/go-strftime@v1.0.0", "dependency_kind": "transitive", "distributed": true,
+      "license_expression": "MIT", "notice_token": "github.com/ncruces/go-strftime v1.0.0",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=", "url": "https://proxy.golang.org/github.com/ncruces/go-strftime/@v/v1.0.0.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/github.com-ncruces-go-strftime-v1.0.0.txt", "sha256": "e8396d9deb9ce329b8ee51d4719f0de74f0c98f3daeb43392822d3c7b2f81387", "bytes": 1069}]
+    },
+    {
+      "id": "go-github.com-remyoudompheng-bigfft",
+      "ecosystem": "go", "name": "github.com/remyoudompheng/bigfft", "version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "purl": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec", "dependency_kind": "transitive", "distributed": true,
+      "license_expression": "BSD-3-Clause", "notice_token": "github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=", "url": "https://proxy.golang.org/github.com/remyoudompheng/bigfft/@v/v0.0.0-20230129092748-24d4a6f8daec.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/github.com-remyoudompheng-bigfft-v0.0.0-20230129092748-24d4a6f8daec.txt", "sha256": "219cc0661adf8cebfd54b709848068d0bc31587fc1283bb42b8ef6bc047d654f", "bytes": 1480}]
+    },
+    {
+      "id": "go-github.com-razvandimescu-gopdf",
+      "ecosystem": "go", "name": "github.com/razvandimescu/gopdf", "version": "v0.10.0",
+      "purl": "pkg:golang/github.com/razvandimescu/gopdf@v0.10.0", "dependency_kind": "direct", "distributed": true,
+      "license_expression": "MIT", "notice_token": "github.com/razvandimescu/gopdf v0.10.0",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:Z7Htqh0ymlWc3W8zpZ6PdEWpfYBye+Al7TdTRpRlVXQ=", "url": "https://proxy.golang.org/github.com/razvandimescu/gopdf/@v/v0.10.0.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/github.com-razvandimescu-gopdf-v0.10.0.txt", "sha256": "58b3d44a415aa95897ca9d10cf9f90aae52eb2493c2f23be088a4c0ad6257021", "bytes": 1071}]
+    },
+    {
+      "id": "go-github.com-robfig-cron-v3",
+      "ecosystem": "go", "name": "github.com/robfig/cron/v3", "version": "v3.0.1",
+      "purl": "pkg:golang/github.com/robfig/cron/v3@v3.0.1", "dependency_kind": "direct", "distributed": true,
+      "license_expression": "MIT", "notice_token": "github.com/robfig/cron/v3 v3.0.1",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=", "url": "https://proxy.golang.org/github.com/robfig/cron/v3/@v/v3.0.1.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/github.com-robfig-cron-v3-v3.0.1.txt", "sha256": "9f1d3c7dca4fbf4c12a5449202514c8ff1147834eb01e9a7da10bbd674a50387", "bytes": 1093}]
+    },
+    {
+      "id": "go-github.com-wailsapp-go-webview2",
+      "ecosystem": "go", "name": "github.com/wailsapp/go-webview2", "version": "v1.0.23",
+      "purl": "pkg:golang/github.com/wailsapp/go-webview2@v1.0.23", "dependency_kind": "direct", "distributed": true,
+      "license_expression": "MIT", "notice_token": "github.com/wailsapp/go-webview2 v1.0.23",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:jmv8qhz1lHibCc79bMM/a/FqOnnzOGEisLav+a0b9P0=", "url": "https://proxy.golang.org/github.com/wailsapp/go-webview2/@v/v1.0.23.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/github.com-wailsapp-go-webview2-v1.0.23.txt", "sha256": "9ab5f0f3d7c559c2e089a75b777d1496433e5f7d84857b0f7f5293a7d28147ff", "bytes": 1118}]
+    },
+    {
+      "id": "go-golang.org-x-sys",
+      "ecosystem": "go", "name": "golang.org/x/sys", "version": "v0.47.0",
+      "purl": "pkg:golang/golang.org/x/sys@v0.47.0", "dependency_kind": "direct", "distributed": true,
+      "license_expression": "BSD-3-Clause", "notice_token": "golang.org/x/sys v0.47.0",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=", "url": "https://proxy.golang.org/golang.org/x/sys/@v/v0.47.0.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/golang.org-x-sys-v0.47.0.txt", "sha256": "69e13d4b96b7fa55d3210d3f27fd7b70239f74298c891549874067d5ef4750d9", "bytes": 1454}]
+    },
+    {
+      "id": "go-modernc.org-libc",
+      "ecosystem": "go", "name": "modernc.org/libc", "version": "v1.74.4",
+      "purl": "pkg:golang/modernc.org/libc@v1.74.4", "dependency_kind": "transitive", "distributed": true,
+      "license_expression": "BSD-3-Clause", "notice_token": "modernc.org/libc v1.74.4",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:fX1Omw4o2/1C2iRkkIsrQTasJQldLhRmuPreXLoWs9k=", "url": "https://proxy.golang.org/modernc.org/libc/@v/v1.74.4.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/modernc.org-libc-v1.74.4.txt", "sha256": "70d40e8d0c4ec7b71230bb495499d64a9f2e42cbc35d924a57b57e6fe21547aa", "bytes": 1483}]
+    },
+    {
+      "id": "go-modernc.org-mathutil",
+      "ecosystem": "go", "name": "modernc.org/mathutil", "version": "v1.7.1",
+      "purl": "pkg:golang/modernc.org/mathutil@v1.7.1", "dependency_kind": "transitive", "distributed": true,
+      "license_expression": "BSD-3-Clause", "notice_token": "modernc.org/mathutil v1.7.1",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:GCZVGXdaN8gTqB1Mf/usp1Y/hSqgI2vAGGP4jZMCxOU=", "url": "https://proxy.golang.org/modernc.org/mathutil/@v/v1.7.1.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/modernc.org-mathutil-v1.7.1.txt", "sha256": "518ccf9ccccd2ee8e13c0fa15251cbc08fc865251369933b007d2faa33d4e2a4", "bytes": 1487}]
+    },
+    {
+      "id": "go-modernc.org-memory",
+      "ecosystem": "go", "name": "modernc.org/memory", "version": "v1.11.0",
+      "purl": "pkg:golang/modernc.org/memory@v1.11.0", "dependency_kind": "transitive", "distributed": true,
+      "license_expression": "BSD-3-Clause", "notice_token": "modernc.org/memory v1.11.0",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:o4QC8aMQzmcwCK3t3Ux/ZHmwFPzE6hf2Y5LbkRs+hbI=", "url": "https://proxy.golang.org/modernc.org/memory/@v/v1.11.0.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/modernc.org-memory-v1.11.0.txt", "sha256": "c8e9b5d5d565f73132ac6625250d56141f5a089be59df53965013e91565b4612", "bytes": 1485}]
+    },
+    {
+      "id": "go-modernc.org-sqlite",
+      "ecosystem": "go", "name": "modernc.org/sqlite", "version": "v1.56.0",
+      "purl": "pkg:golang/modernc.org/sqlite@v1.56.0", "dependency_kind": "direct", "distributed": true,
+      "license_expression": "BSD-3-Clause", "notice_token": "modernc.org/sqlite v1.56.0",
+      "source_receipts": [{"algorithm": "gomod-h1", "value": "h1:/D8e2RfFqoy/Zc6PuC76U28zFwmI/sYx1Kjm4yEn9e0=", "url": "https://proxy.golang.org/modernc.org/sqlite/@v/v1.56.0.zip"}],
+      "license_payloads": [{"path": "sbom/licenses/go/modernc.org-sqlite-v1.56.0.txt", "sha256": "e665b5c61fda666b03f53ed6724c3d3534f20a6c9894dbe99030c0e07414a8e4", "bytes": 1490}]
+    },
+    {
+      "id": "npm-preact", "ecosystem": "npm", "name": "preact", "version": "10.26.4",
+      "purl": "pkg:npm/preact@10.26.4", "dependency_kind": "frontend-production", "distributed": true,
+      "license_expression": "MIT", "notice_token": "Preact 10.26.4",
+      "source_receipts": [{"algorithm": "npm-sri", "value": "sha512-KJhO7LBFTjP71d83trW+Ilnjbo+ySsaAgCfXOXUlmGzJ4ygYPWmysm77yg4emwfmoz3b22yvH5IsVFHbhUaH5w==", "url": "https://registry.npmjs.org/preact/-/preact-10.26.4.tgz"}],
+      "license_payloads": [{"path": "sbom/licenses/npm/preact-10.26.4.txt", "sha256": "5544df580d65b6f3141cba6dfb788f9df8656e948dd049f939477235be49ef62", "bytes": 1088}]
+    },
+    {
+      "id": "npm-cytoscape", "ecosystem": "npm", "name": "cytoscape", "version": "3.34.0",
+      "purl": "pkg:npm/cytoscape@3.34.0", "dependency_kind": "frontend-production", "distributed": true,
+      "license_expression": "MIT", "notice_token": "Cytoscape.js 3.34.0",
+      "source_receipts": [{"algorithm": "npm-sri", "value": "sha512-62rNSrioXw93uliKFBwjukeQyeWwH2PqDrTac31r2P6464u3AUvTk0xS4LVvT251g7IgkFunrI48ZEZGjywSOg==", "url": "https://registry.npmjs.org/cytoscape/-/cytoscape-3.34.0.tgz"}],
+      "license_payloads": [{"path": "sbom/licenses/npm/cytoscape-3.34.0.txt", "sha256": "0970043cf6bec5d59de143ff8710793e96ccb94575388037adb7f73e3f901867", "bytes": 1079}]
+    },
+    {
+      "id": "runtime-node", "ecosystem": "runtime", "name": "Node.js", "version": "24.19.0",
+      "purl": "pkg:generic/node.js@24.19.0", "dependency_kind": "managed-runtime", "distributed": true,
+      "license_expression": "MIT", "notice_token": "Node.js 24.19.0",
+      "source_receipts": [{"algorithm": "SHA-256", "value": "57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73", "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip"}],
+      "license_payloads": [{"path": "runtime/versions/node/24.19.0/LICENSE", "sha256": "d9c4eeda951d6d08f4aa1316b61aafcf67e6da5f79b18f8edeb56fa6abdc038c", "bytes": 160552}]
+    },
+    {
+      "id": "runtime-codex", "ecosystem": "npm", "name": "@openai/codex", "version": "0.146.1",
+      "purl": "pkg:npm/%40openai/codex@0.146.1", "dependency_kind": "managed-runtime", "distributed": true,
+      "license_expression": "Apache-2.0", "notice_token": "Codex CLI 0.146.1",
+      "source_receipts": [
+        {"algorithm": "npm-sri", "value": "sha512-f51R56E/G15soLhf5l5pWUiM+mGHK0NdLozOtzjRoAa+bA20hgWrkyxE/fpwCnuGQM6XNdktHYtK9xQ7bPIbTA==", "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.146.1.tgz"},
+        {"algorithm": "npm-sri", "value": "sha512-FfiNJysKpHkJ08Kn+571r701dgoZVZjqNUxrEZ/JJyu5hIzNTs4XBllAX6ynHkF8G9NebPEtaJz72zxbol/JPg==", "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.146.1-win32-x64.tgz"}
+      ],
+      "license_payloads": [{"path": "sbom/licenses/common/Apache-2.0.txt", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "bytes": 11358}]
+    },
+    {
+      "id": "runtime-chrome-devtools-mcp", "ecosystem": "npm", "name": "chrome-devtools-mcp", "version": "1.6.0",
+      "purl": "pkg:npm/chrome-devtools-mcp@1.6.0", "dependency_kind": "managed-runtime", "distributed": true,
+      "license_expression": "Apache-2.0", "notice_token": "Chrome DevTools MCP 1.6.0",
+      "source_receipts": [{"algorithm": "npm-sri", "value": "sha512-VZX6f/OjQSYhy2BGGRs+y3LsrsAQAz/HwZCWKBLVyST/4r/3zjVEjjVW7gMCVbRDuspnVdcp5hQDPrQ5UFrdZw==", "url": "https://registry.npmjs.org/chrome-devtools-mcp/-/chrome-devtools-mcp-1.6.0.tgz"}],
+      "license_payloads": [
+        {"path": "runtime/versions/chrome-devtools-mcp/1.6.0/node_modules/chrome-devtools-mcp/LICENSE", "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd", "bytes": 11357},
+        {"path": "runtime/versions/chrome-devtools-mcp/1.6.0/node_modules/chrome-devtools-mcp/build/src/third_party/THIRD_PARTY_NOTICES", "sha256": "d0fe4b928d895253c6912a71ca4fa0139c9481c84de121e890760e9772f1276b", "bytes": 170423}
+      ]
+    },
+    {
+      "id": "runtime-oxigraph", "ecosystem": "npm", "name": "oxigraph", "version": "0.5.9",
+      "purl": "pkg:npm/oxigraph@0.5.9", "dependency_kind": "knowledge-sidecar-runtime", "distributed": true,
+      "license_expression": "MIT OR Apache-2.0", "selected_license": "Apache-2.0", "notice_token": "Oxigraph JavaScript 0.5.9",
+      "source_receipts": [{"algorithm": "npm-sri", "value": "sha512-Oyxo/NE9imMvTPcK/TkQmAPALnJOns0XBk/r90SjnWg1fwBPSSZaNlVQ8YDKqeXHD2QISe1FfIVQtbgpKulqCQ==", "url": "https://registry.npmjs.org/oxigraph/-/oxigraph-0.5.9.tgz"}],
+      "license_payloads": [{"path": "sbom/licenses/common/Apache-2.0.txt", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "bytes": 11358}]
+    },
+    {
+      "id": "runtime-openvsp", "ecosystem": "runtime", "name": "OpenVSP", "version": "3.50.4",
+      "purl": "pkg:generic/openvsp@3.50.4", "dependency_kind": "engineering-runtime", "distributed": true,
+      "license_expression": "LicenseRef-NOSA-1.3", "notice_token": "OpenVSP / VSPAERO 3.50.4",
+      "source_receipts": [
+        {"algorithm": "SHA-256", "value": "bd8cf75fe19c15eb13f941b07c315e92e04584d6ee94308f7d466adf67f0bc7c", "url": "https://openvsp.org/zips/old/windows/OpenVSP-3.50.4-win64-Python3.13.zip"},
+        {"algorithm": "SHA-256", "value": "20d191aac46bcc8369dbbe72baa9cdfd4ffe155083cdca8bdf726e508236288b", "url": "https://github.com/OpenVSP/OpenVSP/archive/refs/tags/OpenVSP_3.50.4.zip", "packaged_path": "runtime/sources/openvsp/3.50.4/OpenVSP-OpenVSP_3.50.4.zip"}
+      ],
+      "license_payloads": [
+        {"path": "sbom/licenses/runtime/openvsp-3.50.4-NOSA-1.3.txt", "sha256": "7987e17506f27b2d38a965314fd78a8f356dc2563cd52f783aa5aecf2a244090", "bytes": 13868},
+        {"path": "runtime/licenses/openvsp/3.50.4/LICENSE.txt", "sha256": "e4412fe27818ba6314bf45ef990adb6fb4e9f4001a27d163d42a58b1e18ceac0", "bytes": 13996}
+      ]
+    },
+    {
+      "id": "runtime-gmsh", "ecosystem": "runtime", "name": "Gmsh", "version": "4.14.1",
+      "purl": "pkg:generic/gmsh@4.14.1", "dependency_kind": "engineering-runtime", "distributed": true,
+      "license_expression": "GPL-2.0-or-later", "notice_token": "Gmsh 4.14.1",
+      "source_receipts": [
+        {"algorithm": "SHA-256", "value": "b3464b7e170f39639bc74b47334e7eab5cb44fa9317d16ff0c55b42bb04a1b80", "url": "https://gmsh.info/bin/Windows/gmsh-4.14.1-Windows64.zip"},
+        {"algorithm": "SHA-256", "value": "300cbb74b6fb88062aba70b1f5f31a8980177a4af415221a16ec8c0aa1d72afd", "url": "https://gmsh.info/src/gmsh-4.14.1-source.tgz", "packaged_path": "runtime/sources/gmsh/4.14.1/gmsh-4.14.1-source.tgz"}
+      ],
+      "license_payloads": [{"path": "runtime/licenses/gmsh/4.14.1/LICENSE.txt", "sha256": "7fefa67a6c607068a33ba27e0a18aaf8596aa051f7cf2abcca094a3a484c5870", "bytes": 19460}]
+    },
+    {
+      "id": "runtime-xfoil", "ecosystem": "runtime", "name": "XFOIL", "version": "6.99",
+      "purl": "pkg:generic/xfoil@6.99", "dependency_kind": "engineering-runtime", "distributed": true,
+      "license_expression": "GPL-2.0-only", "notice_token": "XFOIL 6.99",
+      "source_receipts": [
+        {"algorithm": "SHA-256", "value": "e13e8fe5cc38d8ac2626e9d3b17643bdcfaa63791619f042afdaa7cd103bcb08", "url": "https://web.mit.edu/drela/Public/web/xfoil/XFOIL6.99.zip"},
+        {"algorithm": "SHA-256", "value": "5c0250643f52ce0e75d7338ae2504ce7907f2d49a30f921826717b8ac12ebe40", "url": "https://web.mit.edu/drela/Public/web/xfoil/xfoil6.99.tgz", "packaged_path": "runtime/sources/xfoil/6.99/xfoil6.99.tgz"}
+      ],
+      "license_payloads": [{"path": "runtime/licenses/xfoil/6.99/GPL-2.0.txt", "sha256": "e6d6a009505e345fe949e1310334fcb0747f28dae2856759de102ab66b722cb4", "bytes": 18011}]
+    },
+    {
+      "id": "runtime-su2", "ecosystem": "runtime", "name": "SU2", "version": "8.5.0",
+      "purl": "pkg:generic/su2@8.5.0", "dependency_kind": "engineering-runtime", "distributed": true,
+      "license_expression": "LGPL-2.1-only", "notice_token": "SU2 8.5.0 win64-omp",
+      "source_receipts": [
+        {"algorithm": "SHA-256", "value": "4466fe21aedb5e0bad57afd45f829acbdec6ec79fe8c3f8954ddea06a4b4bc11", "url": "https://github.com/su2code/SU2/releases/download/v8.5.0/SU2-v8.5.0-win64-omp.zip"},
+        {"algorithm": "SHA-256", "value": "8c5318c925225453b03a0dd86451a93320fe90b9857f0abf70021d21b66e8e55", "url": "https://github.com/su2code/SU2/archive/12eb826f049ef7f67df974dfcb44cf36ee07c0f8.zip", "packaged_path": "runtime/sources/su2/8.5.0/SU2-12eb826f049ef7f67df974dfcb44cf36ee07c0f8.zip"}
+      ],
+      "license_payloads": [
+        {"path": "runtime/licenses/su2/8.5.0/LICENSE.md", "sha256": "46ae25afd571da3e3761ff82ace5dc26b0b66cf514243379ac026ce094ba32cf", "bytes": 33393},
+        {"path": "runtime/licenses/su2/8.5.0/COPYING.txt", "sha256": "b3aa400aca6d2ba1f0bd03bd98d03d1fe7489a3bbb26969d72016360af8a5c9d", "bytes": 24478}
+      ]
+    }
+  ],
+  "development_sets": [
+    {
+      "id": "frontend-build-dev-dependencies", "ecosystem": "npm", "distributed": false,
+      "lockfile": "frontend/package-lock.json", "lockfile_sha256": "aebf1937133f082ac4867f6c2752e89cbb0eb89cb93bdbc68e5a3954aaa12a96",
+      "package_count": 138, "allowed_license_expressions": ["Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "ISC", "MIT"]
+    },
+    {
+      "id": "go-nonproduction-module-graph", "ecosystem": "go", "distributed": false,
+      "lockfile": "go.sum", "lockfile_sha256": "82282537670798aa0f13a6dc9a885c4ca14720b6d1cfda5ef4e6693da167466c",
+      "package_count": 21, "selection": "go list -m all minus go list -deps ./cmd/aetherops",
+      "packages": [
+        "pkg:golang/github.com/davecgh/go-spew@v1.1.1",
+        "pkg:golang/github.com/google/pprof@v0.0.0-20260802141513-ef3492d7dac3",
+        "pkg:golang/github.com/google/uuid@v1.6.0",
+        "pkg:golang/github.com/hashicorp/golang-lru/v2@v2.0.7",
+        "pkg:golang/github.com/jchv/go-winloader@v0.0.0-20210711035445-715c2860da7e",
+        "pkg:golang/github.com/pmezard/go-difflib@v1.0.0",
+        "pkg:golang/github.com/stretchr/testify@v1.9.0",
+        "pkg:golang/golang.org/x/mod@v0.37.0",
+        "pkg:golang/golang.org/x/sync@v0.21.0",
+        "pkg:golang/golang.org/x/tools@v0.47.0",
+        "pkg:golang/gopkg.in/yaml.v3@v3.0.1",
+        "pkg:golang/modernc.org/cc/v4@v4.29.1",
+        "pkg:golang/modernc.org/ccgo/v4@v4.34.6",
+        "pkg:golang/modernc.org/fileutil@v1.4.0",
+        "pkg:golang/modernc.org/gc/v2@v2.6.5",
+        "pkg:golang/modernc.org/gc/v3@v3.1.4",
+        "pkg:golang/modernc.org/goabi0@v0.2.0",
+        "pkg:golang/modernc.org/opt@v0.2.0",
+        "pkg:golang/modernc.org/sortutil@v1.2.1",
+        "pkg:golang/modernc.org/strutil@v1.2.1",
+        "pkg:golang/modernc.org/token@v1.1.0"
+      ]
+    },
+    {
+      "id": "go-toolchain", "ecosystem": "runtime", "name": "Go", "version": "1.26.5", "distributed": false,
+      "license_expression": "BSD-3-Clause", "license_payload_sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    }
+  ],
+  "external_runtime": [
+    {
+      "id": "webview2-evergreen", "name": "Microsoft Edge WebView2 Runtime", "distributed": false,
+      "license_expression": "LicenseRef-Microsoft-WebView2-Runtime-Terms", "reason": "External system prerequisite; no WebView2 runtime payload is copied into the release."
+    }
+  ]
+}

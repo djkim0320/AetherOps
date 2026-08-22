@@ -1,0 +1,29 @@
+void main()
+{
+    VSPRenew();
+    ReadVSPFile( "aetherops_smoke_wing.vsp3" );
+
+    array<string> wings = FindGeomsWithName( "AetherOpsSmokeWing" );
+    if ( wings.length() != 1 )
+    {
+        Print( "AETHEROPS_MODIFY_ERROR=expected exactly one named wing" );
+        return;
+    }
+
+    string wing = wings[0];
+    double old_sweep = GetParmVal( wing, "Sweep", "XSec_1" );
+    double requested_sweep = 15.0;
+    SetParmVal( wing, "Sweep", "XSec_1", requested_sweep );
+    Update();
+    double new_sweep = GetParmVal( wing, "Sweep", "XSec_1" );
+
+    WriteVSPFile( "aetherops_smoke_wing_modified.vsp3", SET_ALL );
+    Print( "AETHEROPS_MODIFY_OLD_SWEEP=" + old_sweep );
+    Print( "AETHEROPS_MODIFY_NEW_SWEEP=" + new_sweep );
+
+    while ( GetNumTotalErrors() > 0 )
+    {
+        ErrorObj err = PopLastError();
+        Print( "AETHEROPS_MODIFY_ERROR=" + err.GetErrorString() );
+    }
+}

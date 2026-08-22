@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "channel": "stable",
+  "checkedAtMostEvery": "24h",
+  "components": {
+    "go": {
+      "version": "1.26.5",
+      "buildOnly": true
+    },
+    "codex": {
+      "version": "0.146.1",
+      "command": "codex app-server"
+    },
+    "node": {
+      "version": "24.19.0"
+    },
+    "chromeDevtoolsMcp": {
+      "version": "1.6.0",
+      "package": "chrome-devtools-mcp"
+    },
+    "oxigraph": {
+      "version": "0.5.9",
+      "package": "oxigraph"
+    },
+    "openVsp": {
+      "version": "3.50.4",
+      "command": "vspscript.exe"
+    },
+    "gmsh": {
+      "version": "4.14.1",
+      "command": "gmsh.exe"
+    },
+    "xfoil": {
+      "version": "6.99",
+      "command": "xfoil.exe"
+    },
+    "su2": {
+      "version": "8.5.0",
+      "command": "SU2_CFD.exe"
+    },
+    "webView2": {
+      "channel": "evergreen"
+    }
+  }
+}

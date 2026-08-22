@@ -1,0 +1,17 @@
+{
+  "name": "@aetherops/knowledge-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only Oxigraph JSONL sidecar for verified AetherOps knowledge snapshots",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node index.cjs",
+    "test": "node --test --test-concurrency=1"
+  },
+  "dependencies": {
+    "oxigraph": "0.5.9"
+  }
+}

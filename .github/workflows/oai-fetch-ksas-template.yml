@@ -1,0 +1,38 @@
+name: oai-fetch-ksas-template
+
+on:
+  push:
+    branches:
+      - oai-temp-ksas-template-fetch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-template:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download official KSAS templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --user-agent 'Mozilla/5.0' \
+            'https://ksas.or.kr/UploadData/Editor/Conference/202607/26E97D0A88934DA0AF83C6B1FE11C762.doc' \
+            --output out/KSAS_2026_Fall_MSWord_Template.doc
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --user-agent 'Mozilla/5.0' \
+            'https://ksas.or.kr/UploadData/Editor/Conference/202607/FAE005E7F02E41E1B49A5E6E638CC620.doc' \
+            --output out/KSAS_2026_Fall_HWP_Template.doc
+          file out/*
+          sha256sum out/* | tee out/SHA256SUMS.txt
+          test -s out/KSAS_2026_Fall_MSWord_Template.doc
+      - name: Upload templates
+        uses: actions/upload-artifact@v4
+        with:
+          name: ksas-2026-fall-official-templates
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1

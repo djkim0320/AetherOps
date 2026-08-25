@@ -5,14 +5,14 @@ package livee2econtract
 import (
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
 )
 
 const (
 	DetailsSchemaV2 = "aetherops_live_end_to_end_details_v2"
 	ProducerName    = "cmd/livee2eevidence:offline-finalize"
 	ProducerVersion = "2"
-	ResearchPrompt  = "AetherOps v2 실제 종단 검증 연구를 수행하라. 인터넷 WebView2의 Chrome DevTools MCP로 공식 XFOIL 또는 공력 해석 관련 1차 자료를 직접 관찰하고 evidence_capture로 원문을 보존하라. COLLECT 단계에서 xfoil_polar를 NACA 0012, Reynolds 1000000, Mach 0.10, alpha -2도부터 4도까지 2도 간격으로 정확히 한 번 실행하고 그 영수증을 보고서 근거로 사용하라. 보고서와 KnowledgePatch는 실제 도구 결과와 캡처된 근거만 사용하며, 모든 불확실성을 명시하라."
+	ResearchPrompt  = "AetherOps 실제 종단 검증 연구를 수행하라. 인터넷 WebView2의 Chrome DevTools MCP로 공식 XFOIL 또는 공력 해석 관련 1차 자료를 직접 관찰하고 evidence_capture로 원문을 보존하라. COLLECT 단계에서 xfoil_polar를 NACA 0012, Reynolds 1000000, Mach 0.10, alpha -2도부터 4도까지 2도 간격으로 정확히 한 번 실행하고 그 영수증을 보고서 근거로 사용하라. 보고서와 KnowledgePatch는 실제 도구 결과와 캡처된 근거만 사용하며, 모든 불확실성을 명시하라."
 	SPARQLQuery     = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1"
 )
 

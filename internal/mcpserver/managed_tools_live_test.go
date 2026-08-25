@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/browser"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/store"
-	"github.com/djkim0320/Aether-claw/internal/toolstudio"
+	"github.com/djkim0320/AetherOps/internal/browser"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/store"
+	"github.com/djkim0320/AetherOps/internal/toolstudio"
 )
 
 // This opt-in test is a real public-network integration check. It is excluded
@@ -51,7 +51,7 @@ func TestLiveManagedInternalToolGET(t *testing.T) {
 		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]any{"run_id": run.ID, "stage_attempt_id": attempt.ID, "latitude": 37.5665, "longitude": 126.978, "current": "temperature_2m"})
-	result, err := executeManagedTool(t.Context(), db, browser.Policy{}, pkg.ID, "forecast", input)
+	result, err := executeManagedTool(t.Context(), db, browser.Policy{}, nil, pkg.ID, "forecast", input)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/id"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/id"
 )
 
 // ErrDuplicateEngineeringScreening means another general collector in the
@@ -141,7 +141,8 @@ LEFT JOIN engineering_jobs j
 WHERE a.run_id=? AND a.kind='item/mcpToolCall/requestApproval'
   AND a.server='aetherops_engineering' AND a.tool='xfoil_polar'
   AND a.status IN ('pending','approved')
-  AND s.stage='collect' AND s.logical_ordinal>=0 AND s.logical_ordinal<?
+  AND s.stage='collect' AND s.status<>'superseded'
+  AND s.logical_ordinal>=0 AND s.logical_ordinal<?
 ORDER BY a.created_at, a.id, j.created_at, j.id`, approval.RunID, core.EngineeringVerificationOrdinal)
 	if err != nil {
 		return err
@@ -448,7 +449,11 @@ func (db *DB) ListRunEngineeringJobs(ctx context.Context, runID, operation strin
 		return nil, errors.New("engineering run and operation are required")
 	}
 	rows, err := db.sql.QueryContext(ctx, engineeringJobSelect+`
-WHERE run_id = ? AND operation = ? ORDER BY created_at, id`, runID, operation)
+WHERE run_id = ? AND operation = ?
+  AND EXISTS(SELECT 1 FROM stage_attempts s
+             WHERE s.id=engineering_jobs.stage_attempt_id AND s.run_id=engineering_jobs.run_id
+               AND s.status<>'superseded')
+ORDER BY created_at, id`, runID, operation)
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +491,11 @@ FROM engineering_job_artifacts WHERE job_id = ? ORDER BY role, file_name`, jobID
 
 func (db *DB) ListRunEngineeringResults(ctx context.Context, runID string) ([]EngineeringResult, error) {
 	rows, err := db.sql.QueryContext(ctx, engineeringJobSelect+`
-WHERE run_id = ? AND status = 'succeeded' ORDER BY created_at, id`, runID)
+WHERE run_id = ? AND status = 'succeeded'
+  AND EXISTS(SELECT 1 FROM stage_attempts s
+             WHERE s.id=engineering_jobs.stage_attempt_id AND s.run_id=engineering_jobs.run_id
+               AND s.status<>'superseded')
+ORDER BY created_at, id`, runID)
 	if err != nil {
 		return nil, err
 	}

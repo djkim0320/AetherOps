@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
 	_ "modernc.org/sqlite"
 )
 
@@ -76,6 +76,8 @@ var migrations = []string{
 	conversationPlanCyclesSchema,
 	toolStudioSchema,
 	conversationContextProfileSchema,
+	portableToolExecutionSchema,
+	researchRemediationSchema,
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {

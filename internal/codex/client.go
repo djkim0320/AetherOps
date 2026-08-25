@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/djkim0320/Aether-claw/internal/processutil"
+	"github.com/djkim0320/AetherOps/internal/processutil"
 )
 
 // thread/read returns one JSONL response containing the requested display

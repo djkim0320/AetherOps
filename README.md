@@ -4,14 +4,14 @@ AetherOps is a Windows 11 research-agent desktop core. It keeps its own code int
 
 ## Tool Studio
 
-A research stage can inspect approved project tools with `tool_catalog`, read an internal Skill with `tool_get`, invoke an adapter through `tool_run`, or propose a reusable capability through `tool_package_propose`. All four live inside the existing `aetherops_internal` MCP server. Proposals are immutable, content-addressed, and remain `pending_approval` until the user opens **Tool Studio**, reviews every source file, and approves the exact SHA-256 package. Approval updates the project-scoped internal catalog immediately.
+A research stage can inspect approved project tools with `tool_catalog`, read an internal Skill with `tool_get`, invoke an adapter through `tool_run`, or propose a reusable capability through `tool_package_propose`. A portable CLI proposal returns an immutable `install_approval`; the stage passes those fields unchanged to the approval-gated `tool_package_install` call. After the user accepts, AetherOps downloads the exact payload, verifies SHA-256 and size through its SSRF-safe network boundary, materializes it under the app-owned project tool root, runs the declared probe, activates it, and resumes the same Codex turn and `stage_attempt_id`. The resulting grant cannot authorize another project, run, or stage.
 
 Two deliberately narrow package kinds are supported:
 
 - **Skill** packages contain a `SKILL.md` plus bounded UTF-8 reference files. Approved skills remain in the project registry and are returned only by project-authorized `tool_get`; they are not copied into a global Codex skill directory.
-- **MCP** packages contain a declarative `mcp.json`. After approval they appear immediately in the internal `tool_catalog`; no external MCP process is created. The fixed AetherOps interpreter supports public HTTPS JSON `GET` adapters with mapped scalar query parameters. Package-provided JavaScript, commands, package installation, listeners, credentials, and arbitrary file access are not executed.
+- **MCP** packages contain a declarative `mcp.json`. Schema v1 supports public HTTPS JSON `GET` adapters with mapped scalar query parameters. Schema v2 additionally supports an official Windows x64 `portable_exe` or `portable_zip` payload through a fixed Go interpreter: argv is a literal/input-token AST, stdin is none or JSON, stdout is bounded JSON/text, and timeout/probe/source/hash/permissions are part of the approval identity. MSI and installer EXEs, npm/pip, scripts, generated adapter code, services, listeners, registry/PATH changes, credentials, and arbitrary file-handle inputs are rejected.
 
-Every managed MCP call still requires an active `(run_id, stage_attempt_id)`, must match the package's project, passes the SSRF/DNS-rebinding boundary, and is routed through the normal Codex approval surface. Live JSON is discovery output until the exact URL is captured and read back as evidence.
+Every managed MCP call still requires an active `(run_id, stage_attempt_id)` and the package's project. A portable install approval grants bounded `tool_run` calls only to that exact live stage; invocations are durably keyed and a crash while native code is running becomes `uncertain` instead of replaying. Job Objects bound process lifetime and descendants, but they are not an AppContainer: an approved native CLI currently runs with the same Windows-user filesystem and network authority. The UI displays that limitation before manual installation. Tool output remains discovery/computation output until an accepted evidence path reads it back.
 
 ## Current architecture
 
@@ -22,6 +22,7 @@ Every managed MCP call still requires an active `(run_id, stage_attempt_id)`, mu
 - The shell WebView2 and autonomous internet WebView2 use different user-data folders. Only the internet environment exposes a random CDP port to the pinned Chrome DevTools MCP sidecar.
 - Each project-visible knowledge head is backed by one verified canonical N-Quads snapshot. A small non-persistent Oxigraph sidecar serves bounded, project-scoped read-only SPARQL from that snapshot; SQLite and CAS remain authoritative.
 - Each project's RAG projection has an explicit active/shadow head and monotonic memory revision. A reindex builds complete embeddings off to the side, verifies every vector, then swaps the head atomically; research and reindex startup are transactionally mutually exclusive.
+- REVIEW is an executable quality gate, not a report-edit loop. A passing verdict finishes the run. Every new failing verdict must classify the gap as `additional_research` or `replan` and provide concrete remediation tasks. AetherOps preserves the failed cycle as `superseded` audit history, returns the same run to PLAN, performs fresh COLLECT/engineering work, merges a new report, and invokes a new isolated REVIEW. Superseded evidence and solver jobs cannot enter the active cycle. At most three autonomous research remediations are allowed before `quality_failed`.
 
 ## Development
 

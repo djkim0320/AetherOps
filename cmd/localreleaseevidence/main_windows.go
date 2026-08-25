@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/localreleaseevidence"
+	"github.com/djkim0320/AetherOps/internal/localreleaseevidence"
 )
 
 func main() {

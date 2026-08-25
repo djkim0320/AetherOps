@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/desktop"
 )
 
 // BrowserController keeps the human/automation mode explicit. The callback

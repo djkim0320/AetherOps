@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/codex"
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/codex"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 func TestLiveAuthExactModelsTypedVerifierRejectsSubstitutionAndMutation(t *testing.T) {

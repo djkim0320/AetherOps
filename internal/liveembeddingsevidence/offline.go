@@ -14,14 +14,14 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
-	"github.com/djkim0320/Aether-claw/internal/evalrunner"
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalrunner"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 type FinalizeConfig struct {
@@ -45,7 +45,7 @@ func FinalizeOffline(ctx context.Context, config FinalizeConfig) (result Finaliz
 	}
 	root, err := filepath.Abs(strings.TrimSpace(config.DataRoot))
 	if err != nil || strings.TrimSpace(config.DataRoot) == "" {
-		return FinalizeResult{}, errors.New("explicit AetherOps v2 data root is required")
+		return FinalizeResult{}, errors.New("explicit AetherOps data root is required")
 	}
 	database, err := store.OpenReadOnly(ctx, filepath.Join(root, "aetherops.db"))
 	if err != nil {

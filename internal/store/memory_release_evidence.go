@@ -10,7 +10,7 @@ import (
 	"hash"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/rag"
 )
 
 // MemoryShadowReleaseExpectation binds an offline verification to the exact

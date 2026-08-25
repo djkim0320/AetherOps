@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	memoryindex "github.com/djkim0320/Aether-claw/internal/memory"
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	schedulepkg "github.com/djkim0320/Aether-claw/internal/schedule"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	memoryindex "github.com/djkim0320/AetherOps/internal/memory"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	schedulepkg "github.com/djkim0320/AetherOps/internal/schedule"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 type modelCatalogFixture struct{}

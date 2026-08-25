@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/livee2econtract"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/livee2econtract"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
 )
 
 func validateLiveEndToEndDetailsForLedger(raw []byte, receipt EvidenceReceipt, preparedRevision int, preparedAt time.Time) error {

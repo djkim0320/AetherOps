@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
 )
 
 const fixtureToken = "fixture_token_abcdefghijklmnopqrstuvwxyz0123456789"

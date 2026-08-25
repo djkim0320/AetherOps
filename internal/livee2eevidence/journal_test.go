@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/livee2econtract"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/livee2econtract"
 )
 
 func testDigest(character string) string { return strings.Repeat(character, 64) }

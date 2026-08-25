@@ -1,11 +1,14 @@
 package toolstudio
 
 import (
+	"archive/zip"
+	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 func TestSkillProposalRequiresSafeAuditableBundleAndExplicitActivation(t *testing.T) {
@@ -42,6 +45,77 @@ func TestSkillProposalRequiresSafeAuditableBundleAndExplicitActivation(t *testin
 	}
 	if current.RequiresRestart || len(current.Files) != 1 || current.Files[0].Content == "" {
 		t.Fatal("active internal skill did not retain its verified content")
+	}
+}
+
+func TestPortableManifestApprovalCoversPayloadAdapterAndNativePermissions(t *testing.T) {
+	manifest := `{"schema":"aetherops_tool_package_v2","name":"json-check","description":"Portable JSON check","distribution":{"type":"portable_exe","url":"https://downloads.example.com/json-check.exe","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size_bytes":1024,"publisher":"Example","source_url":"https://example.com/json-check","license_spdx":"MIT","entrypoint":"json-check.exe","probe":{"argv":["--version"],"stdout_contains":"1.0.0"}},"permissions":{"native_code":true,"same_windows_user":true,"os_network_sandboxed":false,"os_filesystem_sandboxed":false},"tools":[{"name":"check","description":"Check JSON","input_schema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false},"action":{"type":"portable_cli","executable":"json-check.exe","argv":[{"literal":"--value"},{"input":"value"}],"stdin":{"mode":"none"},"output":{"format":"json","max_bytes":1048576},"timeout_seconds":10}}]}`
+	pkg, err := ValidateProposal("project", "", "", Proposal{
+		Kind: "mcp", Name: "json-check", DisplayName: "JSON Check", Description: "Checks JSON with an approved CLI.", Version: "1.0.0",
+		Files: []ProposalFile{{Path: "mcp.json", Content: manifest}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg.ID = "tool_0123456789abcdef0123456789abcdef"
+	approval, err := ExpectedInstallApproval(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval.PayloadSHA256 != strings.Repeat("a", 64) || !approval.AcceptSameUserNativeCode || approval.ApprovalSHA256 == "" {
+		t.Fatalf("unexpected portable approval: %+v", approval)
+	}
+	changed := strings.Replace(manifest, `"timeout_seconds":10`, `"timeout_seconds":11`, 1)
+	changedPkg, err := ValidateProposal("project", "", "", Proposal{
+		Kind: "mcp", Name: "json-check", DisplayName: "JSON Check", Description: "Checks JSON with an approved CLI.", Version: "1.0.1",
+		Files: []ProposalFile{{Path: "mcp.json", Content: changed}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedPkg.ID = pkg.ID
+	changedApproval, err := ExpectedInstallApproval(changedPkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval.ApprovalSHA256 == changedApproval.ApprovalSHA256 {
+		t.Fatal("adapter change reused the prior install approval identity")
+	}
+	unsafe := strings.Replace(manifest, `"entrypoint":"json-check.exe"`, `"entrypoint":"setup.msi"`, 1)
+	if _, _, err := ParseManifest(unsafe); err == nil {
+		t.Fatal("installer entrypoint was accepted as a portable CLI")
+	}
+}
+
+func TestPortableZIPRejectsTraversalAndCaseCollisions(t *testing.T) {
+	writeArchive := func(name string, entries []string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), name)
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writer := zip.NewWriter(file)
+		for _, entry := range entries {
+			part, err := writer.Create(entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = part.Write(bytes.Repeat([]byte{1}, 16))
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	if err := extractPortableZIP(writeArchive("traversal.zip", []string{"../escape.exe"}), t.TempDir()); err == nil {
+		t.Fatal("ZIP traversal entry was accepted")
+	}
+	if err := extractPortableZIP(writeArchive("collision.zip", []string{"bin/tool.exe", "BIN/TOOL.EXE"}), t.TempDir()); err == nil {
+		t.Fatal("case-colliding ZIP entries were accepted")
 	}
 }
 

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/core"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
 )
 
 func optimizationScreeningSpec(

@@ -16,6 +16,7 @@ PrivilegesRequired=lowest
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\icons\aetherops.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Tasks]

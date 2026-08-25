@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/browser"
+	"github.com/djkim0320/AetherOps/internal/browser"
 )
 
 type evidenceTestResponse struct {

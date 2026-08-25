@@ -1,4 +1,4 @@
-module github.com/djkim0320/Aether-claw
+module github.com/djkim0320/AetherOps
 
 go 1.26.5
 

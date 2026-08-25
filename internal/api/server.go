@@ -23,12 +23,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	memoryindex "github.com/djkim0320/Aether-claw/internal/memory"
-	"github.com/djkim0320/Aether-claw/internal/store"
-	"github.com/djkim0320/Aether-claw/internal/toolstudio"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	memoryindex "github.com/djkim0320/AetherOps/internal/memory"
+	"github.com/djkim0320/AetherOps/internal/store"
+	"github.com/djkim0320/AetherOps/internal/toolstudio"
 )
 
 const maxRequestBytes = 1 << 20

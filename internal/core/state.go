@@ -19,7 +19,7 @@ var allowedTransitions = map[RunStatus]map[RunStatus]bool{
 		RunCancelled: true, RunInterrupted: true, RunUncertain: true,
 	},
 	RunReviewing: {
-		RunSucceeded: true, RunRevising: true, RunQualityFailed: true,
+		RunSucceeded: true, RunRevising: true, RunPlanning: true, RunQualityFailed: true,
 		RunFailed: true, RunCancelled: true, RunInterrupted: true, RunUncertain: true,
 	},
 	RunRevising: {

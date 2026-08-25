@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/livee2econtract"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/livee2econtract"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
 )
 
 func liveE2ETestDigest(character string) string { return strings.Repeat(character, 64) }

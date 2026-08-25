@@ -56,6 +56,29 @@ func TestReviewSchemaDefinesScoreDirection(t *testing.T) {
 	}
 }
 
+func TestReviewSchemaRequiresFreshResearchForEveryFailure(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(ReviewSchema(), &schema); err != nil {
+		t.Fatal(err)
+	}
+	properties := schema["properties"].(map[string]any)
+	actions := properties["remediation_action"].(map[string]any)["enum"].([]any)
+	want := []any{"none", "additional_research", "replan"}
+	if len(actions) != len(want) {
+		t.Fatalf("remediation actions = %#v", actions)
+	}
+	for index := range want {
+		if actions[index] != want[index] {
+			t.Fatalf("remediation actions = %#v, want %#v", actions, want)
+		}
+	}
+	for _, action := range actions {
+		if action == "report_revision" {
+			t.Fatal("current REVIEW schema permits a report-only failure loop")
+		}
+	}
+}
+
 func TestReportSchemaForEvidenceIDsConstrainsVocabularyAndCardinality(t *testing.T) {
 	raw, err := ReportSchemaForEvidenceIDs([]string{"collector-a", "engineering-verification"})
 	if err != nil {

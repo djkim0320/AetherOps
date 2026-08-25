@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/livee2econtract"
+	"github.com/djkim0320/AetherOps/internal/livee2econtract"
 )
 
 const (

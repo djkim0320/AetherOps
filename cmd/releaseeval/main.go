@@ -17,14 +17,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
-	"github.com/djkim0320/Aether-claw/internal/evalrunner"
-	"github.com/djkim0320/Aether-claw/internal/knowledge"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalrunner"
+	"github.com/djkim0320/AetherOps/internal/knowledge"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 func main() {
@@ -43,7 +43,7 @@ func run(ctx context.Context, args []string) (returnErr error) {
 	datasetPath := flags.String("dataset", filepath.Join("evals", "research-v1.json"), "versioned evaluation dataset")
 	executionPath := flags.String("execution", "", "prepared execution manifest with real run ids")
 	runnerReceiptPath := flags.String("runner-receipt", "", "completed live releaseevalrunner receipt")
-	dataRoot := flags.String("data-root", "", "AetherOps v2 data root; defaults to LOCALAPPDATA")
+	dataRoot := flags.String("data-root", "", "AetherOps data root; defaults to LOCALAPPDATA")
 	outputPath := flags.String("out", "", "new output JSON path; existing files are never overwritten")
 	evidenceOutputPath := flags.String("evidence-out", "", "new live_quality_12 release evidence path; verify-runner only")
 	preparedLedgerPath := flags.String("prepared-ledger", "", "current prepared release ledger; required for verify-runner evidence")

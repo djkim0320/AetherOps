@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
 )
 
 func TestRunRequiresPreparedLedgerBeforeOpeningCandidate(t *testing.T) {

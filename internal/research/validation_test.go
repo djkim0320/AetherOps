@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 func TestCanonicalizeEvidenceClaimIDsScopesStableIDsByRunAndWorkstream(t *testing.T) {

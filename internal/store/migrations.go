@@ -1889,3 +1889,222 @@ const conversationContextProfileSchema = `
 ALTER TABLE conversation_sessions ADD COLUMN context_profile TEXT NOT NULL DEFAULT 'default'
 CHECK(context_profile IN ('default','long_1m'));
 `
+
+// portableToolExecutionSchema is migration 18. It adds durable companion
+// state without changing the content-addressed migration-16 proposal tables.
+// Approval, installation, stage capability, and invocation identities are
+// separate so a downloaded executable can never become a global capability.
+const portableToolExecutionSchema = `
+CREATE TABLE portable_tool_installations (
+    id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL REFERENCES tool_packages(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    package_sha256 TEXT NOT NULL CHECK(length(package_sha256)=64),
+    approval_sha256 TEXT NOT NULL CHECK(length(approval_sha256)=64),
+    expected_payload_sha256 TEXT NOT NULL CHECK(length(expected_payload_sha256)=64),
+    payload_blob_hash TEXT REFERENCES blobs(hash),
+    payload_size_bytes INTEGER NOT NULL DEFAULT 0 CHECK(payload_size_bytes>=0),
+    installed_tree_sha256 TEXT CHECK(installed_tree_sha256 IS NULL OR length(installed_tree_sha256)=64),
+    entrypoint TEXT NOT NULL DEFAULT '',
+    probe_output_blob_hash TEXT REFERENCES blobs(hash),
+    state TEXT NOT NULL CHECK(state IN (
+      'downloading','verifying','installing','probing','ready','failed','interrupted','quarantined'
+    )),
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK(payload_blob_hash IS NULL OR payload_blob_hash=expected_payload_sha256),
+    CHECK(
+      (state='ready' AND payload_blob_hash IS NOT NULL AND installed_tree_sha256 IS NOT NULL
+       AND entrypoint<>'' AND completed_at IS NOT NULL AND error='')
+      OR state<>'ready'
+    )
+);
+CREATE INDEX portable_tool_installations_package_created
+ON portable_tool_installations(package_id,created_at DESC,id DESC);
+CREATE UNIQUE INDEX portable_tool_installations_one_live
+ON portable_tool_installations(package_id)
+WHERE state IN ('downloading','verifying','installing','probing','ready');
+
+CREATE TABLE tool_stage_grants (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    stage_attempt_id TEXT NOT NULL REFERENCES stage_attempts(id) ON DELETE CASCADE,
+    package_id TEXT NOT NULL REFERENCES tool_packages(id) ON DELETE CASCADE,
+    installation_id TEXT NOT NULL REFERENCES portable_tool_installations(id) ON DELETE CASCADE,
+    package_sha256 TEXT NOT NULL CHECK(length(package_sha256)=64),
+    approval_sha256 TEXT NOT NULL CHECK(length(approval_sha256)=64),
+    created_at TEXT NOT NULL,
+    UNIQUE(stage_attempt_id,package_id,installation_id)
+);
+CREATE INDEX tool_stage_grants_run_attempt
+ON tool_stage_grants(run_id,stage_attempt_id,created_at);
+
+CREATE TABLE tool_invocations (
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    stage_attempt_id TEXT NOT NULL REFERENCES stage_attempts(id) ON DELETE CASCADE,
+    package_id TEXT NOT NULL REFERENCES tool_packages(id) ON DELETE CASCADE,
+    installation_id TEXT NOT NULL REFERENCES portable_tool_installations(id) ON DELETE CASCADE,
+    stage_grant_id TEXT NOT NULL REFERENCES tool_stage_grants(id) ON DELETE CASCADE,
+    tool_name TEXT NOT NULL,
+    arguments_sha256 TEXT NOT NULL CHECK(length(arguments_sha256)=64),
+    adapter_sha256 TEXT NOT NULL CHECK(length(adapter_sha256)=64),
+    state TEXT NOT NULL CHECK(state IN ('running','succeeded','failed','uncertain')),
+    stdout_blob_hash TEXT REFERENCES blobs(hash),
+    stderr_blob_hash TEXT REFERENCES blobs(hash),
+    exit_code INTEGER,
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    UNIQUE(stage_attempt_id,idempotency_key),
+    CHECK(
+      (state='running' AND completed_at IS NULL AND exit_code IS NULL) OR
+      (state='succeeded' AND completed_at IS NOT NULL AND exit_code IS NOT NULL AND error='') OR
+      (state IN ('failed','uncertain') AND completed_at IS NOT NULL AND error<>'')
+    )
+);
+CREATE INDEX tool_invocations_run_attempt_created
+ON tool_invocations(run_id,stage_attempt_id,created_at);
+CREATE UNIQUE INDEX tool_invocations_exact_stage_call
+ON tool_invocations(stage_attempt_id,package_id,installation_id,tool_name,arguments_sha256,adapter_sha256);
+
+CREATE TABLE tool_install_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    installation_id TEXT NOT NULL REFERENCES portable_tool_installations(id) ON DELETE CASCADE,
+    package_id TEXT NOT NULL REFERENCES tool_packages(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    action TEXT NOT NULL CHECK(action IN (
+      'begun','downloaded','verifying','installing','probing','ready','failed','interrupted','quarantined'
+    )),
+    approval_sha256 TEXT NOT NULL CHECK(length(approval_sha256)=64),
+    detail_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(detail_json)),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX tool_install_events_installation_sequence
+ON tool_install_events(installation_id,sequence);
+
+CREATE TRIGGER portable_tool_installations_insert_guard
+BEFORE INSERT ON portable_tool_installations
+WHEN NOT EXISTS(
+  SELECT 1 FROM tool_packages p
+  WHERE p.id=NEW.package_id AND p.project_id=NEW.project_id
+    AND p.package_sha256=NEW.package_sha256 AND p.kind='mcp'
+)
+BEGIN SELECT RAISE(ABORT, 'portable installation does not match its package'); END;
+
+CREATE TRIGGER portable_tool_installations_identity_immutable
+BEFORE UPDATE OF id,package_id,project_id,package_sha256,approval_sha256,
+                 expected_payload_sha256,created_at ON portable_tool_installations
+BEGIN SELECT RAISE(ABORT, 'portable installation identity is immutable'); END;
+
+CREATE TRIGGER portable_tool_installations_state_guard
+BEFORE UPDATE OF state ON portable_tool_installations
+WHEN NOT (
+  NEW.state=OLD.state OR
+  (OLD.state='downloading' AND NEW.state IN ('verifying','failed','interrupted','quarantined')) OR
+  (OLD.state='verifying' AND NEW.state IN ('installing','failed','interrupted','quarantined')) OR
+  (OLD.state='installing' AND NEW.state IN ('probing','failed','interrupted','quarantined')) OR
+  (OLD.state='probing' AND NEW.state IN ('ready','failed','interrupted','quarantined'))
+)
+BEGIN SELECT RAISE(ABORT, 'invalid portable installation transition'); END;
+
+CREATE TRIGGER portable_tool_installations_terminal_immutable
+BEFORE UPDATE ON portable_tool_installations
+WHEN OLD.state IN ('ready','failed','interrupted','quarantined')
+BEGIN SELECT RAISE(ABORT, 'terminal portable installation is immutable'); END;
+
+CREATE TRIGGER tool_stage_grants_insert_guard
+BEFORE INSERT ON tool_stage_grants
+WHEN NOT EXISTS(
+  SELECT 1
+  FROM stage_attempts s
+  JOIN runs r ON r.id=s.run_id
+  JOIN tool_packages p ON p.id=NEW.package_id
+  JOIN portable_tool_installations i ON i.id=NEW.installation_id
+  WHERE s.id=NEW.stage_attempt_id AND s.run_id=NEW.run_id
+    AND r.project_id=NEW.project_id AND p.project_id=NEW.project_id
+    AND p.state='active' AND p.package_sha256=NEW.package_sha256
+    AND i.package_id=p.id AND i.project_id=NEW.project_id AND i.state='ready'
+    AND i.package_sha256=NEW.package_sha256 AND i.approval_sha256=NEW.approval_sha256
+)
+BEGIN SELECT RAISE(ABORT, 'tool stage grant does not match an active installed package'); END;
+
+CREATE TRIGGER tool_stage_grants_immutable
+BEFORE UPDATE ON tool_stage_grants
+BEGIN SELECT RAISE(ABORT, 'tool stage grant is immutable'); END;
+
+CREATE TRIGGER tool_invocations_insert_guard
+BEFORE INSERT ON tool_invocations
+WHEN NOT EXISTS(
+  SELECT 1
+  FROM tool_stage_grants g
+  JOIN tool_packages p ON p.id=g.package_id
+  JOIN portable_tool_installations i ON i.id=g.installation_id
+  WHERE g.id=NEW.stage_grant_id AND g.project_id=NEW.project_id
+    AND g.run_id=NEW.run_id AND g.stage_attempt_id=NEW.stage_attempt_id
+    AND g.package_id=NEW.package_id AND g.installation_id=NEW.installation_id
+    AND p.state='active' AND p.project_id=NEW.project_id
+    AND i.state='ready' AND i.project_id=NEW.project_id
+)
+BEGIN SELECT RAISE(ABORT, 'tool invocation does not match its exact stage grant'); END;
+
+CREATE TRIGGER tool_invocations_identity_immutable
+BEFORE UPDATE OF id,idempotency_key,project_id,run_id,stage_attempt_id,package_id,
+                 installation_id,stage_grant_id,tool_name,arguments_sha256,
+                 adapter_sha256,created_at,started_at ON tool_invocations
+BEGIN SELECT RAISE(ABORT, 'tool invocation identity is immutable'); END;
+
+CREATE TRIGGER tool_invocations_terminal_immutable
+BEFORE UPDATE ON tool_invocations
+WHEN OLD.state IN ('succeeded','failed','uncertain')
+BEGIN SELECT RAISE(ABORT, 'terminal tool invocation is immutable'); END;
+
+CREATE TRIGGER tool_invocations_state_guard
+BEFORE UPDATE OF state ON tool_invocations
+WHEN NOT (OLD.state='running' AND NEW.state IN ('succeeded','failed','uncertain'))
+BEGIN SELECT RAISE(ABORT, 'invalid tool invocation transition'); END;
+
+CREATE TRIGGER tool_install_events_immutable
+BEFORE UPDATE ON tool_install_events
+BEGIN SELECT RAISE(ABORT, 'tool installation audit is append-only'); END;
+
+CREATE TRIGGER tool_packages_portable_activation_guard
+BEFORE UPDATE OF state ON tool_packages
+WHEN NEW.state='active'
+  AND json_extract(NEW.manifest_json,'$.schema')='aetherops_tool_package_v2'
+  AND NOT EXISTS(
+    SELECT 1 FROM portable_tool_installations i
+    WHERE i.package_id=NEW.id AND i.project_id=NEW.project_id
+      AND i.package_sha256=NEW.package_sha256 AND i.state='ready'
+  )
+BEGIN SELECT RAISE(ABORT, 'portable tool package has no ready installation'); END;
+`
+
+// researchRemediationSchema is migration 19. A failed REVIEW can request a
+// fresh research cycle without deleting or reinterpreting the prior immutable
+// stage artifacts. The previous attempt graph is retained as superseded audit
+// history; this row carries the exact structured gap into the next PLAN.
+const researchRemediationSchema = `
+CREATE TABLE research_remediation_cycles (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    cycle INTEGER NOT NULL CHECK(cycle BETWEEN 1 AND 3),
+    action TEXT NOT NULL CHECK(action IN ('additional_research','replan')),
+    review_stage_attempt_id TEXT NOT NULL REFERENCES stage_attempts(id),
+    review_output_hash TEXT NOT NULL REFERENCES blobs(hash),
+    summary TEXT NOT NULL,
+    revision_requests_json TEXT NOT NULL CHECK(json_valid(revision_requests_json)),
+    remediation_tasks_json TEXT NOT NULL CHECK(json_valid(remediation_tasks_json)),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(run_id,cycle),
+    UNIQUE(review_stage_attempt_id)
+);
+CREATE INDEX research_remediation_cycles_run_created
+ON research_remediation_cycles(run_id,created_at);
+`

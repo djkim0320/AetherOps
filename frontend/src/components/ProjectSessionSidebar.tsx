@@ -25,6 +25,7 @@ export type ProjectSessionSidebarProps = {
   onBeginRenameProject: (p: Project) => void;
   onRenameProject: (id: string) => void;
   onCancelRenameProject: () => void;
+  onDeleteProject: (p: Project) => void;
   renamingSessionID: string;
   sessionTitleDraft: string;
   onSessionTitleDraftChange: (title: string) => void;
@@ -57,6 +58,7 @@ export function ProjectSessionSidebar({
   onBeginRenameProject,
   onRenameProject,
   onCancelRenameProject,
+  onDeleteProject,
   renamingSessionID,
   sessionTitleDraft,
   onSessionTitleDraftChange,
@@ -75,7 +77,7 @@ export function ProjectSessionSidebar({
     <aside class="sidebar">
       {/* Brand Header */}
       <button type="button" class="brand" onClick={() => onSetView("workspace")}>
-        <span class="brand-mark">A</span>
+        <span class="brand-mark"><img src="/aetherops-icon.png" alt="" /></span>
         <div>
           <strong>AetherOps</strong>
           <small>데스크톱 워크스페이스</small>
@@ -228,6 +230,16 @@ export function ProjectSessionSidebar({
                         aria-label="프로젝트 이름 변경"
                       >
                         ✎
+                      </button>
+                      <button
+                        type="button"
+                        class="tree-action danger"
+                        onClick={() => onDeleteProject(project)}
+                        disabled={busy !== null || connection !== "connected"}
+                        title="프로젝트 삭제"
+                        aria-label={`${project.name} 삭제`}
+                      >
+                        ✕
                       </button>
                     </>
                   )}

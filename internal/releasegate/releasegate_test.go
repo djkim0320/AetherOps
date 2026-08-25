@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/releasetree"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/releasetree"
 )
 
 func TestPreparedLedgerCannotTreatMissingExternalEvidenceAsPass(t *testing.T) {
@@ -387,7 +387,7 @@ func writeValidLocalSchedulerEvidence(t *testing.T, root, preparedLedgerSHA stri
 	for name := range releasetree.RootFiles() {
 		value := name + "\n"
 		if name == "go.mod" {
-			value = "module github.com/djkim0320/Aether-claw\n"
+			value = "module github.com/djkim0320/AetherOps\n"
 		}
 		if err := os.WriteFile(filepath.Join(sourceRoot, name), []byte(value), 0o600); err != nil {
 			t.Fatal(err)

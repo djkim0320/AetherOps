@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 // extractionProtocolFixture exercises the exact injected production contract.

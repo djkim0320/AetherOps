@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/processutil"
+	"github.com/djkim0320/AetherOps/internal/processutil"
 )
 
 const (

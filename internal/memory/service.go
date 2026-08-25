@@ -8,10 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/store"
 	"github.com/razvandimescu/gopdf/pdf"
 )
 

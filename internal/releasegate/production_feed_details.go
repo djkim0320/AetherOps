@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
 )
 
 const (

@@ -22,13 +22,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	"github.com/djkim0320/Aether-claw/internal/processutil"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
-	"github.com/djkim0320/Aether-claw/internal/store"
-	"github.com/djkim0320/Aether-claw/internal/su2host"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/processutil"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/store"
+	"github.com/djkim0320/AetherOps/internal/su2host"
 )
 
 const maxCapturedLogBytes = 2 << 20

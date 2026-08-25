@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	webview2 "github.com/djkim0320/Aether-claw/internal/desktop/webview2"
+	webview2 "github.com/djkim0320/AetherOps/internal/desktop/webview2"
 	"golang.org/x/sys/windows"
 )
 
@@ -46,7 +46,7 @@ const (
 	nifMessage     = 0x00000001
 	nifIcon        = 0x00000002
 	nifTip         = 0x00000004
-	idiApplication = 32512
+	idiAetherOps   = 1
 	idiArrow       = 32512
 	mfString       = 0x00000000
 	tpmRightButton = 0x0002
@@ -216,9 +216,9 @@ func (host *Host) createNativeWindow() error {
 	if err != nil {
 		return err
 	}
-	icon, _, iconErr := procLoadIconW.Call(0, uintptr(idiApplication))
+	icon, _, iconErr := procLoadIconW.Call(instance, uintptr(idiAetherOps))
 	if icon == 0 {
-		return lastCallError("LoadIconW", iconErr)
+		return lastCallError("LoadIconW(AetherOps)", iconErr)
 	}
 	cursor, _, cursorErr := procLoadCursorW.Call(0, uintptr(idiArrow))
 	if cursor == 0 {

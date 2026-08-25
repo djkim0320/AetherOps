@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/su2host"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/su2host"
 )
 
 const (

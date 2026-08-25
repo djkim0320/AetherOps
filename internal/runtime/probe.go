@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/processutil"
+	"github.com/djkim0320/AetherOps/internal/processutil"
 )
 
 // AppServerProbe exercises the actual candidate Codex App Server command.

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
-	"github.com/djkim0320/Aether-claw/internal/evalrunner"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalrunner"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
 )
 
 func TestLiveQualityEvidenceRejectsManualOrFixtureProvenanceBeforeReadingDetails(t *testing.T) {

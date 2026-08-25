@@ -28,6 +28,24 @@ export type ResearchSummaryRailProps = {
 
 type RailTab = "plan" | "artifacts" | "approvals";
 
+type PortableInstallApproval = {
+  package_id?: string;
+  approval_sha256?: string;
+  source_url?: string;
+  payload_sha256?: string;
+  publisher?: string;
+};
+
+function portableInstallApproval(approval: Approval): PortableInstallApproval | null {
+  if (approval.tool !== "tool_package_install" || !approval.arguments_json) return null;
+  try {
+    const value = JSON.parse(approval.arguments_json) as PortableInstallApproval;
+    return value.package_id && value.approval_sha256 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ResearchSummaryRail({
   activeRun,
   artifacts,
@@ -275,8 +293,10 @@ export function ResearchSummaryRail({
                 <p class="summary-empty approved">✓ 대기 중인 승인이 없습니다.</p>
               ) : (
                 <div class="approval-list">
-                  {approvals.map((approval) => (
-                    <article class="approval-item" key={approval.id}>
+                  {approvals.map((approval) => {
+                    const portable = portableInstallApproval(approval);
+                    return (
+                    <article class={`approval-item ${portable ? "portable-install-approval" : ""}`} key={approval.id}>
                       <div class="approval-title">
                         <strong>{approval.kind || "작업 승인"}</strong>
                         <span
@@ -288,6 +308,20 @@ export function ResearchSummaryRail({
                         </span>
                       </div>
                       <p>{approval.summary || "승인 세부 정보가 제공되지 않았습니다."}</p>
+                      {portable && (
+                        <div class="portable-approval-summary">
+                          <strong>Portable CLI 다운로드 및 실행</strong>
+                          <span>{portable.publisher || "확인되지 않은 배포자"}</span>
+                          <code>{portable.source_url}</code>
+                          <small>Payload SHA-256</small>
+                          <code>{portable.payload_sha256}</code>
+                          <small>승인 identity</small>
+                          <code>{portable.approval_sha256}</code>
+                          <div class="alert warning small-alert">
+                            현재 Windows 사용자 권한으로 실행됩니다. Job Object는 프로세스 수명 경계이며 OS 수준 네트워크·파일 격리는 아닙니다.
+                          </div>
+                        </div>
+                      )}
                       <dl class="approval-metadata">
                         <div>
                           <dt>서버</dt>
@@ -330,7 +364,8 @@ export function ResearchSummaryRail({
                         </button>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

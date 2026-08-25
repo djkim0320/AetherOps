@@ -14,10 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/codex"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/codex"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/store"
+	"github.com/djkim0320/AetherOps/internal/toolstudio"
 )
 
 type Client interface {
@@ -182,6 +183,23 @@ func (router *Router) handle(ctx context.Context, event codex.Event) error {
 			}
 			return nil
 		}
+	}
+	portableGrant, err := router.approvedPortableToolRun(ctx, event.Method, request, attempt, argumentsJSON)
+	if err != nil {
+		return err
+	}
+	if portableGrant {
+		if err := router.DB.MarkActiveStageExternalSideEffects(ctx, attempt.ID); err != nil {
+			return err
+		}
+		if err := router.Client.RespondApproval(ctx, event, "accept"); err != nil {
+			responseErr := err
+			if markErr := router.markUncertain(ctx, attempt.RunID, err); markErr != nil {
+				responseErr = errors.Join(responseErr, fmt.Errorf("record uncertain portable tool approval outcome: %w", markErr))
+			}
+			return attemptedResponse("accept", responseErr)
+		}
+		return nil
 	}
 	allowed, externalSideEffect := automaticPolicy(event.Method, request)
 	if allowed {
@@ -657,6 +675,53 @@ func automaticPolicy(method string, request approvalRequest) (allowed bool, exte
 		return false, true
 	}
 	return false, true
+}
+
+// approvedPortableToolRun recognizes the exact stage-scoped grant created by
+// a prior user-approved tool_package_install call. It never grants another
+// package, project, run, or attempt, and a changed manifest invalidates the
+// approval hash before App Server receives an automatic accept response.
+func (router *Router) approvedPortableToolRun(ctx context.Context, method string, request approvalRequest, attempt core.StageAttempt, argumentsJSON string) (bool, error) {
+	if !isMCPApprovalMethod(method) ||
+		!serverIs(strings.ToLower(strings.TrimSpace(request.Server)), "aetherops_internal", "aetherops-internal") ||
+		!strings.EqualFold(strings.TrimSpace(request.Tool), "tool_run") {
+		return false, nil
+	}
+	var arguments struct {
+		RunID          string `json:"run_id"`
+		StageAttemptID string `json:"stage_attempt_id"`
+		PackageID      string `json:"package_id"`
+	}
+	if argumentsJSON == "" || json.Unmarshal([]byte(argumentsJSON), &arguments) != nil {
+		return false, nil
+	}
+	if arguments.RunID != attempt.RunID || arguments.StageAttemptID != attempt.ID || arguments.PackageID == "" {
+		return false, nil
+	}
+	run, err := router.DB.Run(ctx, attempt.RunID)
+	if err != nil {
+		return false, err
+	}
+	pkg, err := router.DB.ActiveToolPackageByID(ctx, arguments.PackageID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if pkg.ProjectID != run.ProjectID || pkg.Installation == nil || pkg.Installation.State != "ready" {
+		return false, nil
+	}
+	approval, err := toolstudio.ExpectedInstallApproval(pkg)
+	if err != nil {
+		return false, nil
+	}
+	granted, err := router.DB.HasExactToolStageGrant(ctx, run.ProjectID, attempt.RunID, attempt.ID,
+		pkg.ID, pkg.Installation.ID, pkg.PackageSHA256, approval.ApprovalSHA256)
+	if err != nil {
+		return false, err
+	}
+	return granted, nil
 }
 
 func isEngineeringSolverApproval(method string, request approvalRequest) bool {

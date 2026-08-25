@@ -15,9 +15,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/id"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/id"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 const pinnedReviewSchemaVersion = "knowledge_document_review_v1"

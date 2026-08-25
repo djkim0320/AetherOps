@@ -15,9 +15,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/evalrunner"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/evalrunner"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
 	"golang.org/x/sys/windows"
 )
 

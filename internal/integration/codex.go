@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/codex"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/knowledge"
-	"github.com/djkim0320/Aether-claw/internal/research"
+	"github.com/djkim0320/AetherOps/internal/codex"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/knowledge"
+	"github.com/djkim0320/AetherOps/internal/research"
 )
 
 // CodexAdapter is the narrow bridge between the durable research state

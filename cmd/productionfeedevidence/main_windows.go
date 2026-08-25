@@ -24,11 +24,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
-	"github.com/djkim0320/Aether-claw/internal/productionfeed"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
-	"github.com/djkim0320/Aether-claw/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/productionfeed"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/securepath"
 )
 
 const producerVersion = "1"

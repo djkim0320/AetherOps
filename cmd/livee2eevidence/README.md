@@ -10,7 +10,7 @@ that evaluation receipt's `verified_at` time.
 The two sessions are intentionally distinct contracts. Session A runs the
 12-case evaluation and contributes the endpoint hash sealed in the runner
 receipt. After its offline evaluation is complete, start session B from the
-same packaged `ProductBuild` and AetherOps v2 data root. Session B contributes
+same packaged `ProductBuild` and AetherOps data root. Session B contributes
 its own endpoint hash, descriptor hash, and start time; it operates on the same
 project and durable SQLite/CAS evidence, but its endpoint is not required to
 equal session A's endpoint. A v1 journal, details file, or producer receipt is

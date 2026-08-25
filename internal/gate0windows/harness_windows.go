@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/browser"
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	"github.com/djkim0320/Aether-claw/internal/gate0evidence"
-	"github.com/djkim0320/Aether-claw/internal/integration"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/browser"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/gate0evidence"
+	"github.com/djkim0320/AetherOps/internal/integration"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
 )
 
 var requiredOperationalChecks = gate0evidence.RequiredOperationalCheckIDs()

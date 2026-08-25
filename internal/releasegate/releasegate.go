@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/releasetree"
-	"github.com/djkim0320/Aether-claw/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/releasetree"
+	"github.com/djkim0320/AetherOps/internal/securepath"
 )
 
 const (

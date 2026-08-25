@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/id"
-	"github.com/djkim0320/Aether-claw/internal/memory"
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/id"
+	"github.com/djkim0320/AetherOps/internal/memory"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 // crashBoundaryEmbeddingProtocol is used only to reproduce the external

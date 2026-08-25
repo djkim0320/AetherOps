@@ -5,7 +5,7 @@ package main
 import (
 	"os"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 func osWriteTestFile(path string) error {

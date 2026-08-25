@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/engineering"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/engineering"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 type evaluationOptimizationFixture struct {

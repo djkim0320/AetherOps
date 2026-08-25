@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/codex"
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/codex"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 const (

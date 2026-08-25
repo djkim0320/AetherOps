@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	webview2 "github.com/djkim0320/Aether-claw/internal/desktop/webview2"
+	webview2 "github.com/djkim0320/AetherOps/internal/desktop/webview2"
 	"github.com/wailsapp/go-webview2/webviewloader"
 )
 

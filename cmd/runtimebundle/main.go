@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
 )
 
 func main() {

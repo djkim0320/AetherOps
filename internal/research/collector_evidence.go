@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 // prepareCollectorEvidence resolves every opaque engineering receipt artifact

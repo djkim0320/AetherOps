@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
 )
 
 const (
@@ -25,6 +25,7 @@ const (
 	MaxCollectors                  = 3
 	EngineeringVerificationOrdinal = MaxCollectors
 	MaxRevisions                   = 3
+	MaxResearchRemediations        = 3
 
 	ServiceTierDefault = "default"
 	ServiceTierFast    = "fast"
@@ -68,8 +69,11 @@ const (
 	// V10 adds an immutable SU2 mesh-study contract and a core-authored
 	// engineering acceptance assessment. Older stage checkpoints must not be
 	// resumed because their plan could authorize solver work only through prose.
-	StageExecutionContractV10    = "aetherops-stage-execution-v10"
-	StageExecutionContractSHA256 = "0a638ffa03132777dad1c3dfca3bef9a538521a9b8a214fd12de91fe52b2e503"
+	// V11 makes a failed REVIEW executable: the verdict must describe missing
+	// work, the prior cycle is superseded, and a fresh PLAN/COLLECT/MERGE/REVIEW
+	// cycle runs before quality can be reconsidered.
+	StageExecutionContractV11    = "aetherops-stage-execution-v11"
+	StageExecutionContractSHA256 = "a361ade9786215b112c97650ee01fb51de0a43cc2643acf134c164332933e1a2"
 
 	KnowledgePatchSchemaV1       = "knowledge_patch_v1"
 	KnowledgeEvidenceText        = "text"
@@ -181,9 +185,10 @@ type Project struct {
 }
 
 // ToolPackage is a project-scoped, immutable proposal for a Codex skill or a
-// declarative MCP adapter. Package contents are never executed as arbitrary
-// source code: skills are instruction bundles and MCP packages are interpreted
-// by AetherOps' fixed managed-tool server.
+// declarative MCP adapter. Skills are instruction bundles and MCP packages are
+// interpreted by AetherOps' fixed managed-tool server. A schema-v2 MCP package
+// may reference one explicitly approved portable native payload; its adapter
+// remains declarative and the exact installation is attached below.
 type ToolPackage struct {
 	ID                   string            `json:"id"`
 	ProjectID            string            `json:"project_id"`
@@ -200,6 +205,7 @@ type ToolPackage struct {
 	RequiresRestart      bool              `json:"requires_restart"`
 	Error                string            `json:"error,omitempty"`
 	Files                []ToolPackageFile `json:"files,omitempty"`
+	Installation         *ToolInstallation `json:"installation,omitempty"`
 	CreatedAt            time.Time         `json:"created_at"`
 	UpdatedAt            time.Time         `json:"updated_at"`
 	ActivatedAt          *time.Time        `json:"activated_at,omitempty"`
@@ -210,6 +216,68 @@ type ToolPackageFile struct {
 	Content       string `json:"content,omitempty"`
 	ContentSHA256 string `json:"content_sha256"`
 	Size          int64  `json:"size"`
+}
+
+// ToolInstallation is one immutable attempt to materialize an explicitly
+// approved portable payload. The installation directory is derived from ID;
+// absolute host paths are deliberately not persisted or exposed over JSON.
+type ToolInstallation struct {
+	ID                    string     `json:"id"`
+	PackageID             string     `json:"package_id"`
+	ProjectID             string     `json:"project_id"`
+	PackageSHA256         string     `json:"package_sha256"`
+	ApprovalSHA256        string     `json:"approval_sha256"`
+	ExpectedPayloadSHA256 string     `json:"expected_payload_sha256"`
+	PayloadBlobHash       string     `json:"payload_blob_hash,omitempty"`
+	PayloadSizeBytes      int64      `json:"payload_size_bytes"`
+	InstalledTreeSHA256   string     `json:"installed_tree_sha256,omitempty"`
+	Entrypoint            string     `json:"entrypoint,omitempty"`
+	ProbeOutputBlobHash   string     `json:"probe_output_blob_hash,omitempty"`
+	State                 string     `json:"state"`
+	Error                 string     `json:"error,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
+	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+}
+
+// ToolStageGrant binds an installed package and its exact approval identity to
+// one durable research stage. Grants never authorize another run or attempt.
+type ToolStageGrant struct {
+	ID             string    `json:"id"`
+	ProjectID      string    `json:"project_id"`
+	RunID          string    `json:"run_id"`
+	StageAttemptID string    `json:"stage_attempt_id"`
+	PackageID      string    `json:"package_id"`
+	InstallationID string    `json:"installation_id"`
+	PackageSHA256  string    `json:"package_sha256"`
+	ApprovalSHA256 string    `json:"approval_sha256"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// ToolInvocation is the durable at-most-once boundary for one portable CLI
+// call. A running invocation found at startup becomes uncertain and is never
+// silently replayed.
+type ToolInvocation struct {
+	ID              string     `json:"id"`
+	IdempotencyKey  string     `json:"idempotency_key"`
+	ProjectID       string     `json:"project_id"`
+	RunID           string     `json:"run_id"`
+	StageAttemptID  string     `json:"stage_attempt_id"`
+	PackageID       string     `json:"package_id"`
+	InstallationID  string     `json:"installation_id"`
+	StageGrantID    string     `json:"stage_grant_id"`
+	ToolName        string     `json:"tool_name"`
+	ArgumentsSHA256 string     `json:"arguments_sha256"`
+	AdapterSHA256   string     `json:"adapter_sha256"`
+	State           string     `json:"state"`
+	StdoutBlobHash  string     `json:"stdout_blob_hash,omitempty"`
+	StderrBlobHash  string     `json:"stderr_blob_hash,omitempty"`
+	ExitCode        *int       `json:"exit_code,omitempty"`
+	Error           string     `json:"error,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 }
 
 // ConversationSession is the AetherOps-owned identity for one durable Codex
@@ -1521,12 +1589,46 @@ func (scores ReviewScores) Values() []int {
 }
 
 type ReviewVerdict struct {
-	CitationIntegrityPercent int                 `json:"citation_integrity_percent"`
-	KnowledgeIntegrity       *KnowledgeIntegrity `json:"knowledge_integrity"`
-	CriticalErrors           []string            `json:"critical_errors"`
-	Scores                   ReviewScores        `json:"scores"`
-	RevisionRequests         []string            `json:"revision_requests"`
-	Summary                  string              `json:"summary"`
+	CitationIntegrityPercent int                     `json:"citation_integrity_percent"`
+	KnowledgeIntegrity       *KnowledgeIntegrity     `json:"knowledge_integrity"`
+	CriticalErrors           []string                `json:"critical_errors"`
+	Scores                   ReviewScores            `json:"scores"`
+	RevisionRequests         []string                `json:"revision_requests"`
+	RemediationAction        ReviewRemediationAction `json:"remediation_action"`
+	RemediationTasks         []ReviewRemediationTask `json:"remediation_tasks"`
+	Summary                  string                  `json:"summary"`
+}
+
+type ReviewRemediationAction string
+
+const (
+	ReviewRemediationNone               ReviewRemediationAction = "none"
+	ReviewRemediationReportRevision     ReviewRemediationAction = "report_revision"
+	ReviewRemediationAdditionalResearch ReviewRemediationAction = "additional_research"
+	ReviewRemediationReplan             ReviewRemediationAction = "replan"
+)
+
+// ReviewRemediationTask describes missing evidence or computation. REVIEW may
+// identify the gap, but only a fresh PLAN is allowed to turn it into an
+// executable tool contract.
+type ReviewRemediationTask struct {
+	Objective           string   `json:"objective"`
+	RequiredEvidence    []string `json:"required_evidence"`
+	RequiresEngineering bool     `json:"requires_engineering"`
+}
+
+// EffectiveRemediationAction keeps completed pre-remediation review artifacts
+// resumable. New REVIEW responses are schema-required to set the field; an old
+// empty value receives only the former report-revision behavior.
+func (verdict ReviewVerdict) EffectiveRemediationAction() ReviewRemediationAction {
+	if verdict.RemediationAction == "" {
+		return ReviewRemediationReportRevision
+	}
+	return verdict.RemediationAction
+}
+
+func (action ReviewRemediationAction) RestartsResearch() bool {
+	return action == ReviewRemediationAdditionalResearch || action == ReviewRemediationReplan
 }
 
 type KnowledgeIntegrity struct {

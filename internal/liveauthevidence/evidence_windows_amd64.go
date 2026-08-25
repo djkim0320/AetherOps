@@ -27,12 +27,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/codex"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/evalrunner"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
-	"github.com/djkim0320/Aether-claw/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/codex"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/evalrunner"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/securepath"
 	"golang.org/x/sys/windows"
 )
 

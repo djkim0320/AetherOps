@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 // VerifyLocalRun performs the same immutable run, stage, artifact, evidence,

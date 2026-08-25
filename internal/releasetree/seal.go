@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/securepath"
 )
 
 const (

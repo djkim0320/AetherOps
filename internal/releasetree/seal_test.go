@@ -79,7 +79,7 @@ func newReleaseTreeFixture(t *testing.T) string {
 	for name := range rootFiles {
 		value := name + "\n"
 		if name == "go.mod" {
-			value = "module github.com/djkim0320/Aether-claw\n"
+			value = "module github.com/djkim0320/AetherOps\n"
 		}
 		writeReleaseTreeFile(t, root, name, value)
 	}

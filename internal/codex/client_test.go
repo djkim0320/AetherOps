@@ -57,7 +57,7 @@ func TestProtocolLifecycleModelsThreadTurnAndDeviceLogin(t *testing.T) {
 	threadID, err := client.StartThread(ctx, ThreadOptions{
 		Model:       SolModel,
 		Effort:      SolEffort,
-		CWD:         "D:/AI/AetherOps/AetherOps v2",
+		CWD:         "D:/AI/AetherOps/AetherOps",
 		ServiceName: "lifecycle",
 		Config: map[string]any{
 			"model_context_window":           int64(1_000_000),

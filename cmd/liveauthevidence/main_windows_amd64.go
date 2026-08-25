@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/liveauthevidence"
+	"github.com/djkim0320/AetherOps/internal/liveauthevidence"
 )
 
 func main() {

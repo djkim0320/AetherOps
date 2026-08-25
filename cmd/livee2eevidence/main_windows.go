@@ -17,10 +17,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
-	"github.com/djkim0320/Aether-claw/internal/livee2eevidence"
-	"github.com/djkim0320/Aether-claw/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/livee2eevidence"
+	"github.com/djkim0320/AetherOps/internal/securepath"
 )
 
 func main() {
@@ -43,7 +43,7 @@ func run(ctx context.Context, args []string) (returnErr error) {
 	evaluationReceipt := flags.String("evaluation-receipt", "", "completed real 12/12 release evaluation details")
 	sessionDescriptor := flags.String("session-descriptor", "", "protected observation-session descriptor created after evaluation verification; live only")
 	journal := flags.String("journal", "", "new live journal or completed journal")
-	dataRoot := flags.String("data-root", "", "AetherOps v2 data root; offline-finalize defaults to LOCALAPPDATA")
+	dataRoot := flags.String("data-root", "", "AetherOps data root; offline-finalize defaults to LOCALAPPDATA")
 	detailsOut := flags.String("details-out", "", "new direct ledger-sibling .details.json; offline only")
 	receiptOut := flags.String("receipt-out", "", "new direct ledger-sibling .receipt.json; offline only")
 	if err := flags.Parse(args); err != nil {

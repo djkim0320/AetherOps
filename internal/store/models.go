@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
 )
 
 type Event struct {

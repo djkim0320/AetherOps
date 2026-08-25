@@ -22,31 +22,31 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/api"
-	"github.com/djkim0320/Aether-claw/internal/appdata"
-	"github.com/djkim0320/Aether-claw/internal/approval"
-	"github.com/djkim0320/Aether-claw/internal/browser"
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/codex"
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	"github.com/djkim0320/Aether-claw/internal/dispatch"
-	"github.com/djkim0320/Aether-claw/internal/download"
-	"github.com/djkim0320/Aether-claw/internal/engineering"
-	"github.com/djkim0320/Aether-claw/internal/gate0windows"
-	"github.com/djkim0320/Aether-claw/internal/integration"
-	"github.com/djkim0320/Aether-claw/internal/knowledge"
-	"github.com/djkim0320/Aether-claw/internal/mcpserver"
-	memoryindex "github.com/djkim0320/Aether-claw/internal/memory"
-	"github.com/djkim0320/Aether-claw/internal/processutil"
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	"github.com/djkim0320/Aether-claw/internal/research"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
-	"github.com/djkim0320/Aether-claw/internal/schedule"
-	"github.com/djkim0320/Aether-claw/internal/secret"
-	"github.com/djkim0320/Aether-claw/internal/store"
-	"github.com/djkim0320/Aether-claw/internal/toolstudio"
-	"github.com/djkim0320/Aether-claw/internal/ui"
+	"github.com/djkim0320/AetherOps/internal/api"
+	"github.com/djkim0320/AetherOps/internal/appdata"
+	"github.com/djkim0320/AetherOps/internal/approval"
+	"github.com/djkim0320/AetherOps/internal/browser"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/codex"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/dispatch"
+	"github.com/djkim0320/AetherOps/internal/download"
+	"github.com/djkim0320/AetherOps/internal/engineering"
+	"github.com/djkim0320/AetherOps/internal/gate0windows"
+	"github.com/djkim0320/AetherOps/internal/integration"
+	"github.com/djkim0320/AetherOps/internal/knowledge"
+	"github.com/djkim0320/AetherOps/internal/mcpserver"
+	memoryindex "github.com/djkim0320/AetherOps/internal/memory"
+	"github.com/djkim0320/AetherOps/internal/processutil"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/research"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/schedule"
+	"github.com/djkim0320/AetherOps/internal/secret"
+	"github.com/djkim0320/AetherOps/internal/store"
+	"github.com/djkim0320/AetherOps/internal/toolstudio"
+	"github.com/djkim0320/AetherOps/internal/ui"
 )
 
 const (
@@ -326,7 +326,10 @@ func runApplicationWithReleaseDescriptor(ctx context.Context, releaseDescriptorP
 	if releaseDescriptorPath != "" {
 		evaluationDataRoot = paths.Root
 	}
-	toolService := &toolstudio.Service{DB: db}
+	toolService := &toolstudio.Service{
+		DB: db, CAS: objects, InstallRoot: paths.ManagedTools,
+		QuarantineRoot: paths.ToolQuarantine, AssignProcess: runtimeSupervisor.Assign,
+	}
 	if err := integration.WriteCodexMCPConfig(integration.CodexMCPConfig{
 		CodexHome:           paths.CodexHome,
 		AetherOpsExecutable: executable,
@@ -710,7 +713,10 @@ func runInternalMCP(ctx context.Context, isolatedDataRoot string) (returnErr err
 	credentials := secret.NewStore()
 	embedder := newEmbeddingClient(credentials)
 	knowledgeService := &knowledge.Service{DB: db, CAS: objects, Sidecar: sidecar}
-	toolService := &toolstudio.Service{DB: db}
+	toolService := &toolstudio.Service{
+		DB: db, CAS: objects, InstallRoot: paths.ManagedTools,
+		QuarantineRoot: paths.ToolQuarantine, AssignProcess: supervisor.Assign,
+	}
 	return (&mcpserver.Server{DB: db, CAS: objects, Embedder: embedder, Knowledge: knowledgeService, ToolStudio: toolService}).Serve(ctx, os.Stdin, os.Stdout)
 }
 

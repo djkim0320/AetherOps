@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 const successfulRunRecoveryReason = "startup recovery quarantined an incomplete successful-run knowledge candidate"

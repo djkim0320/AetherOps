@@ -24,15 +24,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	"github.com/djkim0320/Aether-claw/internal/engineering"
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/engineering"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 const localRunAuditSchemaV1 = "aetherops_local_run_audit_v1"
@@ -171,7 +171,7 @@ func parseOptions(args []string, output io.Writer) (auditOptions, error) {
 	flags := flag.NewFlagSet("localrunaudit", flag.ContinueOnError)
 	flags.SetOutput(output)
 	var options auditOptions
-	flags.StringVar(&options.DataRoot, "data-root", "", "existing AetherOps v2 data root")
+	flags.StringVar(&options.DataRoot, "data-root", "", "existing AetherOps data root")
 	flags.StringVar(&options.ProjectID, "project-id", "", "project id that owns the run")
 	flags.StringVar(&options.RunID, "run-id", "", "succeeded engineering research run id")
 	if err := flags.Parse(args); err != nil {

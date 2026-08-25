@@ -71,7 +71,7 @@ export function ChatWorkspace({
       {/* Header */}
       <header class="chat-header">
         <div class="chat-title">
-          <span class="chat-title-mark">A</span>
+          <span class="chat-title-mark"><img src="/aetherops-icon.png" alt="" /></span>
           <div>
             <h2>{selectedSession ? selectedSession.title : "대화 선택 필요"}</h2>
             <p>
@@ -107,7 +107,7 @@ export function ChatWorkspace({
       >
         {transcriptItems.length === 0 ? (
           <div class="chat-welcome">
-            <div class="welcome-mark">A</div>
+            <div class="welcome-mark"><img src="/aetherops-icon.png" alt="" /></div>
             <h2>무엇을 연구해 볼까요?</h2>
             <p>
               AetherOps와 편하게 대화하다가, 복합 연구가 필요할 때는 <strong>계획 모드</strong>로
@@ -164,7 +164,7 @@ export function ChatWorkspace({
                 key={message.id}
               >
                 <div class="message-row assistant-row">
-                  <div class="assistant-avatar">A</div>
+                  <div class="assistant-avatar"><img src="/aetherops-icon.png" alt="" /></div>
                   <div
                     class={`message assistant-message ${
                       message.mode === "plan" ? "plan-response" : ""

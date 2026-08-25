@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/gate0evidence"
-	"github.com/djkim0320/Aether-claw/internal/processutil"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/gate0evidence"
+	"github.com/djkim0320/AetherOps/internal/processutil"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
 	"golang.org/x/sys/windows"
 )
 
@@ -547,12 +547,12 @@ func validateSourceRoot() (string, string, string, error) {
 	}
 	for {
 		module, moduleErr := readRegularLimit(filepath.Join(root, "go.mod"), 1<<20)
-		if moduleErr == nil && strings.HasPrefix(string(module), "module github.com/djkim0320/Aether-claw\n") {
+		if moduleErr == nil && strings.HasPrefix(string(module), "module github.com/djkim0320/AetherOps\n") {
 			break
 		}
 		parent := filepath.Dir(root)
 		if parent == root {
-			return "", "", "", errors.New("current directory is not within the AetherOps v2 source root")
+			return "", "", "", errors.New("current directory is not within the AetherOps source root")
 		}
 		root = parent
 	}

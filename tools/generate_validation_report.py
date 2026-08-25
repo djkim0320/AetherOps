@@ -170,7 +170,7 @@ def on_page(canvas, doc) -> None:
     canvas.line(18 * mm, 286 * mm, 192 * mm, 286 * mm)
     canvas.setFont("Malgun", 7.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(18 * mm, 289 * mm, "AetherOps v2 - 실제 연구 품질 검증")
+    canvas.drawString(18 * mm, 289 * mm, "AetherOps - 실제 연구 품질 검증")
     canvas.drawRightString(192 * mm, 10 * mm, f"{doc.page}")
     canvas.drawString(18 * mm, 10 * mm, "Build f5066b6c80cf - 2026-08-21 KST")
     canvas.restoreState()
@@ -229,13 +229,13 @@ def build_pdf() -> None:
 
     doc = SimpleDocTemplate(
         str(PDF_PATH), pagesize=A4, rightMargin=18 * mm, leftMargin=18 * mm,
-        topMargin=17 * mm, bottomMargin=17 * mm, title="AetherOps v2 실제 연구 품질 검증 보고서",
-        author="Codex", subject="AetherOps v2 build validation",
+        topMargin=17 * mm, bottomMargin=17 * mm, title="AetherOps 실제 연구 품질 검증 보고서",
+        author="Codex", subject="AetherOps build validation",
     )
     story: list = []
 
     story.append(Spacer(1, 12 * mm))
-    story.append(p("AetherOps v2 실제 연구 품질 검증", styles["title"]))
+    story.append(p("AetherOps 실제 연구 품질 검증", styles["title"]))
     story.append(p(
         "Build 0.1.0-alpha.1 | Windows 11 x64 | 실제 ChatGPT OAuth, 실제 모델, 실제 XFOIL, "
         "CAS/SQLite readback | 평가 시각 2026-08-21 KST", styles["subtitle"]

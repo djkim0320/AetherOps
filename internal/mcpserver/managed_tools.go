@@ -9,10 +9,10 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/browser"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/store"
-	"github.com/djkim0320/Aether-claw/internal/toolstudio"
+	"github.com/djkim0320/AetherOps/internal/browser"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/store"
+	"github.com/djkim0320/AetherOps/internal/toolstudio"
 )
 
 const maxManagedJSONBytes = 2 << 20
@@ -51,6 +51,18 @@ func managedToolCatalog(ctx context.Context, db *store.DB, projectID string) ([]
 				tools = append(tools, map[string]any{"name": tool.Name, "description": tool.Description, "input_schema": tool.InputSchema})
 			}
 			entry["tools"] = tools
+			if toolstudio.IsPortableManifest(manifest) && manifest.Distribution != nil && full.Installation != nil {
+				entry["portable"] = map[string]any{
+					"publisher":               manifest.Distribution.Publisher,
+					"license_spdx":            manifest.Distribution.LicenseSPDX,
+					"payload_sha256":          manifest.Distribution.SHA256,
+					"installed_tree_sha256":   full.Installation.InstalledTreeSHA256,
+					"installation_id":         full.Installation.ID,
+					"same_windows_user":       true,
+					"os_network_sandboxed":    false,
+					"os_filesystem_sandboxed": false,
+				}
+			}
 		}
 		result = append(result, entry)
 	}
@@ -74,7 +86,11 @@ func getManagedSkill(ctx context.Context, db *store.DB, projectID, packageID str
 	return pkg, nil
 }
 
-func executeManagedTool(ctx context.Context, db *store.DB, policy browser.Policy, packageID, name string, raw json.RawMessage) (any, error) {
+type portableToolRunner interface {
+	RunPortableForStage(context.Context, string, string, string, string, map[string]any) (any, error)
+}
+
+func executeManagedTool(ctx context.Context, db *store.DB, policy browser.Policy, runner portableToolRunner, packageID, name string, raw json.RawMessage) (any, error) {
 	pkg, err := db.ActiveToolPackageByID(ctx, packageID)
 	if err != nil {
 		return nil, fmt.Errorf("load active managed tool package: %w", err)
@@ -88,6 +104,22 @@ func executeManagedTool(ctx context.Context, db *store.DB, policy browser.Policy
 	manifest, _, err := toolstudio.ParseManifest(pkg.ManifestJSON)
 	if err != nil {
 		return nil, err
+	}
+	if toolstudio.IsPortableManifest(manifest) {
+		if runner == nil {
+			return nil, errors.New("portable tool runner is unavailable")
+		}
+		var arguments map[string]any
+		decoder := json.NewDecoder(strings.NewReader(string(raw)))
+		decoder.UseNumber()
+		if err := decoder.Decode(&arguments); err != nil {
+			return nil, errors.New("invalid portable tool input")
+		}
+		runID, _ := arguments["run_id"].(string)
+		stageID, _ := arguments["stage_attempt_id"].(string)
+		delete(arguments, "run_id")
+		delete(arguments, "stage_attempt_id")
+		return runner.RunPortableForStage(ctx, runID, stageID, packageID, name, arguments)
 	}
 	return callManagedTool(ctx, db, policy, pkg, manifest, name, raw)
 }

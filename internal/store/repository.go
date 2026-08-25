@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/id"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/id"
 )
 
 var (
@@ -374,8 +374,12 @@ SELECT
   (SELECT COUNT(*) FROM approvals a JOIN runs r ON r.id=a.run_id
    WHERE r.project_id=? AND a.status='pending') +
   (SELECT COUNT(*) FROM embedding_indexes
-   WHERE project_id=? AND state='building')`, projectID, projectID, projectID, projectID,
-		projectID, projectID, projectID).Scan(&activeWork); err != nil {
+   WHERE project_id=? AND state='building') +
+  (SELECT COUNT(*) FROM portable_tool_installations
+   WHERE project_id=? AND state IN ('downloading','verifying','installing','probing')) +
+  (SELECT COUNT(*) FROM tool_invocations
+   WHERE project_id=? AND state IN ('running','uncertain'))`, projectID, projectID, projectID, projectID,
+		projectID, projectID, projectID, projectID, projectID).Scan(&activeWork); err != nil {
 		return nil, err
 	}
 	if activeWork != 0 {
@@ -410,10 +414,23 @@ SELECT DISTINCT blob_hash FROM (
   UNION ALL
   SELECT k.blob_hash FROM knowledge_rdf_snapshots k WHERE k.project_id = ?
   UNION ALL
+  SELECT i.payload_blob_hash FROM portable_tool_installations i
+    WHERE i.project_id = ? AND i.payload_blob_hash IS NOT NULL
+  UNION ALL
+  SELECT i.probe_output_blob_hash FROM portable_tool_installations i
+    WHERE i.project_id = ? AND i.probe_output_blob_hash IS NOT NULL
+  UNION ALL
+  SELECT i.stdout_blob_hash FROM tool_invocations i
+    WHERE i.project_id = ? AND i.stdout_blob_hash IS NOT NULL
+  UNION ALL
+  SELECT i.stderr_blob_hash FROM tool_invocations i
+    WHERE i.project_id = ? AND i.stderr_blob_hash IS NOT NULL
+  UNION ALL
   SELECT json_extract(c.payload_json, '$.memo_blob_hash')
     FROM knowledge_curation_events c
     WHERE c.project_id = ? AND json_type(c.payload_json, '$.memo_blob_hash') = 'text'
-)`, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID)
+)`, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID, projectID,
+		projectID, projectID, projectID, projectID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -469,9 +486,14 @@ SELECT
   (SELECT COUNT(*) FROM knowledge_sources WHERE blob_hash = ?) +
   (SELECT COUNT(*) FROM knowledge_assertion_evidence WHERE blob_hash = ?) +
   (SELECT COUNT(*) FROM knowledge_rdf_snapshots WHERE blob_hash = ?) +
+  (SELECT COUNT(*) FROM portable_tool_installations
+     WHERE payload_blob_hash = ? OR probe_output_blob_hash = ?) +
+  (SELECT COUNT(*) FROM tool_invocations
+     WHERE stdout_blob_hash = ? OR stderr_blob_hash = ?) +
   (SELECT COUNT(*) FROM knowledge_curation_events
      WHERE json_extract(payload_json, '$.memo_blob_hash') = ?)`,
-			hash, hash, hash, hash, hash, hash, hash, hash, hash, hash, hash, hash, hash).Scan(&references); err != nil {
+			hash, hash, hash, hash, hash, hash, hash, hash, hash, hash, hash, hash,
+			hash, hash, hash, hash, hash).Scan(&references); err != nil {
 			return nil, err
 		}
 		if references == 0 {
@@ -1067,7 +1089,12 @@ WHERE id = ? OR (run_id = ? AND stage_attempt_id IN (
 ))`, reportArtifactID, runID, runID); err != nil {
 		return core.Run{}, err
 	}
-	if _, err := transaction.ExecContext(ctx, "UPDATE evidence SET adopted = 1 WHERE run_id = ?", runID); err != nil {
+	if _, err := transaction.ExecContext(ctx, `
+UPDATE evidence SET adopted = 1
+WHERE run_id = ? AND stage_attempt_id IN (
+  SELECT id FROM stage_attempts
+  WHERE run_id = ? AND status = 'completed'
+)`, runID, runID); err != nil {
 		return core.Run{}, err
 	}
 	// The report commit and graph invalidation are one durable boundary. A
@@ -1566,6 +1593,13 @@ GROUP BY r.id, r.revision`)
 		return 0, err
 	}
 	now := time.Now().UTC()
+	// Native tool installation and invocation boundaries share this startup
+	// transaction with run recovery. Interrupted installation work is safe to
+	// retry only as a new attempt; a running native invocation is uncertain and
+	// must never be replayed automatically.
+	if _, err := recoverToolWork(ctx, transaction, now); err != nil {
+		return 0, err
+	}
 	// Codex approval request IDs are scoped to the live App Server process. On
 	// restart they cannot be answered safely, so never leave a stale approval
 	// actionable in the UI.

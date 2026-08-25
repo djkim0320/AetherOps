@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/cleanvmevidence"
+	"github.com/djkim0320/AetherOps/internal/cleanvmevidence"
 )
 
 func main() {

@@ -42,8 +42,9 @@ AetherOps의 핵심은 단순 채팅이 아니라 **대화에서 검증 가능�
 2. `COLLECT`: 최대 3개의 독립 수집 작업이 근거와 계산 결과를 병렬로 모은다.
 3. `SYNTHESIZE`: 메인 스레드가 근거를 결합해 보고서를 작성한다.
 4. `REVIEW`: 격리된 리뷰어가 보고서의 근거 무결성과 품질을 평가한다.
+5. REVIEW가 실패하면 부족한 점을 구조화하고 기존 사이클을 감사 이력으로 보존한 뒤 `PLAN → COLLECT/추가 해석 → MERGE → REVIEW`를 새로 수행한다. 같은 근거로 재리뷰만 반복하지 않으며 최대 3개의 보완 연구 사이클 후에도 실패하면 `quality_failed`가 된다.
 
-리뷰를 통과하지 못하면 최대 3회 자동 수정한다. 최종 상태는 성공, 품질 실패, 실패, 취소, 중단, 불확실, 승인 대기 등으로 명확히 구분된다.
+리뷰를 통과하지 못하면 최대 3회 새 보완 연구 사이클을 실행한다. 기존 근거만 다시 표현하는 자동 수정 루프는 사용하지 않는다. 최종 상태는 성공, 품질 실패, 실패, 취소, 중단, 불확실, 승인 대기 등으로 명확히 구분된다.
 
 UI는 이 파이프라인을 “백엔드 로그”처럼 보여주면 안 된다. 사용자가 지금 무엇이 진행 중인지, 무엇이 끝났는지, 무엇을 확인해야 하는지 빠르게 이해하도록 번역해야 한다.
 
@@ -319,10 +320,10 @@ SSE 이벤트로 연구 진행과 승인 상태가 갱신된다. 새 디자인�
 
 ## 16. 검증 명령
 
-저장소 루트는 `D:\AI\AetherOps\AetherOps v2`다.
+저장소 루트는 `D:\AI\AetherOps\AetherOps`다.
 
 ```powershell
-cd "D:\AI\AetherOps\AetherOps v2\frontend"
+cd "D:\AI\AetherOps\AetherOps\frontend"
 pnpm test
 pnpm build
 ```
@@ -330,7 +331,7 @@ pnpm build
 전체 제품 검증이 필요하면:
 
 ```powershell
-cd "D:\AI\AetherOps\AetherOps v2"
+cd "D:\AI\AetherOps\AetherOps"
 .\tools\dev.ps1 test
 .\tools\dev.ps1 build
 ```

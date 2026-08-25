@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/id"
-	"github.com/djkim0320/Aether-claw/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/id"
+	"github.com/djkim0320/AetherOps/internal/rag"
 )
 
 const (
@@ -87,6 +87,10 @@ SELECT DISTINCT hash FROM (
   UNION ALL SELECT blob_hash FROM knowledge_sources
   UNION ALL SELECT blob_hash FROM knowledge_assertion_evidence
   UNION ALL SELECT blob_hash FROM knowledge_rdf_snapshots
+  UNION ALL SELECT payload_blob_hash FROM portable_tool_installations WHERE payload_blob_hash IS NOT NULL
+  UNION ALL SELECT probe_output_blob_hash FROM portable_tool_installations WHERE probe_output_blob_hash IS NOT NULL
+  UNION ALL SELECT stdout_blob_hash FROM tool_invocations WHERE stdout_blob_hash IS NOT NULL
+  UNION ALL SELECT stderr_blob_hash FROM tool_invocations WHERE stderr_blob_hash IS NOT NULL
   UNION ALL SELECT json_extract(payload_json,'$.memo_blob_hash')
     FROM knowledge_curation_events
     WHERE json_type(payload_json,'$.memo_blob_hash')='text'

@@ -80,7 +80,7 @@ func completeSourceSealRoot(t *testing.T) string {
 	for name := range sourceRootFiles {
 		value := name + "\n"
 		if name == "go.mod" {
-			value = "module github.com/djkim0320/Aether-claw\n"
+			value = "module github.com/djkim0320/AetherOps\n"
 		}
 		writeSourceSealFile(t, root, name, value)
 	}

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/evalrunner"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/evalrunner"
 )
 
 func TestDetailsRejectsIneligibleOrIncompleteCampaigns(t *testing.T) {

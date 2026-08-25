@@ -223,7 +223,7 @@ const spdx = {
   dataLicense: "CC0-1.0",
   SPDXID: "SPDXRef-DOCUMENT",
   name: `AetherOps-${manifest.version}`,
-  documentNamespace: `https://github.com/djkim0320/Aether-claw/sbom/v${manifest.version}`,
+  documentNamespace: `https://github.com/djkim0320/AetherOps/sbom/v${manifest.version}`,
   creationInfo: { creators: ["Tool: AetherOps tools/sbom.ps1 + tools/license-sbom.cjs"] },
   packages,
   relationships,

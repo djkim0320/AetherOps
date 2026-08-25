@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
 )
 
 const SessionDescriptorSchemaV2 = "aetherops_release_eval_api_session_v2"

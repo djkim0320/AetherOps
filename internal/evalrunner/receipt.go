@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
 )
 
 const maxReceiptBytes = 4 << 20

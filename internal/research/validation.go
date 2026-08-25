@@ -17,9 +17,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 var stageCapabilityIdentityPattern = regexp.MustCompile(`(?i)(?:\brun_id\b|\bstage_attempt_id\b|\brun_[0-9a-f]{16,}\b|\bstg_[0-9a-f]{16,}\b)`)
@@ -472,6 +472,17 @@ func validateReviewVerdict(verdict core.ReviewVerdict) error {
 	if verdict.CriticalErrors == nil || verdict.RevisionRequests == nil {
 		return errors.New("review verdict omits a required array field")
 	}
+	switch verdict.RemediationAction {
+	case "", core.ReviewRemediationNone, core.ReviewRemediationReportRevision,
+		core.ReviewRemediationAdditionalResearch, core.ReviewRemediationReplan:
+	default:
+		return fmt.Errorf("unsupported review remediation action %q", verdict.RemediationAction)
+	}
+	for index, task := range verdict.RemediationTasks {
+		if strings.TrimSpace(task.Objective) == "" || task.RequiredEvidence == nil {
+			return fmt.Errorf("review remediation task %d is incomplete", index+1)
+		}
+	}
 	_, err := verdict.Passes()
 	return err
 }
@@ -482,6 +493,24 @@ func validateReviewVerdictForReport(verdict core.ReviewVerdict, report core.Repo
 	}
 	if verdict.KnowledgeIntegrity.UnsupportedAssertions > len(report.KnowledgePatch.Assertions) {
 		return fmt.Errorf("review reports %d unsupported assertions but patch contains %d", verdict.KnowledgeIntegrity.UnsupportedAssertions, len(report.KnowledgePatch.Assertions))
+	}
+	// Empty is accepted only for already-persisted review_v1 artifacts. The
+	// current response schema always supplies an explicit action.
+	if verdict.RemediationAction != "" {
+		passes, err := verdict.PassesForReport(report)
+		if err != nil {
+			return err
+		}
+		action := verdict.EffectiveRemediationAction()
+		if passes && action != core.ReviewRemediationNone {
+			return errors.New("passing review must use remediation_action=none")
+		}
+		if !passes && action == core.ReviewRemediationNone {
+			return errors.New("failing review must select a remediation action")
+		}
+		if action.RestartsResearch() && len(verdict.RemediationTasks) == 0 {
+			return errors.New("research remediation requires at least one concrete task")
+		}
 	}
 	return nil
 }

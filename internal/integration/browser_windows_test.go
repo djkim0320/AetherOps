@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/desktop"
 )
 
 func newStoppedBrowserController(t *testing.T, schedule func() error) *BrowserController {

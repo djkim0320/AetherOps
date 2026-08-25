@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 const MaxConcurrentRuns = 2

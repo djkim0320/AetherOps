@@ -292,9 +292,15 @@ func ReviewSchema() json.RawMessage {
       "clarity_and_reproducibility":{"description":"1 is worst and 5 is best.","type":"integer","minimum":1,"maximum":5}
     },"required":["task_fulfillment","claim_support","source_quality","completeness","reasoning_and_uncertainty","clarity_and_reproducibility"],"additionalProperties":false},
     "revision_requests":{"type":"array","items":{"type":"string"}},
+	"remediation_action":{"description":"Use none only for a passing report. Every failing review must use additional_research or replan so AetherOps creates a fresh plan and collection cycle. Use additional_research when the scope is sound but more evidence or computation is required. Use replan when the workstreams, scope, acceptance criteria, or executable analysis contract are wrong.","type":"string","enum":["none","additional_research","replan"]},
+	"remediation_tasks":{"type":"array","items":{"type":"object","properties":{
+	  "objective":{"type":"string","minLength":1},
+	  "required_evidence":{"type":"array","items":{"type":"string"}},
+	  "requires_engineering":{"type":"boolean"}
+	},"required":["objective","required_evidence","requires_engineering"],"additionalProperties":false}},
     "summary":{"type":"string"}
   },
-  "required":["citation_integrity_percent","knowledge_integrity","critical_errors","scores","revision_requests","summary"],
+  "required":["citation_integrity_percent","knowledge_integrity","critical_errors","scores","revision_requests","remediation_action","remediation_tasks","summary"],
   "additionalProperties":false
 }`)
 }

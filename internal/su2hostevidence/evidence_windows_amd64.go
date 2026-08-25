@@ -23,12 +23,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	"github.com/djkim0320/Aether-claw/internal/processutil"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
-	"github.com/djkim0320/Aether-claw/internal/securepath"
-	"github.com/djkim0320/Aether-claw/internal/su2host"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	"github.com/djkim0320/AetherOps/internal/processutil"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/su2host"
 	"golang.org/x/sys/windows"
 )
 

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/engineering"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/engineering"
 )
 
 func TestSolverToolResultUsesBoundedCompactTextAndTypedStructuredContent(t *testing.T) {

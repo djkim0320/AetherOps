@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/engineering"
+	"github.com/djkim0320/AetherOps/internal/engineering"
 )
 
 func TestToolsListPublishesCompleteConservativeAnnotations(t *testing.T) {
@@ -28,9 +28,10 @@ func TestToolsListPublishesCompleteConservativeAnnotations(t *testing.T) {
 				"scholarly_search":          {readOnly: true, openWorld: true},
 				"evidence_capture":          {},
 				"tool_package_propose":      {},
+				"tool_package_install":      {idempotent: true, openWorld: true},
 				"tool_catalog":              {readOnly: true, idempotent: true},
 				"tool_get":                  {readOnly: true, idempotent: true},
-				"tool_run":                  {readOnly: true, openWorld: true},
+				"tool_run":                  {openWorld: true},
 				"artifact_publish_plan":     {},
 				"artifact_publish_evidence": {},
 				"artifact_publish_report":   {},

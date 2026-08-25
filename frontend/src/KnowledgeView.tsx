@@ -52,7 +52,9 @@ import {
 import { KnowledgeCurationStudio } from "./knowledge/KnowledgeCurationStudio";
 import { KnowledgeGraphPanel } from "./knowledge/KnowledgeGraphPanel";
 import { KnowledgeInspector } from "./knowledge/KnowledgeInspector";
+import { KnowledgeLibrary } from "./knowledge/KnowledgeLibrary";
 import { KnowledgeMaterialsPanel } from "./knowledge/KnowledgeMaterialsPanel";
+import { KnowledgeOverview } from "./knowledge/KnowledgeOverview";
 import { KnowledgeOntologyStudio } from "./knowledge/KnowledgeOntologyStudio";
 import { KnowledgeSparqlConsole } from "./knowledge/KnowledgeSparqlConsole";
 import { KnowledgeToolbar, type KnowledgeTab } from "./knowledge/KnowledgeToolbar";
@@ -251,7 +253,8 @@ function localDateTimeFromRFC3339(value: unknown): string {
 }
 
 export function KnowledgeView({ projectID, projectName = "", connected }: KnowledgeViewProps) {
-  const [activeTab, setActiveTab] = useState<KnowledgeTab>("explorer");
+  const [activeTab, setActiveTab] = useState<KnowledgeTab>("overview");
+  const [advancedTool, setAdvancedTool] = useState<"ontology" | "sparql">("ontology");
   const [mode, setMode] = useState<KnowledgeMode>("instance");
   const [status, setStatus] = useState<KnowledgeStatus | null>(null);
   const [graph, setGraph] = useState<KnowledgeGraph>(emptyGraph);
@@ -573,9 +576,9 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
     };
   }, [connected, mode, projectID, selectedEntityID, selectedNode?.raw]);
 
-  // Cytoscape Canvas Lifecycle (Only when explorer tab is active)
+  // Cytoscape canvas lifecycle (only while the relationship view is mounted).
   useEffect(() => {
-    if (activeTab !== "explorer" || !graphElement.current) return;
+    if (activeTab !== "graph" || !graphElement.current) return;
     graphInstance.current?.destroy();
     const instance = cytoscape({
       container: graphElement.current,
@@ -739,7 +742,7 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
     setFocusEntityID(result.id);
     setAppliedQuery(searchQuery.trim());
     selectEntity(result.id);
-    setActiveTab("explorer");
+    setActiveTab("graph");
   }
 
   function selectGraphEdge(edgeID: string) {
@@ -815,7 +818,7 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
       await rebuildKnowledge(projectID);
       setNotice("편집 제안을 기록하고 검증된 shadow graph를 활성화했습니다.");
       await refresh();
-      setActiveTab("explorer");
+      setActiveTab("graph");
     } catch (cause) {
       if (recorded) {
         setNotice(
@@ -1064,7 +1067,7 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
 
   function chooseEditKind(kind: KnowledgeEditKind) {
     setEditKind(kind);
-    setActiveTab("curation");
+    setActiveTab("review");
     setError("");
     if ((kind === "retract_assertion" || kind === "restore_assertion") && assertion) {
       setEditAssertionID(text(assertion.id) ?? text(assertion.assertion_id) ?? "");
@@ -1469,7 +1472,49 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
         notice={notice}
       />
 
-      {activeTab === "explorer" && (
+      {activeTab === "overview" && (
+        <KnowledgeOverview
+          status={status}
+          graph={graph}
+          materials={materials}
+          connected={connected}
+          busy={busy}
+          onNavigate={setActiveTab}
+          onRefresh={refresh}
+        />
+      )}
+
+      {activeTab === "materials" && (
+        <KnowledgeMaterialsPanel
+          materials={materials}
+          materialFile={materialFile}
+          onMaterialFileChange={setMaterialFile}
+          materialTitle={materialTitle}
+          onMaterialTitleChange={setMaterialTitle}
+          materialGraphAdopt={materialGraphAdopt}
+          onMaterialGraphAdoptChange={setMaterialGraphAdopt}
+          onUploadMaterial={uploadMaterial}
+          onToggleMaterialAdopt={toggleMaterialAdopt}
+          onRemoveMaterial={removeMaterial}
+          busy={busy}
+        />
+      )}
+
+      {activeTab === "knowledge" && (
+        <KnowledgeLibrary
+          graph={graph}
+          selectedEntityID={selectedEntityID}
+          onSelectEntity={focusSelectedEntity}
+          onOpenGraph={(id) => {
+            focusSelectedEntity(id);
+            setActiveTab("graph");
+          }}
+          onManageMaterials={() => setActiveTab("materials")}
+          onOpenReview={() => setActiveTab("review")}
+        />
+      )}
+
+      {activeTab === "graph" && (
         <div class="knowledge-layout">
           <KnowledgeGraphPanel
             mode={mode}
@@ -1524,8 +1569,32 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
         </div>
       )}
 
-      {activeTab === "curation" && (
-        <KnowledgeCurationStudio
+      {activeTab === "review" && (
+        <div class="knowledge-review-stack">
+          <section class="panel knowledge-review-intro">
+            <div>
+              <p class="eyebrow">Review Queue</p>
+              <h2>검토가 필요한 지식</h2>
+              <p>
+                서로 충돌하거나 자동으로 합칠 수 없는 지식을 확인합니다. 모든 변경은 근거와 함께
+                기록되며 원본 자료는 바뀌지 않습니다.
+              </p>
+            </div>
+            <div
+              class={`knowledge-review-summary ${
+                (number(status?.conflict_count) ?? 0) > 0 ? "attention" : "clear"
+              }`}
+            >
+              <strong>{number(status?.conflict_count) ?? 0}개 대기</strong>
+              <span>
+                {(number(status?.conflict_count) ?? 0) > 0
+                  ? "아래 도구에서 항목을 선택해 판단하세요."
+                  : "자동 감지된 충돌이 없습니다. 직접 수정 제안은 계속 만들 수 있습니다."}
+              </span>
+            </div>
+          </section>
+
+          <KnowledgeCurationStudio
           mode={mode}
           editKind={editKind}
           onChooseEditKind={chooseEditKind}
@@ -1602,7 +1671,8 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
           editEvidenceIDs={editEvidenceIDs}
           editMemo={editMemo}
           onEditMemoChange={setEditMemo}
-        />
+          />
+        </div>
       )}
 
       {activeTab === "ontology" && (
@@ -1631,22 +1701,6 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
         />
       )}
 
-      {activeTab === "materials" && (
-        <KnowledgeMaterialsPanel
-          materials={materials}
-          materialFile={materialFile}
-          onMaterialFileChange={setMaterialFile}
-          materialTitle={materialTitle}
-          onMaterialTitleChange={setMaterialTitle}
-          materialGraphAdopt={materialGraphAdopt}
-          onMaterialGraphAdoptChange={setMaterialGraphAdopt}
-          onUploadMaterial={uploadMaterial}
-          onToggleMaterialAdopt={toggleMaterialAdopt}
-          onRemoveMaterial={removeMaterial}
-          busy={busy}
-        />
-      )}
-
       {activeTab === "sparql" && (
         <KnowledgeSparqlConsole
           sparql={sparql}
@@ -1655,6 +1709,71 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
           sparqlResult={sparqlResult}
           busy={busy}
         />
+      )}
+
+      {activeTab === "advanced" && (
+        <div class="knowledge-advanced-stack">
+          <section class="panel knowledge-advanced-intro">
+            <div>
+              <p class="eyebrow">Advanced Knowledge Tools</p>
+              <h2>스키마와 질의 도구</h2>
+              <p>
+                온톨로지 가져오기와 읽기 전용 SPARQL은 고급 작업에만 사용합니다. 일반적인 자료와
+                지식 관리는 앞의 탭에서 처리할 수 있습니다.
+              </p>
+            </div>
+            <nav class="knowledge-advanced-tabs" aria-label="고급 지식 도구">
+              <button
+                type="button"
+                class={advancedTool === "ontology" ? "active" : ""}
+                onClick={() => setAdvancedTool("ontology")}
+              >
+                온톨로지와 스키마
+              </button>
+              <button
+                type="button"
+                class={advancedTool === "sparql" ? "active" : ""}
+                onClick={() => setAdvancedTool("sparql")}
+              >
+                SPARQL 질의
+              </button>
+            </nav>
+          </section>
+
+          {advancedTool === "ontology" ? (
+            <KnowledgeOntologyStudio
+              status={status}
+              projectID={projectID}
+              busy={busy}
+              ontologyFile={ontologyFile}
+              onOntologyFileChange={setOntologyFile}
+              onImportOntology={importOntology}
+              schemaDraftName={schemaDraftName}
+              onSchemaDraftNameChange={setSchemaDraftName}
+              schemaDraft={schemaDraft}
+              onSchemaDraftChange={setSchemaDraft}
+              onImportSchemaDraft={importSchemaDraft}
+              ontologyPreview={ontologyPreview}
+              versionID={versionID}
+              onVersionIDChange={setVersionID}
+              onActivateOntology={activateOntology}
+              canActivateOntology={canActivateOntology}
+              onSelectVersion={(ver) => {
+                const verID = text(ver.id) ?? text(ver.version_id) ?? "";
+                setVersionID(verID);
+                setOntologyPreview(ver);
+              }}
+            />
+          ) : (
+            <KnowledgeSparqlConsole
+              sparql={sparql}
+              onSparqlChange={setSparql}
+              onRunSparql={runSparql}
+              sparqlResult={sparqlResult}
+              busy={busy}
+            />
+          )}
+        </div>
       )}
     </div>
   );

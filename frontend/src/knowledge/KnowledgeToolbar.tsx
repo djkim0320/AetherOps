@@ -1,6 +1,16 @@
 import type { KnowledgeRecord, KnowledgeSearchResult, KnowledgeStatus } from "../knowledge-types";
 
-export type KnowledgeTab = "explorer" | "curation" | "ontology" | "materials" | "sparql";
+export type KnowledgeTab =
+  | "overview"
+  | "knowledge"
+  | "graph"
+  | "review"
+  | "advanced"
+  | "explorer"
+  | "curation"
+  | "ontology"
+  | "materials"
+  | "sparql";
 
 export type KnowledgeToolbarProps = {
   projectName: string;
@@ -57,12 +67,18 @@ export function KnowledgeToolbar({
   const isRebuilding = busy === "rebuild";
   const isExporting = busy === "export";
 
+  const isGraph = activeTab === "graph" || activeTab === "explorer";
+  const isCuration = activeTab === "review" || activeTab === "curation";
+  const isOntology = activeTab === "ontology";
+  const isMaterials = activeTab === "materials";
+  const isSparql = activeTab === "sparql";
+
   return (
     <section class="panel knowledge-toolbar" aria-label="프로젝트 지식 툴바">
       {/* Header Row */}
       <div class="knowledge-toolbar-head">
         <div>
-          <p class="eyebrow">Project Knowledge</p>
+          <p class="eyebrow">Project Knowledge Graph & Ontologies</p>
           <h2>{projectName || projectID}</h2>
         </div>
         <div class="knowledge-toolbar-actions">
@@ -73,7 +89,7 @@ export function KnowledgeToolbar({
             disabled={!connected || Boolean(busy)}
             title="지식 상태 및 그래프 새로 고침"
           >
-            <span>↻</span> {isRefreshing ? "불러오는 중…" : "새로 고침"}
+            {isRefreshing ? "불러오는 중…" : "새로 고침"}
           </button>
           <button
             class="button secondary small"
@@ -82,7 +98,7 @@ export function KnowledgeToolbar({
             disabled={!connected || Boolean(busy)}
             title="Shadow graph 재구성"
           >
-            <span>⚙</span> {isRebuilding ? "재구성 중…" : "그래프 재구성"}
+            {isRebuilding ? "재구성 중…" : "그래프 재구성"}
           </button>
           <button
             class="button secondary small"
@@ -91,48 +107,48 @@ export function KnowledgeToolbar({
             disabled={!connected || Boolean(busy)}
             title="JSON-LD 파일로 내보내기"
           >
-            <span>↓</span> {isExporting ? "내보내는 중…" : "JSON-LD 내보내기"}
+            {isExporting ? "내보내는 중…" : "JSON-LD 내보내기"}
           </button>
         </div>
       </div>
 
-      {/* Primary Sub-Tabs Navigation (No emojis) */}
+      {/* Primary Sub-Tabs Navigation (Clean modern segmented control) */}
       <div class="knowledge-nav-row">
-        <nav class="knowledge-subtabs" aria-label="지식 도구 탭">
+        <nav class="knowledge-subtabs-segmented" aria-label="지식 도구 세부 탭">
           <button
             type="button"
-            class={`knowledge-subtab-btn ${activeTab === "explorer" ? "active" : ""}`}
-            onClick={() => onSelectTab("explorer")}
+            class={`knowledge-subtab-segment ${isGraph ? "active" : ""}`}
+            onClick={() => onSelectTab("graph")}
           >
-            <span>•</span> 그래프 탐색기
+            <span class="subtab-title">그래프 탐색기</span>
           </button>
           <button
             type="button"
-            class={`knowledge-subtab-btn ${activeTab === "curation" ? "active" : ""}`}
-            onClick={() => onSelectTab("curation")}
+            class={`knowledge-subtab-segment ${isCuration ? "active" : ""}`}
+            onClick={() => onSelectTab("review")}
           >
-            <span>•</span> 구조화 편집
+            <span class="subtab-title">구조화 편집</span>
           </button>
           <button
             type="button"
-            class={`knowledge-subtab-btn ${activeTab === "ontology" ? "active" : ""}`}
+            class={`knowledge-subtab-segment ${isOntology ? "active" : ""}`}
             onClick={() => onSelectTab("ontology")}
           >
-            <span>•</span> 온톨로지 & 스키마
+            <span class="subtab-title">온톨로지 & 스키마</span>
           </button>
           <button
             type="button"
-            class={`knowledge-subtab-btn ${activeTab === "materials" ? "active" : ""}`}
+            class={`knowledge-subtab-segment ${isMaterials ? "active" : ""}`}
             onClick={() => onSelectTab("materials")}
           >
-            <span>•</span> 프로젝트 자료
+            <span class="subtab-title">프로젝트 자료</span>
           </button>
           <button
             type="button"
-            class={`knowledge-subtab-btn ${activeTab === "sparql" ? "active" : ""}`}
+            class={`knowledge-subtab-segment ${isSparql ? "active" : ""}`}
             onClick={() => onSelectTab("sparql")}
           >
-            <span>•</span> SPARQL 질의
+            <span class="subtab-title">SPARQL 질의</span>
           </button>
         </nav>
 

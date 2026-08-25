@@ -10,14 +10,14 @@ import (
 	"io"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/browser"
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/engineering"
-	"github.com/djkim0320/Aether-claw/internal/knowledge"
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	"github.com/djkim0320/Aether-claw/internal/store"
-	"github.com/djkim0320/Aether-claw/internal/toolstudio"
+	"github.com/djkim0320/AetherOps/internal/browser"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/engineering"
+	"github.com/djkim0320/AetherOps/internal/knowledge"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/store"
+	"github.com/djkim0320/AetherOps/internal/toolstudio"
 )
 
 const (
@@ -46,6 +46,8 @@ type Server struct {
 	Engineering *engineering.Service
 	ToolStudio  interface {
 		ProposeForStage(context.Context, string, string, toolstudio.Proposal) (core.ToolPackage, error)
+		InstallForStage(context.Context, string, string, toolstudio.InstallApproval) (core.ToolPackage, error)
+		RunPortableForStage(context.Context, string, string, string, string, map[string]any) (any, error)
 	}
 	evidencePolicy   browser.Policy
 	scholarEndpoints scholarlyEndpoints
@@ -202,7 +204,7 @@ func (server *Server) toolDefinitions() []map[string]any {
 			"kind": map[string]any{"type": "string", "enum": []string{"entity", "assertion"}},
 			"id":   map[string]any{"type": "string", "minLength": 1},
 		}, "kind", "id"),
-		definition("tool_package_propose", "Propose a project-scoped skill or declarative HTTPS JSON internal MCP adapter when the current task needs a reusable tool. This creates an immutable pending proposal only. After user review and activation in Tool Studio, both kinds appear in tool_catalog immediately; read Skill files with tool_get and invoke MCP adapters with tool_run.", map[string]any{
+		definition("tool_package_propose", "Propose a project-scoped Skill or declarative MCP package when a reusable capability is genuinely missing. MCP schema v1 is HTTPS JSON GET; schema v2 may describe one official Windows x64 portable EXE/ZIP plus a bounded argv/stdin/stdout adapter. This call only creates an immutable proposal. A v2 result includes install_approval, which must be passed unchanged to the user-gated tool_package_install call before use.", map[string]any{
 			"kind":         map[string]any{"type": "string", "enum": []string{"skill", "mcp"}},
 			"name":         map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
 			"display_name": map[string]any{"type": "string", "minLength": 1, "maxLength": 80},
@@ -210,11 +212,20 @@ func (server *Server) toolDefinitions() []map[string]any {
 			"version":      map[string]any{"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-z0-9.-]+)?$"},
 			"files":        map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string", "minLength": 1}, "content": map[string]any{"type": "string", "minLength": 1}}, "required": []string{"path", "content"}, "additionalProperties": false}},
 		}, "kind", "name", "display_name", "description", "version", "files"),
-		definition("tool_catalog", "List user-approved Skills and declarative MCP tools available to this project, including package ids, hashes, and MCP input schemas.", nil),
+		definition("tool_package_install", "Request explicit user approval to download, hash-verify, materialize, probe, and activate an already-proposed portable CLI package. Every field must exactly match install_approval returned by tool_package_propose. The approval grants use only to the current run and stage attempt; changed bytes, source, adapter, or permissions require a new package and approval.", map[string]any{
+			"package_id":                   map[string]any{"type": "string", "pattern": "^tool_[a-f0-9]{32}$"},
+			"package_sha256":               map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"},
+			"approval_sha256":              map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"},
+			"source_url":                   map[string]any{"type": "string", "pattern": "^https://"},
+			"payload_sha256":               map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"},
+			"publisher":                    map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
+			"accept_same_user_native_code": map[string]any{"type": "boolean", "const": true},
+		}, "package_id", "package_sha256", "approval_sha256", "source_url", "payload_sha256", "publisher", "accept_same_user_native_code"),
+		definition("tool_catalog", "List user-approved Skills, HTTPS adapters, and ready portable CLI tools available to this project, including package ids, hashes, and input schemas.", nil),
 		definition("tool_get", "Read the exact hash-verified files of one user-approved project Skill returned by tool_catalog.", map[string]any{
 			"package_id": map[string]any{"type": "string", "pattern": "^tool_[a-f0-9]{32}$"},
 		}, "package_id"),
-		definition("tool_run", "Run one user-approved project tool from tool_catalog through AetherOps' internal SSRF-safe HTTPS JSON boundary. The network action requires user approval and returned JSON is discovery output until evidence_capture reads back the source_url.", map[string]any{
+		definition("tool_run", "Run one approved project tool from tool_catalog through AetherOps' fixed interpreter. HTTPS adapters retain the SSRF-safe GET boundary. Portable CLI adapters require an exact install grant for this stage, run under Job Object supervision with bounded argv/stdin/stdout/time, and are never replayed after an uncertain outcome. Returned data is not evidence by itself.", map[string]any{
 			"package_id": map[string]any{"type": "string", "pattern": "^tool_[a-f0-9]{32}$"},
 			"tool":       map[string]any{"type": "string", "minLength": 1},
 			"input":      map[string]any{"type": "object", "additionalProperties": true},
@@ -247,7 +258,14 @@ func toolAnnotations(name string) map[string]any {
 	case "memory_get", "knowledge_sparql", "knowledge_get", "tool_catalog", "tool_get":
 		annotations = annotationSet{readOnly: true, idempotent: true}
 	case "tool_run":
-		annotations = annotationSet{readOnly: true, openWorld: true}
+		// The selected adapter can be a native portable CLI, so the generic
+		// entrypoint must never advertise itself as read-only.
+		annotations = annotationSet{openWorld: true}
+	case "tool_package_install":
+		// Exact package installation is idempotent, but it downloads and probes
+		// native code. It is intentionally absent from the automatic approval
+		// allowlist and therefore always presents the user-visible boundary.
+		annotations = annotationSet{idempotent: true, openWorld: true}
 	case "evidence_capture", "tool_package_propose",
 		"artifact_publish_plan", "artifact_publish_evidence",
 		"artifact_publish_report", "artifact_publish_review":
@@ -337,7 +355,27 @@ func (server *Server) call(ctx context.Context, name string, raw json.RawMessage
 		if err := decodeStrictToolArgs(raw, &arguments); err != nil {
 			return nil, errors.New("invalid tool package proposal")
 		}
-		return server.ToolStudio.ProposeForStage(ctx, capability.RunID, capability.StageAttemptID, toolstudio.Proposal{Kind: arguments.Kind, Name: arguments.Name, DisplayName: arguments.DisplayName, Description: arguments.Description, Version: arguments.Version, Files: arguments.Files})
+		pkg, err := server.ToolStudio.ProposeForStage(ctx, capability.RunID, capability.StageAttemptID, toolstudio.Proposal{Kind: arguments.Kind, Name: arguments.Name, DisplayName: arguments.DisplayName, Description: arguments.Description, Version: arguments.Version, Files: arguments.Files})
+		if err != nil {
+			return nil, err
+		}
+		approval, approvalErr := toolstudio.ExpectedInstallApproval(pkg)
+		if approvalErr == nil {
+			return map[string]any{"package": pkg, "install_approval": approval, "next_action": "call tool_package_install and wait for the user's exact approval"}, nil
+		}
+		return pkg, nil
+	case "tool_package_install":
+		if server.ToolStudio == nil {
+			return nil, errors.New("tool studio is unavailable")
+		}
+		var arguments struct {
+			capabilityArgs
+			toolstudio.InstallApproval
+		}
+		if err := decodeStrictToolArgs(raw, &arguments); err != nil {
+			return nil, errors.New("invalid portable tool install approval")
+		}
+		return server.ToolStudio.InstallForStage(ctx, capability.RunID, capability.StageAttemptID, arguments.InstallApproval)
 	case "tool_catalog":
 		return managedToolCatalog(ctx, server.DB, projectID)
 	case "tool_get":
@@ -371,7 +409,7 @@ func (server *Server) call(ctx context.Context, name string, raw json.RawMessage
 		if err != nil {
 			return nil, errors.New("managed tool input is invalid")
 		}
-		return executeManagedTool(ctx, server.DB, server.evidencePolicy, arguments.PackageID, arguments.Tool, encoded)
+		return executeManagedTool(ctx, server.DB, server.evidencePolicy, server.ToolStudio, arguments.PackageID, arguments.Tool, encoded)
 	case "memory_search":
 		if server.Embedder == nil {
 			return nil, errors.New("OpenAI embeddings are not configured")

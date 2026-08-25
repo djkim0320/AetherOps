@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/id"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/id"
 )
 
 func (db *DB) CreateToolPackage(ctx context.Context, pkg core.ToolPackage) (core.ToolPackage, error) {
@@ -83,7 +83,18 @@ func (db *DB) ListToolPackages(ctx context.Context, projectID string) ([]core.To
 		}
 		packages = append(packages, pkg)
 	}
-	return packages, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range packages {
+		if err := db.attachLatestToolInstallation(ctx, &packages[index]); err != nil {
+			return nil, err
+		}
+	}
+	return packages, nil
 }
 
 func (db *DB) ActiveToolPackages(ctx context.Context, kind string) ([]core.ToolPackage, error) {
@@ -100,7 +111,18 @@ func (db *DB) ActiveToolPackages(ctx context.Context, kind string) ([]core.ToolP
 		}
 		packages = append(packages, pkg)
 	}
-	return packages, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range packages {
+		if err := db.attachLatestToolInstallation(ctx, &packages[index]); err != nil {
+			return nil, err
+		}
+	}
+	return packages, nil
 }
 
 func (db *DB) ToolPackage(ctx context.Context, projectID, packageID string, includeFiles bool) (core.ToolPackage, error) {
@@ -110,8 +132,14 @@ func (db *DB) ToolPackage(ctx context.Context, projectID, packageID string, incl
 	}
 	if includeFiles {
 		pkg.Files, err = db.toolPackageFiles(ctx, packageID)
+		if err != nil {
+			return core.ToolPackage{}, err
+		}
 	}
-	return pkg, err
+	if err := db.attachLatestToolInstallation(ctx, &pkg); err != nil {
+		return core.ToolPackage{}, err
+	}
+	return pkg, nil
 }
 
 func (db *DB) ActiveToolPackageByID(ctx context.Context, packageID string) (core.ToolPackage, error) {
@@ -120,7 +148,27 @@ func (db *DB) ActiveToolPackageByID(ctx context.Context, packageID string) (core
 		return core.ToolPackage{}, err
 	}
 	pkg.Files, err = db.toolPackageFiles(ctx, packageID)
-	return pkg, err
+	if err != nil {
+		return core.ToolPackage{}, err
+	}
+	if err := db.attachLatestToolInstallation(ctx, &pkg); err != nil {
+		return core.ToolPackage{}, err
+	}
+	return pkg, nil
+}
+
+func (db *DB) attachLatestToolInstallation(ctx context.Context, pkg *core.ToolPackage) error {
+	installation, err := scanToolInstallation(db.sql.QueryRowContext(ctx, toolInstallationSelect+`
+WHERE package_id=? ORDER BY created_at DESC,id DESC LIMIT 1`, pkg.ID))
+	if errors.Is(err, sql.ErrNoRows) {
+		pkg.Installation = nil
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	pkg.Installation = &installation
+	return nil
 }
 
 func (db *DB) toolPackageFiles(ctx context.Context, packageID string) ([]core.ToolPackageFile, error) {
@@ -152,14 +200,14 @@ func (db *DB) ActivateToolPackage(ctx context.Context, projectID, packageID stri
 	if err != nil {
 		return core.ToolPackage{}, err
 	}
-	if pkg.State != "pending_approval" && pkg.State != "disabled" {
+	if pkg.State != "pending_approval" && pkg.State != "disabled" && pkg.State != "failed" {
 		return core.ToolPackage{}, errors.New("tool package is not awaiting activation")
 	}
 	now := time.Now().UTC()
 	if _, err = tx.ExecContext(ctx, `UPDATE tool_packages SET state='disabled',requires_restart=0,updated_at=? WHERE project_id=? AND name=? AND state='active'`, formatTime(now), projectID, pkg.Name); err != nil {
 		return core.ToolPackage{}, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE tool_packages SET state='active',requires_restart=0,error='',updated_at=?,activated_at=? WHERE id=? AND project_id=? AND state IN ('pending_approval','disabled')`, formatTime(now), formatTime(now), packageID, projectID)
+	result, err := tx.ExecContext(ctx, `UPDATE tool_packages SET state='active',requires_restart=0,error='',updated_at=?,activated_at=? WHERE id=? AND project_id=? AND state IN ('pending_approval','disabled','failed')`, formatTime(now), formatTime(now), packageID, projectID)
 	if err != nil {
 		return core.ToolPackage{}, err
 	}

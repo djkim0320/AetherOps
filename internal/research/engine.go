@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,10 +20,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 // researchTurnTimeout is deliberately fixed in the core rather than sourced
@@ -551,6 +552,18 @@ func (engine *Engine) plan(ctx context.Context, run core.Run) (core.ResearchPlan
 	if err != nil {
 		return plan, err
 	}
+	var remediation *researchRemediationInput
+	latestRemediation, remediationErr := engine.db.LatestResearchRemediation(ctx, run.ID)
+	if remediationErr == nil {
+		remediation = &researchRemediationInput{
+			Cycle: latestRemediation.Cycle, Action: latestRemediation.Action,
+			Summary:          latestRemediation.Summary,
+			RevisionRequests: append([]string(nil), latestRemediation.RevisionRequests...),
+			Tasks:            append([]core.ReviewRemediationTask(nil), latestRemediation.Tasks...),
+		}
+	} else if !errors.Is(remediationErr, sql.ErrNoRows) {
+		return plan, fmt.Errorf("load research remediation context: %w", remediationErr)
+	}
 	recoveryFeedback := ""
 	for recoveryAttempt := 1; recoveryAttempt <= maxPlanCapabilityRecoveryAttempts; recoveryAttempt++ {
 		plan = core.ResearchPlan{}
@@ -558,7 +571,7 @@ func (engine *Engine) plan(ctx context.Context, run core.Run) (core.ResearchPlan
 			ctx, run, core.StagePlan, 0, run.MainThreadID, profile,
 			core.PlanSchema(), planInput{
 				Question: run.Question, EngineeringPolicy: engineeringPlanningPolicy,
-				CapabilityRecoveryFeedback: recoveryFeedback,
+				CapabilityRecoveryFeedback: recoveryFeedback, ResearchRemediation: remediation,
 			}, "research.plan",
 			func(output json.RawMessage) error {
 				candidate, err := decodeStrict[core.ResearchPlan](output)
@@ -598,13 +611,9 @@ func (engine *Engine) plan(ctx context.Context, run core.Run) (core.ResearchPlan
 		); checkpointErr != nil {
 			return plan, errors.Join(err, fmt.Errorf("prepare PLAN contract retry: %w", checkpointErr))
 		}
-		activated, activationErr := engine.activatePlanRecoverySkills(context.WithoutCancel(ctx), run)
-		if activationErr != nil {
-			return plan, errors.Join(err, fmt.Errorf("activate bounded PLAN recovery skills: %w", activationErr))
-		}
 		recoveryFeedback = fmt.Sprintf(
-			"PLAN attempt %d was rejected by the deterministic Go contract: %v. Do not repeat the same unsupported plan and do not silently narrow the user's scope. Re-read tool_catalog and the typed engineering capability descriptions. Compose bounded repeated uses of an existing typed tool through schema-supported declarative fields such as operating_points. If a reusable instruction capability is genuinely missing, propose a project Skill; same-run hash-validated Skill proposals may be activated before this retry. External HTTPS adapters, new executables, arbitrary commands, and write-capable tools still require user approval. Newly activated same-run skills: %s.",
-			recoveryAttempt, err, strings.Join(activated, ", "),
+			"PLAN attempt %d was rejected by the deterministic Go contract: %v. Do not repeat the same unsupported plan and do not silently narrow the user's scope. Re-read tool_catalog and the typed engineering capability descriptions. Compose bounded repeated uses of an existing typed tool through schema-supported declarative fields such as operating_points. A proposal is never approval. If a portable CLI is genuinely required, propose the complete v2 manifest, call tool_package_install, wait for the user's exact approval, then confirm activation with tool_catalog before retrying the plan. Pending Skills and adapters remain unavailable until the user activates them.",
+			recoveryAttempt, err,
 		)
 	}
 	return plan, err
@@ -624,26 +633,6 @@ func isRecoverablePlanContractError(err error) bool {
 		}
 	}
 	return false
-}
-
-func (engine *Engine) activatePlanRecoverySkills(ctx context.Context, run core.Run) ([]string, error) {
-	packages, err := engine.db.ListToolPackages(ctx, run.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	activated := make([]string, 0)
-	for _, pkg := range packages {
-		if pkg.State != "pending_approval" || pkg.Kind != "skill" || pkg.SourceRunID != run.ID ||
-			strings.TrimSpace(pkg.SourceStageAttemptID) == "" {
-			continue
-		}
-		current, err := engine.db.ActivateToolPackage(ctx, run.ProjectID, pkg.ID)
-		if err != nil {
-			return nil, err
-		}
-		activated = append(activated, current.Name+"@"+current.Version)
-	}
-	return activated, nil
 }
 
 func (engine *Engine) collect(
@@ -863,8 +852,11 @@ func (engine *Engine) ensureEngineeringVerification(
 func (engine *Engine) xfoilScreeningJobIDs(ctx context.Context, runID string) ([]string, int, error) {
 	rows, err := engine.db.SQL().QueryContext(ctx, `
 SELECT id,status,spec_json
-FROM engineering_jobs
+FROM engineering_jobs j
 WHERE run_id=? AND operation='xfoil_polar'
+  AND EXISTS(SELECT 1 FROM stage_attempts s
+             WHERE s.id=j.stage_attempt_id AND s.run_id=j.run_id
+               AND s.status<>'superseded')
 ORDER BY created_at,id`, runID)
 	if err != nil {
 		return nil, 0, err
@@ -967,6 +959,7 @@ SELECT j.id,j.operation,j.status,j.spec_json,j.receipt_artifact_id
 FROM engineering_jobs j
 JOIN stage_attempts s ON s.id=j.stage_attempt_id AND s.run_id=j.run_id
 WHERE j.run_id=? AND s.stage='collect' AND s.logical_ordinal=?
+	  AND s.status<>'superseded'
 	`,
 		runID, core.EngineeringVerificationOrdinal,
 	)
@@ -1313,6 +1306,31 @@ func (engine *Engine) runReviewCycles(
 				return engine.abort(ctx, run, err)
 			}
 			return completed, nil
+		}
+		if verdict.EffectiveRemediationAction().RestartsResearch() {
+			run, err = engine.ensureReviewing(ctx, run)
+			if err != nil {
+				return engine.abort(ctx, run, err)
+			}
+			preparedRun, _, prepareErr := engine.db.PrepareResearchRemediation(
+				ctx, run.ID, run.Revision, cycle, verdict,
+			)
+			if errors.Is(prepareErr, store.ErrResearchRemediationLimit) {
+				completed, transitionErr := engine.transition(ctx, run, core.RunQualityFailed)
+				if transitionErr != nil {
+					return engine.abort(ctx, run, errors.Join(prepareErr, transitionErr))
+				}
+				return completed, nil
+			}
+			if prepareErr != nil {
+				return engine.abort(ctx, run, fmt.Errorf("prepare research remediation: %w", prepareErr))
+			}
+			run = preparedRun
+			remediationPlan, err := engine.plan(ctx, run)
+			if err != nil {
+				return engine.abort(ctx, run, fmt.Errorf("replan after review: %w", err))
+			}
+			return engine.continueAfterPlan(ctx, run, remediationPlan, nil)
 		}
 		if cycle == core.MaxRevisions {
 			run, err = engine.ensureReviewing(ctx, run)
@@ -1858,9 +1876,16 @@ func stagePrompt(stage core.Stage, runID, attemptID string, input []byte) string
 	if err != nil {
 		panic("fixed research stage envelope could not be encoded: " + err.Error())
 	}
-	instructions := "Return only a JSON object that conforms exactly to the supplied response schema. Use run_id and stage_attempt_id for every AetherOps internal MCP call. Bundled aetherops_engineering tools are first-party capabilities and are intentionally absent from aetherops_internal.tool_catalog; call a matching bundled engineering tool directly and never use an empty project tool catalog to declare that bundled capability unavailable. Use aetherops_internal.tool_catalog only to discover optional user-approved project extensions. Read an approved Skill with tool_get and invoke an approved declarative MCP adapter with tool_run only when the bundled tools do not cover the operation. If a genuinely reusable capability is missing, you may call tool_package_propose. A proposal is not approved merely because it was submitted: do not claim installation or call it until tool_catalog confirms activation. Never retry through arbitrary code; continue with bundled or approved tools or state the limitation while the user reviews it in Tool Studio.\n"
+	instructions := "Return only a JSON object that conforms exactly to the supplied response schema. Use run_id and stage_attempt_id for every AetherOps internal MCP call. Bundled aetherops_engineering tools are first-party capabilities and are intentionally absent from aetherops_internal.tool_catalog; call a matching bundled engineering tool directly and never use an empty project tool catalog to declare that bundled capability unavailable. Use aetherops_internal.tool_catalog only to discover optional user-approved project extensions. Read an approved Skill with tool_get and invoke an approved declarative MCP adapter with tool_run only when the bundled tools do not cover the operation. If a genuinely reusable capability is missing, first prove that no bundled or active project tool covers it. You may then call tool_package_propose. A proposal is never approval. For a portable Windows x64 CLI, the proposal must be an aetherops_tool_package_v2 MCP manifest that declares the official HTTPS source, exact payload SHA-256 and size, publisher and license, portable_exe or portable_zip entrypoint, literal/input-token argv adapter, bounded stdin/output/timeout, side-effect-free probe, and the truthful same-Windows-user native-code permission warning. Use only an official portable binary with a published exact hash; never propose an installer, MSI, package manager, npm/pip package, shell script, service, listener, generated executable code, or PATH/registry mutation. After proposal, pass the returned install_approval fields unchanged to tool_package_install and wait for the user's decision. Only a successful install result and subsequent tool_catalog entry authorize tool_run in this exact stage. Any source, byte, adapter, or permission change requires a new proposal and approval. Never retry through arbitrary code; continue with bundled or approved tools or state the limitation while the user reviews it in Tool Studio.\n"
 	if stage == core.StagePlan {
 		instructions += "PLAN XFOIL SCREENING contract: the typed XFOIL capability supports one NACA four-digit baseline with a sealed plain-flap candidate set and a bounded declarative operating-point matrix. Arbitrary coordinate input, non-NACA-four-digit airfoils, and comparisons across different airfoil families remain unsupported. For one condition, use the required scalar reynolds, mach, ncrit, target_cl, and minimum_cm fields and return operating_points as an empty array. For several conditions, populate operating_points with every exact condition; the scalar fields identify the primary/default point and must remain valid. The backend authorizes the Cartesian product of operating_points and candidate_flap_deflections_deg, capped at 64 calls. Use this composition to solve multi-Reynolds or multi-target-CL work instead of stopping or shrinking scope. Set xfoil_screening to the exact immutable numerical contract, including candidates, every operating point, solver controls, geometry, objective, and constraints. If the task truly cannot be represented even by this bounded matrix, state the unsupported capability so validation fails before COLLECT. If no XFOIL work is required, set xfoil_screening to null. COLLECT is fail-closed: owner ordinal 0 must execute exactly the authorized matrix, and missing, duplicate, additional, failed, or condition-changed jobs invalidate it.\n"
+		var marker struct {
+			ResearchRemediation *researchRemediationInput `json:"research_remediation"`
+		}
+		_ = json.Unmarshal(input, &marker)
+		if marker.ResearchRemediation != nil {
+			instructions += "REMEDIATION PLAN contract: REVIEW proved that the previous active research cycle could not be repaired from its existing evidence. Build a fresh complete plan that directly closes every supplied remediation task. Re-authorize and rerun every required solver or tool through the new PLAN contract; never assume a computation from the superseded cycle is active evidence. Do not merely rewrite the previous report and do not silently omit a requested analysis.\n"
+		}
 	}
 	if stage == core.StageCollect {
 		var marker struct {
@@ -2014,9 +2039,18 @@ func orderedEvidence(plan core.ResearchPlan, evidence map[string]core.EvidenceBu
 }
 
 type planInput struct {
-	Question                   string `json:"question"`
-	EngineeringPolicy          string `json:"engineering_policy"`
-	CapabilityRecoveryFeedback string `json:"capability_recovery_feedback,omitempty"`
+	Question                   string                    `json:"question"`
+	EngineeringPolicy          string                    `json:"engineering_policy"`
+	CapabilityRecoveryFeedback string                    `json:"capability_recovery_feedback,omitempty"`
+	ResearchRemediation        *researchRemediationInput `json:"research_remediation,omitempty"`
+}
+
+type researchRemediationInput struct {
+	Cycle            int                          `json:"cycle"`
+	Action           core.ReviewRemediationAction `json:"action"`
+	Summary          string                       `json:"summary"`
+	RevisionRequests []string                     `json:"revision_requests"`
+	Tasks            []core.ReviewRemediationTask `json:"tasks"`
 }
 
 type collectInput struct {
@@ -2043,7 +2077,7 @@ const reportEvidencePolicy = "Set evidence_ids to every evidence[].workstream_id
 
 const knowledgeReviewPolicy = "Review the report and knowledge_patch together. Set knowledge_integrity.evidence_integrity_percent to 100 only when every handle reads back exactly, and unsupported_assertions to the exact count of assertions not supported by that evidence. Raw SPARQL results alone never support a report claim. " + engineeringVerificationContractPolicy
 
-const reviewScoringPolicy = "Score every axis on an ordinal quality scale where 1 is worst and 5 is best; never treat 1 as first place or highest quality. Passing requires citation integrity 100%, knowledge evidence integrity 100%, zero unsupported assertions, zero critical errors, an arithmetic mean of at least 4.0, and every axis at least 3. When report.engineering_assessment is present, task_fulfillment, completeness, and clarity_and_reproducibility must each be at least 4; an inconclusive scientific outcome may pass only when the report accurately explains the failed conclusion gates. If any condition fails, include at least one concrete, actionable revision_request that explains what must change. If the report is fully supported and your summary says it is complete and consistent, use correspondingly high scores rather than 1s."
+const reviewScoringPolicy = "Score every axis on an ordinal quality scale where 1 is worst and 5 is best; never treat 1 as first place or highest quality. Passing requires citation integrity 100%, knowledge evidence integrity 100%, zero unsupported assertions, zero critical errors, an arithmetic mean of at least 4.0, and every axis at least 3. When report.engineering_assessment is present, task_fulfillment, completeness, and clarity_and_reproducibility must each be at least 4; an inconclusive scientific outcome may pass only when the report accurately explains the failed conclusion gates. If any condition fails, include at least one concrete, actionable revision_request that explains what must change. Set remediation_action=none only when the report passes. Every failing review must select additional_research or replan; report-only revision is not available in the current workflow. Use additional_research when the scope is sound but more evidence, measurement, parameter sweep, solver execution, tool call, or independent verification is needed. Use replan when the current workstreams, scope, acceptance criteria, or executable engineering contract are wrong. Provide remediation_tasks with concrete objectives, required evidence, and whether engineering execution is required. AetherOps will seal the current cycle, create a fresh PLAN, rerun collection/analysis, merge a new report, and only then invoke a new REVIEW. Never ask prose editing to invent missing results. If the report is fully supported and your summary says it is complete and consistent, use correspondingly high scores rather than 1s."
 
 const engineeringReportPolicy = "For XFOIL optimization only, AetherOps deterministically assembles the interpolation lineage table, three comparison figures, independent-execution provenance, engineering_completeness metadata, and deterministic appendix after your structured report is returned. Interpret verified XFOIL results and state limitations, but do not invent or transcribe raw polar rows, graph hashes, execution counts, workspace identities, or retry history. For a planned su2_mesh_study, AetherOps supplies a core-authored engineering_assessment before SYNTHESIZE and appends the identical deterministic assessment and case table after your structured report is returned. Treat assessment.outcome=inconclusive as a successful calculation that does not establish grid independence; never rename it confirmed, omit failed conclusion checks, or let prose override it. Use the receipt's deterministic mesh/quality, final-window stability, surface-spacing, Cp-shock, solver, convergence, and exact-domain metrics. AetherOps attaches every required SU2 config, history, log, mesh, mesh input, surface, and receipt CAS object itself. Distinguish residual-threshold convergence from coefficient stability, and state that shock_x_over_c is the maximum interior |delta Cp/delta x| locator rather than an externally validated shock position. " + engineeringVerificationContractPolicy
 

@@ -21,6 +21,13 @@ export type KnowledgeOntologyStudioProps = {
   onSelectVersion: (version: KnowledgeRecord) => void;
 };
 
+const PREFIX_PRESETS = [
+  { label: "@prefix project:", value: "@prefix project: <urn:aetherops:project:> .\n" },
+  { label: "@prefix rdfs:", value: "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n" },
+  { label: "@prefix owl:", value: "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n" },
+  { label: "@prefix xsd:", value: "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n" }
+];
+
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -81,23 +88,40 @@ export function KnowledgeOntologyStudio({
   const versions = ontologyVersions(status);
   const activeVersion = activeOntologyVersion(status);
 
+  function insertPrefix(prefixText: string) {
+    if (schemaDraft.includes(prefixText.trim())) return;
+    onSchemaDraftChange(prefixText + schemaDraft);
+  }
+
   return (
     <section class="panel knowledge-tool-card ontology-studio-card" aria-label="온톨로지 및 스키마 관리">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">Ontology Lifecycle</p>
+          <p class="eyebrow">Ontology Lifecycle & Schema Management</p>
           <h2>온톨로지 & 스키마 관리</h2>
+        </div>
+
+        <div class="ontology-head-stats">
+          <span class="version-stat-badge">
+            활성 버전: <strong>{activeVersion || "기본 (Default)"}</strong>
+          </span>
+          <span class="count-badge">버전 {versions.length}개</span>
         </div>
       </div>
 
       <div class="ontology-grid">
         {/* Left Column: Import File & Schema Editor */}
         <div class="ontology-left-col">
-          {/* 1. File Upload */}
+          {/* 1. File Upload Section */}
           <div class="ontology-card-section">
-            <h3>RDF/OWL 온톨로지 파일 가져오기</h3>
+            <div class="card-section-head">
+              <h3>RDF/OWL 온톨로지 파일 가져오기</h3>
+              <small>.ttl, .jsonld, .rdf, .owl</small>
+            </div>
             <form onSubmit={onImportOntology} class="knowledge-import-form">
-              <label for="knowledge-ontology-file">파일 선택 (.ttl, .jsonld, .rdf, .owl)</label>
+              <label for="knowledge-ontology-file" class="sr-only">
+                온톨로지 파일 선택
+              </label>
               <input
                 id="knowledge-ontology-file"
                 type="file"
@@ -123,27 +147,53 @@ export function KnowledgeOntologyStudio({
 
           {/* 2. Turtle Schema Interactive Editor */}
           <div class="ontology-card-section">
-            <h3>프로젝트 스키마 편집 (Turtle/RDFS)</h3>
-            <form onSubmit={onImportSchemaDraft}>
-              <label for="knowledge-schema-name">Draft 스키마 이름</label>
-              <input
-                id="knowledge-schema-name"
-                value={schemaDraftName}
-                onInput={(e) => onSchemaDraftNameChange(e.currentTarget.value)}
-              />
+            <div class="card-section-head">
+              <h3>프로젝트 스키마 편집 (Turtle/RDFS)</h3>
+              <small>구조 정의 및 온톨로지 Draft 생성</small>
+            </div>
 
-              <label for="knowledge-schema-source">Turtle 스키마 코드</label>
-              <textarea
-                id="knowledge-schema-source"
-                class="knowledge-code-input"
-                value={schemaDraft}
-                onInput={(e) => onSchemaDraftChange(e.currentTarget.value)}
-                spellcheck={false}
-                rows={9}
-              />
+            <form onSubmit={onImportSchemaDraft} class="schema-draft-form">
+              <div class="schema-draft-name-row">
+                <label for="knowledge-schema-name">Draft 스키마 이름</label>
+                <input
+                  id="knowledge-schema-name"
+                  value={schemaDraftName}
+                  onInput={(e) => onSchemaDraftNameChange(e.currentTarget.value)}
+                  placeholder="예: engineering-v2-draft"
+                />
+              </div>
+
+              {/* Quick Prefix Inserters */}
+              <div class="prefix-presets-row">
+                <span>빠른 접두사:</span>
+                {PREFIX_PRESETS.map((p) => (
+                  <button
+                    type="button"
+                    key={p.label}
+                    class="preset-chip"
+                    onClick={() => insertPrefix(p.value)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              <div class="schema-code-wrapper">
+                <label for="knowledge-schema-source" class="sr-only">
+                  Turtle 스키마 소스 코드
+                </label>
+                <textarea
+                  id="knowledge-schema-source"
+                  class="knowledge-code-input schema-code-area"
+                  value={schemaDraft}
+                  onInput={(e) => onSchemaDraftChange(e.currentTarget.value)}
+                  spellcheck={false}
+                  rows={10}
+                />
+              </div>
 
               <div class="knowledge-form-footer">
-                <span>지원되는 RDFS/OWL 부분집합만 검증하며, 성공해도 자동 활성화하지 않습니다.</span>
+                <span>RDFS/OWL 부분집합 검증 후 안전하게 draft로 등록됩니다.</span>
                 <button
                   class="button small"
                   type="submit"
@@ -160,7 +210,10 @@ export function KnowledgeOntologyStudio({
         <div class="ontology-right-col">
           {/* Validation Preview */}
           <div class="ontology-card-section">
-            <h3>검증 미리보기</h3>
+            <div class="card-section-head">
+              <h3>검증 미리보기</h3>
+              <small>Triple · Term · Axiom 통계 및 SHA-256</small>
+            </div>
             <JsonBlock
               value={ontologyPreview}
               empty="가져온 draft의 버전 ID, canonical SHA-256, triple·term·axiom 수가 여기에 표시됩니다."
@@ -169,7 +222,11 @@ export function KnowledgeOntologyStudio({
 
           {/* Version Control & Activation */}
           <div class="ontology-card-section">
-            <h3>온톨로지 버전 활성화</h3>
+            <div class="card-section-head">
+              <h3>온톨로지 버전 활성화</h3>
+              <small>프로젝트 전역 적용</small>
+            </div>
+
             <div class="knowledge-version-control">
               <input
                 id="knowledge-version"

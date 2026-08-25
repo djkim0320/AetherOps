@@ -15,14 +15,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
-	"github.com/djkim0320/Aether-claw/internal/evalrunner"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
-	"github.com/djkim0320/Aether-claw/internal/releasetree"
-	"github.com/djkim0320/Aether-claw/internal/securepath"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalrunner"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/releasetree"
+	"github.com/djkim0320/AetherOps/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 const (

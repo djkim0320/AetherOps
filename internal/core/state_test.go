@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-func TestStageExecutionContractHashMatchesV9Literal(t *testing.T) {
-	want := fmt.Sprintf("%x", sha256.Sum256([]byte(StageExecutionContractV10)))
+func TestStageExecutionContractHashMatchesV11Literal(t *testing.T) {
+	want := fmt.Sprintf("%x", sha256.Sum256([]byte(StageExecutionContractV11)))
 	if StageExecutionContractSHA256 != want {
 		t.Fatalf("stage execution contract hash = %q, want %q", StageExecutionContractSHA256, want)
 	}

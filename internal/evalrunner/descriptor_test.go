@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
 )
 
 func TestLoadSessionDescriptorBindsLivePIDExecutableAndSiblingToken(t *testing.T) {

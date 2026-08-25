@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 // These deterministic protocol fixtures exercise only orchestration state,
@@ -210,6 +210,138 @@ func TestProtocolFixtureWorkflowStateAndArtifacts(t *testing.T) {
 	}
 	if profileCounts[collectorProfile] != 2 || profileCounts[reviewerProfile] != 1 || len(profileCounts) != 2 {
 		t.Fatalf("isolated thread profiles = %v, want collector x2 and reviewer x1", profileCounts)
+	}
+}
+
+func TestFailedReviewReplansCollectsAndMergesBeforeReviewingAgain(t *testing.T) {
+	ctx := context.Background()
+	planCalls := 0
+	reviewCalls := 0
+	base := responderForPlan(2, false)
+	fixture := newProtocolFixture(t, func(ctx context.Context, threadID string, options TurnOptions) (json.RawMessage, error) {
+		switch schemaKind(options.Schema) {
+		case "plan":
+			planCalls++
+			var input planInput
+			if err := json.Unmarshal(promptInput(options.Prompt), &input); err != nil {
+				return nil, err
+			}
+			if planCalls == 1 && input.ResearchRemediation != nil {
+				return nil, errors.New("initial PLAN unexpectedly received remediation")
+			}
+			if planCalls == 2 {
+				if input.ResearchRemediation == nil ||
+					input.ResearchRemediation.Action != core.ReviewRemediationAdditionalResearch ||
+					len(input.ResearchRemediation.Tasks) != 1 ||
+					!input.ResearchRemediation.Tasks[0].RequiresEngineering {
+					return nil, fmt.Errorf("remediation PLAN input = %+v", input.ResearchRemediation)
+				}
+			}
+			if planCalls == 3 && (input.ResearchRemediation == nil ||
+				input.ResearchRemediation.Action != core.ReviewRemediationReplan ||
+				input.ResearchRemediation.Cycle != 2) {
+				return nil, fmt.Errorf("second remediation PLAN input = %+v", input.ResearchRemediation)
+			}
+			return mustJSONValue(testPlan("question", 2))
+		case "review":
+			reviewCalls++
+			if reviewCalls <= 2 {
+				verdict := testVerdict(false)
+				verdict.RemediationAction = core.ReviewRemediationAdditionalResearch
+				if reviewCalls == 2 {
+					verdict.RemediationAction = core.ReviewRemediationReplan
+				}
+				verdict.RemediationTasks = []core.ReviewRemediationTask{{
+					Objective:           "rerun the missing sensitivity analysis",
+					RequiredEvidence:    []string{"fresh solver receipt", "parameter sensitivity"},
+					RequiresEngineering: true,
+				}}
+				return mustJSONValue(verdict)
+			}
+			return mustJSONValue(testVerdict(true))
+		default:
+			return base(ctx, threadID, options)
+		}
+	})
+	engine, database, _, run := openResearchTest(t, fixture)
+
+	completed, err := engine.Execute(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != core.RunSucceeded || planCalls != 3 || reviewCalls != 3 {
+		t.Fatalf("completed=%s plan/review=%d/%d", completed.Status, planCalls, reviewCalls)
+	}
+	remediation, err := database.LatestResearchRemediation(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remediation.Cycle != 2 || remediation.Action != core.ReviewRemediationReplan || len(remediation.Tasks) != 1 {
+		t.Fatalf("remediation = %+v", remediation)
+	}
+	attempts, err := database.ListStageAttempts(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var superseded, activeCompleted, revisions int
+	for _, attempt := range attempts {
+		switch attempt.Status {
+		case "superseded":
+			superseded++
+		case "completed":
+			activeCompleted++
+		default:
+			t.Fatalf("unexpected stage after remediation: %+v", attempt)
+		}
+		if attempt.Stage == core.StageRevise {
+			revisions++
+		}
+	}
+	if superseded != 10 || activeCompleted != 5 || revisions != 0 {
+		t.Fatalf("stage history superseded/active/revise = %d/%d/%d", superseded, activeCompleted, revisions)
+	}
+}
+
+func TestResearchRemediationStopsAfterBoundedFreshCycles(t *testing.T) {
+	ctx := context.Background()
+	base := responderForPlan(1, false)
+	planCalls := 0
+	reviewCalls := 0
+	fixture := newProtocolFixture(t, func(ctx context.Context, threadID string, options TurnOptions) (json.RawMessage, error) {
+		switch schemaKind(options.Schema) {
+		case "plan":
+			planCalls++
+			return mustJSONValue(testPlan("question", 1))
+		case "review":
+			reviewCalls++
+			verdict := testVerdict(false)
+			verdict.RemediationAction = core.ReviewRemediationAdditionalResearch
+			verdict.RemediationTasks = []core.ReviewRemediationTask{{
+				Objective:        "collect a genuinely missing source",
+				RequiredEvidence: []string{"new primary evidence"},
+			}}
+			return mustJSONValue(verdict)
+		default:
+			return base(ctx, threadID, options)
+		}
+	})
+	engine, database, _, run := openResearchTest(t, fixture)
+	completed, err := engine.Execute(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != core.RunQualityFailed {
+		t.Fatalf("run status = %s, want quality_failed", completed.Status)
+	}
+	if planCalls != core.MaxResearchRemediations+1 || reviewCalls != core.MaxResearchRemediations+1 {
+		t.Fatalf("plan/review calls = %d/%d", planCalls, reviewCalls)
+	}
+	count, err := database.ResearchRemediationCount(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != core.MaxResearchRemediations {
+		t.Fatalf("remediation cycles = %d, want %d", count, core.MaxResearchRemediations)
 	}
 }
 
@@ -3504,7 +3636,7 @@ func testVerdict(passes bool) core.ReviewVerdict {
 	if !passes {
 		unsupportedAssertions = 1
 	}
-	return core.ReviewVerdict{
+	verdict := core.ReviewVerdict{
 		CitationIntegrityPercent: 100,
 		KnowledgeIntegrity: &core.KnowledgeIntegrity{
 			EvidenceIntegrityPercent: 100,
@@ -3519,9 +3651,15 @@ func testVerdict(passes bool) core.ReviewVerdict {
 			ReasoningAndUncertainty:   4,
 			ClarityAndReproducibility: 4,
 		},
-		RevisionRequests: []string{"improve citation"},
-		Summary:          "review",
+		RevisionRequests:  []string{"improve citation"},
+		RemediationAction: core.ReviewRemediationNone,
+		RemediationTasks:  []core.ReviewRemediationTask{},
+		Summary:           "review",
 	}
+	if !passes {
+		verdict.RemediationAction = core.ReviewRemediationReportRevision
+	}
+	return verdict
 }
 
 func mustJSON(t *testing.T, value any) json.RawMessage {

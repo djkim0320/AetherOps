@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/rag"
 )
 
 func TestKnowledgeNQuadsCarriesSchemaReificationAndTypedValues(t *testing.T) {

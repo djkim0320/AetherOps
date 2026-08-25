@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
 )
 
 func TestParseOptionsRequiresExplicitAuditIdentity(t *testing.T) {

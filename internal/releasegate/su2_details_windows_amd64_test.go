@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/su2host"
+	"github.com/djkim0320/AetherOps/internal/su2host"
 )
 
 func TestIncompatibleSU2EvidenceBindsImmediateLedgerRevision(t *testing.T) {

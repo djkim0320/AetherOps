@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/browser"
-	"github.com/djkim0320/Aether-claw/internal/desktop"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/browser"
+	"github.com/djkim0320/AetherOps/internal/desktop"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
 )
 
 // This opt-in test is the complete actual Windows harness. It is skipped in

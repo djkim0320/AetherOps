@@ -3,7 +3,7 @@ package cleanvmevidence
 import (
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/cleanvmcontract"
+	"github.com/djkim0320/AetherOps/internal/cleanvmcontract"
 )
 
 const (

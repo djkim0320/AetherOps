@@ -71,22 +71,24 @@ export function KnowledgeGraphPanel({
               class={`mode-btn ${mode === "instance" ? "active" : ""}`}
               onClick={() => onModeChange("instance")}
             >
-              인스턴스 그래프
+              프로젝트 지식
             </button>
             <button
               type="button"
               class={`mode-btn ${mode === "ontology" ? "active" : ""}`}
               onClick={() => onModeChange("ontology")}
             >
-              온톨로지 스키마
+              스키마 보기
             </button>
           </div>
         </div>
 
         <div class="knowledge-graph-stats">
-          <span>{filteredGraph.nodes.length} 노드</span>
-          <span>·</span>
-          <span>{filteredGraph.edges.length} 관계</span>
+          <span class="graph-stat-badge">{filteredGraph.nodes.length} 노드</span>
+          <span class="graph-stat-badge">{filteredGraph.edges.length} 관계</span>
+          {selectedEntityIDs.length > 0 && (
+            <span class="graph-stat-badge selection">{selectedEntityIDs.length}개 선택</span>
+          )}
         </div>
       </div>
 
@@ -161,35 +163,35 @@ export function KnowledgeGraphPanel({
       </div>
 
       {/* Multi-selection Bar */}
-      <div class="knowledge-selection-toolbar" aria-live="polite">
-        <div class="selection-indicator">
-          <strong>{selectedEntityIDs.length}개 선택됨</strong>
-          <small>캔버스 드래그 박스 또는 체크박스로 다중 선택</small>
-        </div>
+      {selectedEntityIDs.length > 0 && (
+        <div class="knowledge-selection-toolbar" aria-live="polite">
+          <div class="selection-indicator">
+            <strong>{selectedEntityIDs.length}개 선택됨</strong>
+            <small>캔버스 드래그 박스 또는 체크박스로 다중 선택</small>
+          </div>
 
-        <div class="knowledge-selection-chips">
-          {selectedNodes.map((node) => (
-            <button
-              type="button"
-              key={node.id}
-              class="selection-chip"
-              title={`${node.label} 선택 해제`}
-              onClick={() => onSelectEntity(node.id, true)}
-            >
-              <span>{node.label}</span>
-              <span class="chip-remove" aria-hidden="true">
-                ✕
-              </span>
-            </button>
-          ))}
-        </div>
+          <div class="knowledge-selection-chips">
+            {selectedNodes.map((node) => (
+              <button
+                type="button"
+                key={node.id}
+                class="selection-chip"
+                title={`${node.label} 선택 해제`}
+                onClick={() => onSelectEntity(node.id, true)}
+              >
+                <span>{node.label}</span>
+                <span class="chip-remove" aria-hidden="true">
+                  ✕
+                </span>
+              </button>
+            ))}
+          </div>
 
-        {selectedEntityIDs.length > 0 && (
           <button class="button secondary small" type="button" onClick={onClearSelection}>
             선택 해제
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Truncation Warning */}
       {graph.truncated && (

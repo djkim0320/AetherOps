@@ -14,7 +14,6 @@ export type SettingsViewProps = {
   connection: Connection;
   coreReady: boolean;
   busy: string | null;
-  onProjectDeleted: (casCleanupPending: number) => Promise<void>;
 };
 
 function firstText(source: unknown, ...keys: string[]): string | undefined {
@@ -42,8 +41,7 @@ export function SettingsView({
   runtimeUpdate,
   connection,
   coreReady,
-  busy,
-  onProjectDeleted
+  busy
 }: SettingsViewProps) {
   const [showApiKey, setShowApiKey] = useState(false);
   const isRequestingCode = busy === "device-code";
@@ -199,7 +197,6 @@ export function SettingsView({
       <LifecycleControls
         project={selectedProject}
         connected={connection === "connected"}
-        onProjectDeleted={onProjectDeleted}
       />
     </div>
   );

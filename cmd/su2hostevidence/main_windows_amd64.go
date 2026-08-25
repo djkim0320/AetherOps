@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/su2hostevidence"
+	"github.com/djkim0320/AetherOps/internal/su2hostevidence"
 )
 
 func main() {

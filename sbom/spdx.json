@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "AetherOps-0.1.0-alpha.1",
-  "documentNamespace": "https://github.com/djkim0320/Aether-claw/sbom/v0.1.0-alpha.1",
+  "documentNamespace": "https://github.com/djkim0320/AetherOps/sbom/v0.1.0-alpha.1",
   "creationInfo": {
     "creators": [
       "Tool: AetherOps tools/sbom.ps1 + tools/license-sbom.cjs"

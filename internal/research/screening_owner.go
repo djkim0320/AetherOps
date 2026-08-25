@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 const (
@@ -56,6 +56,7 @@ SELECT j.id,j.stage_attempt_id,s.logical_ordinal,s.status,j.status,
 FROM engineering_jobs j
 JOIN stage_attempts s ON s.id=j.stage_attempt_id AND s.run_id=j.run_id
 WHERE j.run_id=? AND j.operation='xfoil_polar'
+	  AND s.status<>'superseded'
 ORDER BY j.created_at,j.id`, runID)
 	if err != nil {
 		return nil, err
@@ -421,7 +422,7 @@ SELECT j.id, s.logical_ordinal, j.status, COALESCE(j.receipt_artifact_id, ''), j
 FROM engineering_jobs j
 JOIN stage_attempts s ON s.id=j.stage_attempt_id AND s.run_id=j.run_id
 WHERE j.run_id=? AND j.operation='xfoil_polar'
-  AND s.stage='collect' AND s.logical_ordinal>=0
+  AND s.stage='collect' AND s.status<>'superseded' AND s.logical_ordinal>=0
   AND s.logical_ordinal<?
 ORDER BY j.created_at,j.id`, runID, core.EngineeringVerificationOrdinal)
 	if err != nil {

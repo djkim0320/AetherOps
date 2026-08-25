@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/engineering"
-	"github.com/djkim0320/Aether-claw/internal/store"
-	"github.com/djkim0320/Aether-claw/internal/toolstudio"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/engineering"
+	"github.com/djkim0320/AetherOps/internal/store"
+	"github.com/djkim0320/AetherOps/internal/toolstudio"
 )
 
 func TestEngineeringVerificationStageRejectsEveryUnrelatedMCPTool(t *testing.T) {
@@ -143,8 +143,8 @@ func TestServerPublishesOnlyThroughActiveStageCapability(t *testing.T) {
 		t.Fatalf("got %d responses, want 4: %s", len(responses), output.String())
 	}
 	listResult := responses[1]["result"].(map[string]any)
-	if tools := listResult["tools"].([]any); len(tools) != 14 {
-		t.Fatalf("tool count = %d, want 14", len(tools))
+	if tools := listResult["tools"].([]any); len(tools) != 15 {
+		t.Fatalf("tool count = %d, want 15", len(tools))
 	}
 	publishResult := responses[2]["result"].(map[string]any)
 	if publishResult["isError"].(bool) {

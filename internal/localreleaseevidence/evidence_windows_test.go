@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/gate0evidence"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/gate0evidence"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
 )
 
 type diagnosticRunner struct {

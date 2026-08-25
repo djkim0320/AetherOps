@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/cas"
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/livee2econtract"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/cas"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/livee2econtract"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 func TestVerifyMCPEvidenceRequiresAtomicOriginMarkerAndCASReadback(t *testing.T) {

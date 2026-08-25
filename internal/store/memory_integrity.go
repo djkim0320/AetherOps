@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/rag"
 )
 
 // VerifyDocumentIndex proves that one adopted material is represented by the

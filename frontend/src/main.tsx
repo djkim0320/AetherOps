@@ -50,6 +50,7 @@ import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { ChatComposer } from "./components/ChatComposer";
 import { ChatWorkspace } from "./components/ChatWorkspace";
 import { FormattedMessage } from "./components/FormattedMessage";
+import { ProjectDeleteDialog } from "./components/ProjectDeleteDialog";
 import { ProjectSessionSidebar } from "./components/ProjectSessionSidebar";
 import { ResearchSummaryRail } from "./components/ResearchSummaryRail";
 import { WorkspaceHeader } from "./components/WorkspaceHeader";
@@ -246,6 +247,9 @@ export function App() {
   const [newProjectName, setNewProjectName] = useState<string>("");
   const [renamingProjectID, setRenamingProjectID] = useState<string>("");
   const [projectNameDraft, setProjectNameDraft] = useState<string>("");
+  const [projectDeleteTarget, setProjectDeleteTarget] = useState<Project | null>(null);
+  const [projectDeleteConfirmation, setProjectDeleteConfirmation] = useState("");
+  const [projectDeleteError, setProjectDeleteError] = useState("");
   const [collapsedProjectIDs, setCollapsedProjectIDs] = useState<string[]>([]);
   const [sessions, setSessions] = useState<ConversationSession[] | null>(null);
   const [selectedSessionID, setSelectedSessionID] = useState<string>("");
@@ -530,6 +534,11 @@ export function App() {
         setContextDetailsOpen(false);
         setSlashMenuOpen(false);
         setDrawerArtifact(null);
+        if (busy !== "project-delete") {
+          setProjectDeleteTarget(null);
+          setProjectDeleteConfirmation("");
+          setProjectDeleteError("");
+        }
       }
     }
     window.addEventListener("keydown", handleGlobalKeyDown);
@@ -575,6 +584,66 @@ export function App() {
       setNotice("프로젝트 이름을 변경했습니다.");
     } catch (err) {
       setActionError(formatApiError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function requestDeleteProject(project: Project) {
+    if (busy !== null || connection !== "connected") return;
+    setProjectDeleteTarget(project);
+    setProjectDeleteConfirmation("");
+    setProjectDeleteError("");
+  }
+
+  async function deleteProject(event: Event) {
+    event.preventDefault();
+    const project = projectDeleteTarget;
+    if (
+      !project ||
+      busy !== null ||
+      connection !== "connected" ||
+      projectDeleteConfirmation !== project.name
+    )
+      return;
+
+    setBusy("project-delete");
+    setActionError(null);
+    setProjectDeleteError("");
+    try {
+      const payload = await del<unknown>(`/api/v1/projects/${encodeURIComponent(project.id)}`, {
+        project_id: project.id,
+        confirm_name: projectDeleteConfirmation
+      });
+      const result = objectFrom(payload);
+      const cleanupPending =
+        typeof result?.cas_cleanup_pending === "number" ? result.cas_cleanup_pending : 0;
+      const remainingProjects = (projects ?? []).filter((candidate) => candidate.id !== project.id);
+      setProjects(remainingProjects);
+      setCollapsedProjectIDs((current) => current.filter((id) => id !== project.id));
+      if (renamingProjectID === project.id) {
+        setRenamingProjectID("");
+        setProjectNameDraft("");
+      }
+      if (selectedProjectID === project.id) {
+        setSelectedProjectID(remainingProjects[0]?.id ?? "");
+        setSelectedSessionID("");
+        setSessions(remainingProjects.length > 0 ? null : []);
+        setRuns([]);
+        setSelectedRunID("");
+        setArtifacts([]);
+        setSelectedArtifactID("");
+      }
+      setNotice(
+        cleanupPending > 0
+          ? `프로젝트를 삭제했습니다. CAS 객체 ${cleanupPending}개는 다음 AetherOps 시작 때 정리합니다.`
+          : "프로젝트를 삭제했습니다."
+      );
+      setProjectDeleteTarget(null);
+      setProjectDeleteConfirmation("");
+      await refreshWorkspace();
+    } catch (err) {
+      setProjectDeleteError(formatApiError(err));
     } finally {
       setBusy(null);
     }
@@ -1010,6 +1079,7 @@ export function App() {
           setRenamingProjectID("");
           setProjectNameDraft("");
         }}
+        onDeleteProject={requestDeleteProject}
         renamingSessionID={renamingSessionID}
         sessionTitleDraft={sessionTitleDraft}
         onSessionTitleDraftChange={setSessionTitleDraft}
@@ -1020,6 +1090,21 @@ export function App() {
         onRenameSession={renameConversationSession}
         onCancelRenameSession={() => setRenamingSessionID("")}
         onDeleteSession={deleteConversationSession}
+      />
+
+      <ProjectDeleteDialog
+        project={projectDeleteTarget}
+        confirmation={projectDeleteConfirmation}
+        busy={busy === "project-delete"}
+        error={projectDeleteError}
+        onConfirmationChange={setProjectDeleteConfirmation}
+        onCancel={() => {
+          if (busy === "project-delete") return;
+          setProjectDeleteTarget(null);
+          setProjectDeleteConfirmation("");
+          setProjectDeleteError("");
+        }}
+        onConfirm={deleteProject}
       />
 
       <main class={view === "workspace" ? "main-content workspace-view" : "main-content"}>
@@ -1336,14 +1421,6 @@ export function App() {
             connection={connection}
             coreReady={coreReady}
             busy={busy}
-            onProjectDeleted={async (casCleanupPending) => {
-              setNotice(
-                casCleanupPending > 0
-                  ? `프로젝트를 삭제했습니다. CAS 객체 ${casCleanupPending}개는 다음 AetherOps 시작 때 정리합니다.`
-                  : "프로젝트를 삭제했습니다."
-              );
-              await refreshWorkspace();
-            }}
           />
         )}
       </main>

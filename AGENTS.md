@@ -12,8 +12,9 @@
 - Bind application HTTP endpoints to loopback only and authenticate every mutating request.
 - The internet WebView2 environment must never receive native host objects or shell web-message bridges.
 - Browser actions are autonomous; arbitrary commands, file writes, and write-type external MCP tools require approval.
-- When an existing tool cannot satisfy a research step, use `tool_package_propose` only for a bounded reusable Skill or declarative HTTPS JSON MCP adapter. Never claim it is active until the user reviews it in Tool Studio and `tool_catalog` confirms it. Read Skills with `tool_get`; invoke adapters with `tool_run`.
+- When an existing tool cannot satisfy a research step, use `tool_package_propose` only for a bounded reusable Skill, declarative HTTPS JSON adapter, or schema-v2 official Windows x64 portable CLI. Portable proposals must fix source URL, payload SHA-256 and size, publisher/license, entrypoint, argv AST, stdin/output limits, timeout, probe, and truthful same-user native-code permissions before approval. Pass the returned identity unchanged to `tool_package_install`; never use installers, package managers, scripts, services, listeners, generated executable adapters, or PATH/registry mutation. Never claim a tool is active until installation succeeds and `tool_catalog` confirms it.
 - Never automatically replay an interrupted Codex turn, browser mutation, form submission, or external write.
+- A failed current-contract REVIEW must never be handled by repeatedly reviewing or rewriting the same evidence. Persist the structured gap, seal the prior cycle as superseded, and run a fresh PLAN -> COLLECT -> MERGE -> REVIEW cycle. Only pre-v11 checkpoint compatibility may enter the legacy report-revision path.
 - Secrets belong in Windows Credential Manager or Codex's dedicated credential store, never in SQLite, logs, prompts, or tracked files.
 - Large bytes enter the content-addressed store only after durable write and SHA-256 verification.
 

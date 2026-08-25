@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/cleanvmcontract"
-	"github.com/djkim0320/Aether-claw/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/cleanvmcontract"
+	"github.com/djkim0320/AetherOps/internal/securepath"
 )
 
 const (

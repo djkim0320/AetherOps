@@ -16,7 +16,7 @@ function Assert-WorkspaceChild([string]$Path) {
     $absolute = [IO.Path]::GetFullPath($Path)
     $prefix = $root.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $absolute.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Runtime build path escaped the AetherOps v2 workspace: $absolute"
+        throw "Runtime build path escaped the AetherOps workspace: $absolute"
     }
     return $absolute
 }

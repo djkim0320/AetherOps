@@ -21,9 +21,9 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/core"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 var (

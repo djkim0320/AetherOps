@@ -2,7 +2,7 @@
 
 package localreleaseevidence
 
-import "github.com/djkim0320/Aether-claw/internal/releasetree"
+import "github.com/djkim0320/AetherOps/internal/releasetree"
 
 const maximumSourceFileBytes = releasetree.MaxFileBytes
 

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 var ErrPlannedEngineeringDenied = errors.New("planned engineering matrix was denied by the user")

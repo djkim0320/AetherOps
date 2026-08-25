@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 // ErrXFOILScreeningOwner is returned when a normal collector other than the

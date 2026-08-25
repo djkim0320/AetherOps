@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
 )
 
 func TestNativeCodexAppServerCommandUsesVerifiedWindowsPackage(t *testing.T) {

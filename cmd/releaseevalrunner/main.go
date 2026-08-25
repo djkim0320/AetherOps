@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/djkim0320/Aether-claw/internal/evalgate"
-	"github.com/djkim0320/Aether-claw/internal/evalrunner"
+	"github.com/djkim0320/AetherOps/internal/evalgate"
+	"github.com/djkim0320/AetherOps/internal/evalrunner"
 )
 
 func main() {

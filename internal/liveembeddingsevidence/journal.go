@@ -13,8 +13,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/djkim0320/Aether-claw/internal/rag"
-	"github.com/djkim0320/Aether-claw/internal/store"
+	"github.com/djkim0320/AetherOps/internal/rag"
+	"github.com/djkim0320/AetherOps/internal/store"
 )
 
 type journalWriter struct {

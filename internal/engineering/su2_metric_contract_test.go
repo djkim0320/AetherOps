@@ -3,7 +3,7 @@ package engineering
 import (
 	"testing"
 
-	"github.com/djkim0320/Aether-claw/internal/core"
+	"github.com/djkim0320/AetherOps/internal/core"
 )
 
 func TestSU2ModelEvidenceUsesTheSharedMetricContract(t *testing.T) {

@@ -29,12 +29,12 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/djkim0320/Aether-claw/internal/buildinfo"
-	"github.com/djkim0320/Aether-claw/internal/codex"
-	"github.com/djkim0320/Aether-claw/internal/processutil"
-	"github.com/djkim0320/Aether-claw/internal/releasegate"
-	managedruntime "github.com/djkim0320/Aether-claw/internal/runtime"
-	"github.com/djkim0320/Aether-claw/internal/securepath"
+	"github.com/djkim0320/AetherOps/internal/buildinfo"
+	"github.com/djkim0320/AetherOps/internal/codex"
+	"github.com/djkim0320/AetherOps/internal/processutil"
+	"github.com/djkim0320/AetherOps/internal/releasegate"
+	managedruntime "github.com/djkim0320/AetherOps/internal/runtime"
+	"github.com/djkim0320/AetherOps/internal/securepath"
 )
 
 const trustConfigSchemaV1 = "aetherops_production_feed_trust_v1"

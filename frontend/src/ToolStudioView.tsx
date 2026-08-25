@@ -1,5 +1,26 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { formatApiError, get, listFrom, post } from "./api";
+
+type ToolInstallation = {
+  id: string;
+  state:
+    | "downloading"
+    | "verifying"
+    | "installing"
+    | "probing"
+    | "ready"
+    | "failed"
+    | "interrupted"
+    | "quarantined";
+  expected_payload_sha256: string;
+  payload_blob_hash?: string;
+  payload_size_bytes: number;
+  installed_tree_sha256?: string;
+  entrypoint?: string;
+  probe_output_blob_hash?: string;
+  error?: string;
+  updated_at: string;
+};
 
 export type ToolPackage = {
   id: string;
@@ -10,11 +31,40 @@ export type ToolPackage = {
   description: string;
   version: string;
   state: "pending_approval" | "active" | "disabled" | "failed";
+  manifest_json?: string;
   package_sha256: string;
   requires_restart: boolean;
   created_at: string;
   error?: string;
+  installation?: ToolInstallation;
   files?: Array<{ path: string; content?: string; content_sha256: string; size: number }>;
+};
+
+type PortableManifest = {
+  schema: "aetherops_tool_package_v2";
+  distribution: {
+    type: "portable_exe" | "portable_zip";
+    url: string;
+    sha256: string;
+    size_bytes: number;
+    publisher: string;
+    source_url: string;
+    license_spdx: string;
+    entrypoint: string;
+    allowed_redirect_hosts?: string[];
+    probe: { argv: string[]; stdout_contains?: string };
+  };
+  permissions: {
+    native_code: true;
+    same_windows_user: true;
+    os_network_sandboxed: false;
+    os_filesystem_sandboxed: false;
+  };
+  tools: Array<{
+    name: string;
+    description: string;
+    action: { type: string; argv?: Array<{ literal?: string; input?: string }>; timeout_seconds?: number };
+  }>;
 };
 
 export type ToolStudioViewProps = {
@@ -22,33 +72,62 @@ export type ToolStudioViewProps = {
   connected: boolean;
 };
 
+const installStates = new Set(["downloading", "verifying", "installing", "probing"]);
+
+function portableManifest(pkg: ToolPackage): PortableManifest | null {
+  if (!pkg.manifest_json) return null;
+  try {
+    const value = JSON.parse(pkg.manifest_json) as PortableManifest;
+    return value.schema === "aetherops_tool_package_v2" && value.distribution ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function stateLabel(pkg: ToolPackage) {
+  const install = pkg.installation?.state;
+  if (install === "downloading") return "다운로드 중";
+  if (install === "verifying") return "해시 검증 중";
+  if (install === "installing") return "설치 중";
+  if (install === "probing") return "호환성 점검 중";
+  if (install === "failed") return "설치 실패";
+  if (install === "interrupted") return "설치 중단";
+  if (install === "quarantined") return "격리됨";
+  if (pkg.state === "pending_approval") return "승인 대기";
+  if (pkg.state === "active") return "활성";
+  if (pkg.state === "disabled") return "비활성";
+  return "실패";
+}
+
+function shortHash(value?: string) {
+  return value ? `${value.slice(0, 12)}…${value.slice(-8)}` : "—";
+}
+
 export function ToolStudioView({ projectID, connected }: ToolStudioViewProps) {
   const [packages, setPackages] = useState<ToolPackage[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<ToolPackage | null>(null);
-  const [stateFilter, setStateFilter] = useState<"all" | "pending_approval" | "active" | "disabled">("all");
+  const [stateFilter, setStateFilter] = useState<"all" | ToolPackage["state"]>("all");
   const [kindFilter, setKindFilter] = useState<"all" | "skill" | "mcp">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  async function refresh() {
+  async function refresh(silent = false) {
     if (!projectID || !connected) {
       setPackages([]);
       return;
     }
-    setBusy("refresh");
+    if (!silent) setBusy("refresh");
     try {
-      const res = await get<unknown>(
-        `/api/v1/projects/${encodeURIComponent(projectID)}/tools`
-      );
-      setPackages(listFrom<ToolPackage>(res, "tools"));
+      const response = await get<unknown>(`/api/v1/projects/${encodeURIComponent(projectID)}/tools`);
+      setPackages(listFrom<ToolPackage>(response, "tools"));
       setError(null);
     } catch (cause) {
       setError(formatApiError(cause));
     } finally {
-      setBusy(null);
+      if (!silent) setBusy(null);
     }
   }
 
@@ -57,26 +136,34 @@ export function ToolStudioView({ projectID, connected }: ToolStudioViewProps) {
     void refresh();
   }, [projectID, connected]);
 
+  const hasLiveInstall = packages?.some((pkg) => installStates.has(pkg.installation?.state ?? "")) ?? false;
+  useEffect(() => {
+    if (!hasLiveInstall) return;
+    const timer = window.setInterval(() => void refresh(true), 1500);
+    return () => window.clearInterval(timer);
+  }, [hasLiveInstall, projectID, connected]);
+
   async function transition(pkg: ToolPackage, action: "activate" | "disable") {
     setBusy(pkg.id);
     setError(null);
     setNotice(null);
     try {
-      await post<ToolPackage>(
+      const updated = await post<ToolPackage>(
         `/api/v1/projects/${encodeURIComponent(projectID)}/tools/${encodeURIComponent(pkg.id)}/${action}`,
-        {}
+        {},
       );
-      if (action === "activate" && reviewing?.id === pkg.id) {
-        setReviewing(null);
-      }
+      setReviewing((current) => (current?.id === pkg.id ? updated : current));
       setNotice(
         action === "activate"
-          ? `도구 패키지 "${pkg.display_name}"을(를) 승인했습니다. 프로젝트 도구 카탈로그에 즉시 적용되었습니다.`
-          : `도구 패키지 "${pkg.display_name}"을(를) 비활성화했습니다.`
+          ? portableManifest(pkg)
+            ? `“${pkg.display_name}”의 정확한 payload를 검증하고 설치했습니다.`
+            : `“${pkg.display_name}”을 프로젝트 도구로 활성화했습니다.`
+          : `“${pkg.display_name}”을 비활성화했습니다.`,
       );
-      await refresh();
+      await refresh(true);
     } catch (cause) {
       setError(formatApiError(cause));
+      await refresh(true);
     } finally {
       setBusy(null);
     }
@@ -86,10 +173,11 @@ export function ToolStudioView({ projectID, connected }: ToolStudioViewProps) {
     setBusy(pkg.id);
     setError(null);
     try {
-      const details = await get<ToolPackage>(
-        `/api/v1/projects/${encodeURIComponent(projectID)}/tools/${encodeURIComponent(pkg.id)}`
+      setReviewing(
+        await get<ToolPackage>(
+          `/api/v1/projects/${encodeURIComponent(projectID)}/tools/${encodeURIComponent(pkg.id)}`,
+        ),
       );
-      setReviewing(details);
     } catch (cause) {
       setError(formatApiError(cause));
     } finally {
@@ -98,316 +186,143 @@ export function ToolStudioView({ projectID, connected }: ToolStudioViewProps) {
   }
 
   async function copyToClipboard(text: string, key: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(null), 2000);
-    } catch {
-      // Fallback
-    }
+    await navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    window.setTimeout(() => setCopiedKey(null), 1600);
   }
 
-  // Filtered list calculation
-  const filteredPackages = packages?.filter((pkg) => {
-    const matchesState = stateFilter === "all" || pkg.state === stateFilter;
-    const matchesKind = kindFilter === "all" || pkg.kind === kindFilter;
-    const q = searchQuery.toLowerCase().trim();
-    const matchesSearch =
-      !q ||
-      pkg.name.toLowerCase().includes(q) ||
-      pkg.display_name.toLowerCase().includes(q) ||
-      pkg.description.toLowerCase().includes(q) ||
-      pkg.package_sha256.toLowerCase().includes(q);
-    return matchesState && matchesKind && matchesSearch;
-  });
-
-  const totalCount = packages?.length ?? 0;
-  const pendingCount = packages?.filter((p) => p.state === "pending_approval").length ?? 0;
-  const activeCount = packages?.filter((p) => p.state === "active").length ?? 0;
-  const skillCount = packages?.filter((p) => p.kind === "skill").length ?? 0;
-  const mcpCount = packages?.filter((p) => p.kind === "mcp").length ?? 0;
+  const filteredPackages = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    return (packages ?? []).filter((pkg) => {
+      const portable = portableManifest(pkg);
+      return (
+        (stateFilter === "all" || pkg.state === stateFilter) &&
+        (kindFilter === "all" || pkg.kind === kindFilter) &&
+        (!query ||
+          [pkg.name, pkg.display_name, pkg.description, pkg.package_sha256, portable?.distribution.publisher]
+            .filter(Boolean)
+            .some((value) => String(value).toLowerCase().includes(query)))
+      );
+    });
+  }, [packages, stateFilter, kindFilter, searchQuery]);
 
   if (!projectID) {
     return (
       <section class="panel empty-state">
         <p class="eyebrow">Tool Studio</p>
         <h2>프로젝트를 먼저 선택하세요</h2>
-        <p>왼쪽 사이드바에서 프로젝트를 선택하면 해당 프로젝트의 확장 도구를 관리할 수 있습니다.</p>
+        <p>프로젝트별 승인 도구와 설치 상태를 여기에서 관리합니다.</p>
       </section>
     );
   }
 
+  const pendingCount = packages?.filter((pkg) => pkg.state === "pending_approval").length ?? 0;
+  const activeCount = packages?.filter((pkg) => pkg.state === "active").length ?? 0;
+  const portableCount = packages?.filter((pkg) => portableManifest(pkg)).length ?? 0;
+
   return (
-    <div class="tool-studio-layout" aria-label="도구 스튜디오 화면">
-      {/* Left Column: Safety Hero & Overview Stats */}
+    <div class="tool-studio-layout" aria-label="도구 스튜디오">
       <section class="panel tool-studio-hero">
         <div class="tool-hero-head">
           <div>
-            <p class="eyebrow">관리형 도구 카탈로그</p>
+            <p class="eyebrow">Project Tool Boundary</p>
             <h2>Tool Studio</h2>
           </div>
-          {pendingCount > 0 && (
-            <span class="tool-pending-alert">승인 대기 {pendingCount}건</span>
-          )}
+          {pendingCount > 0 && <span class="tool-pending-alert">승인 대기 {pendingCount}건</span>}
         </div>
-
         <p class="tool-studio-lead">
-          연구 에이전트가 복합 분석에 필요한 새 기능을 발견하면 스킬 또는 내부 MCP 어댑터 패키지를
-          제안합니다. 모든 제안은 자동 실행되지 않으며, 파일 원문과 SHA-256 해시를 검토하고
-          승인한 뒤에만 현재 프로젝트에 안전하게 적용됩니다.
+          연구에 필요한 기능이 없으면 에이전트가 선언형 호출 어댑터를 먼저 제안합니다. Portable CLI는 사용자가
+          정확한 출처·SHA-256·권한을 승인한 뒤에만 다운로드, 검증, 점검되고 현재 연구 단계에 연결됩니다.
         </p>
-
-        {/* Live Stat Badges */}
         <div class="tool-stats-summary-grid">
-          <div class="tool-stat-box">
-            <span>총 등록 도구</span>
-            <strong>{totalCount}개</strong>
-          </div>
-          <div class="tool-stat-box">
-            <span>활성 도구</span>
-            <strong class="stat-active">{activeCount}개</strong>
-          </div>
-          <div class="tool-stat-box">
-            <span>승인 대기</span>
-            <strong class={pendingCount > 0 ? "stat-pending" : ""}>{pendingCount}개</strong>
-          </div>
-          <div class="tool-stat-box">
-            <span>종류별 구성</span>
-            <strong>
-              Skill {skillCount} · MCP {mcpCount}
-            </strong>
-          </div>
+          <div class="tool-stat-box"><span>전체</span><strong>{packages?.length ?? 0}</strong></div>
+          <div class="tool-stat-box"><span>활성</span><strong class="stat-active">{activeCount}</strong></div>
+          <div class="tool-stat-box"><span>승인 대기</span><strong class={pendingCount ? "stat-pending" : ""}>{pendingCount}</strong></div>
+          <div class="tool-stat-box"><span>Portable CLI</span><strong>{portableCount}</strong></div>
         </div>
-
-        {/* Safety Principles */}
         <div class="tool-safety-grid">
-          <div class="tool-safety-card">
-            <strong>• Skill 확장 원칙</strong>
-            <span>프로젝트 특화 프롬프트 지침 및 도메인 분석 템플릿</span>
-          </div>
-          <div class="tool-safety-card">
-            <strong>• 내부 MCP 어댑터 원칙</strong>
-            <span>인증 및 보안 검증된 공개 HTTPS JSON GET 인터페이스만 허용</span>
-          </div>
-          <div class="tool-safety-card">
-            <strong>• 프로젝트 단위 격리</strong>
-            <span>승인 즉시 현재 프로젝트의 도구 카탈로그에만 안전하게 반영</span>
-          </div>
+          <div class="tool-safety-card"><strong>승인 전에 어댑터 고정</strong><span>URL, payload hash, argv, timeout과 출력 제한까지 승인 해시에 포함합니다.</span></div>
+          <div class="tool-safety-card"><strong>설치 프로그램 제외</strong><span>Portable EXE/ZIP만 허용하며 MSI, npm/pip, 스크립트, 서비스와 PATH 변경은 실행하지 않습니다.</span></div>
+          <div class="tool-safety-card"><strong>같은 단계에서 계속</strong><span>승인 후 새 모델 턴을 만들지 않고 현재 run과 stage attempt에서 도구 호출을 이어갑니다.</span></div>
         </div>
-
-        {notice && (
-          <div class="alert success" role="status">
-            {notice}
-          </div>
-        )}
-        {error && (
-          <div class="alert danger" role="alert">
-            {error}
-          </div>
-        )}
+        <div class="alert warning" role="note">
+          Native CLI는 Job Object로 수명과 자식 프로세스를 관리하지만 아직 AppContainer가 아닙니다. 승인한 바이너리는
+          현재 Windows 사용자 권한으로 실행되며 OS 수준 네트워크·파일시스템 샌드박스를 제공하지 않습니다.
+        </div>
+        {notice && <div class="alert success" role="status">{notice}</div>}
+        {error && <div class="alert danger" role="alert">{error}</div>}
       </section>
 
-      {/* Right Column: Filterable Package Catalog */}
       <section class="panel tool-package-panel">
         <div class="panel-heading tool-panel-head">
           <div class="tool-head-title-row">
-            <div>
-              <p class="eyebrow">패키지 관리</p>
-              <h2>도구 목록 ({filteredPackages?.length ?? 0}/{totalCount})</h2>
-            </div>
-            <button
-              class="button secondary small"
-              onClick={() => void refresh()}
-              disabled={busy === "refresh"}
-            >
-              {busy === "refresh" ? "새로고침 중…" : "새로 고침"}
+            <div><p class="eyebrow">Approved Extensions</p><h2>프로젝트 도구 ({filteredPackages.length})</h2></div>
+            <button class="button secondary small" onClick={() => void refresh()} disabled={busy === "refresh"}>
+              {busy === "refresh" ? "새로고침 중…" : "새로고침"}
             </button>
           </div>
-
-          {/* Search & Multi-facet Filter Bar */}
           <div class="tool-controls-bar">
-            <input
-              type="search"
-              class="tool-search-input"
-              placeholder="도구 이름, 설명, SHA-256 해시 검색…"
-              value={searchQuery}
-              onInput={(e) => setSearchQuery(e.currentTarget.value)}
-            />
-
+            <input class="tool-search-input" type="search" value={searchQuery} onInput={(event) => setSearchQuery(event.currentTarget.value)} placeholder="이름, 설명, 배포자, SHA-256 검색" />
             <div class="tool-filters-row">
-              {/* Kind Tabs */}
               <div class="tool-kind-filter-tabs">
-                <button
-                  type="button"
-                  class={`filter-tab ${kindFilter === "all" ? "active" : ""}`}
-                  onClick={() => setKindFilter("all")}
-                >
-                  종류: 전체
-                </button>
-                <button
-                  type="button"
-                  class={`filter-tab ${kindFilter === "skill" ? "active" : ""}`}
-                  onClick={() => setKindFilter("skill")}
-                >
-                  Skill ({skillCount})
-                </button>
-                <button
-                  type="button"
-                  class={`filter-tab ${kindFilter === "mcp" ? "active" : ""}`}
-                  onClick={() => setKindFilter("mcp")}
-                >
-                  MCP ({mcpCount})
-                </button>
+                {(["all", "skill", "mcp"] as const).map((kind) => (
+                  <button class={`filter-tab ${kindFilter === kind ? "active" : ""}`} type="button" onClick={() => setKindFilter(kind)}>
+                    {kind === "all" ? "모든 종류" : kind === "skill" ? "Skill" : "MCP / CLI"}
+                  </button>
+                ))}
               </div>
-
-              {/* State Tabs */}
               <div class="tool-state-filter-tabs">
-                <button
-                  type="button"
-                  class={`filter-tab ${stateFilter === "all" ? "active" : ""}`}
-                  onClick={() => setStateFilter("all")}
-                >
-                  상태: 전체
-                </button>
-                <button
-                  type="button"
-                  class={`filter-tab ${stateFilter === "pending_approval" ? "active" : ""}`}
-                  onClick={() => setStateFilter("pending_approval")}
-                >
-                  대기 ({pendingCount})
-                </button>
-                <button
-                  type="button"
-                  class={`filter-tab ${stateFilter === "active" ? "active" : ""}`}
-                  onClick={() => setStateFilter("active")}
-                >
-                  활성 ({activeCount})
-                </button>
-                <button
-                  type="button"
-                  class={`filter-tab ${stateFilter === "disabled" ? "active" : ""}`}
-                  onClick={() => setStateFilter("disabled")}
-                >
-                  비활성 ({packages?.filter((p) => p.state === "disabled").length ?? 0})
-                </button>
+                {(["all", "pending_approval", "active", "disabled", "failed"] as const).map((state) => (
+                  <button class={`filter-tab ${stateFilter === state ? "active" : ""}`} type="button" onClick={() => setStateFilter(state)}>
+                    {state === "all" ? "모든 상태" : state === "pending_approval" ? "승인 대기" : state === "active" ? "활성" : state === "disabled" ? "비활성" : "실패"}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
         </div>
 
         {packages === null ? (
-          <p class="tool-muted">도구 제안 목록을 불러오는 중입니다…</p>
-        ) : (filteredPackages?.length ?? 0) === 0 ? (
-          <div class="empty-state">
-            <strong>
-              {searchQuery || stateFilter !== "all" || kindFilter !== "all"
-                ? "조건에 일치하는 도구가 없습니다."
-                : "아직 등록되거나 제안된 도구가 없습니다."}
-            </strong>
-            <span>
-              연구 에이전트가 복합 분석을 진행하며 특화 도구가 필요할 때 새 스킬/어댑터를 제안합니다.
-            </span>
-          </div>
+          <p class="tool-muted">도구 목록을 불러오는 중입니다…</p>
+        ) : filteredPackages.length === 0 ? (
+          <div class="empty-state"><strong>표시할 도구가 없습니다.</strong><span>연구 중 재사용 가능한 기능이 필요하면 에이전트가 이곳에 제안합니다.</span></div>
         ) : (
           <div class="tool-package-list">
-            {filteredPackages?.map((pkg) => {
-              const isPackageBusy = busy === pkg.id;
+            {filteredPackages.map((pkg) => {
+              const portable = portableManifest(pkg);
+              const installing = installStates.has(pkg.installation?.state ?? "");
               return (
                 <article class={`tool-package-card ${pkg.state}`} key={pkg.id}>
                   <div class="tool-package-title">
-                    <span class={`tool-kind-badge ${pkg.kind}`}>
-                      {pkg.kind === "skill" ? "SKILL" : "MCP"}
-                    </span>
-                    <div class="tool-info-title">
-                      <strong>{pkg.display_name}</strong>
-                      <small>
-                        {pkg.name} · v{pkg.version}
-                      </small>
-                    </div>
-                    <span class={`tool-state-badge ${pkg.state}`}>
-                      {pkg.state === "pending_approval"
-                        ? "승인 대기"
-                        : pkg.state === "active"
-                        ? "✓ 활성"
-                        : pkg.state === "disabled"
-                        ? "비활성"
-                        : "실패"}
-                    </span>
+                    <span class={`tool-kind-badge ${portable ? "portable" : pkg.kind}`}>{portable ? "CLI" : pkg.kind.toUpperCase()}</span>
+                    <div class="tool-info-title"><strong>{pkg.display_name}</strong><small>{pkg.name} · v{pkg.version}</small></div>
+                    <span class={`tool-state-badge ${pkg.installation?.state ?? pkg.state}`}>{stateLabel(pkg)}</span>
                   </div>
-
                   <p class="tool-desc">{pkg.description}</p>
-
-                  <details class="tool-details">
-                    <summary>패키지 무결성 정보</summary>
-                    <dl class="tool-dl">
-                      <div>
-                        <dt>SHA-256</dt>
-                        <dd class="sha-dd">
-                          <code>{pkg.package_sha256}</code>
-                          <button
-                            type="button"
-                            class="chat-code-copy-btn"
-                            onClick={() => copyToClipboard(pkg.package_sha256, `sha-${pkg.id}`)}
-                          >
-                            {copiedKey === `sha-${pkg.id}` ? "✓ 복사됨" : "복사"}
-                          </button>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>적용 시점</dt>
-                        <dd>{pkg.requires_restart ? "앱 재시작 시" : "승인 즉시 반영"}</dd>
-                      </div>
-                      <div>
-                        <dt>제안 시각</dt>
-                        <dd>{new Date(pkg.created_at).toLocaleString("ko-KR")}</dd>
-                      </div>
-                    </dl>
-                  </details>
-
-                  {pkg.error && (
-                    <div class="alert danger small-alert" role="alert">
-                      {pkg.error}
+                  {portable && (
+                    <div class="tool-portable-summary">
+                      <span><b>{portable.distribution.publisher}</b> · {portable.distribution.license_spdx}</span>
+                      <span>{portable.distribution.type === "portable_zip" ? "Portable ZIP" : "Single EXE"} · {(portable.distribution.size_bytes / 1024 / 1024).toFixed(1)} MiB</span>
+                      <code title={portable.distribution.sha256}>{shortHash(portable.distribution.sha256)}</code>
                     </div>
                   )}
-
+                  <details class="tool-details">
+                    <summary>무결성 정보</summary>
+                    <dl class="tool-dl">
+                      <div><dt>패키지 SHA-256</dt><dd class="sha-dd"><code>{pkg.package_sha256}</code><button class="chat-code-copy-btn" type="button" onClick={() => void copyToClipboard(pkg.package_sha256, `sha-${pkg.id}`)}>{copiedKey === `sha-${pkg.id}` ? "복사됨" : "복사"}</button></dd></div>
+                      {pkg.installation && <div><dt>설치 트리</dt><dd><code>{shortHash(pkg.installation.installed_tree_sha256)}</code></dd></div>}
+                      <div><dt>제안 시각</dt><dd>{new Date(pkg.created_at).toLocaleString("ko-KR")}</dd></div>
+                    </dl>
+                  </details>
+                  {(pkg.error || pkg.installation?.error) && <div class="alert danger small-alert" role="alert">{pkg.installation?.error || pkg.error}</div>}
                   <div class="tool-package-actions">
-                    <button
-                      class="button secondary small"
-                      disabled={busy !== null}
-                      onClick={() => void review(pkg)}
-                    >
-                      {isPackageBusy && reviewing?.id === pkg.id ? "불러오는 중…" : "원문 파일 검토"}
-                    </button>
-
-                    {pkg.state === "pending_approval" && (
-                      <button
-                        class="button small"
-                        disabled={busy !== null}
-                        onClick={() => void transition(pkg, "activate")}
-                      >
-                        {isPackageBusy ? "승인 중…" : "이 패키지 승인"}
+                    <button class="button secondary small" disabled={busy !== null} onClick={() => void review(pkg)}>내용 검토</button>
+                    {(pkg.state === "pending_approval" || pkg.state === "disabled" || pkg.state === "failed") && (
+                      <button class="button small" disabled={busy !== null || installing} onClick={() => void transition(pkg, "activate")}>
+                        {busy === pkg.id || installing ? "다운로드·검증 중…" : portable ? "승인하고 설치" : "활성화"}
                       </button>
                     )}
-
-                    {pkg.state === "active" && (
-                      <button
-                        class="button secondary small"
-                        disabled={busy !== null}
-                        onClick={() => void transition(pkg, "disable")}
-                      >
-                        {isPackageBusy ? "처리 중…" : "비활성화"}
-                      </button>
-                    )}
-
-                    {pkg.state === "disabled" && (
-                      <button
-                        class="button small"
-                        disabled={busy !== null}
-                        onClick={() => void transition(pkg, "activate")}
-                      >
-                        {isPackageBusy ? "활성화 중…" : "다시 활성화"}
-                      </button>
-                    )}
+                    {pkg.state === "active" && <button class="button secondary small" disabled={busy !== null} onClick={() => void transition(pkg, "disable")}>비활성화</button>}
                   </div>
                 </article>
               );
@@ -416,110 +331,48 @@ export function ToolStudioView({ projectID, connected }: ToolStudioViewProps) {
         )}
       </section>
 
-      {/* Review Drawer / Modal */}
       {reviewing && (
-        <div
-          class="artifact-drawer-overlay"
-          onClick={() => setReviewing(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div class="artifact-drawer-panel tool-drawer-panel" onClick={(e) => e.stopPropagation()}>
+        <div class="artifact-drawer-overlay" onClick={() => setReviewing(null)} role="dialog" aria-modal="true" aria-label="도구 패키지 검토">
+          <div class="artifact-drawer-panel tool-drawer-panel" onClick={(event) => event.stopPropagation()}>
             <header class="artifact-drawer-header">
-              <div>
-                <div class="tool-drawer-badge-row">
-                  <span class={`tool-kind-badge ${reviewing.kind}`}>
-                    {reviewing.kind === "skill" ? "SKILL" : "MCP"}
-                  </span>
-                  <span class={`tool-state-badge ${reviewing.state}`}>
-                    {reviewing.state === "pending_approval"
-                      ? "승인 대기"
-                      : reviewing.state === "active"
-                      ? "✓ 활성"
-                      : reviewing.state === "disabled"
-                      ? "비활성"
-                      : "실패"}
-                  </span>
-                </div>
-                <h2>{reviewing.display_name}</h2>
-                <p>{reviewing.description}</p>
-                <small class="tool-drawer-meta">
-                  식별자: {reviewing.name} · v{reviewing.version} · SHA-256:{" "}
-                  <code>{reviewing.package_sha256.slice(0, 16)}…</code>
-                </small>
-              </div>
-              <button
-                type="button"
-                class="artifact-drawer-close"
-                onClick={() => setReviewing(null)}
-                aria-label="닫기"
-              >
-                ✕
-              </button>
+              <div><p class="eyebrow">Exact Approval Scope</p><h2>{reviewing.display_name}</h2><p>{reviewing.description}</p></div>
+              <button type="button" class="artifact-drawer-close" onClick={() => setReviewing(null)} aria-label="닫기">×</button>
             </header>
-
             <div class="artifact-drawer-body">
+              {(() => {
+                const portable = portableManifest(reviewing);
+                return portable ? (
+                  <section class="tool-portable-review">
+                    <h3>다운로드 및 실행 범위</h3>
+                    <dl class="tool-dl">
+                      <div><dt>배포자</dt><dd>{portable.distribution.publisher}</dd></div>
+                      <div><dt>공식 안내</dt><dd><a href={portable.distribution.source_url} target="_blank" rel="noreferrer">{portable.distribution.source_url}</a></dd></div>
+                      <div><dt>다운로드</dt><dd><code>{portable.distribution.url}</code></dd></div>
+                      <div><dt>Payload SHA-256</dt><dd><code>{portable.distribution.sha256}</code></dd></div>
+                      <div><dt>실행 파일</dt><dd><code>{portable.distribution.entrypoint}</code></dd></div>
+                      <div><dt>Probe</dt><dd><code>{portable.distribution.probe.argv.join(" ")}</code></dd></div>
+                      <div><dt>호출 도구</dt><dd>{portable.tools.map((tool) => tool.name).join(", ")}</dd></div>
+                    </dl>
+                    <div class="alert warning">이 바이너리는 같은 Windows 사용자 권한으로 실행됩니다. 현재 OS 수준 네트워크·파일시스템 격리는 없습니다.</div>
+                  </section>
+                ) : null;
+              })()}
               <div class="tool-review-files">
-                {(reviewing.files ?? []).length === 0 ? (
-                  <div class="empty-state">
-                    <strong>포함된 파일이 없습니다.</strong>
+                {(reviewing.files ?? []).map((file) => (
+                  <div class="tool-file-box" key={file.path}>
+                    <div class="tool-file-head"><strong>{file.path}</strong><small>{file.size.toLocaleString()} bytes</small></div>
+                    <pre class="tool-file-code"><code>{file.content || "(내용 없음)"}</code></pre>
                   </div>
-                ) : (
-                  (reviewing.files ?? []).map((file) => (
-                    <div class="tool-file-box" key={file.path}>
-                      <div class="tool-file-head">
-                        <strong>{file.path}</strong>
-                        <div class="file-head-actions">
-                          <small>{file.size.toLocaleString()} bytes</small>
-                          <button
-                            type="button"
-                            class="chat-code-copy-btn"
-                            onClick={() =>
-                              copyToClipboard(file.content ?? "", `file-${file.path}`)
-                            }
-                          >
-                            {copiedKey === `file-${file.path}` ? "✓ 복사됨" : "복사"}
-                          </button>
-                        </div>
-                      </div>
-                      <pre class="tool-file-code">
-                        <code>{file.content || "(내용이 비어 있습니다)"}</code>
-                      </pre>
-                    </div>
-                  ))
-                )}
+                ))}
               </div>
-
               <div class="tool-review-footer">
-                <p class="safety-note">
-                  승인하면 이 패키지의 정확한 SHA-256 검증본만 현재 프로젝트의 내부 도구 카탈로그에
-                  즉시 적용됩니다.
-                </p>
+                <p class="safety-note">표시된 패키지·payload·adapter·권한 해시가 하나라도 바뀌면 다시 승인해야 합니다.</p>
                 <div class="review-action-row">
-                  <button
-                    class="button secondary small"
-                    type="button"
-                    onClick={() => setReviewing(null)}
-                  >
-                    닫기
-                  </button>
-
+                  <button class="button secondary small" type="button" onClick={() => setReviewing(null)}>닫기</button>
                   {reviewing.state !== "active" ? (
-                    <button
-                      class="button small"
-                      disabled={busy !== null}
-                      onClick={() => void transition(reviewing, "activate")}
-                    >
-                      {busy === reviewing.id ? "승인 중…" : "이 패키지 승인 및 활성화"}
-                    </button>
+                    <button class="button small" disabled={busy !== null} onClick={() => void transition(reviewing, "activate")}>{busy === reviewing.id ? "설치 중…" : portableManifest(reviewing) ? "승인하고 설치" : "활성화"}</button>
                   ) : (
-                    <button
-                      class="button secondary small"
-                      disabled={busy !== null}
-                      onClick={() => void transition(reviewing, "disable")}
-                    >
-                      {busy === reviewing.id ? "처리 중…" : "도구 비활성화"}
-                    </button>
+                    <button class="button secondary small" disabled={busy !== null} onClick={() => void transition(reviewing, "disable")}>비활성화</button>
                   )}
                 </div>
               </div>

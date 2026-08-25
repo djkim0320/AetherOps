@@ -24,6 +24,8 @@ type Paths struct {
 	Downloads          string
 	ManagedRuntimes    string
 	RuntimeCandidates  string
+	ManagedTools       string
+	ToolQuarantine     string
 }
 
 func Resolve() (Paths, error) {
@@ -92,11 +94,13 @@ func resolveLayout(root string) (Paths, error) {
 		Downloads:          filepath.Join(absolute, "downloads", "quarantine"),
 		ManagedRuntimes:    filepath.Join(absolute, "runtimes", "versions"),
 		RuntimeCandidates:  filepath.Join(absolute, "runtimes", "candidates"),
+		ManagedTools:       filepath.Join(absolute, "tools", "versions"),
+		ToolQuarantine:     filepath.Join(absolute, "tools", "quarantine"),
 	}
 	for _, directory := range []string{
 		paths.Root, paths.CAS, paths.CodexHome, paths.ShellProfile,
 		paths.InternetProfile, paths.Downloads, paths.ManagedRuntimes,
-		paths.RuntimeCandidates,
+		paths.RuntimeCandidates, paths.ManagedTools, paths.ToolQuarantine,
 	} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return Paths{}, err
@@ -202,7 +206,7 @@ func validateInternetProfileResetPaths(paths Paths) error {
 	expectedProfile := filepath.Join(root, "webview2", "internet")
 	expectedMarker := filepath.Join(root, "reset-internet-profile.pending")
 	if !samePath(profile, expectedProfile) || !samePath(marker, expectedMarker) {
-		return errors.New("internet profile reset paths are outside the fixed AetherOps v2 layout")
+		return errors.New("internet profile reset paths are outside the fixed AetherOps layout")
 	}
 	if samePath(profile, root) || samePath(profile, filepath.Dir(root)) {
 		return errors.New("internet profile reset target is too broad")

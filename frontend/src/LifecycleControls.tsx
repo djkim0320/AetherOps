@@ -20,7 +20,6 @@ type MemoryDocument = {
 type LifecycleControlsProps = {
   project: LifecycleProject | null;
   connected: boolean;
-  onProjectDeleted: (casCleanupPending: number) => void | Promise<void>;
 };
 
 function bytesLabel(value: number | undefined): string {
@@ -30,7 +29,7 @@ function bytesLabel(value: number | undefined): string {
   return `${(value / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-export function LifecycleControls({ project, connected, onProjectDeleted }: LifecycleControlsProps) {
+export function LifecycleControls({ project, connected }: LifecycleControlsProps) {
   const [memory, setMemory] = useState<MemoryDocument[] | null>(null);
   const [memoryStatus, setMemoryStatus] = useState<ProjectMemoryStatus | null>(null);
   const [busy, setBusy] = useState("");
@@ -145,35 +144,6 @@ export function LifecycleControls({ project, connected, onProjectDeleted }: Life
     }
   }
 
-  async function deleteProject() {
-    if (!project || busy) return;
-    const confirmation = window.prompt(
-      `프로젝트와 그 실행·기억·그래프를 영구 삭제합니다.\n` +
-      `브라우저 프로필과 다른 프로젝트는 유지됩니다.\n\n계속하려면 정확한 프로젝트 이름을 입력하세요:\n${project.name}`
-    );
-    if (confirmation === null) return;
-    if (confirmation !== project.name) {
-      setError("프로젝트 이름이 일치하지 않아 삭제하지 않았습니다.");
-      return;
-    }
-    setBusy("project-delete");
-    setError("");
-    setNotice("");
-    try {
-      const payload = await del<unknown>(`/api/v1/projects/${encodeURIComponent(project.id)}`, {
-        project_id: project.id,
-        confirm_name: confirmation
-      });
-      const result = objectFrom(payload);
-      const cleanupPending = typeof result?.cas_cleanup_pending === "number" ? result.cas_cleanup_pending : 0;
-      await onProjectDeleted(cleanupPending);
-    } catch (cause) {
-      setError(formatApiError(cause));
-    } finally {
-      setBusy("");
-    }
-  }
-
   return <>
     {(error || notice) && <section class={`panel lifecycle-message ${error ? "danger" : "success"}`} role={error ? "alert" : "status"}>{error || notice}</section>}
 
@@ -202,10 +172,5 @@ export function LifecycleControls({ project, connected, onProjectDeleted }: Life
       <button class="button danger-outline" type="button" onClick={() => void resetBrowserProfile()} disabled={!connected || Boolean(busy)}>{busy === "profile-reset" ? "초기화 예약 중" : "인터넷 프로필 초기화"}</button>
     </section>
 
-    <section class="panel setting-card lifecycle-card lifecycle-danger-zone">
-      <p class="eyebrow">위험 구역</p><h2>프로젝트 삭제</h2>
-      <p>{project ? <><strong>{project.name}</strong>의 실행, 일정, 기억, 그래프와 참조되지 않는 CAS 객체를 제거합니다. 실행·승인·세션 생성·해석·기억 색인·그래프 재구성이 진행 중이거나 결과가 불확실하면 서버가 삭제를 거부합니다.</> : "삭제할 프로젝트를 먼저 선택하세요."}</p>
-      <button class="button danger" type="button" onClick={() => void deleteProject()} disabled={!connected || !project || Boolean(busy)}>{busy === "project-delete" ? "삭제 중" : "선택한 프로젝트 삭제"}</button>
-    </section>
   </>;
 }

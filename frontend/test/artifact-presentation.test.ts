@@ -5,6 +5,7 @@ import { artifactPresentation } from "../src/artifact-presentation.ts";
 
 test("research artifacts use reader-facing titles", () => {
 	assert.equal(artifactPresentation("research.report").title, "최종 연구 보고서");
+	assert.equal(artifactPresentation("research.report.document").title, "최종 연구 보고서 문서");
 	assert.equal(artifactPresentation("research.evidence.verification").title, "근거 검증 결과");
 });
 

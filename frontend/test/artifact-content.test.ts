@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { artifactFormattedText, artifactRawText } from "../src/artifact-content.ts";
+import { artifactBinaryContent, artifactFormattedText, artifactRawText } from "../src/artifact-content.ts";
 
 test("report presentation shows an honest inconclusive engineering outcome", () => {
     const content = {
@@ -19,4 +19,14 @@ test("report presentation shows an honest inconclusive engineering outcome", () 
 
 test("non-report artifact presentation remains unchanged", () => {
   assert.equal(artifactFormattedText("research.review", "plain review"), "plain review");
+});
+
+test("verified Word artifacts remain binary instead of being stringified", () => {
+	const content = {
+		blob: new Blob(["docx"]), filename: "report.docx",
+		mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		sha256: "a".repeat(64), size: 4, verified: true as const, binary: true
+	};
+	assert.equal(artifactBinaryContent(content)?.filename, "report.docx");
+	assert.equal(artifactRawText(content), "");
 });

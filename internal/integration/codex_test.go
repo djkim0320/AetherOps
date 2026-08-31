@@ -36,6 +36,41 @@ func TestCodexContextConfigIsLongOnlyForSol(t *testing.T) {
 	}
 }
 
+func TestResearchReviewerOwnsASeparateReadOnlySessionPolicy(t *testing.T) {
+	service, approval, sandbox, err := isolatedResearchStageThreadPolicy(core.StageReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service != "aetherops-reviewer" || approval != "never" || sandbox != "read-only" {
+		t.Fatalf("reviewer thread policy = %q/%q/%q", service, approval, sandbox)
+	}
+	service, approval, sandbox, err = isolatedResearchStageThreadPolicy(core.StageCollect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service != "aetherops-collector" || approval != "on-request" || sandbox != "workspace-write" {
+		t.Fatalf("collector thread policy = %q/%q/%q", service, approval, sandbox)
+	}
+	if _, _, _, err := isolatedResearchStageThreadPolicy(core.StagePlan); err == nil {
+		t.Fatal("project PLAN was allowed to masquerade as an isolated worker session")
+	}
+
+	approval, turnSandbox, err := researchTurnPolicy(core.StageReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval != "never" || string(turnSandbox) != `{"type":"readOnly","networkAccess":false}` {
+		t.Fatalf("reviewer turn policy = %q/%s", approval, turnSandbox)
+	}
+	approval, turnSandbox, err = researchTurnPolicy(core.StageCollect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval != "on-request" || string(turnSandbox) != `{"type":"workspaceWrite","writableRoots":[],"networkAccess":true}` {
+		t.Fatalf("collector turn policy = %q/%s", approval, turnSandbox)
+	}
+}
+
 func TestChatHistoryProjectionRecognizesOnlyAetherOpsConversationTurns(t *testing.T) {
 	mode, message, _, visible, recognized := chatTurnUserMessage(codex.ThreadHistoryTurn{Items: []codex.ThreadHistoryItem{{
 		ID: "user-1", Type: "userMessage", Content: []codex.ThreadHistoryContent{{Type: "text", Text: conversationChatPrompt("안녕하세요")}},

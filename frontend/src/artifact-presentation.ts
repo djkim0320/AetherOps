@@ -11,6 +11,7 @@ const exactPresentations: Record<string, ArtifactPresentation> = {
 	"research.evidence.verification": { label: "검증", title: "근거 검증 결과", description: "출처와 인용 무결성을 확인한 기록", tone: "verification" },
 	"research.report": { label: "보고서", title: "최종 연구 보고서", description: "검토를 통과한 연구 결과와 결론", tone: "report" },
 	"research.report.revision": { label: "보고서", title: "수정된 연구 보고서", description: "품질 검토 의견을 반영한 연구 결과", tone: "report" },
+	"research.report.document": { label: "Word", title: "최종 연구 보고서 문서", description: "AetherOps 보고서 템플릿으로 발행한 검증 완료 Word 문서", tone: "report" },
 	"research.review": { label: "리뷰", title: "품질 검토 결과", description: "근거·완전성·재현성에 대한 평가", tone: "review" },
 	"engineering.xfoil_polar.input": { label: "해석", title: "XFOIL 해석 조건", description: "레이놀즈수와 받음각 등 계산 입력값", tone: "analysis" },
 	"engineering.xfoil_polar.geometry": { label: "형상", title: "익형 형상", description: "해석에 사용된 익형 좌표와 플랩 형상", tone: "model" },

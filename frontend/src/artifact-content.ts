@@ -1,3 +1,5 @@
+import type { ArtifactResponse } from "./api";
+
 export type EngineeringAssessmentView = {
   outcome?: string;
   outcome_reason?: string;
@@ -12,7 +14,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function artifactBinaryContent(content: unknown): ArtifactResponse | null {
+  if (!isRecord(content) || content.binary !== true || content.verified !== true) return null;
+  if (
+    typeof content.filename !== "string" ||
+    typeof content.mediaType !== "string" ||
+    typeof content.sha256 !== "string" ||
+    typeof content.size !== "number"
+  ) return null;
+  if (typeof Blob === "undefined" || !(content.blob instanceof Blob)) return null;
+  return content as unknown as ArtifactResponse;
+}
+
 export function artifactRawText(content: unknown): string {
+  if (artifactBinaryContent(content)) return "";
   if (typeof content === "string") return content;
   return content ? JSON.stringify(content, null, 2) : "";
 }

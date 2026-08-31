@@ -20,6 +20,7 @@ import (
 	"github.com/djkim0320/AetherOps/internal/buildinfo"
 	"github.com/djkim0320/AetherOps/internal/cas"
 	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/reportdocx"
 	"github.com/djkim0320/AetherOps/internal/store"
 )
 
@@ -150,17 +151,38 @@ func TestProtocolFixtureWorkflowStateAndArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artifacts) != len(attempts) {
-		t.Fatalf("artifacts = %d, want %d", len(artifacts), len(attempts))
+	if len(artifacts) != len(attempts)+1 {
+		t.Fatalf("artifacts = %d, want %d stage outputs plus one Word report", len(artifacts), len(attempts))
 	}
+	var reportDocumentCount int
 	for _, artifact := range artifacts {
 		if _, err := objects.ReadVerified(artifact.BlobHash); err != nil {
 			t.Fatalf("artifact %s is not a verified CAS object: %v", artifact.ID, err)
 		}
-		shouldAdopt := artifact.ID == completed.ReportArtifactID || artifact.Kind == "research.evidence"
+		if artifact.Kind == reportdocx.ArtifactKind {
+			reportDocumentCount++
+			metadata, err := db.BlobMetadata(ctx, artifact.BlobHash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if metadata.MediaType != reportdocx.MediaType {
+				t.Fatalf("Word report media type = %q", metadata.MediaType)
+			}
+		}
+		shouldAdopt := artifact.ID == completed.ReportArtifactID || artifact.Kind == "research.evidence" || artifact.Kind == reportdocx.ArtifactKind
 		if artifact.Adopted != shouldAdopt {
 			t.Fatalf("artifact %s (%s) adopted=%v, want %v", artifact.ID, artifact.Kind, artifact.Adopted, shouldAdopt)
 		}
+	}
+	if reportDocumentCount != 1 {
+		t.Fatalf("Word report artifacts = %d, want 1", reportDocumentCount)
+	}
+	canonical, err := db.Artifact(ctx, completed.ReportArtifactID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.Kind != "research.report" {
+		t.Fatalf("canonical report kind = %q, want structured research.report", canonical.Kind)
 	}
 
 	calls := fixture.callsSnapshot()
@@ -199,8 +221,10 @@ func TestProtocolFixtureWorkflowStateAndArtifacts(t *testing.T) {
 		t.Fatalf("isolated thread creates = %d, want two collectors plus one reviewer", len(created))
 	}
 	profileCounts := make(map[ModelProfile]int)
+	stageCounts := make(map[core.Stage]int)
 	for _, call := range created {
 		profileCounts[call.Profile]++
+		stageCounts[call.Stage]++
 	}
 	collectorProfile := ModelProfile{
 		Model: core.CollectorModel, ReasoningEffort: core.CollectorEffort, ServiceTier: core.ServiceTierDefault,
@@ -210,6 +234,36 @@ func TestProtocolFixtureWorkflowStateAndArtifacts(t *testing.T) {
 	}
 	if profileCounts[collectorProfile] != 2 || profileCounts[reviewerProfile] != 1 || len(profileCounts) != 2 {
 		t.Fatalf("isolated thread profiles = %v, want collector x2 and reviewer x1", profileCounts)
+	}
+	if stageCounts[core.StageCollect] != 2 || stageCounts[core.StageReview] != 1 || len(stageCounts) != 2 {
+		t.Fatalf("isolated thread roles = %v, want COLLECT x2 and REVIEW x1", stageCounts)
+	}
+}
+
+func TestReviewFailsClosedWhenProtocolReusesAResearchThread(t *testing.T) {
+	ctx := context.Background()
+	fixture := newProtocolFixture(t, responderForPlan(1, false))
+	fixture.threadIDForCreate = func(core.Stage, int) string { return "fixture-reused-worker-thread" }
+	engine, database, _, run := openResearchTest(t, fixture)
+
+	completed, err := engine.Execute(ctx, run.ID)
+	if err == nil || !strings.Contains(err.Error(), "reviewer thread was already used by collect attempt") {
+		t.Fatalf("reused reviewer thread result = status %s, error %v", completed.Status, err)
+	}
+	if completed.Status != core.RunFailed {
+		t.Fatalf("reused reviewer thread status = %s, want failed", completed.Status)
+	}
+	for _, call := range fixture.callsSnapshot() {
+		if call.Options.Stage == core.StageReview {
+			t.Fatal("review turn started after its supposedly fresh session reused a research thread")
+		}
+	}
+	attempts, listErr := database.ListStageAttempts(ctx, run.ID)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(attempts) == 0 || attempts[len(attempts)-1].Stage != core.StageReview || attempts[len(attempts)-1].Status != "failed" {
+		t.Fatalf("reused reviewer audit = %+v", attempts)
 	}
 }
 
@@ -271,6 +325,19 @@ func TestFailedReviewReplansCollectsAndMergesBeforeReviewingAgain(t *testing.T) 
 	}
 	if completed.Status != core.RunSucceeded || planCalls != 3 || reviewCalls != 3 {
 		t.Fatalf("completed=%s plan/review=%d/%d", completed.Status, planCalls, reviewCalls)
+	}
+	reviewerThreads := map[string]struct{}{}
+	for _, call := range fixture.callsSnapshot() {
+		if call.Options.Stage != core.StageReview {
+			continue
+		}
+		if call.ThreadID == run.MainThreadID {
+			t.Fatal("remediation reviewer reused the project research thread")
+		}
+		reviewerThreads[call.ThreadID] = struct{}{}
+	}
+	if len(reviewerThreads) != 3 {
+		t.Fatalf("reviewer sessions = %v, want one fresh session for each of three reviews", reviewerThreads)
 	}
 	remediation, err := database.LatestResearchRemediation(ctx, run.ID)
 	if err != nil {
@@ -872,6 +939,9 @@ func TestProtocolFixtureFailedReviewsStopAfterThreeRevisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, artifact := range artifacts {
+		if artifact.Kind == reportdocx.ArtifactKind {
+			t.Fatalf("quality-failed run published a Word report through artifact %s", artifact.ID)
+		}
 		if (artifact.Kind == "research.report" || artifact.Kind == "research.report.revision") && artifact.Adopted {
 			t.Fatalf("quality-failed knowledge patch was adopted through artifact %s", artifact.ID)
 		}
@@ -1905,6 +1975,51 @@ func TestSteerTargetsTheActiveRunTurn(t *testing.T) {
 	}
 }
 
+func TestIndependentReviewCannotBeSteered(t *testing.T) {
+	fixture := newProtocolFixture(t, responderForPlan(1, false))
+	engine, _, _, run := openResearchTest(t, fixture)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	originalBeforeTurn := fixture.beforeTurn
+	fixture.beforeTurn = func(ctx context.Context, options TurnOptions) error {
+		if options.Stage == core.StageReview {
+			close(started)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-release:
+			}
+		}
+		return originalBeforeTurn(ctx, options)
+	}
+
+	executionDone := make(chan error, 1)
+	go func() {
+		_, err := engine.Execute(context.Background(), run.ID)
+		executionDone <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the independent review turn")
+	}
+	if err := engine.Steer(context.Background(), run.ID, "raise the score"); !errors.Is(err, ErrNoActiveTurn) {
+		t.Fatalf("review steering error = %v, want ErrNoActiveTurn", err)
+	}
+	if steers := fixture.steersSnapshot(); len(steers) != 0 {
+		t.Fatalf("independent reviewer received steering: %#v", steers)
+	}
+	close(release)
+	select {
+	case err := <-executionDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for research completion")
+	}
+}
+
 func openResearchTest(t *testing.T, fixture *protocolFixture) (*Engine, *store.DB, *cas.Store, core.Run) {
 	return openResearchTestConfigured(t, fixture, core.RunConfiguration{})
 }
@@ -2128,6 +2243,7 @@ type protocolCall struct {
 }
 
 type threadCreateCall struct {
+	Stage   core.Stage
 	Profile ModelProfile
 }
 
@@ -2140,15 +2256,16 @@ type protocolFixture struct {
 	t         *testing.T
 	responder func(context.Context, string, TurnOptions) (json.RawMessage, error)
 
-	mu              sync.Mutex
-	threadSequence  int
-	turnSequence    int
-	calls           []protocolCall
-	threadCreates   []threadCreateCall
-	steers          []steerCall
-	createErr       error
-	transformResult func(TurnResult) TurnResult
-	beforeTurn      func(context.Context, TurnOptions) error
+	mu                sync.Mutex
+	threadSequence    int
+	turnSequence      int
+	calls             []protocolCall
+	threadCreates     []threadCreateCall
+	steers            []steerCall
+	createErr         error
+	threadIDForCreate func(core.Stage, int) string
+	transformResult   func(TurnResult) TurnResult
+	beforeTurn        func(context.Context, TurnOptions) error
 }
 
 func newProtocolFixture(
@@ -2171,14 +2288,17 @@ func (fixture *protocolFixture) ValidateModel(_ context.Context, model, effort, 
 	return fmt.Errorf("unsupported fixture model %s/%s", model, effort)
 }
 
-func (fixture *protocolFixture) CreateThread(_ context.Context, profile ModelProfile) (string, error) {
+func (fixture *protocolFixture) CreateStageThread(_ context.Context, stage core.Stage, profile ModelProfile) (string, error) {
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
 	if fixture.createErr != nil {
 		return "", fixture.createErr
 	}
-	fixture.threadCreates = append(fixture.threadCreates, threadCreateCall{Profile: profile})
+	fixture.threadCreates = append(fixture.threadCreates, threadCreateCall{Stage: stage, Profile: profile})
 	fixture.threadSequence++
+	if fixture.threadIDForCreate != nil {
+		return fixture.threadIDForCreate(stage, fixture.threadSequence), nil
+	}
 	return fmt.Sprintf("fixture-thread-%d", fixture.threadSequence), nil
 }
 
@@ -2196,6 +2316,7 @@ func (fixture *protocolFixture) Turn(ctx context.Context, threadID string, optio
 	fixture.calls = append(fixture.calls, protocolCall{
 		ThreadID: threadID,
 		Options: TurnOptions{
+			Stage:           options.Stage,
 			Model:           options.Model,
 			ReasoningEffort: options.ReasoningEffort,
 			ServiceTier:     options.ServiceTier,
@@ -2306,14 +2427,30 @@ func fixedSchemaForCall(options TurnOptions) error {
 	}
 	switch schemaKind(options.Schema) {
 	case "plan":
+		if options.Stage != core.StagePlan {
+			return fmt.Errorf("plan turn stage = %s", options.Stage)
+		}
 		if options.Model != core.PlannerModel || options.ReasoningEffort != core.PlannerEffort {
 			return fmt.Errorf("plan profile = %s/%s", options.Model, options.ReasoningEffort)
 		}
+		var input planInput
+		if err := json.Unmarshal(promptInput(options.Prompt), &input); err != nil {
+			return err
+		}
+		if input.MemoryPolicy != planningMemoryPolicy {
+			return errors.New("plan prompt omitted the long-term memory exploration policy")
+		}
 	case "evidence":
+		if options.Stage != core.StageCollect {
+			return fmt.Errorf("collector turn stage = %s", options.Stage)
+		}
 		if options.Model != core.CollectorModel || options.ReasoningEffort != core.CollectorEffort {
 			return fmt.Errorf("collector profile = %s/%s", options.Model, options.ReasoningEffort)
 		}
 	case "report":
+		if options.Stage != core.StageSynthesize && options.Stage != core.StageRevise {
+			return fmt.Errorf("report turn stage = %s", options.Stage)
+		}
 		if options.Model != core.PlannerModel || options.ReasoningEffort != core.PlannerEffort {
 			return fmt.Errorf("report profile = %s/%s", options.Model, options.ReasoningEffort)
 		}
@@ -2325,6 +2462,9 @@ func fixedSchemaForCall(options TurnOptions) error {
 			return errors.New("report prompt omitted the knowledge patch policy")
 		}
 	case "review":
+		if options.Stage != core.StageReview {
+			return fmt.Errorf("review turn stage = %s", options.Stage)
+		}
 		if options.Model != core.ReviewerModel || options.ReasoningEffort != core.ReviewerEffort {
 			return fmt.Errorf("review profile = %s/%s", options.Model, options.ReasoningEffort)
 		}
@@ -2341,6 +2481,30 @@ func fixedSchemaForCall(options TurnOptions) error {
 		return errors.New("turn option did not contain a fixed core schema")
 	}
 	return nil
+}
+
+func TestReviewPromptDefinesFreshIndependentEvaluator(t *testing.T) {
+	prompt := stagePrompt(core.StageReview, "run-review", "attempt-review", []byte(`{"report":{"title":"candidate"}}`))
+	for _, required := range []string{
+		"independent reviewer in a fresh reviewer-only Codex session",
+		"no project research-conversation history",
+		"no previous reviewer conversation",
+		"judge only the structured plan, evidence bundles, report",
+		"read-only AetherOps MCP readback",
+		"Do not continue the research",
+		"execute a solver",
+		"additional_research or replan",
+		"fresh PLAN and COLLECT cycle",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("independent review prompt omits %q", required)
+		}
+	}
+	for _, forbidden := range []string{"tool_package_propose", "successful install result", "call a matching bundled engineering tool directly"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("independent review prompt retained research capability instruction %q", forbidden)
+		}
+	}
 }
 
 func promptInput(prompt string) []byte {
@@ -2508,6 +2672,32 @@ func TestPlanPromptRequiresExactStructuredXFOILCandidateSet(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("plan prompt omits %q", required)
+		}
+	}
+}
+
+func TestPlanPromptAllowsRunPinnedLongTermMemoryExploration(t *testing.T) {
+	prompt := stagePrompt(core.StagePlan, "run-plan", "attempt-plan", []byte(`{"question":"compare the new study with prior constraints"}`))
+	for _, required := range []string{
+		"PLAN LONG-TERM MEMORY contract",
+		"aetherops_internal.memory_search",
+		"aetherops_internal.memory_get",
+		"run-pinned project memory",
+		"planning context, not as current report evidence",
+		"verification to COLLECT",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("plan memory prompt omits %q", required)
+		}
+	}
+	for _, required := range []string{
+		"retrieval candidate",
+		"aetherops_internal.knowledge_get",
+		"not a substitute for current external evidence",
+		"An empty memory result is legitimate",
+	} {
+		if !strings.Contains(planningMemoryPolicy, required) {
+			t.Fatalf("plan memory policy omits %q", required)
 		}
 	}
 }

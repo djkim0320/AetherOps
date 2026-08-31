@@ -11,9 +11,24 @@ import (
 	"github.com/djkim0320/AetherOps/internal/cas"
 	"github.com/djkim0320/AetherOps/internal/core"
 	"github.com/djkim0320/AetherOps/internal/engineering"
+	"github.com/djkim0320/AetherOps/internal/rag"
 	"github.com/djkim0320/AetherOps/internal/store"
 	"github.com/djkim0320/AetherOps/internal/toolstudio"
 )
+
+type recordingPlanMemoryEmbedder struct {
+	queries []string
+}
+
+func (embedder *recordingPlanMemoryEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, error) {
+	embedder.queries = append(embedder.queries, inputs...)
+	vectors := make([][]float32, len(inputs))
+	for index := range inputs {
+		vectors[index] = make([]float32, rag.EmbeddingDimensions)
+		vectors[index][0] = 1
+	}
+	return vectors, nil
+}
 
 func TestEngineeringVerificationStageRejectsEveryUnrelatedMCPTool(t *testing.T) {
 	ctx := context.Background()
@@ -65,6 +80,72 @@ func TestEngineeringVerificationStageRejectsEveryUnrelatedMCPTool(t *testing.T) 
 	engineeringArguments, _ := json.Marshal(identity)
 	if _, err := (&Server{DB: database, CAS: objects, Engineering: &engineering.Service{}}).call(ctx, "gmsh_wing_mesh", engineeringArguments); err == nil {
 		t.Fatal("verification attempt called another engineering solver")
+	}
+}
+
+func TestIndependentReviewStageRejectsEveryResearchOrMutationTool(t *testing.T) {
+	allowed := map[string]bool{
+		"memory_get": true, "knowledge_sparql": true, "knowledge_get": true, "engineering_get": true,
+	}
+	for _, server := range []*Server{{}, {Engineering: &engineering.Service{}}} {
+		for _, definition := range server.toolDefinitions() {
+			name, _ := definition["name"].(string)
+			if got := reviewStageToolAllowed(name); got != allowed[name] {
+				t.Fatalf("REVIEW tool classification for %q = %v, want %v", name, got, allowed[name])
+			}
+		}
+	}
+
+	ctx := context.Background()
+	root := t.TempDir()
+	database, err := store.Open(ctx, filepath.Join(root, "aetherops.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	objects, err := cas.Open(filepath.Join(root, "objects"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := database.CreateProject(ctx, "independent review allowlist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.CreateRun(ctx, project.ID, "", "question", "main-thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []core.RunStatus{
+		core.RunPlanning, core.RunCollecting, core.RunSynthesizing, core.RunReviewing,
+	} {
+		run, err = database.TransitionRun(ctx, run.ID, run.Revision, status, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	attempt, err := database.BeginStage(ctx, run.ID, core.StageReview, 0, "reviewer-thread", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := json.Marshal(map[string]any{"run_id": run.ID, "stage_attempt_id": attempt.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range []struct {
+		name   string
+		server *Server
+	}{
+		{name: "scholarly_search", server: &Server{DB: database, CAS: objects}},
+		{name: "evidence_capture", server: &Server{DB: database, CAS: objects}},
+		{name: "tool_package_install", server: &Server{DB: database, CAS: objects}},
+		{name: "artifact_publish_review", server: &Server{DB: database, CAS: objects}},
+		{name: "xfoil_polar", server: &Server{DB: database, CAS: objects, Engineering: &engineering.Service{}}},
+		{name: "su2_naca0012", server: &Server{DB: database, CAS: objects, Engineering: &engineering.Service{}}},
+	} {
+		if _, err := testCase.server.call(ctx, testCase.name, identity); err == nil ||
+			!strings.Contains(err.Error(), "independent REVIEW attempt permits only") {
+			t.Fatalf("REVIEW call %s was not rejected at the stage boundary: %v", testCase.name, err)
+		}
 	}
 }
 
@@ -527,6 +608,79 @@ func TestKnowledgeToolsBindProjectOnlyFromActiveRunStage(t *testing.T) {
 	}
 	if len(reader.Calls) != acceptedCalls {
 		t.Fatalf("blocked SPARQL reached the knowledge service: %+v", reader.Calls[acceptedCalls:])
+	}
+}
+
+func TestPlanStageCanSearchAndReadRunPinnedLongTermMemory(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	database, err := store.Open(ctx, filepath.Join(root, "aetherops.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	objects, err := cas.Open(filepath.Join(root, "objects"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := database.CreateProject(ctx, "planning memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	memoryText := "Prior adopted constraint: preserve a positive pitching-moment margin at the design point."
+	receipt, err := objects.PutBytes([]byte(memoryText))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RegisterBlob(ctx, receipt, "text/plain; charset=utf-8"); err != nil {
+		t.Fatal(err)
+	}
+	vector := make([]float32, rag.EmbeddingDimensions)
+	vector[0] = 1
+	document, err := database.IndexDocument(ctx, store.Document{
+		ProjectID: project.ID, Title: "adopted design constraints", BlobHash: receipt.Hash,
+		EmbeddingModel: rag.EmbeddingModel, EmbeddingDimensions: rag.EmbeddingDimensions, Pinned: true,
+	}, []rag.Chunk{{Ordinal: 0, Text: memoryText}}, [][]float32{vector})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateMCPTestKnowledge(t, ctx, database, objects, project.ID)
+	run, attempt := activeMCPStage(t, database, project.ID, "plan-thread")
+	embedder := &recordingPlanMemoryEmbedder{}
+	server := &Server{DB: database, CAS: objects, Embedder: embedder}
+
+	raw, err := json.Marshal(map[string]any{
+		"run_id": run.ID, "stage_attempt_id": attempt.ID,
+		"query": "previous design pitching moment constraint",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := server.call(ctx, "memory_search", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := value.([]store.GraphMemoryResult)
+	if !ok || len(results) != 1 || results[0].DocumentID != document.ID || results[0].Text != memoryText {
+		t.Fatalf("PLAN memory search result = %#v", value)
+	}
+	if len(embedder.queries) != 1 || embedder.queries[0] != "previous design pitching moment constraint" {
+		t.Fatalf("PLAN memory embedding queries = %#v", embedder.queries)
+	}
+
+	readRaw, err := json.Marshal(map[string]any{
+		"run_id": run.ID, "stage_attempt_id": attempt.ID, "chunk_id": results[0].ChunkID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readValue, err := server.call(ctx, "memory_get", readRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readback, ok := readValue.(store.MemoryResult)
+	if !ok || readback.DocumentID != document.ID || readback.Text != memoryText {
+		t.Fatalf("PLAN memory readback = %#v", readValue)
 	}
 }
 

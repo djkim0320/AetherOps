@@ -310,6 +310,9 @@ func (server *Server) call(ctx context.Context, name string, raw json.RawMessage
 	if err != nil {
 		return nil, err
 	}
+	if attempt.Stage == core.StageReview && !reviewStageToolAllowed(name) {
+		return nil, errors.New("the independent REVIEW attempt permits only memory_get, knowledge_sparql, knowledge_get, and engineering_get readback")
+	}
 	if attempt.Stage == core.StageCollect && attempt.Ordinal == core.EngineeringVerificationOrdinal {
 		if server.Engineering == nil {
 			return nil, errors.New("the engineering verification attempt cannot call internal memory, evidence, graph, or artifact tools")
@@ -554,6 +557,15 @@ func (server *Server) call(ctx context.Context, name string, raw json.RawMessage
 			kind, arguments.MediaType, receipt)
 	default:
 		return nil, fmt.Errorf("tool %q is not available", name)
+	}
+}
+
+func reviewStageToolAllowed(name string) bool {
+	switch name {
+	case "memory_get", "knowledge_sparql", "knowledge_get", "engineering_get":
+		return true
+	default:
+		return false
 	}
 }
 

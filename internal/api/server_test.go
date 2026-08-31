@@ -946,6 +946,14 @@ func TestArtifactDownloadDeclaresUTF8ForKoreanJSON(t *testing.T) {
 	}
 }
 
+func TestArtifactDownloadNameUsesWordExtensionForRenderedReport(t *testing.T) {
+	artifact := store.Artifact{ID: "art_report", Kind: "research.report.document"}
+	name := artifactDownloadName(artifact, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if name != "art_report-research.report.document.docx" {
+		t.Fatalf("Word report download name = %q", name)
+	}
+}
+
 func TestDeviceLoginReportsUnavailableRuntime(t *testing.T) {
 	server, endpoint := startTestServer(t)
 	request, err := http.NewRequest(http.MethodPost, endpoint+"/api/v1/auth/codex/device-code", nil)

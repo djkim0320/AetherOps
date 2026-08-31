@@ -1,7 +1,7 @@
 import { useMemo, useState } from "preact/hooks";
 import { artifactPresentation } from "../artifact-presentation";
 import { FormattedMessage } from "../components/FormattedMessage";
-import { artifactFormattedText, artifactRawText } from "../artifact-content";
+import { artifactBinaryContent, artifactFormattedText, artifactRawText } from "../artifact-content";
 import type { Artifact, Run } from "../types";
 import { STATUS_LABELS } from "../types";
 
@@ -39,6 +39,7 @@ export function ArtifactsView({
   const selectedArtifact =
     artifacts?.find((a) => a.id === selectedArtifactID) ?? artifacts?.[0] ?? null;
   const presentation = selectedArtifact ? artifactPresentation(selectedArtifact.kind) : null;
+  const binaryContent = useMemo(() => artifactBinaryContent(artifactContent), [artifactContent]);
 
   const rawText = useMemo(() => artifactRawText(artifactContent), [artifactContent]);
   const formattedText = useMemo(
@@ -57,14 +58,15 @@ export function ArtifactsView({
   }
 
   function handleDownload() {
-    if (!selectedArtifact || !rawText) return;
-    const blob = new Blob([rawText], {
+    if (!selectedArtifact) return;
+    const blob = binaryContent?.blob ?? (rawText ? new Blob([rawText], {
       type: viewMode === "raw" ? "application/json" : "text/markdown"
-    });
+    }) : null);
+    if (!blob) return;
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${selectedArtifact.id}-${selectedArtifact.kind}.${
+    a.download = binaryContent?.filename ?? `${selectedArtifact.id}-${selectedArtifact.kind}.${
       viewMode === "raw" ? "json" : "md"
     }`;
     document.body.appendChild(a);
@@ -262,39 +264,43 @@ export function ArtifactsView({
 
           {selectedArtifact && (
             <div class="artifact-viewer-actions">
-              <div class="view-mode-toggle">
-                <button
-                  type="button"
-                  class={`toggle-btn ${viewMode === "formatted" ? "active" : ""}`}
-                  onClick={() => setViewMode("formatted")}
-                >
-                  서식 보기
-                </button>
-                <button
-                  type="button"
-                  class={`toggle-btn ${viewMode === "raw" ? "active" : ""}`}
-                  onClick={() => setViewMode("raw")}
-                >
-                  원문 (JSON/Raw)
-                </button>
-              </div>
+              {!binaryContent && (
+                <div class="view-mode-toggle">
+                  <button
+                    type="button"
+                    class={`toggle-btn ${viewMode === "formatted" ? "active" : ""}`}
+                    onClick={() => setViewMode("formatted")}
+                  >
+                    서식 보기
+                  </button>
+                  <button
+                    type="button"
+                    class={`toggle-btn ${viewMode === "raw" ? "active" : ""}`}
+                    onClick={() => setViewMode("raw")}
+                  >
+                    원문 (JSON/Raw)
+                  </button>
+                </div>
+              )}
 
-              <button
-                type="button"
-                class="button secondary small"
-                onClick={handleCopy}
-                disabled={!rawText}
-              >
-                {copied ? "✓ 복사됨" : "복사"}
-              </button>
+              {!binaryContent && (
+                <button
+                  type="button"
+                  class="button secondary small"
+                  onClick={handleCopy}
+                  disabled={!rawText}
+                >
+                  {copied ? "✓ 복사됨" : "복사"}
+                </button>
+              )}
 
               <button
                 type="button"
                 class="button secondary small"
                 onClick={handleDownload}
-                disabled={!rawText}
+                disabled={!binaryContent && !rawText}
               >
-                다운로드
+                {binaryContent ? "Word 보고서 다운로드" : "다운로드"}
               </button>
             </div>
           )}
@@ -334,6 +340,15 @@ export function ArtifactsView({
             <div class="empty-state">
               <strong>표시할 내용이 없습니다</strong>
               <span>왼쪽 목록에서 보고서, 근거 또는 리뷰를 선택하세요.</span>
+            </div>
+          ) : binaryContent ? (
+            <div class="empty-state artifact-document-ready">
+              <strong>템플릿 보고서가 준비되었습니다.</strong>
+              <span>{binaryContent.filename}</span>
+              <span>{(binaryContent.size / 1024).toFixed(1)} KB · SHA-256 검증 완료</span>
+              <button type="button" class="button primary" onClick={handleDownload}>
+                Word 보고서 다운로드
+              </button>
             </div>
           ) : viewMode === "raw" ? (
             <pre class="artifact-raw-code">

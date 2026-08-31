@@ -1775,6 +1775,21 @@ h3 { font-size: 13px; font-weight: 600; }
 
 .artifact-content-body { padding: 18px; min-height: 400px; overflow: auto; max-height: calc(100vh - 250px); }
 
+.artifact-document-ready {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-md);
+  background: var(--accent-teal-soft);
+}
+
+.artifact-document-ready strong { color: var(--text-primary); }
+.artifact-document-ready span { max-width: 100%; color: var(--text-muted); overflow-wrap: anywhere; }
+.artifact-document-ready .button { margin-top: 6px; }
+
 /* ==========================================================================
    Schedules View
    ========================================================================== */

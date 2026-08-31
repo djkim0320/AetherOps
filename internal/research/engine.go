@@ -23,6 +23,7 @@ import (
 	"github.com/djkim0320/AetherOps/internal/buildinfo"
 	"github.com/djkim0320/AetherOps/internal/cas"
 	"github.com/djkim0320/AetherOps/internal/core"
+	"github.com/djkim0320/AetherOps/internal/reportdocx"
 	"github.com/djkim0320/AetherOps/internal/store"
 )
 
@@ -47,6 +48,7 @@ const (
 	engineeringVerificationContractPolicy = "The automatic winner-only independent verification deliberately uses panel_count=240 and alpha_step_deg=0.05 over a one-degree local alpha window centered on the screening interpolation for target_cl (approximately target_alpha-0.5 through target_alpha+0.5, with safe outward endpoint quantization). It preserves the physical and optimization conditions but does not repeat the full screening alpha_start_deg/alpha_end_deg range. This local target-window contract is the required independent verification, not a defect or an incomplete full polar sweep. Never require or request a second full-range verification run."
 	engineeringPlanningPolicy             = "AetherOps exposes bundled first-party typed engineering tools through aetherops_engineering. They are intentionally not returned by aetherops_internal.tool_catalog, which contains only user-approved project extensions. Plan directly against a matching bundled tool and never add a Tool Studio capability gate, Skill requirement, or declarative adapter requirement for an operation already covered by aetherops_engineering. Put one dedicated engineering execution workstream at COLLECT ordinal 0 whenever any solver execution is required; that owner must execute every requested solver case in the complete plan, and all other collectors perform public-source research without repeating solver calls. The bundled su2_naca0012 tool generates its own fixed closed-trailing-edge NACA0012 Gmsh mesh on x/c=[-10,15], y/c=[-10,10] and runs steady Euler SU2_CFD with JST. Every NACA0012 mesh-sensitivity plan must populate su2_mesh_study with profile=su2_naca0012_grid_sensitivity/v1, domain_profile=rect_xm10_xp15_ym10_yp10/v1, objective=assess_grid_sensitivity, reference_comparison=qualitative_context, and the exact coarse-to-fine mesh_sizes_m list. The owner must execute every requested mesh_size_m case exactly once. Never promise a 20c domain, C-grid topology, or quantitative reference overlay because the bundled workflow does not implement them. Every su2_naca0012 call must keep iterations between 20 and 1000 inclusive and mesh_size_m between 0.01 and 0.2 inclusive; choose 1000 iterations when the study asks for the strongest available convergence attempt. The receipt exposes deterministic mesh counts and quality bounds, a common final-50-iteration CL/CD stability window, reconstructed surface spacing, and an objective maximum-interior-Cp-gradient shock locator; require the final report to compare those values and to attach each case's verified mesh, history, surface, config, log, and receipt artifacts. " +
 		"When xfoil_screening is present, plan at least one COLLECT workstream that executes every listed screening candidate at every declared operating point through the typed xfoil_polar tool. Compose repeated uses of an existing typed tool with the bounded operating_points matrix instead of declaring a capability gap merely because several Reynolds, Mach, ncrit, target_cl, or minimum_cm conditions are required. Keep the Cartesian product at 64 calls or fewer. Never silently shrink the user's condition set. For an empty operating_points array (one scalar point), never declare requested winner-only independent verification unsupported: after all screening receipts are verified, AetherOps itself selects the winner and starts the isolated verification defined below. For a non-empty matrix, do not claim a single cell is a globally verified winner; require complete matrix receipts, cross-condition ranking, and explicit uncertainty instead. The PLAN describes the applicable backend step in its acceptance criteria but must not assign it to a collector. " + engineeringVerificationContractPolicy
+	planningMemoryPolicy = "Use the project's adopted long-term memory when it can materially improve the plan: prior terminology, user-pinned constraints, established baselines, earlier results, solver settings, unresolved conflicts, or work that should not be repeated. Search with aetherops_internal.memory_search using the research question and, when useful, narrow follow-up queries. Every result is only a retrieval candidate; before relying on one, call aetherops_internal.memory_get for that exact chunk and reason from the run-pinned readback. Use aetherops_internal.knowledge_get when a graph assertion's qualifiers, proof chain, or evidence handle matters; raw SPARQL rows and search snippets are not evidence. Memory may shape workstreams, acceptance criteria, and verification targets, but it is not a substitute for current external evidence or a new solver result: COLLECT must capture or revalidate sources and computations needed by the final report. Do not skip current research merely because an older report exists, especially when dates, operating conditions, assumptions, or requirements differ. An empty memory result is legitimate; never invent remembered facts, and do not expose internal chunk IDs or hashes in the user-facing plan."
 )
 
 var (
@@ -116,6 +118,7 @@ func validateResearchProfileVersion(version string) error {
 // TurnOptions is the complete model-facing contract for one structured turn.
 // Schema is always a fixed schema from core, never a model-supplied schema.
 type TurnOptions struct {
+	Stage           core.Stage
 	Model           string
 	ReasoningEffort string
 	ServiceTier     string
@@ -139,7 +142,7 @@ type TurnResult struct {
 // currently selectable before a thread is created or a turn is submitted.
 type Protocol interface {
 	ValidateModel(ctx context.Context, model, reasoningEffort, serviceTier string) error
-	CreateThread(ctx context.Context, profile ModelProfile) (string, error)
+	CreateStageThread(ctx context.Context, stage core.Stage, profile ModelProfile) (string, error)
 	Turn(ctx context.Context, threadID string, options TurnOptions) (TurnResult, error)
 	Steer(ctx context.Context, threadID, message string) error
 }
@@ -212,9 +215,12 @@ func New(config Config) (*Engine, error) {
 	}, nil
 }
 
-// Steer appends a message to every in-flight turn owned by runID. Most stages
-// have one active turn; COLLECT may have up to three independent turns, so the
-// same correction is delivered to each collector concurrently.
+// Steer appends a message to every steerable in-flight turn owned by runID.
+// Most stages have one active turn; COLLECT may have up to three independent
+// turns, so the same correction is delivered to each collector concurrently.
+// REVIEW is deliberately absent: user or research-agent steering must not bias
+// the fresh independent reviewer session. Cancellation still reaches it through
+// the run context owned by the dispatcher.
 func (engine *Engine) Steer(ctx context.Context, runID, message string) error {
 	if ctx == nil {
 		return errors.New("research context is required")
@@ -458,7 +464,7 @@ func (engine *Engine) resumeInterrupted(ctx context.Context, run core.Run) (core
 		if err != nil {
 			return run, err
 		}
-		completed, err := engine.succeed(ctx, run)
+		completed, err := engine.succeed(ctx, run, point.report, checkpoint.reviews[point.cycle])
 		if err != nil {
 			return engine.abort(ctx, run, err)
 		}
@@ -570,7 +576,8 @@ func (engine *Engine) plan(ctx context.Context, run core.Run) (core.ResearchPlan
 		err = engine.runStage(
 			ctx, run, core.StagePlan, 0, run.MainThreadID, profile,
 			core.PlanSchema(), planInput{
-				Question: run.Question, EngineeringPolicy: engineeringPlanningPolicy,
+				Question: run.Question, MemoryPolicy: planningMemoryPolicy,
+				EngineeringPolicy:          engineeringPlanningPolicy,
 				CapabilityRecoveryFeedback: recoveryFeedback, ResearchRemediation: remediation,
 			}, "research.plan",
 			func(output json.RawMessage) error {
@@ -1065,6 +1072,8 @@ func (engine *Engine) synthesize(
 		reportSchema, synthesizeInput{
 			Question: run.Question, Plan: plan, Evidence: evidence, EngineeringResults: engineeringResults,
 			ReportEvidencePolicy: reportEvidencePolicy, KnowledgePatchPolicy: knowledgePatchPolicy,
+			ReportTemplateVersion:   reportArtifactTemplateVersion,
+			ReportTemplatePolicy:    reportArtifactTemplatePolicy,
 			OntologyPolicy:          ontologyPatchPolicy(ontologyContract),
 			EngineeringReportPolicy: engineeringReportPolicy,
 			EngineeringAssessment:   engineeringAssessment,
@@ -1127,11 +1136,16 @@ func (engine *Engine) review(
 		return verdict, err
 	}
 	err = engine.runStage(
+		// An empty thread identity is intentional. Every REVIEW attempt starts a
+		// fresh reviewer-only Codex session and receives artifacts, never the
+		// project research conversation or a previous review conversation.
 		ctx, run, core.StageReview, ordinal, "", profile,
 		core.ReviewSchema(), reviewInput{
 			Question: run.Question, Plan: plan, Evidence: evidence, EngineeringResults: engineeringResults,
 			Report: report, KnowledgeReviewPolicy: knowledgeReviewPolicy,
-			ReviewScoringPolicy: reviewScoringPolicy, EngineeringReportPolicy: engineeringReportPolicy,
+			ReportTemplateVersion: reportArtifactTemplateVersion,
+			ReportTemplatePolicy:  reportArtifactTemplatePolicy,
+			ReviewScoringPolicy:   reviewScoringPolicy, EngineeringReportPolicy: engineeringReportPolicy,
 		}, "research.review",
 		func(output json.RawMessage) error {
 			candidate, err := decodeStrict[core.ReviewVerdict](output)
@@ -1194,6 +1208,8 @@ func (engine *Engine) revise(
 			Review:                  verdict,
 			ReportEvidencePolicy:    reportEvidencePolicy,
 			KnowledgePatchPolicy:    knowledgePatchPolicy,
+			ReportTemplateVersion:   reportArtifactTemplateVersion,
+			ReportTemplatePolicy:    reportArtifactTemplatePolicy,
 			OntologyPolicy:          ontologyPatchPolicy(ontologyContract),
 			EngineeringReportPolicy: engineeringReportPolicy,
 			EngineeringAssessment:   engineeringAssessment,
@@ -1301,7 +1317,7 @@ func (engine *Engine) runReviewCycles(
 			if err != nil {
 				return engine.abort(ctx, run, err)
 			}
-			completed, err := engine.succeed(ctx, run)
+			completed, err := engine.succeed(ctx, run, report, verdict)
 			if err != nil {
 				return engine.abort(ctx, run, err)
 			}
@@ -1432,7 +1448,12 @@ func (engine *Engine) transition(ctx context.Context, run core.Run, next core.Ru
 	return updated, nil
 }
 
-func (engine *Engine) succeed(ctx context.Context, run core.Run) (core.Run, error) {
+func (engine *Engine) succeed(
+	ctx context.Context,
+	run core.Run,
+	report core.ReportManifest,
+	verdict core.ReviewVerdict,
+) (core.Run, error) {
 	if err := ctx.Err(); err != nil {
 		return run, err
 	}
@@ -1440,7 +1461,31 @@ func (engine *Engine) succeed(ctx context.Context, run core.Run) (core.Run, erro
 	if err != nil {
 		return run, err
 	}
-	updated, err := engine.db.SucceedRun(ctx, current.ID, current.Revision)
+	project, err := engine.db.Project(ctx, current.ProjectID)
+	if err != nil {
+		return current, fmt.Errorf("load report project: %w", err)
+	}
+	document, err := reportdocx.Render(reportdocx.Input{
+		Run: current, Project: project, Report: report, Verdict: verdict, GeneratedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return current, fmt.Errorf("render report document: %w", err)
+	}
+	receipt, err := engine.cas.PutBytes(document)
+	if err != nil {
+		return current, fmt.Errorf("write report document to CAS: %w", err)
+	}
+	verified, err := engine.cas.ReadVerified(receipt.Hash)
+	if err != nil {
+		return current, fmt.Errorf("verify report document CAS object: %w", err)
+	}
+	if !bytes.Equal(verified, document) || int64(len(document)) != receipt.Size {
+		return current, errors.New("report document CAS readback mismatch")
+	}
+	if err := ctx.Err(); err != nil {
+		return current, err
+	}
+	updated, err := engine.db.SucceedRunWithReportDocument(ctx, current.ID, current.Revision, receipt)
 	if err != nil {
 		return current, err
 	}
@@ -1676,6 +1721,9 @@ func (engine *Engine) runStageWithBeforeTurn(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if stage == core.StageReview && strings.TrimSpace(initialThreadID) != "" {
+		return errors.New("REVIEW must start in a fresh reviewer-only thread")
+	}
 	inputBytes, inputHash, err := structuredInput(input)
 	if err != nil {
 		return fmt.Errorf("encode %s input: %w", stage, err)
@@ -1701,12 +1749,17 @@ func (engine *Engine) runStageWithBeforeTurn(
 
 	threadID := initialThreadID
 	if threadID == "" {
-		threadID, err = engine.protocol.CreateThread(ctx, profile)
+		threadID, err = engine.protocol.CreateStageThread(ctx, stage, profile)
 		if err != nil {
 			return engine.failStage(ctx, attempt, "", fmt.Errorf("create %s thread: %w", stage, err))
 		}
 		if strings.TrimSpace(threadID) == "" {
 			return engine.failStage(ctx, attempt, "", fmt.Errorf("create %s thread: empty thread id", stage))
+		}
+		if stage == core.StageReview {
+			if err := engine.verifyFreshReviewerThread(ctx, run, attempt.ID, threadID); err != nil {
+				return engine.failStage(ctx, attempt, "", fmt.Errorf("validate isolated REVIEW thread: %w", err))
+			}
 		}
 		if err := engine.db.SetStageTurn(context.WithoutCancel(ctx), attempt.ID, threadID, ""); err != nil {
 			return engine.failStage(ctx, attempt, "", fmt.Errorf("record %s thread: %w", stage, err))
@@ -1716,9 +1769,13 @@ func (engine *Engine) runStageWithBeforeTurn(
 	if engine.turnTimeout <= 0 {
 		return engine.failStage(ctx, attempt, "", errors.New("research turn timeout is not configured"))
 	}
-	deactivate := engine.activateThread(run.ID, threadID)
+	deactivate := func() {}
+	if stage != core.StageReview {
+		deactivate = engine.activateThread(run.ID, threadID)
+	}
 	turnContext, cancelTurn := context.WithTimeout(ctx, engine.turnTimeout)
 	result, turnErr := engine.protocol.Turn(turnContext, threadID, TurnOptions{
+		Stage:           stage,
 		Model:           profile.Model,
 		ReasoningEffort: profile.ReasoningEffort,
 		ServiceTier:     profile.ServiceTier,
@@ -1793,6 +1850,27 @@ func (engine *Engine) runStageWithBeforeTurn(
 	}
 	if err := engine.db.CompleteStageWithExecution(ctx, attempt.ID, receipt.Hash, executionReceipt); err != nil {
 		return engine.failStage(ctx, attempt, receipt.Hash, fmt.Errorf("complete %s stage: %w", stage, err))
+	}
+	return nil
+}
+
+func (engine *Engine) verifyFreshReviewerThread(
+	ctx context.Context,
+	run core.Run,
+	currentAttemptID string,
+	threadID string,
+) error {
+	if threadID == run.MainThreadID {
+		return errors.New("reviewer thread matches the project research thread")
+	}
+	attempts, err := engine.db.ListStageAttempts(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	for _, previous := range attempts {
+		if previous.ID != currentAttemptID && previous.CodexThreadID == threadID {
+			return fmt.Errorf("reviewer thread was already used by %s attempt %s", previous.Stage, previous.ID)
+		}
 	}
 	return nil
 }
@@ -1877,7 +1955,11 @@ func stagePrompt(stage core.Stage, runID, attemptID string, input []byte) string
 		panic("fixed research stage envelope could not be encoded: " + err.Error())
 	}
 	instructions := "Return only a JSON object that conforms exactly to the supplied response schema. Use run_id and stage_attempt_id for every AetherOps internal MCP call. Bundled aetherops_engineering tools are first-party capabilities and are intentionally absent from aetherops_internal.tool_catalog; call a matching bundled engineering tool directly and never use an empty project tool catalog to declare that bundled capability unavailable. Use aetherops_internal.tool_catalog only to discover optional user-approved project extensions. Read an approved Skill with tool_get and invoke an approved declarative MCP adapter with tool_run only when the bundled tools do not cover the operation. If a genuinely reusable capability is missing, first prove that no bundled or active project tool covers it. You may then call tool_package_propose. A proposal is never approval. For a portable Windows x64 CLI, the proposal must be an aetherops_tool_package_v2 MCP manifest that declares the official HTTPS source, exact payload SHA-256 and size, publisher and license, portable_exe or portable_zip entrypoint, literal/input-token argv adapter, bounded stdin/output/timeout, side-effect-free probe, and the truthful same-Windows-user native-code permission warning. Use only an official portable binary with a published exact hash; never propose an installer, MSI, package manager, npm/pip package, shell script, service, listener, generated executable code, or PATH/registry mutation. After proposal, pass the returned install_approval fields unchanged to tool_package_install and wait for the user's decision. Only a successful install result and subsequent tool_catalog entry authorize tool_run in this exact stage. Any source, byte, adapter, or permission change requires a new proposal and approval. Never retry through arbitrary code; continue with bundled or approved tools or state the limitation while the user reviews it in Tool Studio.\n"
+	if stage == core.StageReview {
+		instructions = "Return only a JSON object that conforms exactly to the supplied response schema. You are an independent reviewer in a fresh reviewer-only Codex session. You have no project research-conversation history and no previous reviewer conversation; judge only the structured plan, evidence bundles, report, engineering result identities, and fixed review policies supplied below. Use run_id and stage_attempt_id for read-only AetherOps MCP readback. You may call aetherops_internal.memory_get, aetherops_internal.knowledge_get, read-only knowledge_sparql, and aetherops_engineering.engineering_get only to verify an exact supplied item. Do not continue the research, browse for new sources, call scholarly_search or evidence_capture, execute a solver, install or run a project tool, modify files, or repair the report yourself. If evidence, computation, scope, or verification is missing, return the required additional_research or replan remediation decision so the research pipeline performs a fresh PLAN and COLLECT cycle. Never approve a report from familiarity with the project or from an earlier session.\n"
+	}
 	if stage == core.StagePlan {
+		instructions += "PLAN LONG-TERM MEMORY contract: apply memory_policy from the structured task. When project memory can affect scope, constraints, baselines, prior work, or verification targets, call aetherops_internal.memory_search and read every selected candidate back with aetherops_internal.memory_get before relying on it. Use only the run-pinned project memory exposed by these tools. Treat it as planning context, not as current report evidence, and leave current-source or solver verification to COLLECT.\n"
 		instructions += "PLAN XFOIL SCREENING contract: the typed XFOIL capability supports one NACA four-digit baseline with a sealed plain-flap candidate set and a bounded declarative operating-point matrix. Arbitrary coordinate input, non-NACA-four-digit airfoils, and comparisons across different airfoil families remain unsupported. For one condition, use the required scalar reynolds, mach, ncrit, target_cl, and minimum_cm fields and return operating_points as an empty array. For several conditions, populate operating_points with every exact condition; the scalar fields identify the primary/default point and must remain valid. The backend authorizes the Cartesian product of operating_points and candidate_flap_deflections_deg, capped at 64 calls. Use this composition to solve multi-Reynolds or multi-target-CL work instead of stopping or shrinking scope. Set xfoil_screening to the exact immutable numerical contract, including candidates, every operating point, solver controls, geometry, objective, and constraints. If the task truly cannot be represented even by this bounded matrix, state the unsupported capability so validation fails before COLLECT. If no XFOIL work is required, set xfoil_screening to null. COLLECT is fail-closed: owner ordinal 0 must execute exactly the authorized matrix, and missing, duplicate, additional, failed, or condition-changed jobs invalidate it.\n"
 		var marker struct {
 			ResearchRemediation *researchRemediationInput `json:"research_remediation"`
@@ -2040,6 +2122,7 @@ func orderedEvidence(plan core.ResearchPlan, evidence map[string]core.EvidenceBu
 
 type planInput struct {
 	Question                   string                    `json:"question"`
+	MemoryPolicy               string                    `json:"memory_policy"`
 	EngineeringPolicy          string                    `json:"engineering_policy"`
 	CapabilityRecoveryFeedback string                    `json:"capability_recovery_feedback,omitempty"`
 	ResearchRemediation        *researchRemediationInput `json:"research_remediation,omitempty"`
@@ -2088,6 +2171,8 @@ type synthesizeInput struct {
 	EngineeringResults      []store.EngineeringResult   `json:"engineering_results,omitempty"`
 	ReportEvidencePolicy    string                      `json:"report_evidence_policy"`
 	KnowledgePatchPolicy    string                      `json:"knowledge_patch_policy"`
+	ReportTemplateVersion   string                      `json:"report_template_version"`
+	ReportTemplatePolicy    string                      `json:"report_template_policy"`
 	OntologyPolicy          string                      `json:"ontology_policy"`
 	EngineeringReportPolicy string                      `json:"engineering_report_policy,omitempty"`
 	EngineeringAssessment   *core.EngineeringAssessment `json:"engineering_assessment,omitempty"`
@@ -2100,6 +2185,8 @@ type reviewInput struct {
 	EngineeringResults      []store.EngineeringResult `json:"engineering_results,omitempty"`
 	Report                  core.ReportManifest       `json:"report"`
 	KnowledgeReviewPolicy   string                    `json:"knowledge_review_policy"`
+	ReportTemplateVersion   string                    `json:"report_template_version"`
+	ReportTemplatePolicy    string                    `json:"report_template_policy"`
 	ReviewScoringPolicy     string                    `json:"review_scoring_policy"`
 	EngineeringReportPolicy string                    `json:"engineering_report_policy,omitempty"`
 }
@@ -2113,6 +2200,8 @@ type reviseInput struct {
 	Review                  core.ReviewVerdict          `json:"review"`
 	ReportEvidencePolicy    string                      `json:"report_evidence_policy"`
 	KnowledgePatchPolicy    string                      `json:"knowledge_patch_policy"`
+	ReportTemplateVersion   string                      `json:"report_template_version"`
+	ReportTemplatePolicy    string                      `json:"report_template_policy"`
 	OntologyPolicy          string                      `json:"ontology_policy"`
 	EngineeringReportPolicy string                      `json:"engineering_report_policy,omitempty"`
 	EngineeringAssessment   *core.EngineeringAssessment `json:"engineering_assessment,omitempty"`

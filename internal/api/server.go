@@ -1242,7 +1242,7 @@ func artifactDownloadName(artifact store.Artifact, mediaType string) string {
 	}
 	name := artifact.ID + "-" + kind
 	lower := strings.ToLower(name)
-	for _, extension := range []string{".vsp3", ".msh", ".su2", ".restart", ".json", ".csv", ".txt", ".md"} {
+	for _, extension := range []string{".vsp3", ".msh", ".su2", ".restart", ".docx", ".json", ".csv", ".txt", ".md"} {
 		if strings.HasSuffix(lower, extension) {
 			return name
 		}
@@ -1256,6 +1256,8 @@ func artifactDownloadName(artifact store.Artifact, mediaType string) string {
 		return name + ".md"
 	case "text/plain":
 		return name + ".txt"
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return name + ".docx"
 	default:
 		return name + ".bin"
 	}

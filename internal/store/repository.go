@@ -1036,10 +1036,52 @@ WHERE id = ? AND revision = ?`, prior, formatTime(now), runID, current.Revision)
 	return current, nil
 }
 
-// SucceedRun atomically transitions a reviewed run and adopts only its final
-// report plus captured evidence. Draft plans, reviews, and superseded report
-// revisions remain visible but are never marked as long-term memory inputs.
+// SucceedRun is retained for store fixtures and migrations that do not render a
+// user-facing Word companion. Product research execution uses
+// SucceedRunWithReportDocument.
 func (db *DB) SucceedRun(ctx context.Context, runID string, expectedRevision int64) (core.Run, error) {
+	return db.succeedRun(ctx, runID, expectedRevision, nil)
+}
+
+type adoptedReportDocument struct {
+	artifactID string
+	receipt    cas.Receipt
+}
+
+// SucceedRunWithReportDocument commits the canonical JSON ReportManifest and
+// its template-rendered DOCX companion in one SQLite transaction. The JSON
+// artifact remains runs.report_artifact_id because knowledge and memory
+// materialization decode that structured contract; the DOCX is an additional
+// adopted, human-facing artifact on the same final report attempt.
+func (db *DB) SucceedRunWithReportDocument(
+	ctx context.Context,
+	runID string,
+	expectedRevision int64,
+	documentReceipt cas.Receipt,
+) (core.Run, error) {
+	if documentReceipt.Hash == "" || documentReceipt.Size <= 0 {
+		return core.Run{}, errors.New("report document CAS receipt is invalid")
+	}
+	artifactID, err := id.New("art")
+	if err != nil {
+		return core.Run{}, err
+	}
+	return db.succeedRun(ctx, runID, expectedRevision, &adoptedReportDocument{
+		artifactID: artifactID,
+		receipt:    documentReceipt,
+	})
+}
+
+// succeedRun atomically transitions a reviewed run and adopts only its final
+// report, optional rendered companion, and captured evidence. Draft plans,
+// reviews, and superseded report revisions remain visible but are never marked
+// as long-term memory inputs.
+func (db *DB) succeedRun(
+	ctx context.Context,
+	runID string,
+	expectedRevision int64,
+	document *adoptedReportDocument,
+) (core.Run, error) {
 	transaction, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return core.Run{}, err
@@ -1055,20 +1097,54 @@ func (db *DB) SucceedRun(ctx context.Context, runID string, expectedRevision int
 	if err := core.RequireTransition(current.Status, core.RunSucceeded); err != nil {
 		return core.Run{}, err
 	}
-	var reportArtifactID string
+	var reportArtifactID, reportAttemptID string
 	err = transaction.QueryRowContext(ctx, `
-SELECT a.id
+SELECT a.id, a.stage_attempt_id
 FROM artifacts a
 JOIN stage_attempts s ON s.id = a.stage_attempt_id
 WHERE a.run_id = ? AND s.status = 'completed'
-  AND ((s.stage = 'synthesize' AND s.logical_ordinal = 0 AND ? = 0)
-    OR (s.stage = 'revise' AND s.logical_ordinal = ?))
+  AND ((s.stage = 'synthesize' AND s.logical_ordinal = 0 AND ? = 0 AND a.kind = 'research.report')
+    OR (s.stage = 'revise' AND s.logical_ordinal = ? AND a.kind = 'research.report.revision'))
 ORDER BY a.created_at DESC, a.id DESC
-LIMIT 1`, runID, current.RevisionCycle, current.RevisionCycle).Scan(&reportArtifactID)
+LIMIT 1`, runID, current.RevisionCycle, current.RevisionCycle).Scan(&reportArtifactID, &reportAttemptID)
 	if err != nil {
 		return core.Run{}, fmt.Errorf("resolve final report artifact: %w", err)
 	}
 	now := time.Now().UTC()
+	if document != nil {
+		if _, err := transaction.ExecContext(ctx, `
+INSERT INTO blobs(hash, size, media_type, created_at)
+VALUES(?, ?, ?, ?)
+ON CONFLICT(hash) DO NOTHING`,
+			document.receipt.Hash, document.receipt.Size,
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document", formatTime(now),
+		); err != nil {
+			return core.Run{}, err
+		}
+		var storedSize int64
+		var storedMediaType string
+		if err := transaction.QueryRowContext(
+			ctx, "SELECT size, media_type FROM blobs WHERE hash = ?", document.receipt.Hash,
+		).Scan(&storedSize, &storedMediaType); err != nil {
+			return core.Run{}, err
+		}
+		if storedSize != document.receipt.Size || storedMediaType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
+			return core.Run{}, errors.New("report document blob metadata conflicts with CAS receipt")
+		}
+		if _, err := transaction.ExecContext(ctx, `
+INSERT INTO artifacts(id, run_id, stage_attempt_id, kind, blob_hash, adopted, created_at)
+VALUES(?, ?, ?, 'research.report.document', ?, 1, ?)`,
+			document.artifactID, runID, reportAttemptID, document.receipt.Hash, formatTime(now),
+		); err != nil {
+			return core.Run{}, err
+		}
+		if err := appendEvent(ctx, transaction, runID, "artifact.published", map[string]any{
+			"artifact_id": document.artifactID, "attempt_id": reportAttemptID,
+			"kind": "research.report.document", "blob_hash": document.receipt.Hash,
+		}, now); err != nil {
+			return core.Run{}, err
+		}
+	}
 	result, err := transaction.ExecContext(ctx, `
 UPDATE runs
 SET status = ?, revision = revision + 1, report_artifact_id = ?, error = '', updated_at = ?

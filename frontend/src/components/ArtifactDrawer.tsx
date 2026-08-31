@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { Artifact } from "../types";
-import { artifactFormattedText, artifactRawText } from "../artifact-content";
+import { artifactBinaryContent, artifactFormattedText, artifactRawText } from "../artifact-content";
 import { FormattedMessage } from "./FormattedMessage";
 
 export type ArtifactPresentation = {
@@ -32,6 +32,7 @@ export function ArtifactDrawer({
 
   const rawText = artifactRawText(content);
   const formattedText = artifactFormattedText(artifact.kind, content);
+  const binaryContent = artifactBinaryContent(content);
 
   async function handleCopy() {
     try {
@@ -41,6 +42,18 @@ export function ArtifactDrawer({
     } catch {
       // Fallback
     }
+  }
+
+  function handleDownload() {
+    if (!binaryContent) return;
+    const url = URL.createObjectURL(binaryContent.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = binaryContent.filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -59,21 +72,30 @@ export function ArtifactDrawer({
           </div>
 
           <div class="artifact-drawer-actions">
-            <button
-              type="button"
-              class="button secondary small"
-              onClick={() => setViewMode((m) => (m === "formatted" ? "raw" : "formatted"))}
-            >
-              {viewMode === "formatted" ? "원문 (JSON/Raw)" : "서식 보기"}
-            </button>
-            <button
-              type="button"
-              class="button secondary small"
-              onClick={handleCopy}
-              disabled={!rawText}
-            >
-              {copied ? "✓ 복사 완료" : "복사"}
-            </button>
+            {!binaryContent && (
+              <button
+                type="button"
+                class="button secondary small"
+                onClick={() => setViewMode((m) => (m === "formatted" ? "raw" : "formatted"))}
+              >
+                {viewMode === "formatted" ? "원문 (JSON/Raw)" : "서식 보기"}
+              </button>
+            )}
+            {!binaryContent && (
+              <button
+                type="button"
+                class="button secondary small"
+                onClick={handleCopy}
+                disabled={!rawText}
+              >
+                {copied ? "✓ 복사 완료" : "복사"}
+              </button>
+            )}
+            {binaryContent && (
+              <button type="button" class="button secondary small" onClick={handleDownload}>
+                Word 보고서 다운로드
+              </button>
+            )}
             <button
               type="button"
               class="artifact-drawer-close"
@@ -95,6 +117,15 @@ export function ArtifactDrawer({
             <div class="empty-state">
               <strong>표시할 내용이 없습니다</strong>
               <span>산출물 데이터가 비어 있습니다.</span>
+            </div>
+          ) : binaryContent ? (
+            <div class="empty-state artifact-document-ready">
+              <strong>템플릿 보고서가 준비되었습니다.</strong>
+              <span>{binaryContent.filename}</span>
+              <span>{(binaryContent.size / 1024).toFixed(1)} KB · SHA-256 검증 완료</span>
+              <button type="button" class="button primary" onClick={handleDownload}>
+                Word 보고서 다운로드
+              </button>
             </div>
           ) : viewMode === "raw" ? (
             <pre class="artifact-raw-code">

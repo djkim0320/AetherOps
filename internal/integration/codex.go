@@ -102,11 +102,18 @@ func (adapter *CodexAdapter) ContextWindowUsage(_ context.Context, threadID stri
 	}, true
 }
 
-func (adapter *CodexAdapter) CreateThread(ctx context.Context, profile research.ModelProfile) (string, error) {
+func (adapter *CodexAdapter) CreateStageThread(ctx context.Context, stage core.Stage, profile research.ModelProfile) (string, error) {
 	if err := adapter.ValidateModel(ctx, profile.Model, profile.ReasoningEffort, profile.ServiceTier); err != nil {
 		return "", err
 	}
-	return adapter.createThread(ctx, "aetherops-isolated-stage", profile.Model, profile.ReasoningEffort, researchContextProfile(profile.Model))
+	serviceName, approvalPolicy, sandbox, err := isolatedResearchStageThreadPolicy(stage)
+	if err != nil {
+		return "", err
+	}
+	return adapter.createThread(
+		ctx, serviceName, profile.Model, profile.ReasoningEffort,
+		researchContextProfile(profile.Model), approvalPolicy, sandbox,
+	)
 }
 
 func (adapter *CodexAdapter) CreateMainThread(ctx context.Context, projectID string, configuration core.RunConfiguration) (string, error) {
@@ -116,7 +123,10 @@ func (adapter *CodexAdapter) CreateMainThread(ctx context.Context, projectID str
 	if err := adapter.ValidateRunConfiguration(ctx, configuration); err != nil {
 		return "", err
 	}
-	return adapter.createThread(ctx, "aetherops-project-"+projectID, configuration.Model, configuration.ReasoningEffort, configuration.NormalizedContextProfile())
+	return adapter.createThread(
+		ctx, "aetherops-project-"+projectID, configuration.Model, configuration.ReasoningEffort,
+		configuration.NormalizedContextProfile(), "on-request", "workspace-write",
+	)
 }
 
 func (adapter *CodexAdapter) Chat(
@@ -428,13 +438,38 @@ func planDialogueOutputSchema() json.RawMessage {
 	}`)
 }
 
-func (adapter *CodexAdapter) createThread(ctx context.Context, serviceName, model, effort, contextProfile string) (string, error) {
+func isolatedResearchStageThreadPolicy(stage core.Stage) (serviceName, approvalPolicy, sandbox string, err error) {
+	switch stage {
+	case core.StageCollect:
+		return "aetherops-collector", "on-request", "workspace-write", nil
+	case core.StageReview:
+		return "aetherops-reviewer", "never", "read-only", nil
+	default:
+		return "", "", "", fmt.Errorf("stage %q does not own an isolated research session", stage)
+	}
+}
+
+func researchTurnPolicy(stage core.Stage) (approvalPolicy string, sandboxPolicy json.RawMessage, err error) {
+	switch stage {
+	case core.StageReview:
+		return "never", json.RawMessage(`{"type":"readOnly","networkAccess":false}`), nil
+	case core.StagePlan, core.StageCollect, core.StageSynthesize, core.StageRevise:
+		return "on-request", json.RawMessage(`{"type":"workspaceWrite","writableRoots":[],"networkAccess":true}`), nil
+	default:
+		return "", nil, fmt.Errorf("unsupported research turn stage %q", stage)
+	}
+}
+
+func (adapter *CodexAdapter) createThread(
+	ctx context.Context,
+	serviceName, model, effort, contextProfile, approvalPolicy, sandbox string,
+) (string, error) {
 	threadID, err := adapter.Client.StartThread(ctx, codex.ThreadOptions{
 		Model:          model,
 		Effort:         effort,
 		CWD:            adapter.WorkDir,
-		ApprovalPolicy: "on-request",
-		Sandbox:        "workspace-write",
+		ApprovalPolicy: approvalPolicy,
+		Sandbox:        sandbox,
 		ServiceName:    serviceName,
 		Config:         codexContextConfig(model, contextProfile),
 	})
@@ -451,6 +486,10 @@ func (adapter *CodexAdapter) Turn(ctx context.Context, threadID string, options 
 	if err := adapter.ensureResumed(ctx, threadID, options.Model, researchContextProfile(options.Model)); err != nil {
 		return research.TurnResult{}, err
 	}
+	approvalPolicy, sandboxPolicy, err := researchTurnPolicy(options.Stage)
+	if err != nil {
+		return research.TurnResult{}, err
+	}
 	result, err := adapter.Client.Turn(ctx, threadID, codex.TurnOptions{
 		Model:          options.Model,
 		Effort:         options.ReasoningEffort,
@@ -458,8 +497,8 @@ func (adapter *CodexAdapter) Turn(ctx context.Context, threadID string, options 
 		Prompt:         options.Prompt,
 		OutputSchema:   append(json.RawMessage(nil), options.Schema...),
 		CWD:            adapter.WorkDir,
-		ApprovalPolicy: "on-request",
-		SandboxPolicy:  json.RawMessage(`{"type":"workspaceWrite","writableRoots":[],"networkAccess":true}`),
+		ApprovalPolicy: approvalPolicy,
+		SandboxPolicy:  sandboxPolicy,
 	})
 	if err != nil && ctx.Err() != nil {
 		// turn/start can be cancelled before its response exposes a turn id. In

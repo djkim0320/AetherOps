@@ -1010,11 +1010,12 @@ export function App() {
 
   async function selectArtifact(artifact: Artifact) {
     setSelectedArtifactID(artifact.id);
+    setArtifactContent(null);
     setBusy("artifact");
     setActionError(null);
     try {
       const res = await fetchArtifact(artifactContentPath(artifact.id));
-		setArtifactContent(res?.json ?? res?.text ?? res?.blob ?? res);
+      setArtifactContent(res.binary ? res : (res?.json ?? res?.text ?? res));
     } catch (err) {
       setActionError(formatApiError(err));
     } finally {
@@ -1025,11 +1026,12 @@ export function App() {
   async function openArtifactInDrawer(artifact: Artifact) {
     setSelectedArtifactID(artifact.id);
     setDrawerArtifact(artifact);
+    setArtifactContent(null);
     setBusy("artifact");
     setActionError(null);
     try {
       const res = await fetchArtifact(artifactContentPath(artifact.id));
-		setArtifactContent(res?.json ?? res?.text ?? res?.blob ?? res);
+      setArtifactContent(res.binary ? res : (res?.json ?? res?.text ?? res));
     } catch (err) {
       setActionError(formatApiError(err));
     } finally {

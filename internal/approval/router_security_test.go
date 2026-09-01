@@ -210,6 +210,59 @@ func TestExactEngineeringReplayResponseFailureIsNotFollowedByDecline(t *testing.
 	}
 }
 
+func TestReceiptReadbackAttemptDeclinesSolverWithoutCreatingUIApproval(t *testing.T) {
+	ctx := context.Background()
+	value := newEngineeringReplayRouterFixture(t, "succeeded")
+	results, err := value.database.ListRunEngineeringResults(ctx, value.run.ID)
+	if err != nil || len(results) != 1 {
+		t.Fatalf("load reusable result: count=%d err=%v", len(results), err)
+	}
+	readbackAttempt, err := value.database.BeginStage(
+		ctx, value.run.ID, core.StageCollect, 1, "thread-readback", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := value.database.AuthorizeEngineeringReceiptReuses(
+		ctx, value.run.ID, readbackAttempt.ID, results,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var approvalsBefore int
+	if err := value.database.SQL().QueryRowContext(ctx, "SELECT COUNT(*) FROM approvals").Scan(&approvalsBefore); err != nil {
+		t.Fatal(err)
+	}
+	arguments := make(map[string]any, len(value.arguments))
+	for key, item := range value.arguments {
+		arguments[key] = item
+	}
+	arguments["stage_attempt_id"] = readbackAttempt.ID
+	client := &protocolFixture{}
+	router := &Router{DB: value.database, Client: client, pending: make(map[string]pendingApproval)}
+	event := approvalEvent("item/mcpToolCall/requestApproval", map[string]any{
+		"threadId": readbackAttempt.CodexThreadID, "turnId": "turn-readback", "itemId": "solver-forbidden",
+		"serverName": "aetherops_engineering", "toolName": "xfoil_polar",
+		"arguments": arguments, "reason": "incorrectly execute during receipt readback",
+	})
+	if err := router.handle(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.responses) != 1 || client.responses[0].decision != "decline" {
+		t.Fatalf("readback solver response = %+v", client.responses)
+	}
+	pending, err := value.database.ListPendingApprovals(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var approvalsAfter int
+	if err := value.database.SQL().QueryRowContext(ctx, "SELECT COUNT(*) FROM approvals").Scan(&approvalsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 || approvalsAfter != approvalsBefore {
+		t.Fatalf("readback solver request leaked to UI: pending=%+v before=%d after=%d", pending, approvalsBefore, approvalsAfter)
+	}
+}
+
 func TestEquivalentXFOILScreeningAcrossCollectorsIsAutomaticallyDeclined(t *testing.T) {
 	ctx := context.Background()
 	database, run, planAttempt := activeRun(t)

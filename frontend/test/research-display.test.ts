@@ -31,6 +31,23 @@ test("planned research hides the internal execution contract and shows its goal"
 	});
 });
 
+test("new planned runs use the final plan as their only executable question", () => {
+	const question = [
+		"계획 모드에서 합의된 실행 계획:",
+		"# 목표",
+		"NACA 0012 격자 수렴성을 검증한다.",
+		"",
+		"# 완료 기준",
+		"- GCI를 계산한다."
+	].join("\n");
+
+	assert.deepEqual(researchQuestionDisplay(question), {
+		planned: true,
+		title: "합의된 계획으로 연구를 시작했습니다.",
+		text: "NACA 0012 격자 수렴성을 검증한다."
+	});
+});
+
 test("planned research without a goal section uses a compact pointer", () => {
 	const display = researchQuestionDisplay("연구 목표:\n응답\n\n계획 모드에서 합의된 실행 계획:\n# 범위\n상세 계약");
 	assert.equal(display.planned, true);

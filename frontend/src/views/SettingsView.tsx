@@ -86,7 +86,7 @@ export function SettingsView({
             : "장치 로그인 코드 요청"}
         </button>
 
-        {deviceCode && (
+        {deviceCode && !(codexAccount?.authenticated && codexAccount.chatgpt) && (
           <div class="device-code-card">
             {firstText(deviceCode, "user_code") && (
               <div class="user-code-row">
@@ -119,17 +119,18 @@ export function SettingsView({
         )}
       </section>
 
-      {/* 2. OpenAI API Key (Optional) */}
+      {/* 2. OpenAI API Key for embeddings */}
       <section class="panel setting-card">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">직접 연결 (선택 사항)</p>
+            <p class="eyebrow">지식 검색 연결 (선택 사항)</p>
             <h2>OpenAI API 키</h2>
           </div>
         </div>
 
         <p class="setting-desc">
-          Codex 로그인 대신 직접 발급받은 OpenAI API 키를 등록하여 모델 호출을 진행할 수 있습니다.
+          장기 기억과 지식 검색에 사용할 OpenAI 임베딩 API 키를 등록합니다. 대화와 연구 실행에는 위의
+          Codex 로그인이 별도로 필요합니다.
         </p>
 
         <form class="api-key-form" onSubmit={onSaveApiKey}>

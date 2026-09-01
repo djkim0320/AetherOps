@@ -15,7 +15,8 @@ func validSU2MeshStudyPlan() ResearchPlan {
 		}},
 		SourceRequirements: []string{}, AcceptanceCriteria: []string{},
 		SU2MeshStudy: &SU2MeshStudyPlan{
-			Profile: SU2MeshStudyProfileV1, NACA: "0012", Mach: .8, AlphaDeg: 1.25,
+			ExecutionMode: SU2ExecutionExecute,
+			Profile:       SU2MeshStudyProfileV1, NACA: "0012", Mach: .8, AlphaDeg: 1.25,
 			Iterations: 1000, MeshSizesM: []float64{.04, .025, .015},
 			DomainProfile: SU2FixedDomainV1, Objective: SU2ObjectiveGridStudy,
 			ReferenceComparison: "qualitative_context",
@@ -36,6 +37,7 @@ func TestSU2MeshStudyPlanClosesCapabilityMismatch(t *testing.T) {
 		{"unsupported overlay", func(value *SU2MeshStudyPlan) { value.ReferenceComparison = "quantitative_overlay" }},
 		{"unordered meshes", func(value *SU2MeshStudyPlan) { value.MeshSizesM = []float64{.04, .015, .025} }},
 		{"too few meshes", func(value *SU2MeshStudyPlan) { value.MeshSizesM = []float64{.04, .02} }},
+		{"unknown execution mode", func(value *SU2MeshStudyPlan) { value.ExecutionMode = "cached_if_available" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -71,6 +73,11 @@ func TestPlanSchemaRequiresExplicitSU2ContractField(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("plan schema does not require an explicit nullable SU2 contract")
+	}
+	text := string(PlanSchema())
+	if !strings.Contains(text, `"execution_mode"`) ||
+		!strings.Contains(text, `"execute","readback_existing"`) {
+		t.Fatal("plan schema omits the fail-closed SU2 execution mode")
 	}
 }
 

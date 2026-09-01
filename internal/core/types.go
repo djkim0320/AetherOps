@@ -70,7 +70,7 @@ const (
 	// engineering acceptance assessment. Older stage checkpoints must not be
 	// resumed because their plan could authorize solver work only through prose.
 	// V11 makes a failed REVIEW executable: the verdict must describe missing
-	// work, the prior cycle is superseded, and a fresh PLAN/COLLECT/MERGE/REVIEW
+	// work, the prior cycle is superseded, and a fresh PLAN/COLLECT/SYNTHESIZE/REVIEW
 	// cycle runs before quality can be reconsidered.
 	StageExecutionContractV11    = "aetherops-stage-execution-v11"
 	StageExecutionContractSHA256 = "a361ade9786215b112c97650ee01fb51de0a43cc2643acf134c164332933e1a2"
@@ -497,6 +497,8 @@ const (
 	SU2MeshStudyProfileV1 = "su2_naca0012_grid_sensitivity/v1"
 	SU2FixedDomainV1      = "rect_xm10_xp15_ym10_yp10/v1"
 	SU2ObjectiveGridStudy = "assess_grid_sensitivity"
+	SU2ExecutionExecute   = "execute"
+	SU2ExecutionReadback  = "readback_existing"
 )
 
 // SU2MeshStudyPlan is the immutable capability contract for the bundled
@@ -504,6 +506,7 @@ const (
 // model cannot promise a 20c or C-grid study and then silently execute the
 // smaller bundled rectangular domain.
 type SU2MeshStudyPlan struct {
+	ExecutionMode       string    `json:"execution_mode"`
 	Profile             string    `json:"profile"`
 	NACA                string    `json:"naca"`
 	Mach                float64   `json:"mach"`
@@ -516,6 +519,9 @@ type SU2MeshStudyPlan struct {
 }
 
 func (plan SU2MeshStudyPlan) Validate() error {
+	if plan.ExecutionMode != SU2ExecutionExecute && plan.ExecutionMode != SU2ExecutionReadback {
+		return errors.New("SU2 mesh study requires an explicit execute or readback_existing mode")
+	}
 	if plan.Profile != SU2MeshStudyProfileV1 || plan.NACA != "0012" ||
 		plan.DomainProfile != SU2FixedDomainV1 || plan.Objective != SU2ObjectiveGridStudy ||
 		plan.ReferenceComparison != "qualitative_context" {
@@ -1612,9 +1618,10 @@ const (
 // identify the gap, but only a fresh PLAN is allowed to turn it into an
 // executable tool contract.
 type ReviewRemediationTask struct {
-	Objective           string   `json:"objective"`
-	RequiredEvidence    []string `json:"required_evidence"`
-	RequiresEngineering bool     `json:"requires_engineering"`
+	Objective                  string   `json:"objective"`
+	RequiredEvidence           []string `json:"required_evidence"`
+	RequiresEngineering        bool     `json:"requires_engineering"`
+	RequiresNewSolverExecution bool     `json:"requires_new_solver_execution"`
 }
 
 // EffectiveRemediationAction keeps completed pre-remediation review artifacts

@@ -47,6 +47,7 @@ func PlanSchema() json.RawMessage {
     "su2_mesh_study":{"description":"Exact immutable contract for the bundled fixed-domain NACA0012 SU2 grid-sensitivity workflow; otherwise null.","anyOf":[
       {"type":"null"},
       {"type":"object","properties":{
+		"execution_mode":{"type":"string","enum":["execute","readback_existing"]},
         "profile":{"type":"string","const":"su2_naca0012_grid_sensitivity/v1"},
         "naca":{"type":"string","const":"0012"},
         "mach":{"type":"number"},"alpha_deg":{"type":"number"},"iterations":{"type":"integer"},
@@ -54,7 +55,7 @@ func PlanSchema() json.RawMessage {
         "domain_profile":{"type":"string","const":"rect_xm10_xp15_ym10_yp10/v1"},
         "objective":{"type":"string","const":"assess_grid_sensitivity"},
         "reference_comparison":{"type":"string","const":"qualitative_context"}
-      },"required":["profile","naca","mach","alpha_deg","iterations","mesh_sizes_m","domain_profile","objective","reference_comparison"],"additionalProperties":false}
+      },"required":["execution_mode","profile","naca","mach","alpha_deg","iterations","mesh_sizes_m","domain_profile","objective","reference_comparison"],"additionalProperties":false}
     ]}
   },
   "required":["question","mode","workstreams","source_requirements","acceptance_criteria","xfoil_screening","su2_mesh_study"],
@@ -296,8 +297,9 @@ func ReviewSchema() json.RawMessage {
 	"remediation_tasks":{"type":"array","items":{"type":"object","properties":{
 	  "objective":{"type":"string","minLength":1},
 	  "required_evidence":{"type":"array","items":{"type":"string"}},
-	  "requires_engineering":{"type":"boolean"}
-	},"required":["objective","required_evidence","requires_engineering"],"additionalProperties":false}},
+	  "requires_engineering":{"description":"True when the task needs engineering receipts, deterministic post-processing, or engineering analysis, including readback of existing results.","type":"boolean"},
+	  "requires_new_solver_execution":{"description":"True only when a genuinely missing solver run at a new or previously unexecuted contract is required. Keep false for receipt readback, plotting, audit tables, or reanalysis of existing solver artifacts.","type":"boolean"}
+	},"required":["objective","required_evidence","requires_engineering","requires_new_solver_execution"],"additionalProperties":false}},
     "summary":{"type":"string"}
   },
   "required":["citation_integrity_percent","knowledge_integrity","critical_errors","scores","revision_requests","remediation_action","remediation_tasks","summary"],

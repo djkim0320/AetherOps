@@ -558,7 +558,7 @@ func renderAuditAppendix(input Input) string {
 		{"연구 프로필", input.Run.ResearchProfileVersion},
 		{"검색 프로필", input.Run.RetrievalProfile},
 		{"지식 generation", input.Run.KnowledgeGenerationID},
-		{"PLAN / MERGE / REVISE / REVIEW", strings.Join([]string{core.PlannerModel, core.PlannerEffort, core.ServiceTierDefault}, " · ")},
+		{"PLAN / SYNTHESIZE / REVISE / REVIEW", strings.Join([]string{core.PlannerModel, core.PlannerEffort, core.ServiceTierDefault}, " · ")},
 		{"COLLECT", strings.Join([]string{core.CollectorModel, core.CollectorEffort, core.ServiceTierDefault}, " · ")},
 		{"제품 버전", input.Run.ProductBuild.Version},
 		{"발행 시각", input.GeneratedAt.Format(time.RFC3339)},

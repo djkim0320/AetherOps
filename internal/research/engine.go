@@ -48,7 +48,9 @@ const (
 	engineeringVerificationContractPolicy = "The automatic winner-only independent verification deliberately uses panel_count=240 and alpha_step_deg=0.05 over a one-degree local alpha window centered on the screening interpolation for target_cl (approximately target_alpha-0.5 through target_alpha+0.5, with safe outward endpoint quantization). It preserves the physical and optimization conditions but does not repeat the full screening alpha_start_deg/alpha_end_deg range. This local target-window contract is the required independent verification, not a defect or an incomplete full polar sweep. Never require or request a second full-range verification run."
 	engineeringPlanningPolicy             = "AetherOps exposes bundled first-party typed engineering tools through aetherops_engineering. They are intentionally not returned by aetherops_internal.tool_catalog, which contains only user-approved project extensions. Plan directly against a matching bundled tool and never add a Tool Studio capability gate, Skill requirement, or declarative adapter requirement for an operation already covered by aetherops_engineering. Put one dedicated engineering execution workstream at COLLECT ordinal 0 whenever any solver execution is required; that owner must execute every requested solver case in the complete plan, and all other collectors perform public-source research without repeating solver calls. The bundled su2_naca0012 tool generates its own fixed closed-trailing-edge NACA0012 Gmsh mesh on x/c=[-10,15], y/c=[-10,10] and runs steady Euler SU2_CFD with JST. Every NACA0012 mesh-sensitivity plan must populate su2_mesh_study with profile=su2_naca0012_grid_sensitivity/v1, domain_profile=rect_xm10_xp15_ym10_yp10/v1, objective=assess_grid_sensitivity, reference_comparison=qualitative_context, and the exact coarse-to-fine mesh_sizes_m list. The owner must execute every requested mesh_size_m case exactly once. Never promise a 20c domain, C-grid topology, or quantitative reference overlay because the bundled workflow does not implement them. Every su2_naca0012 call must keep iterations between 20 and 1000 inclusive and mesh_size_m between 0.01 and 0.2 inclusive; choose 1000 iterations when the study asks for the strongest available convergence attempt. The receipt exposes deterministic mesh counts and quality bounds, a common final-50-iteration CL/CD stability window, reconstructed surface spacing, and an objective maximum-interior-Cp-gradient shock locator; require the final report to compare those values and to attach each case's verified mesh, history, surface, config, log, and receipt artifacts. " +
 		"When xfoil_screening is present, plan at least one COLLECT workstream that executes every listed screening candidate at every declared operating point through the typed xfoil_polar tool. Compose repeated uses of an existing typed tool with the bounded operating_points matrix instead of declaring a capability gap merely because several Reynolds, Mach, ncrit, target_cl, or minimum_cm conditions are required. Keep the Cartesian product at 64 calls or fewer. Never silently shrink the user's condition set. For an empty operating_points array (one scalar point), never declare requested winner-only independent verification unsupported: after all screening receipts are verified, AetherOps itself selects the winner and starts the isolated verification defined below. For a non-empty matrix, do not claim a single cell is a globally verified winner; require complete matrix receipts, cross-condition ranking, and explicit uncertainty instead. The PLAN describes the applicable backend step in its acceptance criteria but must not assign it to a collector. " + engineeringVerificationContractPolicy
-	planningMemoryPolicy = "Use the project's adopted long-term memory when it can materially improve the plan: prior terminology, user-pinned constraints, established baselines, earlier results, solver settings, unresolved conflicts, or work that should not be repeated. Search with aetherops_internal.memory_search using the research question and, when useful, narrow follow-up queries. Every result is only a retrieval candidate; before relying on one, call aetherops_internal.memory_get for that exact chunk and reason from the run-pinned readback. Use aetherops_internal.knowledge_get when a graph assertion's qualifiers, proof chain, or evidence handle matters; raw SPARQL rows and search snippets are not evidence. Memory may shape workstreams, acceptance criteria, and verification targets, but it is not a substitute for current external evidence or a new solver result: COLLECT must capture or revalidate sources and computations needed by the final report. Do not skip current research merely because an older report exists, especially when dates, operating conditions, assumptions, or requirements differ. An empty memory result is legitimate; never invent remembered facts, and do not expose internal chunk IDs or hashes in the user-facing plan."
+	planningMemoryPolicy   = "Use the project's adopted long-term memory when it can materially improve the plan: prior terminology, user-pinned constraints, established baselines, earlier results, solver settings, unresolved conflicts, or work that should not be repeated. Search with aetherops_internal.memory_search using the research question and, when useful, narrow follow-up queries. Every result is only a retrieval candidate; before relying on one, call aetherops_internal.memory_get for that exact chunk and reason from the run-pinned readback. Use aetherops_internal.knowledge_get when a graph assertion's qualifiers, proof chain, or evidence handle matters; raw SPARQL rows and search snippets are not evidence. Memory may shape workstreams, acceptance criteria, and verification targets, but it is not a substitute for current external evidence or a new solver result: COLLECT must capture or revalidate sources and computations needed by the final report. Do not skip current research merely because an older report exists, especially when dates, operating conditions, assumptions, or requirements differ. An empty memory result is legitimate; never invent remembered facts, and do not expose internal chunk IDs or hashes in the user-facing plan."
+	currentRunScopePolicy  = "CURRENT RUN SCOPE contract: the structured task input below is the sole authority for this run's explicit user objective, requested operating conditions, scope, and acceptance criteria. A project's main Codex thread is deliberately reused and may contain unrelated prior runs, plans, reports, or user messages; treat all of that earlier conversation as non-authoritative historical context. Never import an older objective, numerical condition, solver requirement, or future-work request into the current plan or report unless the current structured task explicitly includes it. Run-pinned long-term memory may inform terminology, known baselines, and verification targets under the separate memory policy, but it must be identified as prior context and must not be restated as a current user requirement. When earlier thread content conflicts with or extends the structured task, ignore it. Never call an earlier run's scope the current task's original goal."
+	su2ExecutionModePolicy = "PLAN SU2 EXECUTION MODE contract: set su2_mesh_study.execution_mode=execute for a new solver study. readback_existing is legal only when reusable_su2_mesh_study is supplied by the Go core; copy that exact contract, place its receipt-readback workstream at ordinal 0, use only the listed reusable_engineering_results with engineering_get, and do not call su2_naca0012. Never select readback_existing merely because a similar result appears in conversation history or memory."
 )
 
 var (
@@ -526,6 +528,11 @@ func (engine *Engine) continueCollection(
 	plan core.ResearchPlan,
 	existing map[string]core.EvidenceBundle,
 ) (core.Run, error) {
+	var err error
+	plan, err = engine.applyRemediationSU2ReadbackPlan(ctx, run.ID, plan)
+	if err != nil {
+		return engine.abort(ctx, run, fmt.Errorf("apply remediation SU2 readback contract: %w", err))
+	}
 	evidence, err := engine.collect(ctx, run, plan, existing)
 	if err != nil {
 		return engine.abort(ctx, run, err)
@@ -570,6 +577,14 @@ func (engine *Engine) plan(ctx context.Context, run core.Run) (core.ResearchPlan
 	} else if !errors.Is(remediationErr, sql.ErrNoRows) {
 		return plan, fmt.Errorf("load research remediation context: %w", remediationErr)
 	}
+	var reusableSU2 *core.SU2MeshStudyPlan
+	var reusableEngineeringResults []store.EngineeringResult
+	if remediation != nil && !remediationNeedsNewSolverExecution(remediation) {
+		reusableSU2, reusableEngineeringResults, err = engine.reusableSU2StudyPlan(ctx, run.ID)
+		if err != nil {
+			return plan, fmt.Errorf("prepare remediation SU2 readback contract: %w", err)
+		}
+	}
 	recoveryFeedback := ""
 	for recoveryAttempt := 1; recoveryAttempt <= maxPlanCapabilityRecoveryAttempts; recoveryAttempt++ {
 		plan = core.ResearchPlan{}
@@ -579,6 +594,7 @@ func (engine *Engine) plan(ctx context.Context, run core.Run) (core.ResearchPlan
 				Question: run.Question, MemoryPolicy: planningMemoryPolicy,
 				EngineeringPolicy:          engineeringPlanningPolicy,
 				CapabilityRecoveryFeedback: recoveryFeedback, ResearchRemediation: remediation,
+				ReusableSU2MeshStudy: reusableSU2, ReusableEngineeringResults: reusableEngineeringResults,
 			}, "research.plan",
 			func(output json.RawMessage) error {
 				candidate, err := decodeStrict[core.ResearchPlan](output)
@@ -589,6 +605,13 @@ func (engine *Engine) plan(ctx context.Context, run core.Run) (core.ResearchPlan
 				// workstreams and acceptance contract; it must not be trusted to echo a
 				// potentially large, multilingual question byte-for-byte.
 				candidate.Question = run.Question
+				if reusableSU2 != nil {
+					copy := *reusableSU2
+					copy.MeshSizesM = append([]float64(nil), reusableSU2.MeshSizesM...)
+					candidate.SU2MeshStudy = &copy
+				} else if candidate.SU2MeshStudy != nil && candidate.SU2MeshStudy.ExecutionMode == core.SU2ExecutionReadback {
+					return errors.New("SU2 readback_existing mode has no core-authorized reusable receipt set")
+				}
 				candidate, err = stripStageCapabilityIdentity(candidate)
 				if err != nil {
 					return err
@@ -775,10 +798,29 @@ func (engine *Engine) collectWorkstream(
 		return bundle, err
 	}
 	engineeringPolicy, screeningRole := engineeringPolicyForCollector(index)
+	var reusableEngineeringResults []store.EngineeringResult
 	var beforeTurn func(context.Context, core.StageAttempt) error
 	if index == core.EngineeringScreeningOwnerOrdinal && plan.XFOILScreening != nil {
 		beforeTurn = func(stageContext context.Context, attempt core.StageAttempt) error {
 			return engine.executePlannedXFOILScreening(stageContext, run, attempt, *plan.XFOILScreening)
+		}
+	}
+	if index == core.EngineeringScreeningOwnerOrdinal && plan.SU2MeshStudy != nil &&
+		plan.SU2MeshStudy.ExecutionMode == core.SU2ExecutionReadback {
+		reusablePlan, results, readbackErr := engine.reusableSU2StudyPlan(ctx, run.ID)
+		if readbackErr != nil {
+			return bundle, readbackErr
+		}
+		expected, _ := json.Marshal(plan.SU2MeshStudy)
+		actual, _ := json.Marshal(reusablePlan)
+		if reusablePlan == nil || !bytes.Equal(expected, actual) {
+			return bundle, errors.New("active SU2 readback plan does not match the core-reconstructed receipt contract")
+		}
+		reusableEngineeringResults = results
+		engineeringPolicy = engineeringReceiptReadbackPolicy
+		screeningRole = engineeringReceiptReadbackRole
+		beforeTurn = func(stageContext context.Context, attempt core.StageAttempt) error {
+			return engine.db.AuthorizeEngineeringReceiptReuses(stageContext, run.ID, attempt.ID, results)
 		}
 	}
 	err = engine.runStageWithBeforeTurn(
@@ -790,6 +832,7 @@ func (engine *Engine) collectWorkstream(
 			SourceRequirements: plan.SourceRequirements,
 			EngineeringPolicy:  engineeringPolicy,
 			ScreeningRole:      screeningRole,
+			EngineeringResults: reusableEngineeringResults,
 		}, "research.evidence", beforeTurn,
 		func(output json.RawMessage) error {
 			candidate, err := engine.prepareCollectorEvidence(ctx, run.ID, index, workstream.ID, &plan, output)
@@ -1958,22 +2001,30 @@ func stagePrompt(stage core.Stage, runID, attemptID string, input []byte) string
 	if stage == core.StageReview {
 		instructions = "Return only a JSON object that conforms exactly to the supplied response schema. You are an independent reviewer in a fresh reviewer-only Codex session. You have no project research-conversation history and no previous reviewer conversation; judge only the structured plan, evidence bundles, report, engineering result identities, and fixed review policies supplied below. Use run_id and stage_attempt_id for read-only AetherOps MCP readback. You may call aetherops_internal.memory_get, aetherops_internal.knowledge_get, read-only knowledge_sparql, and aetherops_engineering.engineering_get only to verify an exact supplied item. Do not continue the research, browse for new sources, call scholarly_search or evidence_capture, execute a solver, install or run a project tool, modify files, or repair the report yourself. If evidence, computation, scope, or verification is missing, return the required additional_research or replan remediation decision so the research pipeline performs a fresh PLAN and COLLECT cycle. Never approve a report from familiarity with the project or from an earlier session.\n"
 	}
+	if stage != core.StageReview {
+		instructions += currentRunScopePolicy + "\n"
+	}
 	if stage == core.StagePlan {
 		instructions += "PLAN LONG-TERM MEMORY contract: apply memory_policy from the structured task. When project memory can affect scope, constraints, baselines, prior work, or verification targets, call aetherops_internal.memory_search and read every selected candidate back with aetherops_internal.memory_get before relying on it. Use only the run-pinned project memory exposed by these tools. Treat it as planning context, not as current report evidence, and leave current-source or solver verification to COLLECT.\n"
+		instructions += su2ExecutionModePolicy + "\n"
 		instructions += "PLAN XFOIL SCREENING contract: the typed XFOIL capability supports one NACA four-digit baseline with a sealed plain-flap candidate set and a bounded declarative operating-point matrix. Arbitrary coordinate input, non-NACA-four-digit airfoils, and comparisons across different airfoil families remain unsupported. For one condition, use the required scalar reynolds, mach, ncrit, target_cl, and minimum_cm fields and return operating_points as an empty array. For several conditions, populate operating_points with every exact condition; the scalar fields identify the primary/default point and must remain valid. The backend authorizes the Cartesian product of operating_points and candidate_flap_deflections_deg, capped at 64 calls. Use this composition to solve multi-Reynolds or multi-target-CL work instead of stopping or shrinking scope. Set xfoil_screening to the exact immutable numerical contract, including candidates, every operating point, solver controls, geometry, objective, and constraints. If the task truly cannot be represented even by this bounded matrix, state the unsupported capability so validation fails before COLLECT. If no XFOIL work is required, set xfoil_screening to null. COLLECT is fail-closed: owner ordinal 0 must execute exactly the authorized matrix, and missing, duplicate, additional, failed, or condition-changed jobs invalidate it.\n"
 		var marker struct {
 			ResearchRemediation *researchRemediationInput `json:"research_remediation"`
 		}
 		_ = json.Unmarshal(input, &marker)
 		if marker.ResearchRemediation != nil {
-			instructions += "REMEDIATION PLAN contract: REVIEW proved that the previous active research cycle could not be repaired from its existing evidence. Build a fresh complete plan that directly closes every supplied remediation task. Re-authorize and rerun every required solver or tool through the new PLAN contract; never assume a computation from the superseded cycle is active evidence. Do not merely rewrite the previous report and do not silently omit a requested analysis.\n"
+			instructions += "REMEDIATION PLAN contract: REVIEW proved that the previous active research cycle could not be repaired from its existing evidence. Build a fresh complete plan that directly closes every supplied remediation task. Re-authorize and rerun every required solver or tool through the new PLAN contract. When the Go core supplies reusable_su2_mesh_study and reusable_engineering_results, that exact immutable receipt set is the only exception: preserve the readback_existing contract, revalidate it with engineering_get, and do not execute the solver again. Do not merely rewrite the previous report and do not silently omit a requested analysis.\n"
 		}
 	}
 	if stage == core.StageCollect {
 		var marker struct {
-			WorkflowKind string `json:"workflow_kind"`
+			WorkflowKind       string                    `json:"workflow_kind"`
+			EngineeringResults []store.EngineeringResult `json:"reusable_engineering_results"`
 		}
 		_ = json.Unmarshal(input, &marker)
+		if len(marker.EngineeringResults) > 0 {
+			instructions += "REMEDIATION ENGINEERING READBACK contract: the Go core has authorized only the exact reusable_engineering_results listed in the structured task for this collector attempt. Call aetherops_engineering.engineering_get once for each listed job.id with the current run_id and stage_attempt_id, verify reused_result=true and the immutable receipt/evidence handles, and cite the returned top-level receipt_artifact_id. Do not call su2_naca0012, xfoil_polar, or any other solver; a readback-only attempt cannot request execution approval. Do not cite any engineering job or receipt absent from the supplied list.\n"
+		}
 		if marker.WorkflowKind == engineeringVerificationWorkflowKind {
 			instructions += "ENGINEERING VERIFICATION contract: this is a new isolated collector attempt after screening. Read each supplied job with aetherops_engineering.engineering_get. Select exactly one candidate by the stated objective, hard constraints, convergence quality, and counterevidence. Preserve the selected result's NACA, Reynolds, Mach, sealed-flap geometry/deflection, Ncrit, iterations, optimization objective, target CL, and minimum CM; replace run_id and stage_attempt_id with the current values. Do not reuse the screening numerical resolution: set panel_count to ceil(screening panel_count*1.5/10)*10 with a 240 floor and 300 ceiling, which must be greater than screening; use alpha_step_deg no larger than min(screening alpha_step_deg,0.05); and make the alpha interval contain the screening winner's target-alpha +/-0.5 degrees. Serialize alpha_start_deg and alpha_end_deg with at least 8 digits after the decimal point. Never round alpha_start_deg upward or alpha_end_deg downward; preserve full precision or round outward so the interval cannot exclude either target-local boundary. You may expand that interval when the local range is inadequate to bracket target CL. Set execution_purpose=independent_verification and verification_of_job_id to the selected screening job, then call xfoil_polar exactly once. The server deterministically rejects changed invariant inputs, reused screening resolution, and insufficient target-local coverage. A cached screening result is not verification. Agreement requires both runs to satisfy minimum CM, CD difference no greater than max(0.0005,5% of screening CD), and CM difference no greater than 0.01. Return workstream_id=aetherops_engineering_verification. Put only the new call's top-level receipt_artifact_id in engineering_receipt_artifact_ids and cite that same id from every computed claim. It must be art_ followed by exactly 32 lowercase hexadecimal characters; never use cas_blob_sha256 or evidence_handles artifact_hash. Leave sources empty unless this attempt also captured a public source. Do not transcribe engineering URL, title, publisher, captured_at, or blob_hash; AetherOps rehydrates them from the exact attempt-owned receipt. Do not cite screening receipts from another attempt in this bundle, do not call evidence_capture, and do not run any other solver. State whether the fresh result agrees, but do not hide failed points or numerical discontinuities.\n"
 		} else {
@@ -2126,6 +2177,8 @@ type planInput struct {
 	EngineeringPolicy          string                    `json:"engineering_policy"`
 	CapabilityRecoveryFeedback string                    `json:"capability_recovery_feedback,omitempty"`
 	ResearchRemediation        *researchRemediationInput `json:"research_remediation,omitempty"`
+	ReusableSU2MeshStudy       *core.SU2MeshStudyPlan    `json:"reusable_su2_mesh_study,omitempty"`
+	ReusableEngineeringResults []store.EngineeringResult `json:"reusable_engineering_results,omitempty"`
 }
 
 type researchRemediationInput struct {
@@ -2136,13 +2189,61 @@ type researchRemediationInput struct {
 	Tasks            []core.ReviewRemediationTask `json:"tasks"`
 }
 
+func remediationNeedsNewSolverExecution(remediation *researchRemediationInput) bool {
+	if remediation == nil {
+		return false
+	}
+	for _, task := range remediation.Tasks {
+		if task.RequiresNewSolverExecution {
+			return true
+		}
+	}
+	return false
+}
+
+// applyRemediationSU2ReadbackPlan keeps immutable SU2 receipts available to a
+// fresh remediation cycle when REVIEW asked only for readback, plotting,
+// auditing, or other post-processing. It also repairs interrupted checkpoints
+// created by older builds whose persisted remediation plan omitted the
+// readback contract. A structured request for a genuinely new solver execution
+// is the only condition that permits a new SU2 contract instead.
+func (engine *Engine) applyRemediationSU2ReadbackPlan(
+	ctx context.Context,
+	runID string,
+	plan core.ResearchPlan,
+) (core.ResearchPlan, error) {
+	remediation, err := engine.db.LatestResearchRemediation(ctx, runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return plan, nil
+	}
+	if err != nil {
+		return plan, fmt.Errorf("load latest research remediation: %w", err)
+	}
+	input := &researchRemediationInput{Action: remediation.Action, Tasks: remediation.Tasks}
+	if !remediation.Action.RestartsResearch() || remediationNeedsNewSolverExecution(input) {
+		return plan, nil
+	}
+	reusable, _, err := engine.reusableSU2StudyPlan(ctx, runID)
+	if err != nil {
+		return plan, err
+	}
+	if reusable == nil {
+		return plan, nil
+	}
+	copy := *reusable
+	copy.MeshSizesM = append([]float64(nil), reusable.MeshSizesM...)
+	plan.SU2MeshStudy = &copy
+	return plan, nil
+}
+
 type collectInput struct {
-	Question           string            `json:"question"`
-	Plan               core.ResearchPlan `json:"plan"`
-	Workstream         core.Workstream   `json:"workstream"`
-	SourceRequirements []string          `json:"source_requirements"`
-	EngineeringPolicy  string            `json:"engineering_policy"`
-	ScreeningRole      string            `json:"engineering_screening_role"`
+	Question           string                    `json:"question"`
+	Plan               core.ResearchPlan         `json:"plan"`
+	Workstream         core.Workstream           `json:"workstream"`
+	SourceRequirements []string                  `json:"source_requirements"`
+	EngineeringPolicy  string                    `json:"engineering_policy"`
+	ScreeningRole      string                    `json:"engineering_screening_role"`
+	EngineeringResults []store.EngineeringResult `json:"reusable_engineering_results,omitempty"`
 }
 
 type engineeringVerificationInput struct {
@@ -2160,9 +2261,9 @@ const reportEvidencePolicy = "Set evidence_ids to every evidence[].workstream_id
 
 const knowledgeReviewPolicy = "Review the report and knowledge_patch together. Set knowledge_integrity.evidence_integrity_percent to 100 only when every handle reads back exactly, and unsupported_assertions to the exact count of assertions not supported by that evidence. Raw SPARQL results alone never support a report claim. " + engineeringVerificationContractPolicy
 
-const reviewScoringPolicy = "Score every axis on an ordinal quality scale where 1 is worst and 5 is best; never treat 1 as first place or highest quality. Passing requires citation integrity 100%, knowledge evidence integrity 100%, zero unsupported assertions, zero critical errors, an arithmetic mean of at least 4.0, and every axis at least 3. When report.engineering_assessment is present, task_fulfillment, completeness, and clarity_and_reproducibility must each be at least 4; an inconclusive scientific outcome may pass only when the report accurately explains the failed conclusion gates. If any condition fails, include at least one concrete, actionable revision_request that explains what must change. Set remediation_action=none only when the report passes. Every failing review must select additional_research or replan; report-only revision is not available in the current workflow. Use additional_research when the scope is sound but more evidence, measurement, parameter sweep, solver execution, tool call, or independent verification is needed. Use replan when the current workstreams, scope, acceptance criteria, or executable engineering contract are wrong. Provide remediation_tasks with concrete objectives, required evidence, and whether engineering execution is required. AetherOps will seal the current cycle, create a fresh PLAN, rerun collection/analysis, merge a new report, and only then invoke a new REVIEW. Never ask prose editing to invent missing results. If the report is fully supported and your summary says it is complete and consistent, use correspondingly high scores rather than 1s."
+const reviewScoringPolicy = "Score every axis on an ordinal quality scale where 1 is worst and 5 is best; never treat 1 as first place or highest quality. Passing requires citation integrity 100%, knowledge evidence integrity 100%, zero unsupported assertions, zero critical errors, an arithmetic mean of at least 4.0, and every axis at least 3. When report.engineering_assessment is present, task_fulfillment, completeness, and clarity_and_reproducibility must each be at least 4; an inconclusive scientific outcome may pass only when the report accurately explains the failed conclusion gates. If any condition fails, include at least one concrete, actionable revision_request that explains what must change. Set remediation_action=none only when the report passes. Every failing review must select additional_research or replan; report-only revision is not available in the current workflow. Use additional_research when the scope is sound but more evidence, measurement, parameter sweep, solver execution, tool call, or independent verification is needed. Use replan when the current workstreams, scope, acceptance criteria, or executable analysis contract are wrong. For every remediation task, set requires_engineering=true when engineering receipts, deterministic post-processing, plotting, auditing, or engineering analysis is needed. Separately set requires_new_solver_execution=true only when a genuinely missing solver run at a new or previously unexecuted contract is necessary; keep it false for engineering_get readback, plotting, audit tables, and reanalysis of existing solver artifacts. AetherOps will reuse immutable receipts whenever new execution is false. AetherOps will seal the current cycle, create a fresh PLAN, rerun collection/analysis, synthesize a new report, and only then invoke a new REVIEW. Never ask prose editing to invent missing results. If the report is fully supported and your summary says it is complete and consistent, use correspondingly high scores rather than 1s."
 
-const engineeringReportPolicy = "For XFOIL optimization only, AetherOps deterministically assembles the interpolation lineage table, three comparison figures, independent-execution provenance, engineering_completeness metadata, and deterministic appendix after your structured report is returned. Interpret verified XFOIL results and state limitations, but do not invent or transcribe raw polar rows, graph hashes, execution counts, workspace identities, or retry history. For a planned su2_mesh_study, AetherOps supplies a core-authored engineering_assessment before SYNTHESIZE and appends the identical deterministic assessment and case table after your structured report is returned. Treat assessment.outcome=inconclusive as a successful calculation that does not establish grid independence; never rename it confirmed, omit failed conclusion checks, or let prose override it. Use the receipt's deterministic mesh/quality, final-window stability, surface-spacing, Cp-shock, solver, convergence, and exact-domain metrics. AetherOps attaches every required SU2 config, history, log, mesh, mesh input, surface, and receipt CAS object itself. Distinguish residual-threshold convergence from coefficient stability, and state that shock_x_over_c is the maximum interior |delta Cp/delta x| locator rather than an externally validated shock position. " + engineeringVerificationContractPolicy
+const engineeringReportPolicy = "For XFOIL optimization only, AetherOps deterministically assembles the interpolation lineage table, three comparison figures, independent-execution provenance, engineering_completeness metadata, and deterministic appendix after your structured report is returned. Interpret verified XFOIL results and state limitations, but do not invent or transcribe raw polar rows, graph hashes, execution counts, workspace identities, or retry history. For a planned su2_mesh_study, AetherOps supplies a core-authored engineering_assessment before SYNTHESIZE and appends the identical deterministic assessment, case table, execution audit, exact reproduction contract, three full-history convergence figures, and two realized-cell-count grid-sensitivity figures after your structured report is returned. The figures use every contiguous CAS history row without interpolation, smoothing, or omission. Treat assessment.outcome=inconclusive as a successful calculation that does not establish grid independence; never rename it confirmed, omit failed conclusion checks, or let prose override it. Use the receipt's deterministic mesh/quality, final-window stability, surface-spacing, Cp-shock, solver, convergence, and exact-domain metrics. AetherOps attaches every required SU2 config, history, log, mesh, mesh input, surface, and receipt CAS object itself. Do not request command execution to read workspace CSV files or recreate the core-owned figures. Distinguish residual-threshold convergence from coefficient stability, and state that shock_x_over_c is the maximum interior |delta Cp/delta x| locator rather than an externally validated shock position. " + engineeringVerificationContractPolicy
 
 type synthesizeInput struct {
 	Question                string                      `json:"question"`

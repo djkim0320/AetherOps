@@ -133,7 +133,7 @@ func (adapter *CodexAdapter) Chat(
 	ctx context.Context,
 	threadID, message string,
 	mode core.ChatMode,
-	planCycleID string,
+	planCycleID, planObjective string,
 	configuration core.RunConfiguration,
 ) (core.ChatReply, error) {
 	message = strings.TrimSpace(message)
@@ -156,7 +156,7 @@ func (adapter *CodexAdapter) Chat(
 		if strings.TrimSpace(planCycleID) == "" {
 			return core.ChatReply{}, errors.New("plan cycle id is required for planning chat")
 		}
-		prompt = planChatPrompt(message, planCycleID)
+		prompt = planChatPrompt(message, planCycleID, planObjective)
 		outputSchema = planDialogueOutputSchema()
 	}
 	result, err := adapter.Client.Turn(ctx, threadID, codex.TurnOptions{
@@ -290,6 +290,11 @@ func decodeAetherOpsChatPrompt(prompt string) (core.ChatMode, string, string, bo
 		if _, value, found := strings.Cut(header, cycleMarker); found {
 			planCycleID = strings.TrimSpace(strings.SplitN(value, "\n", 2)[0])
 		}
+		if context, encoded := decodePlanChatContext(strings.TrimSpace(message)); encoded {
+			message = context.TurnMessage
+		} else if strings.HasPrefix(strings.TrimSpace(message), planChatContextMarker) {
+			return "", "", "", false
+		}
 	}
 	return mode, strings.TrimSpace(message), planCycleID, true
 }
@@ -377,7 +382,40 @@ func conversationChatPrompt(message string) string {
 ` + message
 }
 
-func planChatPrompt(message, planCycleID string) string {
+const planChatContextMarker = "[AETHEROPS_PLAN_CONTEXT_V1]"
+
+type planChatContext struct {
+	Objective          string `json:"objective"`
+	TurnMessage        string `json:"turn_message"`
+	CapabilityContract string `json:"capability_contract"`
+}
+
+func encodePlanChatContext(objective, message string) string {
+	encoded, err := json.Marshal(planChatContext{
+		Objective:          strings.TrimSpace(objective),
+		TurnMessage:        strings.TrimSpace(message),
+		CapabilityContract: "The objective is the sole authority for this planning cycle. Preserve it and never replace it with an unrelated prior topic. The bundled su2_naca0012 workflow is supported for fixed closed-trailing-edge NACA 0012 on x/c=[-10,15], y/c=[-10,10] with steady Euler/JST, 3-8 mesh_size_m values from 0.01 through 0.2, Mach 0.01 through 2, alpha -20 through 20 degrees, and 20-1000 iterations. It produces verified solver receipts for qualitative-context grid-sensitivity analysis; it is not viscous RANS. When the objective fits this contract, do not redirect the user to XFOIL or ask XFOIL flap-optimization questions.",
+	})
+	if err != nil {
+		panic("fixed plan chat context could not be encoded: " + err.Error())
+	}
+	return planChatContextMarker + "\n" + string(encoded)
+}
+
+func decodePlanChatContext(value string) (planChatContext, bool) {
+	var context planChatContext
+	if !strings.HasPrefix(value, planChatContextMarker+"\n") {
+		return context, false
+	}
+	err := json.Unmarshal([]byte(strings.TrimPrefix(value, planChatContextMarker+"\n")), &context)
+	if err != nil || strings.TrimSpace(context.Objective) == "" || strings.TrimSpace(context.TurnMessage) == "" {
+		return planChatContext{}, false
+	}
+	return context, true
+}
+
+func planChatPrompt(message, planCycleID, planObjective string) string {
+	message = encodePlanChatContext(planObjective, message)
 	return `AetherOps 계획 모드입니다. Codex 계획 모드처럼 사용자의 의도를 짧게 인터뷰한 뒤 최종 실행 계획을 만드세요.
 
 절대 연구를 실행하지 마세요. 웹 탐색, 명령 실행, MCP 도구 호출, 파일 변경을 하지 마세요. 현재 대화 맥락만 사용하세요.

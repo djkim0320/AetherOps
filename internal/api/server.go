@@ -643,6 +643,9 @@ func (server *Server) handleProjectPath(writer http.ResponseWriter, request *htt
 			writeError(writer, http.StatusBadRequest, "invalid_model_configuration", err.Error())
 			return
 		}
+		if !server.requireCodexLogin(writer, request) {
+			return
+		}
 		run, err := server.Runs.StartRun(request.Context(), projectID, strings.TrimSpace(body.Query), configuration)
 		if errors.Is(err, store.ErrConversationSessionCreationUnknown) {
 			writeError(writer, http.StatusConflict, "session_thread_uncertain", "이 대화의 Codex 스레드 생성 결과가 불확실합니다. 새 대화를 만들어 계속해 주세요")
@@ -727,6 +730,35 @@ func normalizedProjectName(raw string) (string, bool) {
 		!strings.ContainsRune(name, utf8.RuneError) && utf8.RuneCountInString(name) <= 120
 }
 
+func (server *Server) requireCodexLogin(writer http.ResponseWriter, request *http.Request) bool {
+	if server.CodexAccount == nil {
+		return true
+	}
+	value, err := server.CodexAccount.ReadCodexAccount(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "codex_account_unavailable", "Codex 로그인 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요")
+		return false
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "codex_account_unavailable", "Codex 로그인 상태 응답을 확인하지 못했습니다")
+		return false
+	}
+	var status struct {
+		Authenticated bool `json:"authenticated"`
+		ChatGPT       bool `json:"chatgpt"`
+	}
+	if err := json.Unmarshal(encoded, &status); err != nil {
+		writeError(writer, http.StatusServiceUnavailable, "codex_account_unavailable", "Codex 로그인 상태 응답을 확인하지 못했습니다")
+		return false
+	}
+	if !status.Authenticated || !status.ChatGPT {
+		writeError(writer, http.StatusUnauthorized, "codex_login_required", "Codex 로그인이 필요합니다. 설정에서 장치 로그인을 완료해 주세요")
+		return false
+	}
+	return true
+}
+
 func (server *Server) handleChat(writer http.ResponseWriter, request *http.Request, targetID string, sessionScoped bool) {
 	if server.Chat == nil {
 		writeError(writer, http.StatusServiceUnavailable, "chat_unavailable", "Codex 채팅이 준비되지 않았습니다")
@@ -799,6 +831,9 @@ func (server *Server) handleChat(writer http.ResponseWriter, request *http.Reque
 	}
 	if err := server.Models.ValidateRunConfiguration(request.Context(), configuration); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_model_configuration", err.Error())
+		return
+	}
+	if !server.requireCodexLogin(writer, request) {
 		return
 	}
 	var reply core.ChatReply
@@ -1015,6 +1050,9 @@ func (server *Server) handleSessionRunStart(writer http.ResponseWriter, request 
 		writeError(writer, http.StatusBadRequest, "invalid_model_configuration", err.Error())
 		return
 	}
+	if !server.requireCodexLogin(writer, request) {
+		return
+	}
 	run, err := server.Runs.StartSessionRun(request.Context(), sessionID, strings.TrimSpace(body.Query), configuration)
 	if errors.Is(err, store.ErrConversationSessionCreationUnknown) {
 		writeError(writer, http.StatusConflict, "session_thread_uncertain", "이 대화의 Codex 스레드 생성 결과가 불확실합니다. 새 대화를 만들어 계속해 주세요")
@@ -1062,6 +1100,9 @@ func (server *Server) handlePlannedSessionRunStart(writer http.ResponseWriter, r
 	}
 	if err := server.Models.ValidateRunConfiguration(request.Context(), configuration); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_model_configuration", err.Error())
+		return
+	}
+	if !server.requireCodexLogin(writer, request) {
 		return
 	}
 	run, err := server.Runs.StartPlannedSessionRun(request.Context(), sessionID, strings.TrimSpace(body.PlanCycleID), configuration)
@@ -1350,6 +1391,9 @@ func (server *Server) handleSchedules(writer http.ResponseWriter, request *http.
 		if err != nil {
 			writeInternal(writer, err)
 			return
+		}
+		if schedules == nil {
+			schedules = []core.Schedule{}
 		}
 		writeJSON(writer, http.StatusOK, schedules)
 	case http.MethodPost:

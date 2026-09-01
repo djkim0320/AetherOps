@@ -2,6 +2,7 @@ import { render } from "preact";
 import { lazy, Suspense } from "preact/compat";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
+  ApiError,
   fetchArtifact,
   formatApiError,
   del,
@@ -20,8 +21,10 @@ import { artifactPresentation } from "./artifact-presentation";
 import { chatHistoryMessages } from "./chat-history";
 import { LifecycleControls } from "./LifecycleControls";
 import { resolveRunSelection } from "./model-selection";
-import { planningObjective } from "./plan-cycle";
+import { loadBrowserOperationalStatus, loadSchedulesState } from "./operational-state";
+import { parseSlashCommand, planningObjective } from "./plan-cycle";
 import { blockingRunFrom, type RunControlRef } from "./run-controls";
+import { retainRunEventHistory, stageState } from "./run-progress";
 import type {
   Approval,
   Artifact,
@@ -41,7 +44,6 @@ import type {
   Run,
   Schedule,
   Speed,
-  Stage,
   View
 } from "./types";
 import { STATUS_LABELS } from "./types";
@@ -169,47 +171,6 @@ function contextUsageFrom(payload: unknown): ContextWindowUsage {
   };
 }
 
-function currentStage(run: Run | null): Stage | null {
-  if (!run) return null;
-  const explicit = stringValue(run.current_stage);
-  if (explicit === "plan" || explicit === "collect" || explicit === "synthesize" || explicit === "review") {
-    return explicit;
-  }
-  switch (run.status) {
-    case "planning":
-      return "plan";
-    case "collecting":
-      return "collect";
-    case "synthesizing":
-      return "synthesize";
-    case "reviewing":
-    case "revising":
-    case "waiting_approval":
-      return "review";
-    default:
-      return null;
-  }
-}
-
-function stageState(stage: Stage, run: Run | null): "complete" | "active" | "waiting" | "attention" {
-  if (!run) return "waiting";
-  if (run.status === "failed" || run.status === "quality_failed" || run.status === "cancelled") {
-    return currentStage(run) === stage ? "attention" : "waiting";
-  }
-  const stages: Stage[] = ["plan", "collect", "synthesize", "review"];
-  const active = currentStage(run);
-  if (!active) {
-    return run.status === "succeeded" ? "complete" : "waiting";
-  }
-  const activeIndex = stages.indexOf(active);
-  const targetIndex = stages.indexOf(stage);
-  if (targetIndex < activeIndex) return "complete";
-  if (targetIndex === activeIndex) {
-    return run.status === "waiting_approval" ? "waiting" : "active";
-  }
-  return "waiting";
-}
-
 function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
     <div class="empty-state">
@@ -269,10 +230,12 @@ export function App() {
   const [drawerArtifact, setDrawerArtifact] = useState<Artifact | null>(null);
   const [approvals, setApprovals] = useState<Approval[] | null>(null);
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
+  const [schedulesLoadError, setSchedulesLoadError] = useState<string | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [contextUsages, setContextUsages] = useState<Record<string, ContextWindowUsage>>({});
   const [browserState, setBrowserState] = useState<string | null>(null);
   const [browserMode, setBrowserMode] = useState<"automatic" | "manual" | null>(null);
+  const [browserStatusError, setBrowserStatusError] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState<string>("");
   const [scheduleQuestion, setScheduleQuestion] = useState<string>("");
   const [scheduleKind, setScheduleKind] = useState<Schedule["kind"]>("every");
@@ -313,6 +276,10 @@ export function App() {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const chatMessageSequence = useRef(0);
   const busySessionIDsRef = useRef(new Set<string>());
+  const selectedSessionIDRef = useRef("");
+  const selectedRunIDRef = useRef("");
+  selectedSessionIDRef.current = selectedSessionID;
+  selectedRunIDRef.current = selectedRunID;
 
   const selectedProject = useMemo(
     () => projects?.find((p) => p.id === selectedProjectID) ?? null,
@@ -326,11 +293,16 @@ export function App() {
     () => runs?.find((r) => r.id === selectedRunID) ?? runs?.[0] ?? null,
     [runs, selectedRunID]
   );
+  const activeRunEvents = useMemo(
+    () => (activeRun ? events.filter((event) => event.run_id === activeRun.id) : []),
+    [activeRun, events]
+  );
   const chatMode = sessionChatModes[selectedSessionID] ?? "chat";
   const currentPlanCycle = planCycles[selectedSessionID] ?? null;
   const researchQuery = sessionDrafts[selectedSessionID] ?? "";
   const sessionBusy = busySessions[selectedSessionID] === true;
   const coreReady = status?.ready === true;
+  const codexConversationReady = codexAccount?.authenticated === true && codexAccount.chatgpt === true;
 
   const reasoningOptions = selectedModelOption?.supported_reasoning_efforts ?? [];
   const reasoningIndex = Math.max(0, reasoningOptions.indexOf(selectedEffort));
@@ -354,6 +326,27 @@ export function App() {
     return chats.map((m) => ({ kind: "chat" as const, message: m }));
   }, [sessionChats, selectedSessionID]);
 
+  const refreshSchedulesState = useCallback(async () => {
+    try {
+      const list = await loadSchedulesState((path) => get<unknown>(path));
+      setSchedules(list);
+      setSchedulesLoadError(null);
+    } catch (err) {
+      setSchedulesLoadError(formatApiError(err));
+    }
+  }, []);
+
+  const refreshBrowserOperationalState = useCallback(async () => {
+    try {
+      const browser = await loadBrowserOperationalStatus((path) => get<unknown>(path));
+      setBrowserState(browser.status);
+      setBrowserMode(browser.mode);
+      setBrowserStatusError(null);
+    } catch (err) {
+      setBrowserStatusError(formatApiError(err));
+    }
+  }, []);
+
   // Load Status & Initial Data
   const refreshWorkspace = useCallback(async () => {
     try {
@@ -366,6 +359,11 @@ export function App() {
 
       const codexRes = await get<CodexAccountStatus>("/api/v1/auth/codex/status").catch(() => null);
       setCodexAccount(codexRes);
+      if (codexRes?.authenticated === true && codexRes.chatgpt === true) {
+        // A device code is single-use login state. Never keep showing an old
+        // code or its login link after the managed Codex account is connected.
+        setDeviceCode(null);
+      }
 
       const projRes = await get<unknown>("/api/v1/projects").catch(() => null);
       const projList = (listFrom(projRes, "projects") as Project[]) ?? [];
@@ -374,16 +372,22 @@ export function App() {
       if (!selectedProjectID && projList.length > 0) {
         setSelectedProjectID(projList[0].id);
       }
+
+      await Promise.all([refreshSchedulesState(), refreshBrowserOperationalState()]);
     } catch {
       setConnection("offline");
     }
-  }, [selectedProjectID]);
+  }, [selectedProjectID, refreshSchedulesState, refreshBrowserOperationalState]);
 
   useEffect(() => {
     void refreshWorkspace();
     const interval = setInterval(refreshWorkspace, 10000);
     return () => clearInterval(interval);
   }, [refreshWorkspace]);
+
+  useEffect(() => {
+    setActionError(null);
+  }, [view]);
 
   useEffect(() => {
     if (!runSelection.option) return;
@@ -448,25 +452,38 @@ export function App() {
   }, [selectedSessionID]);
 
   // Load Runs, Artifacts, Approvals for Selected Session
+  useEffect(() => {
+    setRuns(null);
+    setSelectedRunID("");
+    setArtifacts(null);
+    setSelectedArtifactID("");
+    setArtifactContent(null);
+  }, [selectedSessionID]);
+
   const loadRuns = useCallback(async (sessionID: string) => {
     if (!sessionID) return;
     try {
       const res = await get<unknown>(`/api/v1/sessions/${encodeURIComponent(sessionID)}/runs`);
       const list = (listFrom(res, "runs") as Run[]) ?? [];
+      if (selectedSessionIDRef.current !== sessionID) return;
       setRuns(list);
-      if (list.length > 0 && !selectedRunID) {
+      if (list.length === 0) {
+        setSelectedRunID("");
+        setArtifacts([]);
+      } else if (!list.some((run) => run.id === selectedRunIDRef.current)) {
         setSelectedRunID(list[0].id);
       }
     } catch {
       // Ignore
     }
-  }, [selectedRunID]);
+  }, []);
 
   const loadArtifacts = useCallback(async (runID: string) => {
     if (!runID) return;
     try {
       const res = await get<unknown>(`/api/v1/runs/${encodeURIComponent(runID)}/artifacts`);
       const list = (listFrom(res, "artifacts") as Artifact[]) ?? [];
+      if (selectedRunIDRef.current !== runID) return;
       setArtifacts(list);
     } catch {
       // Ignore
@@ -507,7 +524,7 @@ export function App() {
     const cleanup = subscribeToRunEvents(
       "",
       (event: RunEvent) => {
-        setEvents((prev) => [event, ...prev.slice(0, 19)]);
+        setEvents((prev) => retainRunEventHistory(event, prev));
         if (shouldRefreshApprovals(event.kind)) {
           void loadApprovals();
         }
@@ -751,8 +768,25 @@ export function App() {
     }
   }
 
-  async function beginPlanCycle(sessionID: string) {
-    const objective = planningObjective(sessionChats[sessionID] ?? []);
+  function openCodexLogin(): false {
+    setCodexAccount((current) => current ?? { authenticated: false, chatgpt: false });
+    setActionError(null);
+    setNotice(null);
+    setView("settings");
+    return false;
+  }
+
+  function showCodexActionError(err: unknown) {
+    if (err instanceof ApiError && err.code === "codex_login_required") {
+      setCodexAccount({ authenticated: false, chatgpt: false });
+      openCodexLogin();
+      return;
+    }
+    setActionError(formatApiError(err));
+  }
+
+  async function beginPlanCycle(sessionID: string, explicitObjective = "") {
+    const objective = planningObjective(sessionChats[sessionID] ?? [], explicitObjective);
     try {
       const res = await post<unknown>(`/api/v1/sessions/${encodeURIComponent(sessionID)}/plan-cycle`, {
         objective
@@ -780,6 +814,7 @@ export function App() {
       setActionError("대화와 관리 런타임, 모델 설정을 먼저 확인해 주세요.");
       return false;
     }
+    if (!codexConversationReady) return openCodexLogin();
     const sessionID = selectedSessionID;
     busySessionIDsRef.current.add(sessionID);
     if (options.displayUser !== false)
@@ -814,7 +849,7 @@ export function App() {
       if (mode === "plan") await loadPlanCycle(sessionID);
       return true;
     } catch (err) {
-      setActionError(formatApiError(err));
+      showCodexActionError(err);
       return false;
     } finally {
       busySessionIDsRef.current.delete(sessionID);
@@ -822,22 +857,35 @@ export function App() {
     }
   }
 
-  async function handleSlashCommand(command: string) {
+  async function handleSlashCommand(input: string) {
+    const parsed = parseSlashCommand(input);
+    if (!parsed) return;
+    const { command, argument } = parsed;
     setSlashMenuOpen(false);
+    setSessionDrafts((prev) => ({ ...prev, [selectedSessionID]: "" }));
     if (command === "/plan") {
+      if (!codexConversationReady) {
+        openCodexLogin();
+        return;
+      }
       const sessionID = selectedSessionID;
       if (!sessionID) return;
       setSessionChatModes((prev) => ({ ...prev, [sessionID]: "plan" }));
       const latest = await loadPlanCycle(sessionID);
-      const cycle = latest?.status === "active" ? latest : await beginPlanCycle(sessionID);
+      const cycle = argument
+        ? await beginPlanCycle(sessionID, argument)
+        : latest?.status === "active"
+        ? latest
+        : await beginPlanCycle(sessionID);
       if (!cycle) return;
+      if (argument) appendChatMessage(sessionID, "user", argument, "plan");
       appendChatMessage(
         sessionID,
         "system",
         "계획 모드를 시작합니다. 연구 목적과 범위를 함께 정리합니다.",
         "plan"
       );
-      if (!latest || latest.status !== "active") {
+      if (argument || !latest || latest.status !== "active") {
         await sendChat("연구를 시작하기 위한 계획 인터뷰를 시작해줘", "plan", {
           displayUser: false,
           planCycleID: cycle.id
@@ -903,6 +951,10 @@ export function App() {
 
   async function startPlannedResearch(msg?: ChatMessage) {
     if (!selectedSessionID || !selectedProjectID) return;
+    if (!codexConversationReady) {
+      openCodexLogin();
+      return;
+    }
     const planCycleID = currentPlanCycle?.id ?? msg?.planCycleID ?? "";
     if (!planCycleID) {
       setActionError("완료된 계획을 찾지 못했습니다. 계획 카드를 다시 불러와 주세요.");
@@ -928,7 +980,7 @@ export function App() {
       }
       await loadRuns(selectedSessionID);
     } catch (err) {
-      setActionError(formatApiError(err));
+      showCodexActionError(err);
     } finally {
       setBusy(null);
     }
@@ -1237,7 +1289,7 @@ export function App() {
               artifacts={artifacts}
               selectedArtifactID={selectedArtifactID}
               onOpenArtifact={openArtifactInDrawer}
-              events={events}
+              events={activeRunEvents}
               approvals={approvals}
               onDecideApproval={decideApproval}
               blockingRun={activeRun ? blockingRunFrom(activeRun) : null}
@@ -1250,7 +1302,7 @@ export function App() {
               busy={busy}
               onRunAction={runAction}
               formatDate={formatDate}
-              stageState={stageState}
+              stageState={(stage, run) => stageState(stage, run, activeRunEvents)}
             />
           </div>
         )}
@@ -1313,6 +1365,7 @@ export function App() {
             selectedSessionID={selectedSessionID}
             onSelectSessionID={setSelectedSessionID}
             schedules={schedules}
+            loadError={schedulesLoadError}
             coreReady={coreReady}
             busy={busy}
             onCreateSchedule={async (data) => {
@@ -1320,7 +1373,7 @@ export function App() {
               try {
                 await post("/api/v1/schedules", data);
                 setNotice("연구 일정을 등록했습니다.");
-                await refreshWorkspace();
+                await refreshSchedulesState();
               } catch (err) {
                 setActionError(formatApiError(err));
               } finally {
@@ -1332,7 +1385,7 @@ export function App() {
               try {
                 await post(`/api/v1/schedules/${encodeURIComponent(scheduleID)}/enabled`, { enabled });
                 setNotice(enabled ? "연구 일정을 다시 활성화했습니다." : "연구 일정을 일시 중지했습니다.");
-                await refreshWorkspace();
+                await refreshSchedulesState();
               } catch (err) {
                 setActionError(formatApiError(err));
               } finally {
@@ -1344,7 +1397,7 @@ export function App() {
               try {
                 await del(`/api/v1/schedules/${encodeURIComponent(scheduleID)}`);
                 setNotice("연구 일정을 삭제했습니다.");
-                await refreshWorkspace();
+                await refreshSchedulesState();
               } catch (err) {
                 setActionError(formatApiError(err));
               } finally {
@@ -1359,12 +1412,14 @@ export function App() {
           <ControlsView
             browserState={browserState}
             browserMode={browserMode}
+            statusError={browserStatusError}
             connection={connection}
             busy={busy}
             onSetBrowserMode={async (mode) => {
               setBusy("browser-mode");
               try {
                 await post("/api/v1/browser/mode", { mode });
+                await refreshBrowserOperationalState();
                 setNotice(`브라우저 제어를 ${mode === "manual" ? "수동" : "자동"} 모드로 전환했습니다.`);
               } catch (err) {
                 setActionError(formatApiError(err));
@@ -1376,6 +1431,7 @@ export function App() {
               setBusy("emergency-stop");
               try {
                 await post("/api/v1/browser/emergency-stop", {});
+                await refreshBrowserOperationalState();
                 setNotice("전역 긴급 중지 신호를 전송했습니다.");
               } catch (err) {
                 setActionError(formatApiError(err));

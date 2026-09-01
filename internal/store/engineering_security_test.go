@@ -590,6 +590,52 @@ func TestEngineeringReceiptArtifactIDRehydrationRejectsCrossAttemptAndForgedID(t
 	}
 }
 
+func TestEngineeringReceiptReuseRequiresExplicitAttemptScopedAuthorization(t *testing.T) {
+	fixture := completedEngineeringReceiptSecurityFixture(t)
+	ctx := context.Background()
+	readbackAttempt, err := fixture.database.BeginStage(
+		ctx, fixture.run.ID, core.StageCollect, 1, "readback-thread", "readback-turn",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.database.EngineeringReceiptEvidenceForCollector(
+		ctx, fixture.run.ID, readbackAttempt.Ordinal, fixture.receiptArtifact.ID,
+	); err == nil {
+		t.Fatal("prior receipt crossed attempts before the Go core authorized readback")
+	}
+	result := EngineeringResult{Job: fixture.job, Artifacts: []EngineeringJobArtifact{{
+		ArtifactID: fixture.receiptArtifact.ID,
+		Role:       "receipt",
+		FileName:   "execution-receipt.json",
+		MediaType:  "application/json",
+		BlobHash:   fixture.receiptArtifact.BlobHash,
+	}}}
+	if err := fixture.database.AuthorizeEngineeringReceiptReuses(
+		ctx, fixture.run.ID, readbackAttempt.ID, []EngineeringResult{result},
+	); err != nil {
+		t.Fatalf("authorize immutable receipt readback: %v", err)
+	}
+	readbackOnly, err := fixture.database.EngineeringReceiptReadbackOnly(ctx, fixture.run.ID, readbackAttempt.ID)
+	if err != nil || !readbackOnly {
+		t.Fatalf("readback-only scope = %t, err=%v", readbackOnly, err)
+	}
+	rehydrated, err := fixture.database.EngineeringReceiptEvidenceForCollector(
+		ctx, fixture.run.ID, readbackAttempt.Ordinal, fixture.receiptArtifact.ID,
+	)
+	if err != nil {
+		t.Fatalf("explicitly authorized receipt readback failed: %v", err)
+	}
+	if rehydrated != fixture.source {
+		t.Fatalf("readback changed immutable source: got %+v want %+v", rehydrated, fixture.source)
+	}
+	if err := fixture.database.VerifyEvidenceSourcesForCollector(
+		ctx, fixture.run.ID, readbackAttempt.Ordinal, []core.EvidenceSource{rehydrated},
+	); err != nil {
+		t.Fatalf("authorized receipt failed collector verification: %v", err)
+	}
+}
+
 func TestEngineeringReceiptEvidenceRejectsNonReceiptAndIncompleteJob(t *testing.T) {
 	fixture := completedEngineeringReceiptSecurityFixture(t)
 	ctx := context.Background()

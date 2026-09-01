@@ -28,6 +28,7 @@ type chatProtocolFixture struct {
 	threadID         string
 	message          string
 	mode             core.ChatMode
+	planObjective    string
 }
 
 func (fixture *chatProtocolFixture) CreateMainThread(_ context.Context, sessionID string, _ core.RunConfiguration) (string, error) {
@@ -39,12 +40,13 @@ func (fixture *chatProtocolFixture) Chat(
 	_ context.Context,
 	threadID, message string,
 	mode core.ChatMode,
-	_ string,
+	_, planObjective string,
 	configuration core.RunConfiguration,
 ) (core.ChatReply, error) {
 	fixture.threadID = threadID
 	fixture.message = message
 	fixture.mode = mode
+	fixture.planObjective = planObjective
 	return core.ChatReply{ThreadID: threadID, TurnID: "turn-chat", Mode: mode, Text: "reply", Model: configuration.Model}, nil
 }
 
@@ -409,12 +411,23 @@ func TestProjectChatUsesMainThreadWithoutCreatingResearchRun(t *testing.T) {
 		_ = dispatcher.Shutdown(shutdown)
 	})
 	configuration := core.RunConfiguration{Model: core.PlannerModel, ReasoningEffort: core.PlannerEffort, ServiceTier: core.ServiceTierDefault}
-	reply, err := dispatcher.ChatProject(ctx, project.ID, "scope the research", core.ChatModePlan, "pln_test", configuration)
+	sessionBeforeChat, err := database.DefaultConversationSession(ctx, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle, err := database.BeginConversationPlanCycle(ctx, sessionBeforeChat.ID, "authoritative objective")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := dispatcher.ChatProject(ctx, project.ID, "scope the research", core.ChatModePlan, cycle.ID, configuration)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reply.Text != "reply" || reply.ProjectID != project.ID || protocol.threadID != "thread-chat" || protocol.mode != core.ChatModePlan {
 		t.Fatalf("chat reply=%+v protocol=%+v", reply, protocol)
+	}
+	if protocol.planObjective != "authoritative objective" {
+		t.Fatalf("plan objective = %q", protocol.planObjective)
 	}
 	storedProject, err := database.Project(ctx, project.ID)
 	if err != nil {

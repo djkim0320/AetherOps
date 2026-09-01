@@ -471,6 +471,11 @@ func TestEngineeringPoliciesAssignScreeningAndIndependentVerificationToCorrectSt
 			t.Fatalf("collection policy omits %q", required)
 		}
 	}
+	for _, required := range []string{"execution_mode=execute", "readback_existing", "reusable_su2_mesh_study", "engineering_get", "do not call su2_naca0012"} {
+		if !strings.Contains(su2ExecutionModePolicy, required) {
+			t.Fatalf("SU2 execution-mode policy omits %q", required)
+		}
+	}
 }
 
 func TestEngineCanonicalizesSameRawClaimIDAcrossCollectorsBeforeSynthesisAndReview(t *testing.T) {
@@ -2507,6 +2512,24 @@ func TestReviewPromptDefinesFreshIndependentEvaluator(t *testing.T) {
 	}
 }
 
+func TestMainThreadStagePromptRejectsPriorRunScopeLeakage(t *testing.T) {
+	for _, stage := range []core.Stage{core.StagePlan, core.StageSynthesize, core.StageRevise} {
+		prompt := stagePrompt(stage, "run-current", "attempt-current", []byte(`{"question":"current task only"}`))
+		for _, required := range []string{
+			"CURRENT RUN SCOPE contract",
+			"sole authority for this run's explicit user objective",
+			"main Codex thread is deliberately reused",
+			"non-authoritative historical context",
+			"Never import an older objective, numerical condition, solver requirement",
+			"Never call an earlier run's scope the current task's original goal",
+		} {
+			if !strings.Contains(prompt, required) {
+				t.Fatalf("%s prompt omits scope-isolation rule %q", stage, required)
+			}
+		}
+	}
+}
+
 func promptInput(prompt string) []byte {
 	envelope, err := decodeFixturePrompt(prompt)
 	if err != nil {
@@ -2699,6 +2722,85 @@ func TestPlanPromptAllowsRunPinnedLongTermMemoryExploration(t *testing.T) {
 		if !strings.Contains(planningMemoryPolicy, required) {
 			t.Fatalf("plan memory policy omits %q", required)
 		}
+	}
+}
+
+func TestRemediationPromptsUseAuthorizedReceiptReadbackWithoutSolverExecution(t *testing.T) {
+	remediation := &researchRemediationInput{
+		Cycle: 1, Action: core.ReviewRemediationReplan, Summary: "reconcile receipt analysis",
+		RevisionRequests: []string{"re-read existing receipts"},
+		Tasks:            []core.ReviewRemediationTask{{Objective: "revalidate", RequiresEngineering: true}},
+	}
+	reusablePlan := &core.SU2MeshStudyPlan{
+		ExecutionMode: core.SU2ExecutionReadback,
+		Profile:       core.SU2MeshStudyProfileV1, NACA: "0012", Mach: .15, AlphaDeg: 5,
+		Iterations: 1000, MeshSizesM: []float64{.12, .06, .03},
+		DomainProfile: core.SU2FixedDomainV1, Objective: core.SU2ObjectiveGridStudy,
+		ReferenceComparison: "qualitative_context",
+	}
+	result := store.EngineeringResult{Job: store.EngineeringJob{
+		ID: "eng_existing", RunID: "run-readback", StageAttemptID: "stg_prior",
+		Operation: "su2_naca0012", Status: "succeeded",
+		ReceiptArtifactID: "art_0123456789abcdef0123456789abcdef",
+	}}
+	planTask, err := json.Marshal(planInput{
+		Question: "current task", ResearchRemediation: remediation,
+		ReusableSU2MeshStudy: reusablePlan, ReusableEngineeringResults: []store.EngineeringResult{result},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planPrompt := stagePrompt(core.StagePlan, "run-readback", "stg-plan", planTask)
+	for _, required := range []string{
+		"REMEDIATION PLAN contract", "reusable_su2_mesh_study", "readback_existing",
+		"revalidate it with engineering_get", "do not execute the solver again",
+	} {
+		if !strings.Contains(planPrompt, required) {
+			t.Fatalf("remediation PLAN prompt omits %q", required)
+		}
+	}
+	collectTask, err := json.Marshal(collectInput{
+		Question: "current task", Plan: core.ResearchPlan{SU2MeshStudy: reusablePlan},
+		Workstream:         core.Workstream{ID: "receipt_readback", Question: "read receipts"},
+		EngineeringResults: []store.EngineeringResult{result},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectPrompt := stagePrompt(core.StageCollect, "run-readback", "stg-readback", collectTask)
+	for _, required := range []string{
+		"REMEDIATION ENGINEERING READBACK contract", "engineering_get once for each listed job.id",
+		"reused_result=true", "Do not call su2_naca0012", "cannot request execution approval",
+	} {
+		if !strings.Contains(collectPrompt, required) {
+			t.Fatalf("receipt-readback COLLECT prompt omits %q", required)
+		}
+	}
+	if remediationNeedsNewSolverExecution(remediation) {
+		t.Fatal("engineering readback remediation was classified as new solver work")
+	}
+	remediation.Tasks[0].RequiresNewSolverExecution = true
+	if !remediationNeedsNewSolverExecution(remediation) {
+		t.Fatal("fresh solver remediation lost its execution requirement")
+	}
+	if !strings.Contains(reviewScoringPolicy, "requires_new_solver_execution=true") ||
+		!strings.Contains(reviewScoringPolicy, "plotting") ||
+		!strings.Contains(reviewScoringPolicy, "reuse immutable receipts") {
+		t.Fatal("review policy does not distinguish post-processing from a new solver execution")
+	}
+}
+
+func TestReviewRejectsNewSolverExecutionWithoutEngineeringRequirement(t *testing.T) {
+	verdict := testVerdict(false)
+	verdict.RemediationAction = core.ReviewRemediationAdditionalResearch
+	verdict.RemediationTasks = []core.ReviewRemediationTask{{
+		Objective:                  "run a missing solver case",
+		RequiredEvidence:           []string{"fresh receipt"},
+		RequiresNewSolverExecution: true,
+	}}
+	if err := validateReviewVerdict(verdict); err == nil ||
+		!strings.Contains(err.Error(), "without engineering work") {
+		t.Fatalf("invalid solver remediation error = %v", err)
 	}
 }
 

@@ -139,6 +139,19 @@ func (router *Router) handle(ctx context.Context, event codex.Event) error {
 		argumentsSHA256 = hex.EncodeToString(digest[:])
 	}
 	if isEngineeringSolverApproval(event.Method, request) && argumentsSHA256 != "" {
+		readbackOnly, readbackErr := router.DB.EngineeringReceiptReadbackOnly(ctx, attempt.RunID, attempt.ID)
+		if readbackErr != nil {
+			return fmt.Errorf("resolve engineering receipt-readback scope: %w", readbackErr)
+		}
+		if readbackOnly {
+			// REVIEW remediation can authorize immutable receipt readback, never a
+			// solver side effect. Decline in-protocol without creating a pending UI
+			// approval or marking the run uncertain.
+			if err := router.Client.RespondApproval(ctx, event, "decline"); err != nil {
+				return attemptedResponse("decline", err)
+			}
+			return nil
+		}
 		tool := strings.ToLower(strings.TrimSpace(request.Tool))
 		_, replay, lookupErr := router.DB.SucceededEngineeringJobForApprovalScope(
 			ctx, attempt.RunID, attempt.ID, tool, argumentsSHA256,

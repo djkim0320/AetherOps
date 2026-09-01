@@ -77,6 +77,21 @@ func TestReviewSchemaRequiresFreshResearchForEveryFailure(t *testing.T) {
 			t.Fatal("current REVIEW schema permits a report-only failure loop")
 		}
 	}
+	taskSchema := properties["remediation_tasks"].(map[string]any)["items"].(map[string]any)
+	taskProperties := taskSchema["properties"].(map[string]any)
+	if _, exists := taskProperties["requires_new_solver_execution"]; !exists {
+		t.Fatal("review remediation task cannot distinguish receipt readback from a new solver execution")
+	}
+	required := taskSchema["required"].([]any)
+	found := false
+	for _, name := range required {
+		if name == "requires_new_solver_execution" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("requires_new_solver_execution is optional in the REVIEW response schema")
+	}
 }
 
 func TestReportSchemaForEvidenceIDsConstrainsVocabularyAndCardinality(t *testing.T) {

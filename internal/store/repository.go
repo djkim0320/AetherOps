@@ -628,11 +628,11 @@ WHERE conversation_session_id=? ORDER BY created_at DESC,id DESC LIMIT 1`, sessi
 		if latestID != cycle.ID {
 			return core.Run{}, ErrPlanCycleSuperseded
 		}
-		objective := cycle.Objective
-		if objective == "" {
-			objective = "계획 인터뷰에서 합의된 목표는 아래 최종 계획을 따릅니다."
-		}
-		question = "연구 목표:\n" + objective + "\n\n계획 모드에서 합의된 실행 계획:\n" + cycle.FinalPlan
+		// The final plan is the executable contract. The original objective stays
+		// in the append-only plan cycle for audit, but replaying it into every
+		// research stage can reintroduce instructions that the interview already
+		// superseded (for example, an earlier "do not start research" preflight).
+		question = "계획 모드에서 합의된 실행 계획:\n" + cycle.FinalPlan
 	}
 	run := core.Run{
 		ID: runID, ProjectID: session.ProjectID, ConversationSessionID: session.ID,
@@ -2322,9 +2322,17 @@ JOIN artifacts a
   ON a.id=ja.artifact_id AND a.run_id=j.run_id AND a.stage_attempt_id=j.stage_attempt_id
 JOIN blobs b ON b.hash=a.blob_hash AND b.hash=ja.blob_hash
 JOIN stage_attempts s ON s.id=j.stage_attempt_id AND s.run_id=j.run_id AND s.stage='collect'
-WHERE j.run_id=? AND (?='' OR j.stage_attempt_id=?)
+WHERE j.run_id=? AND (
+    ?='' OR j.stage_attempt_id=? OR EXISTS(
+      SELECT 1 FROM engineering_receipt_reuses reuse
+      WHERE reuse.run_id=j.run_id
+        AND reuse.stage_attempt_id=?
+        AND reuse.source_job_id=j.id
+        AND reuse.receipt_artifact_id=j.receipt_artifact_id
+    )
+  )
   AND j.status='succeeded' AND j.receipt_artifact_id=?`,
-		runID, attemptID, attemptID, artifactID,
+		runID, attemptID, attemptID, attemptID, artifactID,
 	).Scan(&operation, &blobHash, &created)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

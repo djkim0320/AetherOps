@@ -14,11 +14,13 @@ import (
 )
 
 const (
-	engineeringScreeningOwnerRole = "owner"
-	engineeringScreeningReadRole  = "public_research_only"
+	engineeringScreeningOwnerRole  = "owner"
+	engineeringScreeningReadRole   = "public_research_only"
+	engineeringReceiptReadbackRole = "receipt_readback_owner"
 
-	engineeringScreeningOwnerPolicy = "You are the single deterministic owner of every bundled engineering solver call required anywhere in the complete research plan, even when another workstream describes part of the numerical comparison. Inspect the complete plan before the first solver call, enumerate the whole requested case set, and execute every case in this one collector attempt. This includes every requested su2_naca0012 mesh_size_m case and every XFOIL execution_purpose=screening job. No other normal collector may launch an engineering solver. Include every successful solver receipt artifact id returned in this attempt in engineering_receipt_artifact_ids and cite it from the corresponding claims; AetherOps rejects an XFOIL owner bundle that omits an executed screening receipt. Public-source work remains independent and may proceed normally."
-	engineeringScreeningReadPolicy  = "You are not the engineering solver owner. Do not call su2_naca0012, xfoil_polar, gmsh_wing_mesh, openvsp_wing_aero, or openvsp_modify_wing, and do not cite or copy a solver receipt produced by another collector attempt. Continue the assigned public-source research in parallel and use evidence_capture normally. The owner collector receives the complete plan and produces the single attempt-scoped solver receipt set."
+	engineeringScreeningOwnerPolicy  = "You are the single deterministic owner of every bundled engineering solver call required anywhere in the complete research plan, even when another workstream describes part of the numerical comparison. Inspect the complete plan before the first solver call, enumerate the whole requested case set, and execute every case in this one collector attempt. This includes every requested su2_naca0012 mesh_size_m case and every XFOIL execution_purpose=screening job. No other normal collector may launch an engineering solver. Include every successful solver receipt artifact id returned in this attempt in engineering_receipt_artifact_ids and cite it from the corresponding claims; AetherOps rejects an XFOIL owner bundle that omits an executed screening receipt. Public-source work remains independent and may proceed normally."
+	engineeringScreeningReadPolicy   = "You are not the engineering solver owner. Do not call su2_naca0012, xfoil_polar, gmsh_wing_mesh, openvsp_wing_aero, or openvsp_modify_wing, and do not cite or copy a solver receipt produced by another collector attempt. Continue the assigned public-source research in parallel and use evidence_capture normally. The owner collector receives the complete plan and produces the single attempt-scoped solver receipt set."
+	engineeringReceiptReadbackPolicy = "This is the sole core-authorized receipt-readback workstream for a REVIEW remediation. Do not execute or request approval for su2_naca0012 or any other solver. Call engineering_get exactly once for each job in reusable_engineering_results, using the current run_id and stage_attempt_id. Require reused_result=true, cite only the returned top-level receipt_artifact_id values, and report any identity, CAS, or metric mismatch instead of substituting a new calculation."
 )
 
 func engineeringPolicyForCollector(index int) (string, string) {
@@ -57,7 +59,10 @@ FROM engineering_jobs j
 JOIN stage_attempts s ON s.id=j.stage_attempt_id AND s.run_id=j.run_id
 WHERE j.run_id=? AND j.operation='xfoil_polar'
 	  AND s.status<>'superseded'
-ORDER BY j.created_at,j.id`, runID)
+-- created_at can legitimately collide when a bounded matrix is materialized in
+-- one transaction. rowid preserves the durable insertion/plan order instead of
+-- letting random job ids reorder the evidence bundle between runs.
+ORDER BY j.created_at,j.rowid,j.id`, runID)
 	if err != nil {
 		return nil, err
 	}

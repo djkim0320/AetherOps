@@ -10,7 +10,7 @@
     "checked_in_payload_root": "sbom/licenses"
   },
   "inputs": [
-    {"path": "go.mod", "sha256": "5704eea6fbceb806f44c2fd2516ab16e68a149104df0d256371358e8023ea5ca"},
+    {"path": "go.mod", "sha256": "53f41733d00c2ee8008a94c78b810895dac629096f22dc9a31046dec9c6c2a33"},
     {"path": "go.sum", "sha256": "82282537670798aa0f13a6dc9a885c4ca14720b6d1cfda5ef4e6693da167466c"},
     {"path": "frontend/package-lock.json", "sha256": "aebf1937133f082ac4867f6c2752e89cbb0eb89cb93bdbc68e5a3954aaa12a96"},
     {"path": "tools/knowledge-sidecar/package-lock.json", "sha256": "6d22563834e02e0f3fbf255d96f59e47cb50c579e1273a5deec2d3310de6ab7a"},

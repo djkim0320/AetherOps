@@ -23,3 +23,10 @@ export function planningObjective(messages: PlanningObjectiveMessage[], explicit
 		.join("\n\n");
 	return snapshot || "계획 시작 시점에 아직 구체적인 연구 목표가 제시되지 않았습니다. 계획 인터뷰에서 목표를 먼저 확정합니다.";
 }
+
+export function parseSlashCommand(input: string): { command: string; argument: string } | null {
+	const trimmed = input.trim();
+	const match = /^(\/[^\s]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
+	if (!match) return null;
+	return { command: match[1].toLowerCase(), argument: (match[2] ?? "").trim() };
+}

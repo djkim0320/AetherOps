@@ -11,3 +11,14 @@ test("capability recovery events are presented as user-facing activity", () => {
 test("unknown event kinds remain inspectable", () => {
   assert.equal(runEventLabel("custom.event"), "custom.event");
 });
+
+test("stage and transition payloads produce specific user-facing activity", () => {
+  assert.equal(
+    runEventLabel("stage.started", { stage: "collect", ordinal: 2 }),
+    "자료 수집기 3을 시작했습니다"
+  );
+  assert.equal(
+    runEventLabel("run.transition", { from: "collecting", to: "failed" }),
+    "자료 수집 중 실행이 실패했습니다"
+  );
+});

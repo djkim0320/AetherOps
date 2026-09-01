@@ -19,7 +19,7 @@ type Executor interface {
 
 type MainThreadProtocol interface {
 	CreateMainThread(context.Context, string, core.RunConfiguration) (string, error)
-	Chat(context.Context, string, string, core.ChatMode, string, core.RunConfiguration) (core.ChatReply, error)
+	Chat(context.Context, string, string, core.ChatMode, string, string, core.RunConfiguration) (core.ChatReply, error)
 	ChatHistory(context.Context, string) (core.ChatHistory, error)
 }
 
@@ -212,7 +212,17 @@ func (dispatcher *Dispatcher) ChatSession(
 	if err != nil {
 		return core.ChatReply{}, err
 	}
-	reply, err := dispatcher.Threads.Chat(ctx, session.CodexThreadID, strings.TrimSpace(message), mode, planCycleID, configuration)
+	planObjective := ""
+	if mode == core.ChatModePlan {
+		cycle, err := dispatcher.DB.RequireActiveConversationPlanCycle(ctx, sessionID, planCycleID)
+		if err != nil {
+			return core.ChatReply{}, err
+		}
+		planObjective = cycle.Objective
+	}
+	reply, err := dispatcher.Threads.Chat(
+		ctx, session.CodexThreadID, strings.TrimSpace(message), mode, planCycleID, planObjective, configuration,
+	)
 	if err != nil {
 		return core.ChatReply{}, err
 	}

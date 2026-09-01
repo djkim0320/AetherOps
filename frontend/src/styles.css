@@ -773,6 +773,28 @@ h3 { font-size: 13px; font-weight: 600; }
   padding-left: 14px;
   border-left: 2px solid var(--border-medium);
 }
+.assistant-pending-message {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.typing-indicator { display: inline-flex; align-items: center; gap: 3px; }
+.typing-indicator i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: aetherops-typing 1.15s ease-in-out infinite;
+}
+.typing-indicator i:nth-child(2) { animation-delay: .15s; }
+.typing-indicator i:nth-child(3) { animation-delay: .3s; }
+@keyframes aetherops-typing {
+  0%, 60%, 100% { opacity: .35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
 .assistant-message-head {
   display: flex;
   align-items: center;
@@ -1433,6 +1455,25 @@ h3 { font-size: 13px; font-weight: 600; }
 .rail-stage-item.active { background: var(--accent-blue-soft); }
 .rail-stage-item.active .rail-stage-marker { background: var(--accent-blue); color: #fff; }
 .rail-stage-item.active .rail-stage-copy strong { color: var(--accent-blue); }
+
+.rail-stage-item.attention { background: var(--accent-danger-soft); }
+.rail-stage-item.attention .rail-stage-marker { background: var(--accent-danger); color: #fff; }
+.rail-stage-item.attention .rail-stage-copy strong { color: var(--accent-danger); }
+
+.summary-run-error {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(242, 139, 150, 0.28);
+  border-radius: var(--radius-sm);
+  background: var(--accent-danger-soft);
+}
+.summary-run-error strong { display: block; color: #ffccd3; font-size: 11px; }
+.summary-run-error p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font: 10px/1.5 ui-monospace, "Cascadia Code", monospace;
+  overflow-wrap: anywhere;
+}
 
 .summary-runtime-warning {
   display: grid;

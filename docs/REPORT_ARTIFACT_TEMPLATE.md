@@ -65,7 +65,7 @@ The reference contains instructional placeholders. A generated report replaces t
 
 ## Application issuance contract
 
-1. MERGE or REVISE publishes the canonical JSON `ReportManifest` as `research.report` or `research.report.revision`.
+1. SYNTHESIZE or REVISE publishes the canonical JSON `ReportManifest` as `research.report` or `research.report.revision`.
 2. REVIEW must pass the existing citation, knowledge-integrity, critical-error, score, and engineering-report gates.
 3. The Go core renders `ReportManifest.answer_markdown` and the adopted `ReviewVerdict` into the embedded reference template. Supported document structures include headings, paragraphs, real numbered/bulleted list styles, callouts, fenced code, and explicit fixed-width tables.
 4. The rendered package is written to CAS and read back by SHA-256.

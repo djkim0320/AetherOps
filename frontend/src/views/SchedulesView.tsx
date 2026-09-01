@@ -9,6 +9,7 @@ export type SchedulesViewProps = {
   selectedSessionID: string;
   onSelectSessionID: (id: string) => void;
   schedules: Schedule[] | null;
+  loadError: string | null;
   coreReady: boolean;
   busy: string | null;
   onCreateSchedule: (data: {
@@ -85,6 +86,7 @@ export function SchedulesView({
   selectedSessionID,
   onSelectSessionID,
   schedules,
+  loadError,
   coreReady,
   busy,
   onCreateSchedule,
@@ -374,7 +376,11 @@ export function SchedulesView({
           </div>
         </div>
 
-        {schedules === null ? (
+        {loadError ? (
+          <div class="alert danger" role="alert">
+            <strong>일정 목록을 불러오지 못했습니다.</strong> {loadError}
+          </div>
+        ) : schedules === null ? (
           <div class="empty-state">
             <strong>일정 목록을 불러오는 중입니다…</strong>
           </div>

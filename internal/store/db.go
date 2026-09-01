@@ -78,6 +78,7 @@ var migrations = []string{
 	conversationContextProfileSchema,
 	portableToolExecutionSchema,
 	researchRemediationSchema,
+	engineeringReceiptReuseSchema,
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {

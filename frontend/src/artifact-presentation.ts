@@ -9,7 +9,7 @@ const exactPresentations: Record<string, ArtifactPresentation> = {
 	"research.plan": { label: "계획", title: "연구 계획", description: "연구 범위와 조사·분석 방법", tone: "plan" },
 	"research.evidence": { label: "근거", title: "수집된 근거", description: "출처와 핵심 증거를 정리한 자료", tone: "evidence" },
 	"research.evidence.verification": { label: "검증", title: "근거 검증 결과", description: "출처와 인용 무결성을 확인한 기록", tone: "verification" },
-	"research.report": { label: "보고서", title: "최종 연구 보고서", description: "검토를 통과한 연구 결과와 결론", tone: "report" },
+	"research.report": { label: "보고서", title: "연구 결과 보고서", description: "수집된 근거와 분석 결론을 정리한 검토 대상 보고서", tone: "report" },
 	"research.report.revision": { label: "보고서", title: "수정된 연구 보고서", description: "품질 검토 의견을 반영한 연구 결과", tone: "report" },
 	"research.report.document": { label: "Word", title: "최종 연구 보고서 문서", description: "AetherOps 보고서 템플릿으로 발행한 검증 완료 Word 문서", tone: "report" },
 	"research.review": { label: "리뷰", title: "품질 검토 결과", description: "근거·완전성·재현성에 대한 평가", tone: "review" },

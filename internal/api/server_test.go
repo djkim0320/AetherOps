@@ -1010,6 +1010,52 @@ func TestCodexAccountStatusUsesAuthenticatedStableReadback(t *testing.T) {
 	}
 }
 
+func TestChatRejectsMissingCodexLoginBeforeStartingATurn(t *testing.T) {
+	server, endpoint := startTestServer(t)
+	chat := &chatControllerFixture{}
+	server.Chat = chat
+	server.Models = modelCatalogFixture{}
+	server.CodexAccount = codexAccountFixture{value: map[string]any{
+		"authenticated": false, "chatgpt": false, "requires_openai_auth": true,
+	}}
+	body, err := json.Marshal(map[string]string{
+		"message": "로그인 상태를 확인해 줘", "mode": "chat", "model": core.PlannerModel,
+		"reasoning_effort": core.PlannerEffort, "speed": "standard",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, endpoint+"/api/v1/sessions/session-no-login/chat", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+server.Token())
+	request.Header.Set("Origin", endpoint)
+	response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("chat without Codex login status = %d", response.StatusCode)
+	}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Error.Code != "codex_login_required" {
+		t.Fatalf("chat without Codex login code = %q", payload.Error.Code)
+	}
+	if chat.message != "" {
+		t.Fatalf("chat turn started before login: %q", chat.message)
+	}
+}
+
 func TestOpenCodexLoginUsesOnlyOfficialURL(t *testing.T) {
 	server, endpoint := startTestServer(t)
 	var opened string
@@ -1438,5 +1484,30 @@ func TestScheduleAPIUsesValidatedScheduler(t *testing.T) {
 	}
 	if len(schedules) != 1 || schedules[0]["project_id"] != project.ID {
 		t.Fatalf("unexpected schedules: %+v", schedules)
+	}
+}
+
+func TestScheduleAPIEncodesAnEmptyListAsJSONArray(t *testing.T) {
+	server, endpoint := startTestServer(t)
+	request, err := http.NewRequest(http.MethodGet, endpoint+"/api/v1/schedules", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+server.Token())
+	request.Header.Set("Origin", endpoint)
+	response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("empty schedule list status = %d", response.StatusCode)
+	}
+	var schedules []core.Schedule
+	if err := json.NewDecoder(response.Body).Decode(&schedules); err != nil {
+		t.Fatal(err)
+	}
+	if schedules == nil || len(schedules) != 0 {
+		t.Fatalf("empty schedule list = %#v", schedules)
 	}
 }

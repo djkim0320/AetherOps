@@ -47,15 +47,15 @@ func TestConversationPlanCyclePairsLatestObjectiveAndPlanExactlyOnce(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantQuestion := "연구 목표:\n" + objective + "\n\n계획 모드에서 합의된 실행 계획:\n" + finalPlan
-	if run.Question != wantQuestion || strings.Contains(run.Question, "과거") {
+	wantQuestion := "계획 모드에서 합의된 실행 계획:\n" + finalPlan
+	if run.Question != wantQuestion || strings.Contains(run.Question, "과거") || strings.Contains(run.Question, objective) {
 		t.Fatalf("planned run question = %q", run.Question)
 	}
 	consumed, err := db.ConversationPlanCycle(ctx, session.ID, latest.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if consumed.Status != "consumed" || consumed.RunID != run.ID || consumed.ConsumedAt == nil {
+	if consumed.Status != "consumed" || consumed.RunID != run.ID || consumed.ConsumedAt == nil || consumed.Objective != objective {
 		t.Fatalf("consumed cycle = %+v", consumed)
 	}
 	if _, err := db.CreatePlannedConversationRunConfigured(ctx, session.ID, latest.ID, "thread-plan", core.RunConfiguration{}); !errors.Is(err, ErrPlanCycleNotReady) {

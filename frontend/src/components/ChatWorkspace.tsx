@@ -123,7 +123,8 @@ export function ChatWorkspace({
             </div>
           </div>
         ) : (
-          transcriptItems.map((item) => {
+          <>
+          {transcriptItems.map((item) => {
             const message = item.message;
             if (message.role === "user") {
               return (
@@ -241,7 +242,23 @@ export function ChatWorkspace({
                 </div>
               </article>
             );
-          })
+          })}
+          {sessionBusy && (
+            <article class="chat-turn chat-only-turn assistant-turn pending-assistant-turn" role="status">
+              <div class="message-row assistant-row">
+                <div class="assistant-avatar"><img src="/aetherops-icon.png" alt="" /></div>
+                <div class="message assistant-message assistant-pending-message">
+                  <span class="typing-indicator" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  <span>{chatMode === "plan" ? "계획을 정리하는 중…" : "Codex가 답변을 생성하는 중…"}</span>
+                </div>
+              </div>
+            </article>
+          )}
+          </>
         )}
       </div>
     </section>

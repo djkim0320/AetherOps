@@ -35,6 +35,7 @@ export type Run = {
   service_tier?: string;
   context_profile?: string;
   blocking_run?: RunControlRef;
+  error?: string;
   created_at?: string;
   updated_at?: string;
 };
@@ -173,6 +174,17 @@ export type Schedule = {
   created_at?: string;
 };
 
+export type BrowserOperationalStatus = {
+  status: string;
+  mode: "automatic" | "manual";
+  active_surface?: string;
+  tab_count?: number;
+  window_visible?: boolean;
+  emergency_stopped?: boolean;
+  profile_reset_pending?: boolean;
+  last_observed_at?: string | null;
+};
+
 export type Connection = "checking" | "connected" | "offline";
 
 export type View =
@@ -189,7 +201,7 @@ export type Stage = "plan" | "collect" | "synthesize" | "review";
 export const STAGE_DEFINITIONS: Array<{ key: Stage; label: string; korean: string }> = [
   { key: "plan", label: "PLAN", korean: "계획 수립" },
   { key: "collect", label: "COLLECT", korean: "정보 수집" },
-  { key: "synthesize", label: "SYNTHESIZE", korean: "보고서 합성" },
+  { key: "synthesize", label: "SYNTHESIZE", korean: "보고서 종합" },
   { key: "review", label: "REVIEW", korean: "품질 검토" }
 ];
 
@@ -229,7 +241,7 @@ export const STATUS_LABELS: Record<string, string> = {
   queued: "대기 중",
   planning: "계획 수립 중",
   collecting: "자료 수집 중",
-  synthesizing: "보고서 합성 중",
+  synthesizing: "보고서 종합 중",
   reviewing: "품질 검토 중",
   revising: "보고서 보완 중",
   waiting_approval: "승인 대기",

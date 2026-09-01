@@ -5,6 +5,7 @@ import type { Connection } from "../types";
 export type ControlsViewProps = {
   browserState: string | null;
   browserMode: "automatic" | "manual" | null;
+  statusError: string | null;
   connection: Connection;
   busy: string | null;
   onSetBrowserMode: (mode: "automatic" | "manual") => Promise<void>;
@@ -14,6 +15,7 @@ export type ControlsViewProps = {
 export function ControlsView({
   browserState,
   browserMode,
+  statusError,
   connection,
   busy,
   onSetBrowserMode,
@@ -113,7 +115,7 @@ export function ControlsView({
             <span class="stat-card-label">브라우저 프로세스 상태</span>
             <div class="stat-card-value">
               <span class={`status-dot ${browserState === "ready" ? "active" : ""}`} />
-              <strong>{browserState ?? "상태 확인 중"}</strong>
+              <strong>{browserState ?? (statusError ? "상태 조회 실패" : "상태 확인 중")}</strong>
             </div>
           </div>
 
@@ -125,6 +127,8 @@ export function ControlsView({
                   ? "자동 제어 (에이전트)"
                   : browserMode === "manual"
                   ? "수동 개입 (사용자)"
+                  : statusError
+                  ? "확인 불가"
                   : "확인 중"}
               </strong>
             </div>
@@ -144,6 +148,12 @@ export function ControlsView({
             </div>
           </div>
         </div>
+
+        {statusError && (
+          <div class="alert danger" role="alert">
+            <strong>브라우저 상태를 불러오지 못했습니다.</strong> {statusError}
+          </div>
+        )}
 
         {/* Interactive Mode Control Panel */}
         <div class="control-panel-section">

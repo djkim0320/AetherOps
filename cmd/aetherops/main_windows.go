@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -705,19 +706,94 @@ func runInternalMCP(ctx context.Context, isolatedDataRoot string) (returnErr err
 	if err != nil {
 		return err
 	}
-	sidecar, err := startKnowledgeSidecar(ctx, runtimePaths, script, supervisor.Assign)
-	if err != nil {
-		return err
+	// tools/list must remain a lightweight MCP handshake. Starting one Oxigraph
+	// WASM process for every parallel collector before the handshake caused the
+	// required server to miss Codex's startup deadline. Knowledge queries still
+	// get a fully verified sidecar, but it is created on the first actual graph
+	// read instead of for collectors that only capture sources or publish data.
+	lazyKnowledge := &lazyKnowledgeReader{
+		processContext: ctx, runtimePaths: runtimePaths, script: script,
+		assign: supervisor.Assign, db: db, objects: objects,
 	}
-	defer func() { returnErr = errors.Join(returnErr, sidecar.Close()) }()
+	defer func() { returnErr = errors.Join(returnErr, lazyKnowledge.Close()) }()
 	credentials := secret.NewStore()
 	embedder := newEmbeddingClient(credentials)
-	knowledgeService := &knowledge.Service{DB: db, CAS: objects, Sidecar: sidecar}
 	toolService := &toolstudio.Service{
 		DB: db, CAS: objects, InstallRoot: paths.ManagedTools,
 		QuarantineRoot: paths.ToolQuarantine, AssignProcess: supervisor.Assign,
 	}
-	return (&mcpserver.Server{DB: db, CAS: objects, Embedder: embedder, Knowledge: knowledgeService, ToolStudio: toolService}).Serve(ctx, os.Stdin, os.Stdout)
+	return (&mcpserver.Server{DB: db, CAS: objects, Embedder: embedder, Knowledge: lazyKnowledge, ToolStudio: toolService}).Serve(ctx, os.Stdin, os.Stdout)
+}
+
+type lazyKnowledgeReader struct {
+	mu             sync.Mutex
+	processContext context.Context
+	runtimePaths   managedruntime.ProcessPaths
+	script         string
+	assign         func(int) error
+	db             *store.DB
+	objects        *cas.Store
+	sidecar        *knowledge.Sidecar
+	service        *knowledge.Service
+}
+
+func (reader *lazyKnowledgeReader) resolve() (*knowledge.Service, error) {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.service != nil {
+		return reader.service, nil
+	}
+	sidecar, err := startKnowledgeSidecar(
+		reader.processContext, reader.runtimePaths, reader.script, reader.assign,
+	)
+	if err != nil {
+		return nil, err
+	}
+	reader.sidecar = sidecar
+	reader.service = &knowledge.Service{DB: reader.db, CAS: reader.objects, Sidecar: sidecar}
+	return reader.service, nil
+}
+
+func (reader *lazyKnowledgeReader) SPARQLGeneration(
+	ctx context.Context, projectID, generationID, query string, maxRows int,
+) (any, error) {
+	service, err := reader.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return service.SPARQLGeneration(ctx, projectID, generationID, query, maxRows)
+}
+
+func (reader *lazyKnowledgeReader) EntityGeneration(
+	ctx context.Context, projectID, generationID, entityID string,
+) (any, error) {
+	service, err := reader.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return service.EntityGeneration(ctx, projectID, generationID, entityID)
+}
+
+func (reader *lazyKnowledgeReader) AssertionGeneration(
+	ctx context.Context, projectID, generationID, assertionID string,
+) (any, error) {
+	service, err := reader.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return service.AssertionGeneration(ctx, projectID, generationID, assertionID)
+}
+
+func (reader *lazyKnowledgeReader) Close() error {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.sidecar == nil {
+		return nil
+	}
+	err := reader.sidecar.Close()
+	reader.sidecar = nil
+	reader.service = nil
+	return err
 }
 
 func startKnowledgeSidecar(ctx context.Context, runtimePaths managedruntime.ProcessPaths, script string, assign func(int) error) (*knowledge.Sidecar, error) {

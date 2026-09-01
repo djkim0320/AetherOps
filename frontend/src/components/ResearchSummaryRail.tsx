@@ -164,6 +164,13 @@ export function ResearchSummaryRail({
                   );
                 })}
               </div>
+
+              {activeRun?.error && (
+                <div class="summary-run-error" role="alert">
+                  <strong>실행이 중단된 이유</strong>
+                  <p>{activeRun.error}</p>
+                </div>
+              )}
             </div>
 
             {warnings.length > 0 && (
@@ -389,7 +396,7 @@ export function ResearchSummaryRail({
                     >
                       <span class="activity-dot" />
                       <div>
-                        <strong>{runEventLabel(String(event.kind ?? "run_event"))}</strong>
+                        <strong>{runEventLabel(String(event.kind ?? "run_event"), event.payload)}</strong>
                         <small>{formatDate(event.created_at)}</small>
                       </div>
                     </div>

@@ -2108,3 +2108,46 @@ CREATE TABLE research_remediation_cycles (
 CREATE INDEX research_remediation_cycles_run_created
 ON research_remediation_cycles(run_id,created_at);
 `
+
+// engineeringReceiptReuseSchema is migration 20. A REVIEW-directed research
+// cycle may need to revalidate an immutable solver receipt without executing
+// the solver again. Reuse is an explicit, attempt-scoped authorization: it
+// neither changes the source job nor weakens ordinary cross-attempt isolation.
+const engineeringReceiptReuseSchema = `
+CREATE TABLE engineering_receipt_reuses (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    stage_attempt_id TEXT NOT NULL REFERENCES stage_attempts(id) ON DELETE CASCADE,
+    source_job_id TEXT NOT NULL REFERENCES engineering_jobs(id) ON DELETE CASCADE,
+    receipt_artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(stage_attempt_id,receipt_artifact_id),
+    UNIQUE(stage_attempt_id,source_job_id)
+);
+CREATE INDEX engineering_receipt_reuses_run_attempt
+ON engineering_receipt_reuses(run_id,stage_attempt_id,created_at);
+
+CREATE TRIGGER engineering_receipt_reuses_insert_guard
+BEFORE INSERT ON engineering_receipt_reuses
+WHEN NOT EXISTS(
+  SELECT 1
+  FROM stage_attempts target
+  JOIN engineering_jobs source ON source.id=NEW.source_job_id
+  JOIN engineering_job_artifacts link
+    ON link.job_id=source.id AND link.role='receipt'
+      AND link.artifact_id=source.receipt_artifact_id
+  JOIN artifacts artifact
+    ON artifact.id=source.receipt_artifact_id
+      AND artifact.run_id=source.run_id
+      AND artifact.stage_attempt_id=source.stage_attempt_id
+      AND artifact.blob_hash=link.blob_hash
+  WHERE target.id=NEW.stage_attempt_id AND target.run_id=NEW.run_id
+    AND target.stage='collect' AND target.status='in_progress'
+    AND source.run_id=NEW.run_id AND source.stage_attempt_id<>NEW.stage_attempt_id
+    AND source.status='succeeded' AND source.receipt_artifact_id=NEW.receipt_artifact_id
+)
+BEGIN SELECT RAISE(ABORT, 'engineering receipt reuse does not match an active collect attempt and immutable succeeded receipt'); END;
+
+CREATE TRIGGER engineering_receipt_reuses_immutable
+BEFORE UPDATE ON engineering_receipt_reuses
+BEGIN SELECT RAISE(ABORT, 'engineering receipt reuse authorization is immutable'); END;
+`

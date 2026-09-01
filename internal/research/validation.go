@@ -482,6 +482,9 @@ func validateReviewVerdict(verdict core.ReviewVerdict) error {
 		if strings.TrimSpace(task.Objective) == "" || task.RequiredEvidence == nil {
 			return fmt.Errorf("review remediation task %d is incomplete", index+1)
 		}
+		if task.RequiresNewSolverExecution && !task.RequiresEngineering {
+			return fmt.Errorf("review remediation task %d requests a new solver execution without engineering work", index+1)
+		}
 	}
 	_, err := verdict.Passes()
 	return err

@@ -70,7 +70,7 @@ func WriteCodexMCPConfig(config CodexMCPConfig) error {
 			"artifact_publish_report", "artifact_publish_review",
 			"knowledge_sparql", "knowledge_get", "tool_package_propose", "tool_catalog", "tool_get", "tool_run",
 		}),
-		"startup_timeout_sec = 10",
+		"startup_timeout_sec = 30",
 		"tool_timeout_sec = 120",
 		"",
 		"[mcp_servers.aetherops_engineering]",

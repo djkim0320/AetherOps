@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { planningObjective } from "../src/plan-cycle.ts";
+import { parseSlashCommand, planningObjective } from "../src/plan-cycle.ts";
 
 test("planning objective snapshots multiple ordinary user requirements", () => {
 	assert.equal(planningObjective([
@@ -28,4 +28,13 @@ test("empty kickoff persists an explicit absence instead of an empty objective",
 	const objective = planningObjective([]);
 	assert.match(objective, /아직 구체적인 연구 목표가 제시되지 않았습니다/);
 	assert.notEqual(objective, "");
+});
+
+test("slash plan accepts a natural-language objective on the same input", () => {
+	assert.deepEqual(parseSlashCommand(" /PLAN  NACA 0012를 실제 SU2로 검증해 줘\n조건표도 포함해 "), {
+		command: "/plan",
+		argument: "NACA 0012를 실제 SU2로 검증해 줘\n조건표도 포함해"
+	});
+	assert.deepEqual(parseSlashCommand("/research"), { command: "/research", argument: "" });
+	assert.equal(parseSlashCommand("ordinary chat"), null);
 });

@@ -15,8 +15,8 @@ func TestChatPromptsKeepConversationSeparateFromResearchExecution(t *testing.T) 
 		!strings.Contains(conversation, "시장에 대해 이야기해 보자") {
 		t.Fatalf("conversation prompt did not preserve the execution boundary: %q", conversation)
 	}
-	plan := planChatPrompt("경쟁사 범위를 정하자", "pln_test")
-	for _, required := range []string{"절대 연구를 실행하지 마세요", "MCP 도구 호출", "needs_input", "상호 배타적인 선택지", "경쟁사 범위를 정하자"} {
+	plan := planChatPrompt("경쟁사 범위를 정하자", "pln_test", "NACA 0012 SU2 격자 민감도")
+	for _, required := range []string{"절대 연구를 실행하지 마세요", "MCP 도구 호출", "needs_input", "상호 배타적인 선택지", "경쟁사 범위를 정하자", "NACA 0012 SU2 격자 민감도", "su2_naca0012", "do not redirect the user to XFOIL"} {
 		if !strings.Contains(plan, required) {
 			t.Fatalf("plan prompt is missing %q: %q", required, plan)
 		}
@@ -80,7 +80,7 @@ func TestChatHistoryProjectionRecognizesOnlyAetherOpsConversationTurns(t *testin
 	}
 
 	_, _, _, visible, recognized = chatTurnUserMessage(codex.ThreadHistoryTurn{Items: []codex.ThreadHistoryItem{{
-		Type: "userMessage", Content: []codex.ThreadHistoryContent{{Type: "text", Text: planChatPrompt("[AETHEROPS_PLAN_KICKOFF] 시작", "pln_kickoff")}},
+		Type: "userMessage", Content: []codex.ThreadHistoryContent{{Type: "text", Text: planChatPrompt("[AETHEROPS_PLAN_KICKOFF] 시작", "pln_kickoff", "새 연구 목표")}},
 	}}})
 	if !recognized || visible {
 		t.Fatalf("plan kickoff visibility = %v, recognized=%v", visible, recognized)
@@ -118,7 +118,7 @@ func TestProjectChatHistoryRestoresStructuredPlanDialogue(t *testing.T) {
 	history := projectChatHistory(codex.ThreadHistory{ThreadID: "thread-1", Turns: []codex.ThreadHistoryTurn{{
 		ID: "turn-1", Status: "completed", StartedAt: &started, CompletedAt: &completed,
 		Items: []codex.ThreadHistoryItem{
-			{ID: "user-1", Type: "userMessage", Content: []codex.ThreadHistoryContent{{Type: "text", Text: planChatPrompt("경쟁사 범위를 정하자", "pln_history")}}},
+			{ID: "user-1", Type: "userMessage", Content: []codex.ThreadHistoryContent{{Type: "text", Text: planChatPrompt("경쟁사 범위를 정하자", "pln_history", "내부 권위 목표")}}},
 			{ID: "assistant-1", Type: "agentMessage", Phase: "final_answer", Text: `{"status":"needs_input","message":"범위를 골라 주세요.","questions":[{"id":"scope","header":"범위","question":"어디까지 볼까요?","options":[{"id":"kr","label":"국내","description":"한국 시장","recommended":true},{"id":"global","label":"글로벌","description":"해외 포함","recommended":false}]}],"plan":""}`},
 		},
 	}}})

@@ -4,7 +4,7 @@ export type ResearchQuestionDisplay = {
 	text: string;
 };
 
-const plannedResearchMarker = "\n\n계획 모드에서 합의된 실행 계획:\n";
+const plannedResearchMarker = "계획 모드에서 합의된 실행 계획:\n";
 const maxGoalLength = 240;
 
 function compactText(value: string): string {

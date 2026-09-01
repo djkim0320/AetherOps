@@ -30,6 +30,7 @@ func TestDedicatedCodexConfigPinsCredentialStoreAndMCPCommands(t *testing.T) {
 		`enabled_tools = ["engineering_capabilities", "engineering_get", "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_naca0012"]`,
 		`args = ["engineering-mcp"]`,
 		`args = ["chrome-mcp", "--browser-url=http://127.0.0.1:54321", "--no-usage-statistics"]`, "required = true",
+		"startup_timeout_sec = 30",
 	} {
 		if !strings.Contains(config, required) {
 			t.Fatalf("dedicated Codex config is missing %q:\n%s", required, config)

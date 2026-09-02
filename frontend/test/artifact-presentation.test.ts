@@ -15,6 +15,9 @@ test("known engineering artifacts explain their meaning", () => {
 	assert.equal(polar.title, "공력 성능 데이터");
 	assert.match(polar.description, /양력·항력·모멘트/);
 	assert.equal(artifactPresentation("engineering.xfoil_polar.geometry").title, "익형 형상");
+	const su2 = artifactPresentation("engineering.su2_cfd.receipt");
+	assert.equal(su2.title, "SU2 실행 기록");
+	assert.match(su2.description, /입력·물리 설정/);
 });
 
 test("new engineering roles remain readable without exposing the raw kind", () => {

@@ -70,6 +70,27 @@ var su2MetricContractsV1 = map[string]EngineeringMetricContract{
 	"farfield_y_abs_chords":      {Kind: EngineeringMetricDecimal},
 }
 
+var su2GeneralMetricContractsV1 = map[string]EngineeringMetricContract{
+	"case_id":                 {Kind: EngineeringMetricString},
+	"solver":                  {Kind: EngineeringMetricString},
+	"turbulence_model":        {Kind: EngineeringMetricString},
+	"mesh_sha256":             {Kind: EngineeringMetricString},
+	"source_config_sha256":    {Kind: EngineeringMetricString, Optional: true},
+	"effective_config_sha256": {Kind: EngineeringMetricString},
+	"mesh_dimension":          {Kind: EngineeringMetricInteger},
+	"mesh_nodes":              {Kind: EngineeringMetricInteger},
+	"mesh_elements":           {Kind: EngineeringMetricInteger},
+	"mesh_markers":            {Kind: EngineeringMetricInteger},
+	"history_rows":            {Kind: EngineeringMetricInteger},
+	"history_columns":         {Kind: EngineeringMetricInteger},
+	"final_iteration":         {Kind: EngineeringMetricInteger, Optional: true},
+	"converged":               {Kind: EngineeringMetricBoolean},
+	"termination_reason":      {Kind: EngineeringMetricString},
+	"cl":                      {Kind: EngineeringMetricDecimal, Optional: true},
+	"cd":                      {Kind: EngineeringMetricDecimal, Optional: true},
+	"final_rms_density":       {Kind: EngineeringMetricDecimal, Optional: true},
+}
+
 // SU2MetricContractsV1 is the single scalar contract shared by the solver
 // model view and deterministic knowledge projection. A copy prevents callers
 // from mutating the process-wide authority.
@@ -84,6 +105,30 @@ func SU2MetricContractsV1() map[string]EngineeringMetricContract {
 func SU2MetricEvidencePathsV1() [][]string {
 	keys := make([]string, 0, len(su2MetricContractsV1))
 	for key := range su2MetricContractsV1 {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	paths := make([][]string, len(keys))
+	for index, key := range keys {
+		paths[index] = []string{key}
+	}
+	return paths
+}
+
+// SU2GeneralMetricContractsV1 is the graph/evidence contract for the general
+// project-owned SU2_CFD path. Arbitrary final history columns remain in the
+// receipt/CAS; only these stable cross-physics scalars become graph assertions.
+func SU2GeneralMetricContractsV1() map[string]EngineeringMetricContract {
+	result := make(map[string]EngineeringMetricContract, len(su2GeneralMetricContractsV1))
+	for key, contract := range su2GeneralMetricContractsV1 {
+		result[key] = contract
+	}
+	return result
+}
+
+func SU2GeneralMetricEvidencePathsV1() [][]string {
+	keys := make([]string, 0, len(su2GeneralMetricContractsV1))
+	for key := range su2GeneralMetricContractsV1 {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)

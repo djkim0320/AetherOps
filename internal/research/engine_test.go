@@ -461,17 +461,17 @@ func TestPlanCapabilityRecoveryRetriesDeterministicContractFailure(t *testing.T)
 }
 
 func TestEngineeringPoliciesAssignScreeningAndIndependentVerificationToCorrectStages(t *testing.T) {
-	for _, required := range []string{"bundled first-party typed engineering tools", "intentionally not returned by aetherops_internal.tool_catalog", "COLLECT ordinal 0", "su2_naca0012", "every requested mesh_size_m case", "iterations between 20 and 1000", "x/c=[-10,15]", "final-50-iteration", "every listed screening candidate", "panel_count=240", "alpha_step_deg=0.05", "AetherOps itself", "one-degree local alpha window", "does not repeat the full screening"} {
+	for _, required := range []string{"bundled first-party typed engineering tools", "intentionally not returned by aetherops_internal.tool_catalog", "COLLECT ordinal 0", "su2_cfd", "engineering_inputs", "su2_cases", "no built-in geometry", "every listed screening candidate", "panel_count=240", "alpha_step_deg=0.05", "AetherOps itself", "one-degree local alpha window", "does not repeat the full screening"} {
 		if !strings.Contains(engineeringPlanningPolicy, required) {
 			t.Fatalf("planning policy omits %q", required)
 		}
 	}
-	for _, required := range []string{"exactly once", "every candidate", "overrides any workstream prose", "separate verification attempt", "exactly these six JSON keys", "alpha_deg", "iterations", "never use aoa_deg", "max_iterations"} {
+	for _, required := range []string{"exactly once", "every candidate", "overrides any workstream prose", "separate verification attempt", "plan.su2_cases", "engineering_inputs", "Every input and physics choice must be explicit"} {
 		if !strings.Contains(collectEngineeringPolicy, required) {
 			t.Fatalf("collection policy omits %q", required)
 		}
 	}
-	for _, required := range []string{"execution_mode=execute", "readback_existing", "reusable_su2_mesh_study", "engineering_get", "do not call su2_naca0012"} {
+	for _, required := range []string{"su2_cases", "engineering_inputs", "no predefined case", "never authorizes implicit geometry"} {
 		if !strings.Contains(su2ExecutionModePolicy, required) {
 			t.Fatalf("SU2 execution-mode policy omits %q", required)
 		}
@@ -2676,7 +2676,7 @@ func TestKnowledgePatchPolicyRequiresCopyOnlyExclusiveEvidenceHandles(t *testing
 		"exactly kind=text, source_id, claim_id, blob_hash, byte_start, byte_end, and span_hash",
 		"copy one complete entry from its evidence_handles array verbatim",
 		"exactly kind=engineering, artifact_hash, json_pointer, and value_hash",
-		"/spec/arguments/naca",
+		"/spec/arguments handle",
 		"Never calculate, guess, leave empty, or invent",
 		"If no returned handle exactly supports an assertion, omit that assertion",
 	} {
@@ -2731,36 +2731,37 @@ func TestRemediationPromptsUseAuthorizedReceiptReadbackWithoutSolverExecution(t 
 		RevisionRequests: []string{"re-read existing receipts"},
 		Tasks:            []core.ReviewRemediationTask{{Objective: "revalidate", RequiresEngineering: true}},
 	}
-	reusablePlan := &core.SU2MeshStudyPlan{
-		ExecutionMode: core.SU2ExecutionReadback,
-		Profile:       core.SU2MeshStudyProfileV1, NACA: "0012", Mach: .15, AlphaDeg: 5,
-		Iterations: 1000, MeshSizesM: []float64{.12, .06, .03},
-		DomainProfile: core.SU2FixedDomainV1, Objective: core.SU2ObjectiveGridStudy,
-		ReferenceComparison: "qualitative_context",
+	reusablePlan := &core.SU2CaseSetPlan{
+		Objective: "revalidate prior generic CFD",
+		Cases: []core.SU2CasePlan{{
+			ID: "case_a", MeshSource: core.SU2InputMaterial, MeshID: "doc_mesh",
+			MeshSHA256: strings.Repeat("a", 64), Solver: "EULER", TurbulenceModel: "NONE",
+			ConfigOverrides: map[string]string{"ITER": "100"}, OutputFiles: []string{"surface_csv"}, TimeoutSeconds: 300,
+		}},
 	}
 	result := store.EngineeringResult{Job: store.EngineeringJob{
 		ID: "eng_existing", RunID: "run-readback", StageAttemptID: "stg_prior",
-		Operation: "su2_naca0012", Status: "succeeded",
+		Operation: "su2_cfd", Status: "succeeded",
 		ReceiptArtifactID: "art_0123456789abcdef0123456789abcdef",
 	}}
 	planTask, err := json.Marshal(planInput{
 		Question: "current task", ResearchRemediation: remediation,
-		ReusableSU2MeshStudy: reusablePlan, ReusableEngineeringResults: []store.EngineeringResult{result},
+		ReusableSU2Cases: reusablePlan, ReusableEngineeringResults: []store.EngineeringResult{result},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	planPrompt := stagePrompt(core.StagePlan, "run-readback", "stg-plan", planTask)
 	for _, required := range []string{
-		"REMEDIATION PLAN contract", "reusable_su2_mesh_study", "readback_existing",
-		"revalidate it with engineering_get", "do not execute the solver again",
+		"REMEDIATION PLAN contract", "reusable_su2_cases", "exact generic case set",
+		"revalidate every immutable receipt with engineering_get", "do not execute a solver",
 	} {
 		if !strings.Contains(planPrompt, required) {
 			t.Fatalf("remediation PLAN prompt omits %q", required)
 		}
 	}
 	collectTask, err := json.Marshal(collectInput{
-		Question: "current task", Plan: core.ResearchPlan{SU2MeshStudy: reusablePlan},
+		Question: "current task", Plan: core.ResearchPlan{SU2Cases: reusablePlan},
 		Workstream:         core.Workstream{ID: "receipt_readback", Question: "read receipts"},
 		EngineeringResults: []store.EngineeringResult{result},
 	})
@@ -2770,7 +2771,7 @@ func TestRemediationPromptsUseAuthorizedReceiptReadbackWithoutSolverExecution(t 
 	collectPrompt := stagePrompt(core.StageCollect, "run-readback", "stg-readback", collectTask)
 	for _, required := range []string{
 		"REMEDIATION ENGINEERING READBACK contract", "engineering_get once for each listed job.id",
-		"reused_result=true", "Do not call su2_naca0012", "cannot request execution approval",
+		"reused_result=true", "Do not call any solver", "cannot request execution approval",
 	} {
 		if !strings.Contains(collectPrompt, required) {
 			t.Fatalf("receipt-readback COLLECT prompt omits %q", required)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +33,13 @@ import (
 	"github.com/djkim0320/AetherOps/internal/toolstudio"
 )
 
-const maxRequestBytes = 1 << 20
+const maxRequestBytes = 28 << 20
+
+const (
+	maxChatAttachments     = 4
+	maxChatAttachmentBytes = 10 << 20
+	maxChatAttachmentTotal = 20 << 20
+)
 
 type RunController interface {
 	StartRun(context.Context, string, string, core.RunConfiguration) (core.Run, error)
@@ -44,8 +52,8 @@ type RunController interface {
 }
 
 type ChatController interface {
-	ChatProject(context.Context, string, string, core.ChatMode, string, core.RunConfiguration) (core.ChatReply, error)
-	ChatSession(context.Context, string, string, core.ChatMode, string, core.RunConfiguration) (core.ChatReply, error)
+	ChatProject(context.Context, string, string, []core.ChatAttachment, core.ChatMode, string, core.RunConfiguration) (core.ChatReply, error)
+	ChatSession(context.Context, string, string, []core.ChatAttachment, core.ChatMode, string, core.RunConfiguration) (core.ChatReply, error)
 }
 
 type ChatHistoryProvider interface {
@@ -772,14 +780,24 @@ func (server *Server) handleChat(writer http.ResponseWriter, request *http.Reque
 		Speed           string        `json:"speed"`
 		ContextProfile  string        `json:"context_profile"`
 		PlanCycleID     string        `json:"plan_cycle_id"`
+		Attachments     []struct {
+			Name      string `json:"name"`
+			MediaType string `json:"media_type"`
+			Data      string `json:"data"`
+		} `json:"attachments"`
 	}
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_request", "채팅 메시지 형식을 확인해 주세요")
 		return
 	}
 	body.Message = strings.TrimSpace(body.Message)
-	if !validUserFacingText(body.Message, 64*1024) {
+	if (!validUserFacingText(body.Message, 64*1024) && body.Message != "") || (body.Message == "" && len(body.Attachments) == 0) {
 		writeError(writer, http.StatusBadRequest, "invalid_chat_message", "메시지를 1자 이상 64KB 이하로 입력해 주세요")
+		return
+	}
+	attachments, err := validatedChatAttachments(body.Attachments)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_chat_attachment", err.Error())
 		return
 	}
 	if body.Mode == "" {
@@ -837,11 +855,10 @@ func (server *Server) handleChat(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	var reply core.ChatReply
-	var err error
 	if sessionScoped {
-		reply, err = server.Chat.ChatSession(request.Context(), targetID, body.Message, body.Mode, body.PlanCycleID, configuration)
+		reply, err = server.Chat.ChatSession(request.Context(), targetID, body.Message, attachments, body.Mode, body.PlanCycleID, configuration)
 	} else {
-		reply, err = server.Chat.ChatProject(request.Context(), targetID, body.Message, body.Mode, body.PlanCycleID, configuration)
+		reply, err = server.Chat.ChatProject(request.Context(), targetID, body.Message, attachments, body.Mode, body.PlanCycleID, configuration)
 	}
 	if errors.Is(err, core.ErrProjectResearchActive) {
 		writeError(writer, http.StatusConflict, "research_active", "연구가 진행 중입니다. 현재 실행에는 Ctrl+Enter로 지시를 보내세요")
@@ -865,6 +882,107 @@ func (server *Server) handleChat(writer http.ResponseWriter, request *http.Reque
 		}
 	}
 	writeJSON(writer, http.StatusOK, reply)
+}
+
+func validatedChatAttachments(values []struct {
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}) ([]core.ChatAttachment, error) {
+	if len(values) > maxChatAttachments {
+		return nil, fmt.Errorf("첨부 파일은 한 번에 %d개까지 추가할 수 있습니다", maxChatAttachments)
+	}
+	attachments := make([]core.ChatAttachment, 0, len(values))
+	total := 0
+	for _, value := range values {
+		name := strings.TrimSpace(value.Name)
+		if name == "" || name != filepath.Base(name) || !validUserFacingText(name, 255) {
+			return nil, errors.New("첨부 파일 이름이 올바르지 않습니다")
+		}
+		decoded, err := base64.StdEncoding.DecodeString(value.Data)
+		if err != nil || len(decoded) == 0 {
+			return nil, fmt.Errorf("%s 파일 데이터를 읽을 수 없습니다", name)
+		}
+		if len(decoded) > maxChatAttachmentBytes {
+			return nil, fmt.Errorf("%s 파일은 10MB를 초과합니다", name)
+		}
+		total += len(decoded)
+		if total > maxChatAttachmentTotal {
+			return nil, errors.New("첨부 파일 전체 크기는 20MB를 초과할 수 없습니다")
+		}
+		mediaType := strings.ToLower(strings.TrimSpace(strings.Split(value.MediaType, ";")[0]))
+		ext := strings.ToLower(filepath.Ext(name))
+		if imageType, ok := allowedChatImage(mediaType, decoded); ok {
+			attachments = append(attachments, core.ChatAttachment{
+				Name: name, MediaType: imageType, Kind: "image",
+				Content: "data:" + imageType + ";base64," + base64.StdEncoding.EncodeToString(decoded),
+			})
+			continue
+		}
+		if documentType, ok := allowedChatDocument(mediaType, ext, decoded); ok {
+			attachments = append(attachments, core.ChatAttachment{
+				Name: name, MediaType: documentType, Kind: "document",
+				Content: base64.StdEncoding.EncodeToString(decoded),
+			})
+			continue
+		}
+		if !allowedChatText(mediaType, ext) || !utf8.Valid(decoded) || bytes.IndexByte(decoded, 0) >= 0 || strings.ContainsRune(string(decoded), '\uFFFD') {
+			return nil, fmt.Errorf("%s 형식은 지원하지 않습니다. 텍스트·코드·PDF·DOCX·XLSX·PPTX 또는 PNG/JPEG/GIF/WebP 파일을 사용하세요", name)
+		}
+		attachments = append(attachments, core.ChatAttachment{
+			Name: name, MediaType: mediaType, Kind: "text", Content: string(decoded),
+		})
+	}
+	return attachments, nil
+}
+
+func allowedChatDocument(mediaType, ext string, data []byte) (string, bool) {
+	if ext == ".pdf" {
+		return "application/pdf", len(data) >= 5 && string(data[:5]) == "%PDF-" &&
+			(mediaType == "application/pdf" || mediaType == "" || mediaType == "application/octet-stream")
+	}
+	expected := map[string]struct{ mediaType, marker string }{
+		".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word/document.xml"},
+		".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xl/workbook.xml"},
+		".pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation", "ppt/presentation.xml"},
+	}
+	document, ok := expected[ext]
+	if !ok || (mediaType != document.mediaType && mediaType != "" && mediaType != "application/octet-stream") {
+		return "", false
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", false
+	}
+	hasContentTypes, hasMarker := false, false
+	for _, file := range reader.File {
+		hasContentTypes = hasContentTypes || file.Name == "[Content_Types].xml"
+		hasMarker = hasMarker || file.Name == document.marker
+	}
+	return document.mediaType, hasContentTypes && hasMarker
+}
+
+func allowedChatImage(mediaType string, data []byte) (string, bool) {
+	detected := strings.ToLower(strings.Split(http.DetectContentType(data), ";")[0])
+	allowed := map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
+	return detected, allowed[mediaType] && detected == mediaType
+}
+
+func allowedChatText(mediaType, ext string) bool {
+	if strings.HasPrefix(mediaType, "text/") {
+		return true
+	}
+	if mediaType == "application/json" || mediaType == "application/xml" || mediaType == "application/javascript" {
+		return true
+	}
+	allowedExtensions := map[string]bool{
+		".txt": true, ".md": true, ".markdown": true, ".csv": true, ".tsv": true,
+		".json": true, ".jsonl": true, ".xml": true, ".yaml": true, ".yml": true,
+		".js": true, ".jsx": true, ".ts": true, ".tsx": true, ".css": true, ".html": true,
+		".py": true, ".go": true, ".rs": true, ".java": true, ".c": true, ".h": true,
+		".cpp": true, ".hpp": true, ".cs": true, ".sql": true, ".sh": true, ".ps1": true,
+	}
+	return allowedExtensions[ext] && (mediaType == "" || mediaType == "application/octet-stream")
 }
 
 func (server *Server) handleSessionPath(writer http.ResponseWriter, request *http.Request) {

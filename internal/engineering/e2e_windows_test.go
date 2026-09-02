@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -226,11 +228,58 @@ func TestRealBundledEngineeringAdapters(t *testing.T) {
 	t.Logf("XFOIL sealed plain flap PASS duration=%s job=%s samples=%d alpha=[%.3f,%.3f] CM=[%.4f,%.4f]",
 		time.Since(stageStarted).Round(time.Millisecond), flapResult.JobID, len(samples),
 		samples[0].Alpha, samples[len(samples)-1].Alpha, samples[0].CM, samples[len(samples)-1].CM)
-	su2 := SU2Spec{RunID: run.ID, StageAttemptID: attempt.ID, Mach: .8, AlphaDeg: 1.25,
-		Iterations: 250, MeshSizeM: .02}
-	approve("su2_naca0012", su2)
+	su2InputDir := filepath.Join(root, "su2-general-input")
+	if err := os.MkdirAll(su2InputDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	geoPath := filepath.Join(su2InputDir, "fixture.geo")
+	meshPath := filepath.Join(su2InputDir, "fixture.su2")
+	if err := os.WriteFile(geoPath, []byte(realSU2E2EGeo(.02)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.runCommand(ctx, su2InputDir, paths.GmshExecutable, "", nil,
+		geoPath, "-2", "-format", "su2", "-o", meshPath); err != nil {
+		t.Fatalf("prepare real general SU2 mesh: %v", err)
+	}
+	meshFile, err := os.Open(meshPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meshReceipt, putErr := objects.PutReader(meshFile)
+	closeErr := meshFile.Close()
+	if err := errors.Join(putErr, closeErr); err != nil {
+		t.Fatal(err)
+	}
+	meshArtifact, err := database.PublishArtifact(ctx, run.ID, attempt.ID,
+		"engineering.test.general_su2_mesh", "application/vnd.su2.mesh", meshReceipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	su2 := SU2CFDSpec{
+		RunID: run.ID, StageAttemptID: attempt.ID, CaseID: "real_euler_airfoil",
+		MeshSource: core.SU2InputArtifact, MeshID: meshArtifact.ID, MeshSHA256: meshReceipt.Hash,
+		Solver: "EULER", TurbulenceModel: "NONE", OutputFiles: []string{"surface_csv", "restart_ascii"},
+		TimeoutSeconds: 720,
+		ConfigOverrides: map[string]string{
+			"ITER": "250", "MACH_NUMBER": "0.8", "AOA": "1.25",
+			"FREESTREAM_PRESSURE": "101325.0", "FREESTREAM_TEMPERATURE": "288.15",
+			"REF_ORIGIN_MOMENT_X": "0.25", "REF_ORIGIN_MOMENT_Y": "0.0", "REF_ORIGIN_MOMENT_Z": "0.0",
+			"REF_LENGTH": "1.0", "REF_AREA": "1.0", "MARKER_EULER": "( airfoil )",
+			"MARKER_FAR": "( farfield )", "MARKER_MONITORING": "( airfoil )", "MARKER_PLOTTING": "( airfoil )",
+			"NUM_METHOD_GRAD": "WEIGHTED_LEAST_SQUARES", "CFL_NUMBER": "1e3", "CFL_ADAPT": "NO",
+			"CONV_NUM_METHOD_FLOW": "JST", "JST_SENSOR_COEFF": "( 0.5, 0.02 )", "MUSCL_FLOW": "NO",
+			"TIME_DISCRE_FLOW": "EULER_IMPLICIT", "LINEAR_SOLVER": "FGMRES", "LINEAR_SOLVER_PREC": "ILU",
+			"LINEAR_SOLVER_ERROR": "1E-10", "LINEAR_SOLVER_ITER": "10", "MGLEVEL": "3", "MGCYCLE": "W_CYCLE",
+			"MG_PRE_SMOOTH": "( 1, 2, 3, 3 )", "MG_POST_SMOOTH": "( 0, 0, 0, 0 )",
+			"MG_CORRECTION_SMOOTH": "( 0, 0, 0, 0 )", "MG_DAMP_RESTRICTION": "1.0",
+			"MG_DAMP_PROLONGATION": "1.0", "CONV_FIELD": "RMS_DENSITY", "CONV_RESIDUAL_MINVAL": "-8",
+			"CONV_STARTITER": "10", "SCREEN_OUTPUT": "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",
+			"HISTORY_OUTPUT": "( ITER, RMS_RES, AERO_COEFF )",
+		},
+	}
+	approve("su2_cfd", su2)
 	stageStarted = time.Now()
-	su2Result, err := service.SU2NACA0012(ctx, su2)
+	su2Result, err := service.SU2CFD(ctx, su2)
 	if err != nil || !su2Result.NumericallyValid {
 		t.Fatalf("real SU2: valid=%v err=%v", su2Result.NumericallyValid, err)
 	}
@@ -239,7 +288,51 @@ func TestRealBundledEngineeringAdapters(t *testing.T) {
 	if !clOK || !cdOK || cl <= 0 || cd <= 0 {
 		t.Fatalf("real transonic SU2 requires positive lift and drag: CL=%v CD=%v", su2Result.Metrics["cl"], su2Result.Metrics["cd"])
 	}
+	finalIteration, iterationOK := su2Result.Metrics["final_iteration"].(int)
+	if !iterationOK || finalIteration <= 0 {
+		t.Fatalf("real SU2 final iteration was not recovered from the nested history counters: %v", su2Result.Metrics["final_iteration"])
+	}
 	logResult("SU2", stageStarted, su2Result, service.threads)
+}
+
+func realSU2E2EGeo(meshSize float64) string {
+	const pointsPerSide = 40
+	var builder strings.Builder
+	builder.WriteString("SetFactory(\"OpenCASCADE\");\n")
+	pointID := 1
+	for index := 0; index <= pointsPerSide; index++ {
+		x := .5 * (1 + math.Cos(math.Pi*float64(index)/pointsPerSide))
+		y := realSU2E2EThickness(x)
+		if index == 0 || index == pointsPerSide {
+			y = 0
+		}
+		fmt.Fprintf(&builder, "Point(%d)={%s,%s,0,%s};\n", pointID, formatNumber(x), formatNumber(y), formatNumber(meshSize))
+		pointID++
+	}
+	for index := 1; index < pointsPerSide; index++ {
+		x := .5 * (1 - math.Cos(math.Pi*float64(index)/pointsPerSide))
+		fmt.Fprintf(&builder, "Point(%d)={%s,%s,0,%s};\n", pointID, formatNumber(x),
+			formatNumber(-realSU2E2EThickness(x)), formatNumber(meshSize))
+		pointID++
+	}
+	last := pointID - 1
+	farSize := math.Max(meshSize*8, .5)
+	fmt.Fprintf(&builder, "Spline(1)={1:%d,1};\n", last)
+	for _, point := range [][2]float64{{-10, -10}, {15, -10}, {15, 10}, {-10, 10}} {
+		fmt.Fprintf(&builder, "Point(%d)={%s,%s,0,%s};\n", pointID, formatNumber(point[0]), formatNumber(point[1]), formatNumber(farSize))
+		pointID++
+	}
+	firstFar := last + 1
+	fmt.Fprintf(&builder, "Line(2)={%d,%d}; Line(3)={%d,%d}; Line(4)={%d,%d}; Line(5)={%d,%d};\n",
+		firstFar, firstFar+1, firstFar+1, firstFar+2, firstFar+2, firstFar+3, firstFar+3, firstFar)
+	builder.WriteString("Curve Loop(1)={1}; Curve Loop(2)={2,3,4,5}; Plane Surface(1)={2,1};\n")
+	builder.WriteString("Physical Curve(\"airfoil\")={1}; Physical Curve(\"farfield\")={2,3,4,5}; Physical Surface(\"fluid\")={1};\n")
+	builder.WriteString("Mesh.Algorithm=6; Mesh.Optimize=1;\n")
+	return builder.String()
+}
+
+func realSU2E2EThickness(x float64) float64 {
+	return 5 * .12 * (.2969*math.Sqrt(x) - .126*x - .3516*x*x + .2843*x*x*x - .1036*x*x*x*x)
 }
 
 func TestOpenVSPPathBudgetFailsClosed(t *testing.T) {

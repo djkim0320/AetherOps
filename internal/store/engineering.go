@@ -65,7 +65,7 @@ func EngineeringServiceOwnsExternalBoundary(approval core.Approval) bool {
 		return false
 	}
 	switch approval.Tool {
-	case "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_naca0012":
+	case "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_cfd":
 		return true
 	default:
 		return false

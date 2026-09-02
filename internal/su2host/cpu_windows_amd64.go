@@ -161,7 +161,7 @@ func RequireNative() (Observation, error) {
 	return observation, nil
 }
 
-// CandidatePreflight executes the same preflight used by engineering.SU2NACA0012
+// CandidatePreflight executes the same preflight used by the general SU2_CFD adapter
 // and binds its result to the currently executing candidate file.
 func CandidatePreflight(executablePath string, observedAt time.Time) (CandidatePreflightReceipt, error) {
 	hash, err := hashRegularFile(executablePath)

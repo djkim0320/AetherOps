@@ -7,6 +7,7 @@ export type SettingsViewProps = {
   codexAccount: CodexAccountStatus | null;
   deviceCode: JsonRecord | null;
   onRequestDeviceCode: () => Promise<void>;
+  onOpenDeviceLogin: (url: string) => Promise<void>;
   apiKey: string;
   onApiKeyChange: (key: string) => void;
   onSaveApiKey: (e: Event) => Promise<void>;
@@ -35,6 +36,7 @@ export function SettingsView({
   codexAccount,
   deviceCode,
   onRequestDeviceCode,
+  onOpenDeviceLogin,
   apiKey,
   onApiKeyChange,
   onSaveApiKey,
@@ -45,7 +47,9 @@ export function SettingsView({
 }: SettingsViewProps) {
   const [showApiKey, setShowApiKey] = useState(false);
   const isRequestingCode = busy === "device-code";
+  const isOpeningDeviceLogin = busy === "open-device-login";
   const isSavingApiKey = busy === "api-key";
+  const deviceLoginURL = firstText(deviceCode, "verification_uri_complete", "verification_uri");
 
   return (
     <div class="settings-layout" aria-label="설정 및 계정 관리 화면">
@@ -95,18 +99,14 @@ export function SettingsView({
               </div>
             )}
 
-            {firstText(deviceCode, "verification_uri_complete", "verification_uri") && (
+            {deviceLoginURL && (
               <button
                 class="button secondary small"
                 type="button"
-                onClick={() =>
-                  window.open(
-                    firstText(deviceCode, "verification_uri_complete", "verification_uri"),
-                    "_blank"
-                  )
-                }
+                onClick={() => void onOpenDeviceLogin(deviceLoginURL)}
+                disabled={isOpeningDeviceLogin || connection !== "connected"}
               >
-                브라우저에서 로그인 페이지 열기 ↗
+                {isOpeningDeviceLogin ? "브라우저 여는 중…" : "브라우저에서 로그인 페이지 열기 ↗"}
               </button>
             )}
 

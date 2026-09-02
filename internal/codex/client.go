@@ -508,7 +508,7 @@ func (c *Client) Turn(ctx context.Context, threadID string, options TurnOptions)
 	}
 	params := struct {
 		ThreadID       string          `json:"threadId"`
-		Input          []textInput     `json:"input"`
+		Input          []UserInput     `json:"input"`
 		CWD            string          `json:"cwd,omitempty"`
 		ApprovalPolicy string          `json:"approvalPolicy,omitempty"`
 		SandboxPolicy  json.RawMessage `json:"sandboxPolicy,omitempty"`
@@ -520,7 +520,7 @@ func (c *Client) Turn(ctx context.Context, threadID string, options TurnOptions)
 		OutputSchema   json.RawMessage `json:"outputSchema,omitempty"`
 	}{
 		ThreadID:       threadID,
-		Input:          []textInput{{Type: "text", Text: options.Prompt}},
+		Input:          append([]UserInput{{Type: "text", Text: options.Prompt}}, options.Inputs...),
 		CWD:            options.CWD,
 		ApprovalPolicy: options.ApprovalPolicy,
 		SandboxPolicy:  options.SandboxPolicy,

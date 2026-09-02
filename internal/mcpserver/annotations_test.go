@@ -43,12 +43,13 @@ func TestToolsListPublishesCompleteConservativeAnnotations(t *testing.T) {
 			server: &Server{Engineering: &engineering.Service{}},
 			annotations: map[string]expectedAnnotation{
 				"engineering_capabilities": {readOnly: true, idempotent: true},
+				"engineering_inputs":       {readOnly: true, idempotent: true},
 				"engineering_get":          {readOnly: true, idempotent: true},
 				"openvsp_wing_aero":        {idempotent: true},
 				"openvsp_modify_wing":      {idempotent: true},
 				"gmsh_wing_mesh":           {idempotent: true},
 				"xfoil_polar":              {idempotent: true},
-				"su2_naca0012":             {idempotent: true},
+				"su2_cfd":                  {idempotent: true},
 			},
 		},
 	}

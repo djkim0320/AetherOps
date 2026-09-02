@@ -312,6 +312,16 @@ func (mode ChatMode) Validate() error {
 	return nil
 }
 
+// ChatAttachment is a bounded, validated user-provided input for one chat turn.
+// Content is decoded UTF-8 for text, a data URL for images, and base64 for
+// documents that are materialized only for the duration of the Codex turn.
+type ChatAttachment struct {
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	Kind      string `json:"kind"`
+	Content   string `json:"content"`
+}
+
 // ChatReply contains the completed turn reference, visible assistant text, and
 // an optional bounded planning prompt. Codex remains the durable owner of the
 // full conversation transcript.
@@ -490,7 +500,112 @@ type ResearchPlan struct {
 	SourceRequirements []string            `json:"source_requirements"`
 	AcceptanceCriteria []string            `json:"acceptance_criteria"`
 	XFOILScreening     *XFOILScreeningPlan `json:"xfoil_screening"`
-	SU2MeshStudy       *SU2MeshStudyPlan   `json:"su2_mesh_study"`
+	SU2Cases           *SU2CaseSetPlan     `json:"su2_cases"`
+	// SU2MeshStudy is retained only so an older checkpoint fails with an
+	// explicit migration error instead of being misread as a general case set.
+	// It is never accepted as a current execution contract.
+	SU2MeshStudy *SU2MeshStudyPlan `json:"su2_mesh_study,omitempty"`
+}
+
+const (
+	SU2InputArtifact = "artifact"
+	SU2InputMaterial = "material"
+)
+
+// SU2CaseSetPlan is the exact case matrix for the general SU2_CFD adapter.
+// Every case binds immutable project-owned mesh/config bytes by SHA-256; the
+// collector may not substitute a built-in geometry or silently shrink the set.
+type SU2CaseSetPlan struct {
+	Objective string        `json:"objective"`
+	Cases     []SU2CasePlan `json:"cases"`
+}
+
+type SU2CasePlan struct {
+	ID              string            `json:"case_id"`
+	MeshSource      string            `json:"mesh_source"`
+	MeshID          string            `json:"mesh_id"`
+	MeshSHA256      string            `json:"mesh_sha256"`
+	ConfigSource    string            `json:"config_source"`
+	ConfigID        string            `json:"config_id"`
+	ConfigSHA256    string            `json:"config_sha256"`
+	Solver          string            `json:"solver"`
+	TurbulenceModel string            `json:"turbulence_model"`
+	ConfigOverrides map[string]string `json:"config_overrides"`
+	OutputFiles     []string          `json:"output_files"`
+	TimeoutSeconds  int               `json:"timeout_seconds"`
+}
+
+func (plan SU2CaseSetPlan) Validate() error {
+	if strings.TrimSpace(plan.Objective) == "" || len(plan.Cases) < 1 || len(plan.Cases) > 16 {
+		return errors.New("SU2 case set requires an objective and 1-16 exact cases")
+	}
+	ids := make(map[string]struct{}, len(plan.Cases))
+	for _, item := range plan.Cases {
+		if err := item.Validate(); err != nil {
+			return fmt.Errorf("SU2 case %q: %w", item.ID, err)
+		}
+		if _, duplicate := ids[item.ID]; duplicate {
+			return fmt.Errorf("duplicate SU2 case id %q", item.ID)
+		}
+		ids[item.ID] = struct{}{}
+	}
+	return nil
+}
+
+func (plan SU2CasePlan) Validate() error {
+	if !regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`).MatchString(plan.ID) ||
+		(plan.MeshSource != SU2InputArtifact && plan.MeshSource != SU2InputMaterial) ||
+		strings.TrimSpace(plan.MeshID) == "" || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(plan.MeshSHA256) {
+		return errors.New("case id and immutable project-owned mesh identity are required")
+	}
+	if plan.ConfigSource == "" {
+		if plan.ConfigID != "" || plan.ConfigSHA256 != "" || len(plan.ConfigOverrides) == 0 {
+			return errors.New("an omitted config source requires empty config identity and non-empty overrides")
+		}
+	} else if (plan.ConfigSource != SU2InputArtifact && plan.ConfigSource != SU2InputMaterial) ||
+		strings.TrimSpace(plan.ConfigID) == "" || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(plan.ConfigSHA256) {
+		return errors.New("config source must bind an immutable project artifact or material")
+	}
+	allowedSolvers := map[string]bool{
+		"EULER": true, "NAVIER_STOKES": true, "RANS": true,
+		"INC_EULER": true, "INC_NAVIER_STOKES": true, "INC_RANS": true,
+	}
+	if !allowedSolvers[plan.Solver] {
+		return errors.New("solver must be a supported direct single-zone SU2_CFD solver")
+	}
+	switch plan.Solver {
+	case "RANS", "INC_RANS":
+		if plan.TurbulenceModel != "SA" && plan.TurbulenceModel != "SST" {
+			return errors.New("RANS requires the SA or SST turbulence model")
+		}
+	default:
+		if plan.TurbulenceModel != "NONE" {
+			return errors.New("Euler and laminar Navier-Stokes cases require turbulence_model=NONE")
+		}
+	}
+	if len(plan.ConfigOverrides) > 256 {
+		return errors.New("SU2 case has more than 256 configuration overrides")
+	}
+	if len(plan.OutputFiles) < 1 || len(plan.OutputFiles) > 3 {
+		return errors.New("SU2 case requires 1-3 managed output formats")
+	}
+	allowedOutputs := map[string]bool{
+		"surface_csv": true, "volume_paraview_ascii": true, "restart_ascii": true,
+	}
+	seenOutputs := make(map[string]struct{}, len(plan.OutputFiles))
+	for _, output := range plan.OutputFiles {
+		if !allowedOutputs[output] {
+			return fmt.Errorf("unsupported managed SU2 output %q", output)
+		}
+		if _, duplicate := seenOutputs[output]; duplicate {
+			return fmt.Errorf("duplicate managed SU2 output %q", output)
+		}
+		seenOutputs[output] = struct{}{}
+	}
+	if plan.TimeoutSeconds < 60 || plan.TimeoutSeconds > 7200 {
+		return errors.New("SU2 timeout must be between 60 and 7200 seconds")
+	}
+	return nil
 }
 
 const (
@@ -714,10 +829,13 @@ func (plan ResearchPlan) Validate() error {
 		return errors.New("XFOIL research requires the immutable supported xfoil_screening contract; arbitrary airfoil-coordinate comparisons are not supported")
 	}
 	if plan.SU2MeshStudy != nil {
+		return errors.New("legacy SU2 preset plans are not executable; create an exact su2_cases contract")
+	}
+	if plan.SU2Cases != nil {
 		if plan.Mode != "engineering" {
-			return errors.New("SU2 mesh study requires engineering research mode")
+			return errors.New("SU2 cases require engineering research mode")
 		}
-		if err := plan.SU2MeshStudy.Validate(); err != nil {
+		if err := plan.SU2Cases.Validate(); err != nil {
 			return err
 		}
 	}

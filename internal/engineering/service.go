@@ -466,7 +466,10 @@ var engineeringArgumentEvidenceKeys = map[string][]string{
 		"flap_chord_ratio", "flap_hinge_x_over_c", "flap_hinge_y_over_c", "flap_deflection_deg",
 		"ncrit", "iterations", "panel_count",
 	},
-	"su2_naca0012": {"mach", "alpha_deg", "iterations", "mesh_size_m"},
+	"su2_cfd": {
+		"case_id", "mesh_source", "mesh_id", "mesh_sha256", "config_source", "config_id",
+		"config_sha256", "solver", "turbulence_model", "timeout_seconds",
+	},
 }
 
 var engineeringMetricEvidencePaths = map[string][][]string{
@@ -519,7 +522,7 @@ var engineeringMetricEvidencePaths = map[string][][]string{
 		{"optimization_verification", "winner_flap_deflection_deg"},
 		{"optimization_verification", "agreement"},
 	},
-	"su2_naca0012": core.SU2MetricEvidencePathsV1(),
+	"su2_cfd": core.SU2GeneralMetricEvidencePathsV1(),
 }
 
 var engineeringReceiptEvidenceKeys = []string{
@@ -599,6 +602,25 @@ func executionReceiptModelView(operation, artifactHash string, data []byte) ([]E
 			return nil, nil, err
 		}
 		setNestedSummaryValue(summary, path, value)
+	}
+	if operation == "su2_cfd" {
+		finalValues, _ := metrics["final_values"].(map[string]any)
+		keys := make([]string, 0, len(finalValues))
+		for key := range finalValues {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if len(keys) > 64 {
+			keys = keys[:64]
+		}
+		for _, key := range keys {
+			value := finalValues[key]
+			pointer := "/metrics/final_values/" + escapeEvidencePointerToken(key)
+			if err := appendReceiptScalarHandle(&handles, artifactHash, pointer, value); err != nil {
+				return nil, nil, err
+			}
+			setNestedSummaryValue(summary, []string{"final_values", key}, value)
+		}
 	}
 	return handles, summary, nil
 }

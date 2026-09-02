@@ -341,7 +341,7 @@ func TestEngineeringApprovalPersistsCanonicalExactScopeBeforeExecution(t *testin
 	}
 	event := approvalEvent("item/mcpToolCall/requestApproval", map[string]any{
 		"threadId": "thread-1", "turnId": "turn-1", "itemId": "solver-1",
-		"serverName": "aetherops_engineering", "toolName": "su2_naca0012",
+		"serverName": "aetherops_engineering", "toolName": "su2_cfd",
 		"arguments": arguments, "reason": "run typed SU2 analysis",
 	})
 	if err := router.handle(context.Background(), event); err != nil {
@@ -358,7 +358,7 @@ func TestEngineeringApprovalPersistsCanonicalExactScopeBeforeExecution(t *testin
 	expectedDigest := sha256.Sum256(expectedJSON)
 	expectedHash := hex.EncodeToString(expectedDigest[:])
 	approval := pending[0]
-	if approval.Server != "aetherops_engineering" || approval.Tool != "su2_naca0012" ||
+	if approval.Server != "aetherops_engineering" || approval.Tool != "su2_cfd" ||
 		approval.ArgumentsJSON != string(expectedJSON) || approval.ArgumentsSHA256 != expectedHash ||
 		approval.Risk != "external_side_effect" || !approval.ExternalSideEffect {
 		t.Fatalf("approval scope was not exact: %+v, expected JSON=%s hash=%s", approval, expectedJSON, expectedHash)
@@ -399,7 +399,7 @@ func TestEngineeringApprovalResponseFailureWithoutAdmissionRecoversInterrupted(t
 	event := approvalEvent("item/mcpToolCall/requestApproval", map[string]any{
 		"threadId": attempt.CodexThreadID, "turnId": "turn-solver-response-failure",
 		"itemId": "solver-response-failure", "serverName": "aetherops_engineering",
-		"toolName": "su2_naca0012", "arguments": arguments,
+		"toolName": "su2_cfd", "arguments": arguments,
 	})
 	if err := router.handle(ctx, event); err != nil {
 		t.Fatal(err)
@@ -449,7 +449,7 @@ func TestEngineeringApprovalResponseFailureAfterAdmissionRecoversUncertain(t *te
 	}
 	argumentDigest := sha256.Sum256(argumentBytes)
 	argumentHash := hex.EncodeToString(argumentDigest[:])
-	specJSON := `{"arguments":` + string(argumentBytes) + `,"operation":"su2_naca0012","runtime_bundle_hash":"fixture","tool_component":"su2","tool_version":"1"}`
+	specJSON := `{"arguments":` + string(argumentBytes) + `,"operation":"su2_cfd","runtime_bundle_hash":"fixture","tool_component":"su2","tool_version":"1"}`
 	specDigest := sha256.Sum256([]byte(specJSON))
 	var admitted store.EngineeringJob
 	fixture := &protocolFixture{err: responseFailure}
@@ -458,7 +458,7 @@ func TestEngineeringApprovalResponseFailureAfterAdmissionRecoversUncertain(t *te
 		var beginErr error
 		admitted, execute, beginErr = database.BeginEngineeringJob(ctx, store.EngineeringJob{
 			ProjectID: run.ProjectID, RunID: run.ID, StageAttemptID: attempt.ID,
-			Operation: "su2_naca0012", SpecJSON: specJSON,
+			Operation: "su2_cfd", SpecJSON: specJSON,
 			SpecSHA256: hex.EncodeToString(specDigest[:]), ToolComponent: "su2",
 			ToolVersion: "1", ApprovalScopeHash: argumentHash,
 		})
@@ -474,7 +474,7 @@ func TestEngineeringApprovalResponseFailureAfterAdmissionRecoversUncertain(t *te
 	event := approvalEvent("item/mcpToolCall/requestApproval", map[string]any{
 		"threadId": attempt.CodexThreadID, "turnId": "turn-admitted-response-failure",
 		"itemId": "admitted-response-failure", "serverName": "aetherops_engineering",
-		"toolName": "su2_naca0012", "arguments": arguments,
+		"toolName": "su2_cfd", "arguments": arguments,
 	})
 	if err := router.handle(ctx, event); err != nil {
 		t.Fatal(err)
@@ -530,7 +530,7 @@ func TestEngineeringAutomaticPolicyUsesExactServerAndToolScope(t *testing.T) {
 			}
 		}
 		allowed, external = automaticPolicy(method, approvalRequest{
-			Server: "aetherops_engineering", Tool: "su2_naca0012",
+			Server: "aetherops_engineering", Tool: "su2_cfd",
 		})
 		if allowed || !external {
 			t.Fatalf("%s solver execution policy = allowed %v external %v", method, allowed, external)

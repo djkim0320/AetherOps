@@ -145,6 +145,7 @@ type TurnOptions struct {
 	Effort       string
 	ServiceTier  string
 	Prompt       string
+	Inputs       []UserInput
 	OutputSchema json.RawMessage
 
 	CWD            string
@@ -152,6 +153,15 @@ type TurnOptions struct {
 	SandboxPolicy  json.RawMessage
 	Summary        string
 	Personality    string
+}
+
+// UserInput maps to the stable App Server UserInput variants used by AetherOps.
+type UserInput struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+	URL  string `json:"url,omitempty"`
+	Name string `json:"name,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 // TurnResult is returned after App Server emits turn/completed. Text contains
@@ -292,6 +302,24 @@ func (e *TurnError) Error() string {
 func validateTurnOptions(options TurnOptions) error {
 	if strings.TrimSpace(options.Prompt) == "" {
 		return errors.New("codex turn prompt is required")
+	}
+	for _, input := range options.Inputs {
+		switch input.Type {
+		case "text":
+			if strings.TrimSpace(input.Text) == "" || input.URL != "" {
+				return errors.New("codex text input is invalid")
+			}
+		case "image":
+			if !strings.HasPrefix(input.URL, "data:image/") || input.Text != "" {
+				return errors.New("codex image input is invalid")
+			}
+		case "mention":
+			if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Path) == "" || input.Text != "" || input.URL != "" {
+				return errors.New("codex mention input is invalid")
+			}
+		default:
+			return fmt.Errorf("unsupported codex input type %q", input.Type)
+		}
 	}
 	if len(options.OutputSchema) != 0 && !json.Valid(options.OutputSchema) {
 		return errors.New("codex turn output schema is not valid JSON")

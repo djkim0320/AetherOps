@@ -384,9 +384,9 @@ func validateSolverReceipt(raw []byte, runner evalrunner.Receipt) error {
 		return fmt.Errorf("decode clean VM SU2 receipt: %w", err)
 	}
 	if receipt.Schema != 1 || strings.TrimSpace(receipt.JobID) == "" || strings.TrimSpace(receipt.StageAttemptID) == "" ||
-		receipt.Operation != "su2_naca0012" || !receipt.Executed || !receipt.Numerical || receipt.Threads < 1 ||
+		receipt.Operation != "su2_cfd" || !receipt.Executed || !receipt.Numerical || receipt.Threads < 1 ||
 		receipt.StartedAt.IsZero() || !receipt.CompletedAt.After(receipt.StartedAt) || !validDigest(receipt.SpecSHA256) ||
-		len(receipt.Spec) == 0 || !json.Valid(receipt.Spec) || len(receipt.Metrics) == 0 || len(receipt.Artifacts) < 3 {
+		len(receipt.Spec) == 0 || !json.Valid(receipt.Spec) || len(receipt.Metrics) == 0 || len(receipt.Artifacts) < 4 {
 		return errors.New("clean VM SU2 receipt is incomplete or not a numerically valid execution")
 	}
 	knownRun := false
@@ -399,25 +399,25 @@ func validateSolverReceipt(raw []byte, runner evalrunner.Receipt) error {
 	if !knownRun {
 		return errors.New("clean VM SU2 receipt is not bound to an engineering evaluation run")
 	}
-	if len(receipt.ExitCodes) != 2 {
-		return errors.New("clean VM SU2 receipt does not contain Gmsh and SU2 exit codes")
+	if len(receipt.ExitCodes) != 1 {
+		return errors.New("clean VM SU2 receipt does not contain exactly one isolated SU2 exit code")
 	}
 	for _, code := range receipt.ExitCodes {
 		if code != 0 {
 			return errors.New("clean VM SU2 receipt contains a failed process")
 		}
 	}
-	components := map[string]bool{"gmsh": false, "su2": false}
+	components := map[string]bool{"su2": false}
 	for _, executable := range receipt.Executables {
 		if _, required := components[executable.Component]; required && strings.TrimSpace(executable.Version) != "" &&
 			validDigest(executable.SHA256) && len(executable.Argv) > 0 {
 			components[executable.Component] = true
 		}
 	}
-	if !components["gmsh"] || !components["su2"] {
-		return errors.New("clean VM SU2 receipt lacks authenticated Gmsh or SU2 executable provenance")
+	if !components["su2"] {
+		return errors.New("clean VM SU2 receipt lacks authenticated SU2 executable provenance")
 	}
-	roles := map[string]bool{"mesh": false, "history": false, "log": false}
+	roles := map[string]bool{"mesh_input": false, "config": false, "history": false, "log": false}
 	for _, artifact := range receipt.Artifacts {
 		if strings.TrimSpace(artifact.ArtifactID) == "" || strings.TrimSpace(artifact.FileName) == "" ||
 			strings.TrimSpace(artifact.MediaType) == "" || !validDigest(artifact.SHA256) || artifact.Size <= 0 {
@@ -427,8 +427,8 @@ func validateSolverReceipt(raw []byte, runner evalrunner.Receipt) error {
 			roles[artifact.Role] = true
 		}
 	}
-	if !roles["mesh"] || !roles["history"] || !roles["log"] {
-		return errors.New("clean VM SU2 receipt lacks mesh, convergence history, or solver log")
+	if !roles["mesh_input"] || !roles["config"] || !roles["history"] || !roles["log"] {
+		return errors.New("clean VM SU2 receipt lacks immutable mesh, normalized config, convergence history, or solver log")
 	}
 	return nil
 }

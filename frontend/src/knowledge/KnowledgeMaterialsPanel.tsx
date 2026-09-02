@@ -85,7 +85,8 @@ export function KnowledgeMaterialsPanel({
           </div>
           <p class="section-desc">
             보고서나 데이터 파일을 프로젝트에 보관하고, 필요한 자료만 검증된 지식과 관계를 만드는 데
-            사용하도록 선택할 수 있습니다.
+            사용하도록 선택할 수 있습니다. SU2 격자와 설정 파일은 연구 계획에서 해석 입력으로 선택할 수
+            있습니다.
           </p>
 
           <form class="knowledge-material-form" onSubmit={onUploadMaterial}>
@@ -97,7 +98,7 @@ export function KnowledgeMaterialsPanel({
               placeholder="비워 둘 경우 원본 파일명을 사용합니다"
             />
 
-            <label for="knowledge-material-file">자료 파일 선택 (PDF, TXT, MD, JSON, CSV)</label>
+            <label for="knowledge-material-file">자료 파일 선택 (PDF, TXT, MD, JSON, CSV, SU2, CFG)</label>
             <input
               id="knowledge-material-file"
               type="file"

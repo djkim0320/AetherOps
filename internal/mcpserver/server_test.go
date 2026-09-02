@@ -20,6 +20,22 @@ type recordingPlanMemoryEmbedder struct {
 	queries []string
 }
 
+func TestEngineeringToolSurfaceExposesOnlyGeneralSU2(t *testing.T) {
+	var generic int
+	for _, definition := range (&Server{Engineering: &engineering.Service{}}).toolDefinitions() {
+		name, _ := definition["name"].(string)
+		if name == "su2_cfd" {
+			generic++
+		}
+		if strings.HasPrefix(name, "su2_") && name != "su2_cfd" {
+			t.Fatalf("unexpected SU2 tool exposed: %q", name)
+		}
+	}
+	if generic != 1 {
+		t.Fatalf("general SU2 tool count = %d, want 1", generic)
+	}
+}
+
 func (embedder *recordingPlanMemoryEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, error) {
 	embedder.queries = append(embedder.queries, inputs...)
 	vectors := make([][]float32, len(inputs))
@@ -140,7 +156,7 @@ func TestIndependentReviewStageRejectsEveryResearchOrMutationTool(t *testing.T) 
 		{name: "tool_package_install", server: &Server{DB: database, CAS: objects}},
 		{name: "artifact_publish_review", server: &Server{DB: database, CAS: objects}},
 		{name: "xfoil_polar", server: &Server{DB: database, CAS: objects, Engineering: &engineering.Service{}}},
-		{name: "su2_naca0012", server: &Server{DB: database, CAS: objects, Engineering: &engineering.Service{}}},
+		{name: "su2_cfd", server: &Server{DB: database, CAS: objects, Engineering: &engineering.Service{}}},
 	} {
 		if _, err := testCase.server.call(ctx, testCase.name, identity); err == nil ||
 			!strings.Contains(err.Error(), "independent REVIEW attempt permits only") {

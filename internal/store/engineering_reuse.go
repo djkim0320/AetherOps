@@ -56,6 +56,60 @@ WHERE run_id=? AND stage_attempt_id=? AND source_job_id=? AND receipt_artifact_i
 	return transaction.Commit()
 }
 
+// RemediationEngineeringResults returns the exact engineering jobs from the
+// research cycle sealed by one remediation record. Matching the stage
+// updated_at to the remediation created_at prevents an older superseded cycle
+// from being silently mixed into the current readback contract.
+func (db *DB) RemediationEngineeringResults(
+	ctx context.Context,
+	runID, operation string,
+	cycle int,
+) ([]EngineeringResult, error) {
+	if runID == "" || operation == "" || cycle < 1 {
+		return nil, errors.New("remediation engineering lookup is incomplete")
+	}
+	rows, err := db.sql.QueryContext(ctx, engineeringJobSelect+`
+WHERE engineering_jobs.run_id=? AND engineering_jobs.operation=?
+  AND EXISTS(
+    SELECT 1
+    FROM stage_attempts attempt
+    JOIN research_remediation_cycles remediation
+      ON remediation.run_id=attempt.run_id
+     AND remediation.cycle=?
+     AND remediation.created_at=attempt.updated_at
+    WHERE attempt.id=engineering_jobs.stage_attempt_id
+      AND attempt.run_id=engineering_jobs.run_id
+      AND attempt.stage='collect'
+      AND attempt.logical_ordinal=0
+      AND attempt.status='superseded'
+  )
+ORDER BY engineering_jobs.created_at,engineering_jobs.id`, runID, operation, cycle)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []EngineeringJob
+	for rows.Next() {
+		job, scanErr := scanEngineeringJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	results := make([]EngineeringResult, 0, len(jobs))
+	for _, job := range jobs {
+		artifacts, artifactErr := db.EngineeringJobArtifacts(ctx, job.ID)
+		if artifactErr != nil {
+			return nil, artifactErr
+		}
+		results = append(results, EngineeringResult{Job: job, Artifacts: artifacts})
+	}
+	return results, nil
+}
+
 // EngineeringReceiptReadbackOnly reports whether the active attempt was
 // explicitly prepared to read prior receipts. Approval routing uses this to
 // decline any solver execution request without presenting a misleading UI

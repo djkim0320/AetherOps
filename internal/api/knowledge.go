@@ -283,7 +283,7 @@ func resolvePinnedMaterialMediaType(filename, title, claimed string) string {
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".md", ".markdown":
 		return "text/markdown; charset=utf-8"
-	case ".txt", ".log":
+	case ".txt", ".log", ".su2", ".cfg":
 		return "text/plain; charset=utf-8"
 	case ".csv":
 		return "text/csv; charset=utf-8"

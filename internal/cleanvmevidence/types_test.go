@@ -121,7 +121,7 @@ func TestTypedWorkflowArtifactsRejectSelfDeclaredSuccess(t *testing.T) {
 	runner := evalrunner.Receipt{Cases: []evalrunner.CaseReceipt{{DatasetCaseID: "engineering-01", RunID: "run-1"}}}
 	for name, validate := range map[string]func() error{
 		"solver": func() error {
-			return validateSolverReceipt([]byte(`{"schema":1,"job_id":"job","run_id":"run-1","stage_attempt_id":"attempt","operation":"su2_naca0012","spec":{},"spec_sha256":"`+strings.Repeat("a", 64)+`","executables":[],"threads":4,"started_at":"2026-08-09T00:00:00Z","completed_at":"2026-08-09T00:01:00Z","exit_codes":[0,0],"executed":true,"numerically_valid":true,"metrics":{"cl":0.3},"artifacts":[]}`), runner)
+			return validateSolverReceipt([]byte(`{"schema":1,"job_id":"job","run_id":"run-1","stage_attempt_id":"attempt","operation":"su2_cfd","spec":{},"spec_sha256":"`+strings.Repeat("a", 64)+`","executables":[],"threads":4,"started_at":"2026-08-09T00:00:00Z","completed_at":"2026-08-09T00:01:00Z","exit_codes":[0],"executed":true,"numerically_valid":true,"metrics":{"cl":0.3},"artifacts":[]}`), runner)
 		},
 		"rdf": func() error {
 			return validateRDFSnapshotReceipt([]byte(`{"id":"snapshot","blob_hash":"` + strings.Repeat("a", 64) + `","dataset_sha256":"` + strings.Repeat("a", 64) + `","triple_count":0}`))
@@ -138,6 +138,32 @@ func TestTypedWorkflowArtifactsRejectSelfDeclaredSuccess(t *testing.T) {
 				t.Fatal("self-declared or incomplete typed artifact was accepted")
 			}
 		})
+	}
+}
+
+func TestCleanVMValidatorAcceptsGeneralSU2Receipt(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	now := time.Now().UTC()
+	receipt := solverReceipt{
+		Schema: 1, JobID: "eng_general", RunID: "run-1", StageAttemptID: "stg_collect",
+		Operation: "su2_cfd", Spec: json.RawMessage(`{"operation":"su2_cfd"}`), SpecSHA256: digest,
+		Executables: []solverExecutable{{Component: "su2", Version: "8.5.0", SHA256: digest, Argv: []string{"case.cfg"}}},
+		Threads:     4, StartedAt: now.Add(-time.Minute), CompletedAt: now,
+		ExitCodes: []int{0}, Executed: true, Numerical: true, Metrics: map[string]any{"history_rows": 10},
+	}
+	for _, role := range []string{"mesh_input", "config", "history", "log"} {
+		receipt.Artifacts = append(receipt.Artifacts, solverArtifactMetadata{
+			ArtifactID: "art_" + role, Role: role, FileName: role + ".dat",
+			MediaType: "application/octet-stream", SHA256: digest, Size: 1,
+		})
+	}
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := evalrunner.Receipt{Cases: []evalrunner.CaseReceipt{{DatasetCaseID: "engineering-01", RunID: "run-1"}}}
+	if err := validateSolverReceipt(encoded, runner); err != nil {
+		t.Fatalf("general SU2 receipt rejected: %v", err)
 	}
 }
 

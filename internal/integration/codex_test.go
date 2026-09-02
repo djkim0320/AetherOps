@@ -16,7 +16,7 @@ func TestChatPromptsKeepConversationSeparateFromResearchExecution(t *testing.T) 
 		t.Fatalf("conversation prompt did not preserve the execution boundary: %q", conversation)
 	}
 	plan := planChatPrompt("경쟁사 범위를 정하자", "pln_test", "NACA 0012 SU2 격자 민감도")
-	for _, required := range []string{"절대 연구를 실행하지 마세요", "MCP 도구 호출", "needs_input", "상호 배타적인 선택지", "경쟁사 범위를 정하자", "NACA 0012 SU2 격자 민감도", "su2_naca0012", "do not redirect the user to XFOIL"} {
+	for _, required := range []string{"절대 연구를 실행하지 마세요", "MCP 도구 호출", "needs_input", "상호 배타적인 선택지", "경쟁사 범위를 정하자", "NACA 0012 SU2 격자 민감도", "su2_cfd", "engineering_inputs", "no predefined geometry"} {
 		if !strings.Contains(plan, required) {
 			t.Fatalf("plan prompt is missing %q: %q", required, plan)
 		}

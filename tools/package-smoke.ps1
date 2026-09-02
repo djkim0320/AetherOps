@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ZipPath,
     [Parameter(Mandatory = $true)]
-    [string]$StagingRoot
+    [string]$StagingRoot,
+    [ValidateSet('release', 'development')]
+    [string]$ExpectedBuildMode = 'release'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -112,11 +114,11 @@ try {
     }
     $readiness = Get-Content -Raw -LiteralPath $descriptorPath | ConvertFrom-Json
     if ($readiness.schema -cne 'aetherops_release_eval_api_session_v2' -or
-        $readiness.mode -cne 'normal' -or $readiness.build_mode -cne 'release' -or
+        $readiness.mode -cne 'normal' -or $readiness.build_mode -cne $ExpectedBuildMode -or
         $readiness.runtime_set_ready -cne $true -or
         $readiness.codex_initialize_model_list_ready -cne $true -or
         $readiness.oxigraph_handshake_ready -cne $true -or $readiness.api_ready -cne $true) {
-        throw 'Portable normal-core readiness receipt is incomplete or not release-mode.'
+        throw "Portable normal-core readiness receipt is incomplete or not $ExpectedBuildMode-mode."
     }
     $executableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $executable).Hash.ToLowerInvariant()
     if ([string]$readiness.product_build.executable_sha256 -cne $executableHash) {
@@ -179,4 +181,4 @@ try {
     }
 }
 
-Write-Host 'Portable archive manifest readback, hostile-environment normal-core readiness, setup rejection, and cleanup passed.'
+Write-Host "Portable archive manifest readback, hostile-environment $ExpectedBuildMode-mode normal-core readiness, setup rejection, and cleanup passed."

@@ -19,7 +19,7 @@ const exactPresentations: Record<string, ArtifactPresentation> = {
 	"engineering.xfoil_polar.receipt": { label: "검증", title: "XFOIL 실행 기록", description: "솔버 설정과 산출물 무결성 기록", tone: "verification" },
 	"engineering.xfoil_polar.result": { label: "결과", title: "XFOIL 해석 결과", description: "구조화된 공력 계산 결과", tone: "analysis" },
 	"engineering.mesh.su2": { label: "격자", title: "SU2 해석 격자", description: "CFD 계산에 사용된 격자 데이터", tone: "model" },
-	"engineering.su2_naca0012.receipt": { label: "검증", title: "SU2 실행 기록", description: "CFD 솔버 설정과 산출물 무결성 기록", tone: "verification" },
+	"engineering.su2_cfd.receipt": { label: "검증", title: "SU2 실행 기록", description: "CFD 입력·물리 설정과 산출물 무결성 기록", tone: "verification" },
 	"engineering.openvsp_wing_aero.model": { label: "모델", title: "OpenVSP 항공기 모델", description: "공력 해석에 사용된 3차원 형상", tone: "model" }
 };
 

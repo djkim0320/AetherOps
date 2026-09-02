@@ -19,10 +19,15 @@ import { shouldRefreshApprovals } from "./approval-events";
 import { artifactContentPath } from "./artifact-path";
 import { artifactPresentation } from "./artifact-presentation";
 import { chatHistoryMessages } from "./chat-history";
+import { prepareChatAttachments, type ChatAttachmentDraft } from "./chat-attachments";
 import { LifecycleControls } from "./LifecycleControls";
 import { resolveRunSelection } from "./model-selection";
 import { loadBrowserOperationalStatus, loadSchedulesState } from "./operational-state";
 import { parseSlashCommand, planningObjective } from "./plan-cycle";
+import {
+  shouldBootstrapPlanCycle,
+  shouldStartPlanCycleFromSlashArgument
+} from "./composer-mode";
 import { blockingRunFrom, type RunControlRef } from "./run-controls";
 import { retainRunEventHistory, stageState } from "./run-progress";
 import type {
@@ -217,6 +222,7 @@ export function App() {
   const [renamingSessionID, setRenamingSessionID] = useState<string>("");
   const [sessionTitleDraft, setSessionTitleDraft] = useState<string>("");
   const [sessionDrafts, setSessionDrafts] = useState<Record<string, string>>({});
+  const [sessionAttachments, setSessionAttachments] = useState<Record<string, ChatAttachmentDraft[]>>({});
   const [sessionChats, setSessionChats] = useState<Record<string, ChatMessage[]>>({});
   const [sessionChatModes, setSessionChatModes] = useState<Record<string, ChatMode>>({});
   const [planSelections, setPlanSelections] = useState<Record<string, Record<string, PlanSelection>>>({});
@@ -300,6 +306,7 @@ export function App() {
   const chatMode = sessionChatModes[selectedSessionID] ?? "chat";
   const currentPlanCycle = planCycles[selectedSessionID] ?? null;
   const researchQuery = sessionDrafts[selectedSessionID] ?? "";
+  const chatAttachments = sessionAttachments[selectedSessionID] ?? [];
   const sessionBusy = busySessions[selectedSessionID] === true;
   const coreReady = status?.ready === true;
   const codexConversationReady = codexAccount?.authenticated === true && codexAccount.chatgpt === true;
@@ -685,6 +692,70 @@ export function App() {
     }
   }
 
+  async function ensureConversationTarget(): Promise<string> {
+    if (selectedSessionID) return selectedSessionID;
+    if (busy !== null || !coreReady || connection !== "connected") return "";
+
+    setBusy("conversation-bootstrap");
+    setActionError(null);
+    try {
+      let projectID = selectedProjectID || projects?.[0]?.id || "";
+      if (!projectID) {
+        const projectPayload = await post<unknown>("/api/v1/projects", { name: "내 프로젝트" });
+        const project = objectFrom(projectPayload, "project") as Project | null;
+        if (!project?.id) throw new Error("기본 프로젝트를 만들지 못했습니다.");
+        projectID = project.id;
+        setProjects((current) =>
+          current?.some((candidate) => candidate.id === project.id)
+            ? current
+            : [...(current ?? []), project]
+        );
+      }
+      setSelectedProjectID(projectID);
+
+      const sessionPayload = await get<unknown>(
+        `/api/v1/projects/${encodeURIComponent(projectID)}/sessions`
+      );
+      const availableSessions = listFrom(
+        sessionPayload,
+        "sessions"
+      ) as ConversationSession[];
+      let session: ConversationSession | null = availableSessions[0] ?? null;
+      if (!session) {
+        const createdPayload = await post<unknown>(
+          `/api/v1/projects/${encodeURIComponent(projectID)}/sessions`,
+          { title: "새 대화" }
+        );
+        session = objectFrom(createdPayload, "session") as ConversationSession | null;
+      }
+      if (!session?.id) throw new Error("기본 대화를 만들지 못했습니다.");
+
+      const sessionID = session.id;
+      setSelectedSessionID(sessionID);
+      setSessionDrafts((current) => {
+        const next = { ...current };
+        next[sessionID] = current[sessionID] ?? current[""] ?? "";
+        delete next[""];
+        return next;
+      });
+      setSessionAttachments((current) => {
+        const next = { ...current };
+        next[sessionID] = current[sessionID] ?? current[""] ?? [];
+        delete next[""];
+        return next;
+      });
+      await refreshWorkspace();
+      await loadSessions(projectID, sessionID);
+      setNotice("첫 대화를 준비했습니다.");
+      return sessionID;
+    } catch (err) {
+      setActionError(formatApiError(err));
+      return "";
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function renameConversationSession(sessionID: string) {
     const title = sessionTitleDraft.trim();
     if (!title || busy !== null || busySessions[sessionID]) return;
@@ -737,7 +808,7 @@ export function App() {
     role: ChatMessage["role"],
     text: string,
     mode: ChatMode,
-    plan?: Pick<ChatMessage, "planReady" | "planQuestions" | "planCycleID">
+    plan?: Pick<ChatMessage, "planReady" | "planQuestions" | "planCycleID" | "attachments">
   ) {
     const msg: ChatMessage = {
       id: `${Date.now()}-${++chatMessageSequence.current}`,
@@ -748,7 +819,8 @@ export function App() {
       createdAt: new Date().toISOString(),
       planReady: plan?.planReady,
       planQuestions: plan?.planQuestions,
-      planCycleID: plan?.planCycleID
+      planCycleID: plan?.planCycleID,
+      attachments: plan?.attachments
     };
     setSessionChats((prev) => ({
       ...prev,
@@ -806,19 +878,33 @@ export function App() {
   async function sendChat(
     message: string,
     mode: ChatMode,
-    options: { displayUser?: boolean; displayText?: string; planCycleID?: string } = {}
+    options: {
+      displayUser?: boolean;
+      displayText?: string;
+      planCycleID?: string;
+      sessionID?: string;
+      attachments?: ChatAttachmentDraft[];
+    } = {}
   ) {
-    if (sessionBusy || busySessionIDsRef.current.has(selectedSessionID) || busy === "run" || busy === "steer")
+    const sessionID = options.sessionID ?? selectedSessionID;
+    if (
+      busySessions[sessionID] ||
+      busySessionIDsRef.current.has(sessionID) ||
+      busy === "run" ||
+      busy === "steer"
+    )
       return false;
-    if (!coreReady || !selectedSessionID || !runSelection.option || !runSelection.effort) {
+    if (!coreReady || !sessionID || !runSelection.option || !runSelection.effort) {
       setActionError("대화와 관리 런타임, 모델 설정을 먼저 확인해 주세요.");
       return false;
     }
     if (!codexConversationReady) return openCodexLogin();
-    const sessionID = selectedSessionID;
     busySessionIDsRef.current.add(sessionID);
+    const attachments = options.attachments ?? [];
     if (options.displayUser !== false)
-      appendChatMessage(sessionID, "user", options.displayText ?? message, mode);
+      appendChatMessage(sessionID, "user", (options.displayText ?? message) || "첨부 파일을 확인해 주세요.", mode, {
+        attachments: attachments.map(({ name, kind }) => ({ name, kind }))
+      });
     setSessionDrafts((prev) => ({ ...prev, [sessionID]: "" }));
     setBusySessions((prev) => ({ ...prev, [sessionID]: true }));
     setModelSettingsOpen(false);
@@ -826,7 +912,8 @@ export function App() {
     setNotice(null);
 
     try {
-      const planCycleID = mode === "plan" ? options.planCycleID ?? currentPlanCycle?.id ?? "" : "";
+      const planCycleID =
+        mode === "plan" ? options.planCycleID ?? planCycles[sessionID]?.id ?? "" : "";
       const payload = await post<unknown>(`/api/v1/sessions/${encodeURIComponent(sessionID)}/chat`, {
         message,
         mode,
@@ -834,7 +921,8 @@ export function App() {
         reasoning_effort: runSelection.effort,
         speed: runSelection.speed,
         context_profile: runSelection.contextProfile,
-        plan_cycle_id: planCycleID
+        plan_cycle_id: planCycleID,
+        attachments: attachments.map(({ name, mediaType, data }) => ({ name, media_type: mediaType, data }))
       });
       const reply = objectFrom(payload) as ChatReply | null;
       const assistantText = reply ? stringValue(reply.text) : undefined;
@@ -847,6 +935,7 @@ export function App() {
       });
 
       if (mode === "plan") await loadPlanCycle(sessionID);
+      if (attachments.length) setSessionAttachments((prev) => ({ ...prev, [sessionID]: [] }));
       return true;
     } catch (err) {
       showCodexActionError(err);
@@ -857,20 +946,26 @@ export function App() {
     }
   }
 
-  async function handleSlashCommand(input: string) {
+  async function handleSlashCommand(input: string, targetSessionID = selectedSessionID) {
     const parsed = parseSlashCommand(input);
     if (!parsed) return;
     const { command, argument } = parsed;
+    const sessionID = targetSessionID;
     setSlashMenuOpen(false);
-    setSessionDrafts((prev) => ({ ...prev, [selectedSessionID]: "" }));
+    if (sessionID) setSessionDrafts((prev) => ({ ...prev, [sessionID]: "" }));
     if (command === "/plan") {
+      if (!sessionID) {
+        setActionError("플랜 모드를 선택하려면 프로젝트와 대화를 먼저 선택하세요.");
+        return;
+      }
+      setActionError(null);
+      setSessionChatModes((prev) => ({ ...prev, [sessionID]: "plan" }));
+      requestAnimationFrame(() => composerRef.current?.focus());
+      if (!shouldStartPlanCycleFromSlashArgument(argument)) return;
       if (!codexConversationReady) {
         openCodexLogin();
         return;
       }
-      const sessionID = selectedSessionID;
-      if (!sessionID) return;
-      setSessionChatModes((prev) => ({ ...prev, [sessionID]: "plan" }));
       const latest = await loadPlanCycle(sessionID);
       const cycle = argument
         ? await beginPlanCycle(sessionID, argument)
@@ -888,12 +983,14 @@ export function App() {
       if (argument || !latest || latest.status !== "active") {
         await sendChat("연구를 시작하기 위한 계획 인터뷰를 시작해줘", "plan", {
           displayUser: false,
-          planCycleID: cycle.id
+          planCycleID: cycle.id,
+          sessionID
         });
       }
     } else if (command === "/chat") {
-      setSessionChatModes((prev) => ({ ...prev, [selectedSessionID]: "chat" }));
-      appendChatMessage(selectedSessionID, "system", "일반 대화 모드로 전환했습니다.", "chat");
+      if (!sessionID) return;
+      setSessionChatModes((prev) => ({ ...prev, [sessionID]: "chat" }));
+      appendChatMessage(sessionID, "system", "일반 대화 모드로 전환했습니다.", "chat");
     } else if (command === "/research") {
       if (currentPlanCycle?.status === "ready" && currentPlanCycle.final_plan) {
         void startPlannedResearch();
@@ -902,7 +999,7 @@ export function App() {
       }
     } else if (command === "/help") {
       appendChatMessage(
-        selectedSessionID,
+        sessionID,
         "system",
         "**사용 가능한 명령어**\n- `/plan`: 대화형 계획 모드 시작\n- `/research`: 합의된 계획으로 연구 시작\n- `/chat`: 일반 대화 모드로 전환",
         chatMode
@@ -910,14 +1007,45 @@ export function App() {
     }
   }
 
-  function submitComposer() {
+  async function selectPlanMode() {
+    const sessionID = selectedSessionID || (await ensureConversationTarget());
+    if (!sessionID) return;
+    setActionError(null);
+    setSlashMenuOpen(false);
+    setSessionChatModes((prev) => ({ ...prev, [sessionID]: "plan" }));
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }
+
+  async function submitComposer() {
     const raw = researchQuery.trim();
-    if (!raw) return;
-    if (raw.startsWith("/")) {
-      void handleSlashCommand(raw);
+    const pendingAttachments = sessionAttachments[selectedSessionID] ?? [];
+    if (!raw && pendingAttachments.length === 0) return;
+    const sessionID = selectedSessionID || (await ensureConversationTarget());
+    if (!sessionID) return;
+    const targetMode = sessionChatModes[sessionID] ?? chatMode;
+    const targetPlanCycle = planCycles[sessionID] ?? currentPlanCycle;
+    if (raw.startsWith("/") && pendingAttachments.length > 0) {
+      setActionError("슬래시 명령과 파일 첨부는 함께 보낼 수 없습니다.");
       return;
     }
-    void sendChat(raw, chatMode);
+    if (raw.startsWith("/")) {
+      await handleSlashCommand(raw, sessionID);
+      return;
+    }
+    if (shouldBootstrapPlanCycle(targetMode, targetPlanCycle !== null)) {
+      if (!codexConversationReady) {
+        openCodexLogin();
+        return;
+      }
+      if (pendingAttachments.length > 0) {
+        const cycle = await beginPlanCycle(sessionID, raw);
+        if (cycle) await sendChat(raw, "plan", { sessionID, planCycleID: cycle.id, attachments: pendingAttachments });
+      } else {
+        await handleSlashCommand(`/plan ${raw}`, sessionID);
+      }
+      return;
+    }
+    await sendChat(raw, targetMode, { sessionID, attachments: pendingAttachments });
   }
 
   function handleComposerKeyDown(event: globalThis.KeyboardEvent) {
@@ -929,7 +1057,7 @@ export function App() {
     }
     if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
     event.preventDefault();
-    submitComposer();
+    void submitComposer();
   }
 
   async function steerResearch() {
@@ -1195,6 +1323,7 @@ export function App() {
                 currentPlanCycle={currentPlanCycle}
                 sessionBusy={sessionBusy}
                 busy={busy}
+                onSelectPlanMode={selectPlanMode}
                 onSelectSlashCommand={(cmd) => {
                   if (cmd === "/plan" || cmd === "/research" || cmd === "/chat" || cmd === "/help") {
                     void handleSlashCommand(cmd);
@@ -1209,6 +1338,23 @@ export function App() {
 
               <ChatComposer
                 query={researchQuery}
+                attachments={chatAttachments}
+                onAddFiles={(files) => {
+                  const targetSessionID = selectedSessionID;
+                  void prepareChatAttachments(files, sessionAttachments[targetSessionID] ?? [])
+                    .then((next) => {
+                      setSessionAttachments((prev) => ({ ...prev, [targetSessionID]: next }));
+                      setActionError(null);
+                      requestAnimationFrame(() => composerRef.current?.focus());
+                    })
+                    .catch((error: unknown) => setActionError(formatApiError(error)));
+                }}
+                onRemoveAttachment={(id) => {
+                  setSessionAttachments((prev) => ({
+                    ...prev,
+                    [selectedSessionID]: (prev[selectedSessionID] ?? []).filter((item) => item.id !== id)
+                  }));
+                }}
                 onQueryChange={(val) => {
                   setSessionDrafts((prev) => ({ ...prev, [selectedSessionID]: val }));
                   if (val.startsWith("/")) {
@@ -1221,6 +1367,7 @@ export function App() {
                 onSubmit={submitComposer}
                 onKeyDown={handleComposerKeyDown}
                 chatMode={chatMode}
+                onSelectPlanMode={selectPlanMode}
                 onClosePlanMode={() => handleSlashCommand("/chat")}
                 slashMenuOpen={slashMenuOpen}
                 slashQuery={slashQuery}
@@ -1230,7 +1377,6 @@ export function App() {
                 }}
                 coreReady={coreReady}
                 connection={connection}
-                selectedSessionID={selectedSessionID}
                 sessionBusy={sessionBusy}
                 busy={busy}
                 activeRun={activeRun}
@@ -1452,6 +1598,16 @@ export function App() {
               try {
                 const res = await post<JsonRecord>("/api/v1/auth/codex/device-code", {});
                 setDeviceCode(res);
+              } catch (err) {
+                setActionError(formatApiError(err));
+              } finally {
+                setBusy(null);
+              }
+            }}
+            onOpenDeviceLogin={async (url) => {
+              setBusy("open-device-login");
+              try {
+                await post("/api/v1/auth/codex/open-login", { url });
               } catch (err) {
                 setActionError(formatApiError(err));
               } finally {

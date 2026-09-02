@@ -170,7 +170,7 @@ func TestEngineeringServiceOwnsExternalBoundaryOnlyForCanonicalSurface(t *testin
 		ExternalSideEffect: true,
 	}
 	for _, tool := range []string{
-		"openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_naca0012",
+		"openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_cfd",
 	} {
 		approval := base
 		approval.Tool = tool
@@ -184,6 +184,7 @@ func TestEngineeringServiceOwnsExternalBoundaryOnlyForCanonicalSurface(t *testin
 		func(approval *core.Approval) { approval.Server = "aetherops_engineering_evil" },
 		func(approval *core.Approval) { approval.Tool = "XFOIL_POLAR" },
 		func(approval *core.Approval) { approval.Tool = "unknown_solver" },
+		func(approval *core.Approval) { approval.Tool = "su2_naca0012" },
 		func(approval *core.Approval) { approval.ExternalSideEffect = false },
 	} {
 		approval := base
@@ -210,7 +211,7 @@ func TestSucceededEngineeringJobForApprovalScopeIsExactAndCompleted(t *testing.T
 	}{
 		{"different run", "run_missing", completed.attempt.ID, completed.job.Operation, completed.job.ApprovalScopeHash},
 		{"different attempt", completed.run.ID, "stg_missing", completed.job.Operation, completed.job.ApprovalScopeHash},
-		{"different operation", completed.run.ID, completed.attempt.ID, "su2_naca0012", completed.job.ApprovalScopeHash},
+		{"different operation", completed.run.ID, completed.attempt.ID, "su2_cfd", completed.job.ApprovalScopeHash},
 		{"different arguments", completed.run.ID, completed.attempt.ID, completed.job.Operation, strings.Repeat("f", 64)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -257,7 +258,7 @@ func TestCreateApprovalRequiresExactArgumentsSHA256(t *testing.T) {
 		RunID: run.ID, StageAttemptID: attempt.ID,
 		ThreadID: attempt.CodexThreadID, TurnID: "collector-turn", ItemID: "solver-call",
 		Kind: "item/mcpToolCall/requestApproval", Summary: "scope",
-		Server: "aetherops_engineering", Tool: "su2_naca0012",
+		Server: "aetherops_engineering", Tool: "su2_cfd",
 		ArgumentsJSON: validJSON, ArgumentsSHA256: sha256Text(validJSON),
 		Risk: "external_side_effect", ExternalSideEffect: true,
 	}
@@ -289,7 +290,7 @@ func TestCreateApprovalRequiresExactArgumentsSHA256(t *testing.T) {
 }
 
 func TestBeginEngineeringJobRequiresExactServerToolAndArgumentsScope(t *testing.T) {
-	const operation = "su2_naca0012"
+	const operation = "su2_cfd"
 	const arguments = `{"alpha_deg":2,"mach":0.3}`
 	tests := []struct {
 		name              string
@@ -302,7 +303,7 @@ func TestBeginEngineeringJobRequiresExactServerToolAndArgumentsScope(t *testing.
 		{name: "wrong server", server: "unclassified_external", tool: operation, approvedArguments: arguments},
 		{name: "server alias is not canonical", server: "aetherops-engineering", tool: operation, approvedArguments: arguments},
 		{name: "wrong tool", server: "aetherops_engineering", tool: "gmsh_wing_mesh", approvedArguments: arguments},
-		{name: "wrong tool case", server: "aetherops_engineering", tool: "SU2_NACA0012", approvedArguments: arguments},
+		{name: "wrong tool case", server: "aetherops_engineering", tool: "SU2_CFD", approvedArguments: arguments},
 		{name: "wrong arguments hash", server: "aetherops_engineering", tool: operation, approvedArguments: `{"alpha_deg":3,"mach":0.3}`},
 	}
 	for _, test := range tests {
@@ -344,7 +345,7 @@ func TestBeginEngineeringJobRequiresExactServerToolAndArgumentsScope(t *testing.
 
 func TestEngineeringJobIsAtMostOnceAndRecoveryIsUncertain(t *testing.T) {
 	database, run, attempt := engineeringSecurityRun(t)
-	const operation = "su2_naca0012"
+	const operation = "su2_cfd"
 	const arguments = `{"alpha_deg":2,"mach":0.3}`
 	approveEngineeringScope(t, database, run, attempt, "aetherops_engineering", operation, arguments)
 	if stageHasExternalSideEffects(t, database, attempt.ID) {
@@ -421,7 +422,7 @@ func TestEngineeringAdmissionRejectsInactiveOrFailedCollectWithoutMarkerOrJob(t 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			database, run, attempt := engineeringSecurityRun(t)
-			const operation = "su2_naca0012"
+			const operation = "su2_cfd"
 			const arguments = `{"alpha_deg":2,"mach":0.3}`
 			approveEngineeringScope(t, database, run, attempt, "aetherops_engineering", operation, arguments)
 			test.prepare(t, database, run, attempt)

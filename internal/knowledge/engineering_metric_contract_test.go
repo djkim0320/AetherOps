@@ -7,13 +7,11 @@ import (
 	"github.com/djkim0320/AetherOps/internal/core"
 )
 
-func TestSU2KnowledgeProjectionUsesTheSharedMetricContract(t *testing.T) {
-	if !reflect.DeepEqual(engineeringMetricContracts["su2_naca0012"], core.SU2MetricContractsV1()) {
-		t.Fatal("SU2 knowledge projection diverged from the core metric contract")
+func TestGeneralSU2KnowledgeProjectionUsesTheSharedMetricContract(t *testing.T) {
+	if !reflect.DeepEqual(engineeringMetricContracts["su2_cfd"], core.SU2GeneralMetricContractsV1()) {
+		t.Fatal("general SU2 knowledge projection diverged from the core metric contract")
 	}
-	copy := core.SU2MetricContractsV1()
-	delete(copy, "cl_late_stddev")
-	if _, exists := core.SU2MetricContractsV1()["cl_late_stddev"]; !exists {
-		t.Fatal("caller mutation changed the shared SU2 metric authority")
+	if engineeringArtifactOnlyMetrics["su2_cfd"]["final_values"] != engineeringArtifactMetricObject {
+		t.Fatal("arbitrary SU2 history columns must remain an artifact-only object")
 	}
 }

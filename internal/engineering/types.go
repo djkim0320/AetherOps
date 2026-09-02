@@ -154,11 +154,22 @@ type XFOILSpec struct {
 	PanelCount        *int     `json:"panel_count,omitempty"`
 }
 
-type SU2Spec struct {
-	RunID          string  `json:"run_id"`
-	StageAttemptID string  `json:"stage_attempt_id"`
-	Mach           float64 `json:"mach"`
-	AlphaDeg       float64 `json:"alpha_deg"`
-	Iterations     int     `json:"iterations"`
-	MeshSizeM      float64 `json:"mesh_size_m"`
+// SU2CFDSpec is the sole current SU2 execution contract. It has no built-in
+// geometry or physics preset: exact project-owned mesh/config bytes and every
+// configuration override are covered by the user's approval hash.
+type SU2CFDSpec struct {
+	RunID           string            `json:"run_id"`
+	StageAttemptID  string            `json:"stage_attempt_id"`
+	CaseID          string            `json:"case_id"`
+	MeshSource      string            `json:"mesh_source"`
+	MeshID          string            `json:"mesh_id"`
+	MeshSHA256      string            `json:"mesh_sha256"`
+	ConfigSource    string            `json:"config_source"`
+	ConfigID        string            `json:"config_id"`
+	ConfigSHA256    string            `json:"config_sha256"`
+	Solver          string            `json:"solver"`
+	TurbulenceModel string            `json:"turbulence_model"`
+	ConfigOverrides map[string]string `json:"config_overrides"`
+	OutputFiles     []string          `json:"output_files"`
+	TimeoutSeconds  int               `json:"timeout_seconds"`
 }

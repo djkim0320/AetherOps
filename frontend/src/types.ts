@@ -83,6 +83,7 @@ export type ChatMessage = {
   planReady?: boolean;
   planQuestions?: PlanQuestion[];
   planCycleID?: string;
+  attachments?: Array<{ name: string; kind: "text" | "image" | "document" }>;
 };
 
 export type ChatReply = {

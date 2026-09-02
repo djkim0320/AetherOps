@@ -232,6 +232,14 @@ func TestKnowledgePinnedTextUploadUsesDeterministicExtensionMediaType(t *testing
 	}
 }
 
+func TestKnowledgePinnedSU2InputsUseTextMediaType(t *testing.T) {
+	for _, filename := range []string{"mesh.su2", "case.cfg"} {
+		if got := resolvePinnedMaterialMediaType(filename, "solver input", "application/octet-stream"); got != "text/plain; charset=utf-8" {
+			t.Fatalf("%s media type = %q", filename, got)
+		}
+	}
+}
+
 func TestKnowledgeMaterialUploadRejectsTrailingJSONValue(t *testing.T) {
 	probe := &knowledgeControllerProbe{}
 	server := &Server{Knowledge: probe}

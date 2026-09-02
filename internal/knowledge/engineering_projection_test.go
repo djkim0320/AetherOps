@@ -33,12 +33,12 @@ func TestDeterministicEngineeringProjectionUsesVerifiedReceiptEvidence(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	arguments := `{"alpha_deg":2,"mach":0.3}`
+	arguments := `{"case_id":"case_a","mesh_sha256":"` + knowledgeTestSHA("mesh") + `","solver":"EULER"}`
 	approval, err := database.CreateApproval(ctx, core.Approval{
 		RunID: run.ID, StageAttemptID: attempt.ID, ThreadID: attempt.CodexThreadID,
 		TurnID: "collector-turn", ItemID: "solver-call",
 		Kind: "item/mcpToolCall/requestApproval", Summary: "SU2 deterministic test",
-		Server: "aetherops_engineering", Tool: "su2_naca0012",
+		Server: "aetherops_engineering", Tool: "su2_cfd",
 		ArgumentsJSON: arguments, ArgumentsSHA256: knowledgeTestSHA(arguments),
 		Risk: "external_side_effect", ExternalSideEffect: true,
 	})
@@ -48,10 +48,10 @@ func TestDeterministicEngineeringProjectionUsesVerifiedReceiptEvidence(t *testin
 	if _, err := database.DecideApproval(ctx, approval.ID, "approved"); err != nil {
 		t.Fatal(err)
 	}
-	jobSpec := `{"arguments":{"alpha_deg":2,"iterations":50,"mach":0.3},"operation":"su2_naca0012","runtime_bundle_hash":"` + knowledgeTestSHA("runtime") + `","tool_component":"su2","tool_version":"8.5.0"}`
+	jobSpec := `{"arguments":{"case_id":"case_a","mesh_sha256":"` + knowledgeTestSHA("mesh") + `","solver":"EULER"},"operation":"su2_cfd","runtime_bundle_hash":"` + knowledgeTestSHA("runtime") + `","tool_component":"su2","tool_version":"8.5.0"}`
 	job, execute, err := database.BeginEngineeringJob(ctx, store.EngineeringJob{
 		ProjectID: project.ID, RunID: run.ID, StageAttemptID: attempt.ID,
-		Operation: "su2_naca0012", SpecJSON: jobSpec, SpecSHA256: knowledgeTestSHA(jobSpec),
+		Operation: "su2_cfd", SpecJSON: jobSpec, SpecSHA256: knowledgeTestSHA(jobSpec),
 		ToolComponent: "su2", ToolVersion: "8.5.0", ApprovalScopeHash: knowledgeTestSHA(arguments),
 	})
 	if err != nil || !execute {
@@ -81,7 +81,7 @@ func TestDeterministicEngineeringProjectionUsesVerifiedReceiptEvidence(t *testin
 		t.Fatal(err)
 	}
 	artifact, err := database.PublishArtifact(ctx, run.ID, attempt.ID,
-		"engineering.su2_naca0012.receipt", "application/json", receipt)
+		"engineering.su2_cfd.receipt", "application/json", receipt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,24 +173,12 @@ func TestEngineeringMetricUnitContractRejectsUnknownAndNormalizesAngle(t *testin
 
 func su2ProjectionTestMetrics() map[string]any {
 	return map[string]any{
-		"iterations": 49, "cl": json.Number("0.4125"), "cd": json.Number("0.01875"),
-		"initial_rms_density": json.Number("-1.0"), "final_rms_density": json.Number("-8.1"),
-		"residual_drop_orders": json.Number("7.1"), "late_window_iterations": 49,
-		"cl_late_mean": json.Number("0.4124"), "cl_late_stddev": json.Number("0.00001"),
-		"cl_late_range": json.Number("0.00004"), "cd_late_mean": json.Number("0.01874"),
-		"cd_late_stddev": json.Number("0.000001"), "cd_late_range": json.Number("0.000004"),
-		"mesh_nodes": 1000, "mesh_volume_elements": 1900, "airfoil_boundary_elements": 100,
-		"farfield_boundary_elements": 80, "mesh_orientation_valid": true,
-		"orthogonality_available": false,
-		"cv_face_area_aspect_min": json.Number("1.0"), "cv_face_area_aspect_max": json.Number("5.5"),
-		"cv_subvolume_ratio_min": json.Number("0.4"), "cv_subvolume_ratio_max": json.Number("3.1"),
-		"surface_points": 100, "surface_spacing_mean_m": json.Number("0.025"),
-		"surface_spacing_min_m": json.Number("0.02"), "surface_spacing_max_m": json.Number("0.03"),
-		"upper_shock_x_over_c": json.Number("0.59"), "upper_shock_delta_cp": json.Number("0.8"),
-		"lower_shock_x_over_c": json.Number("0.62"), "lower_shock_delta_cp": json.Number("0.2"),
-		"solver": "EULER", "conv_num_method_flow": "JST", "cfl_number": json.Number("5"),
-		"conv_residual_minval": json.Number("-8"), "farfield_x_min_chords": json.Number("-10"),
-		"farfield_x_max_chords": json.Number("15"), "farfield_y_abs_chords": json.Number("10"),
+		"case_id": "case_a", "solver": "EULER", "turbulence_model": "NONE",
+		"mesh_sha256": knowledgeTestSHA("mesh"), "effective_config_sha256": knowledgeTestSHA("config"),
+		"mesh_dimension": 2, "mesh_nodes": 1000, "mesh_elements": 1900, "mesh_markers": 2,
+		"history_rows": 50, "history_columns": 12, "final_iteration": 49,
+		"converged": true, "termination_reason": "convergence_criteria_satisfied",
+		"cl": json.Number("0.4125"), "cd": json.Number("0.01875"), "final_rms_density": json.Number("-8.1"),
 	}
 }
 

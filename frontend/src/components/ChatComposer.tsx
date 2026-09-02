@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { attachmentAccept, formatAttachmentSize, type ChatAttachmentDraft } from "../chat-attachments";
 import type {
   ChatMode,
   Connection,
@@ -9,6 +10,7 @@ import type {
   Speed
 } from "../types";
 import { SLASH_COMMANDS, STATUS_LABELS } from "../types";
+import { COMPOSER_PROMPT_CHIPS, composerModePresentation } from "../composer-mode";
 import { researchQuestionDisplay } from "../research-display";
 import { ContextMeter } from "./ContextMeter";
 import { ModelSettingsPopover } from "./ModelSettingsPopover";
@@ -19,19 +21,22 @@ export type ChatComposerProps = {
   onSubmit: () => void;
   onKeyDown: (e: globalThis.KeyboardEvent) => void;
   chatMode: ChatMode;
+  onSelectPlanMode: () => void;
   onClosePlanMode: () => void;
   slashMenuOpen: boolean;
   slashQuery: string;
   onSelectSlashCommand: (command: string) => void;
   coreReady: boolean;
   connection: Connection;
-  selectedSessionID: string;
   sessionBusy: boolean;
   busy: string | null;
   activeRun: Run | null;
   artifactsCount: number | null;
   onOpenActiveRun: () => void;
   composerRef: { current: HTMLTextAreaElement | null };
+  attachments: ChatAttachmentDraft[];
+  onAddFiles: (files: File[]) => void;
+  onRemoveAttachment: (id: string) => void;
 
   // Context usage
   contextUsage: ContextWindowUsage | null;
@@ -61,32 +66,28 @@ export type ChatComposerProps = {
   onSelectPromptChip: (promptText: string) => void;
 };
 
-const PROMPT_CHIPS = [
-  { label: "프로젝트 분석", text: "프로젝트 아키텍처와 주요 의존성을 분석해줘" },
-  { label: "성능 최적화", text: "시스템 병목 지점과 성능 최적화 방안을 검토해줘" },
-  { label: "단위 테스트", text: "핵심 모듈에 대한 포괄적인 단위 테스트 계획을 세워줘" },
-  { label: "계획 수립", text: "/plan" }
-];
-
 export function ChatComposer({
   query,
   onQueryChange,
   onSubmit,
   onKeyDown,
   chatMode,
+  onSelectPlanMode,
   onClosePlanMode,
   slashMenuOpen,
   slashQuery,
   onSelectSlashCommand,
   coreReady,
   connection,
-  selectedSessionID,
   sessionBusy,
   busy,
   activeRun,
   artifactsCount,
   onOpenActiveRun,
   composerRef,
+  attachments,
+  onAddFiles,
+  onRemoveAttachment,
   contextUsage,
   selectedContextProfile,
   contextDetailsOpen,
@@ -109,6 +110,8 @@ export function ChatComposer({
   onCloseModelSettings,
   onSelectPromptChip
 }: ChatComposerProps) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragDepth, setDragDepth] = useState(0);
   // Auto-resize textarea
   useEffect(() => {
     const el = composerRef.current;
@@ -123,19 +126,28 @@ export function ChatComposer({
       cmd.command.toLowerCase().includes(slashQuery.toLowerCase()) ||
       cmd.label.toLowerCase().includes(slashQuery.toLowerCase())
   );
+  const modePresentation = composerModePresentation(chatMode);
 
   return (
     <div class="composer-dock">
       {/* Quick Prompt Chips */}
       {!query && (
         <div class="composer-quick-chips" role="toolbar" aria-label="빠른 입력 칩">
-          {PROMPT_CHIPS.map((chip) => (
+          {COMPOSER_PROMPT_CHIPS.map((chip) => (
             <button
               type="button"
               key={chip.label}
               class="composer-chip-btn"
-              onClick={() => onSelectPromptChip(chip.text)}
-              disabled={!coreReady || sessionBusy || connection !== "connected"}
+              onClick={() =>
+                chip.kind === "mode"
+                  ? onSelectPlanMode()
+                  : onSelectPromptChip(chip.value)
+              }
+              disabled={
+                !coreReady ||
+                sessionBusy ||
+                connection !== "connected"
+              }
             >
               {chip.label}
             </button>
@@ -158,7 +170,30 @@ export function ChatComposer({
       )}
 
       {/* Main Composer Box */}
-      <div class={`chat-composer ${chatMode === "plan" ? "plan-mode" : ""}`}>
+      <div
+        class={`chat-composer ${chatMode === "plan" ? "plan-mode" : ""} ${dragDepth > 0 ? "drag-active" : ""}`}
+        onDragEnter={(event) => {
+          if (!event.dataTransfer?.types.includes("Files")) return;
+          event.preventDefault();
+          setDragDepth((depth) => depth + 1);
+        }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer?.types.includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          setDragDepth((depth) => Math.max(0, depth - 1));
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragDepth(0);
+          const files = Array.from(event.dataTransfer?.files ?? []);
+          if (files.length) onAddFiles(files);
+        }}
+      >
+        {dragDepth > 0 && <div class="attachment-drop-overlay">파일을 놓아 첨부</div>}
         {chatMode === "plan" && (
           <div class="plan-mode-strip">
             <span class="plan-mode-icon">P</span>
@@ -201,23 +236,67 @@ export function ChatComposer({
           </div>
         )}
 
+        {attachments.length > 0 && (
+          <div class="attachment-list" aria-label="첨부 파일">
+            {attachments.map((attachment) => (
+              <span class="attachment-chip" key={attachment.id} title={attachment.name}>
+                <b aria-hidden="true">{attachment.kind === "image" ? "▧" : attachment.kind === "document" ? "▰" : "▤"}</b>
+                <span>{attachment.name}</span>
+                <small>{formatAttachmentSize(attachment.size)}</small>
+                <button type="button" onClick={() => onRemoveAttachment(attachment.id)} aria-label={`${attachment.name} 첨부 제거`}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+
         <textarea
           ref={composerRef}
           value={query}
           onInput={(e) => onQueryChange(e.currentTarget.value)}
           onKeyDown={onKeyDown}
-          placeholder=""
+          placeholder={modePresentation.placeholder}
           aria-label="메시지 입력"
           rows={1}
           disabled={!coreReady || sessionBusy || connection !== "connected"}
         />
 
         <div class="chat-composer-footer">
-          <div class="composer-mode-label">
-            <i class={chatMode === "plan" ? "plan" : ""}>
-              {chatMode === "plan" ? "계획 모드" : "대화"}
-            </i>
-            <span>Enter 전송 · Shift+Enter 줄바꿈 · Ctrl+Enter 스티어링</span>
+          <div class="composer-left-row">
+            <input
+              ref={fileInputRef}
+              class="attachment-file-input"
+              type="file"
+              multiple
+              accept={attachmentAccept()}
+              onChange={(event) => {
+                const files = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                if (files.length) onAddFiles(files);
+              }}
+            />
+            <button
+              type="button"
+              class="attachment-add-button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!coreReady || sessionBusy || connection !== "connected"}
+              title="파일 첨부"
+              aria-label="파일 첨부"
+            >+</button>
+            <div
+              class={`composer-mode-label ${modePresentation.active ? "plan-active" : ""}`}
+              aria-live="polite"
+            >
+              <span
+                class={`composer-mode-badge ${modePresentation.active ? "plan" : ""}`}
+                role="status"
+              >
+                <b aria-hidden="true">{modePresentation.glyph}</b>
+                <span>{modePresentation.label}</span>
+              </span>
+              <span class="composer-key-hint">
+                Enter 전송 · Shift+Enter 줄바꿈 · Ctrl+Enter 스티어링
+              </span>
+            </div>
           </div>
 
           <div class="composer-actions-row">
@@ -255,9 +334,10 @@ export function ChatComposer({
               disabled={
                 !coreReady ||
                 sessionBusy ||
-                !query.trim() ||
+                (!query.trim() && attachments.length === 0) ||
                 connection !== "connected" ||
-                busy === "run"
+                busy === "run" ||
+                busy === "conversation-bootstrap"
               }
               aria-label="전송"
             >

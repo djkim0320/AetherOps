@@ -10,6 +10,7 @@ import type {
   Run
 } from "../types";
 import { STATUS_LABELS } from "../types";
+import { CHAT_THINKING_LABEL } from "../chat-status";
 import { FormattedMessage } from "./FormattedMessage";
 import { PlanQuestionnaire } from "./PlanQuestionnaire";
 
@@ -26,6 +27,7 @@ export type ChatWorkspaceProps = {
   currentPlanCycle: ConversationPlanCycle | null;
   sessionBusy: boolean;
   busy: string | null;
+  onSelectPlanMode: () => void;
   onSelectSlashCommand: (cmd: string) => void;
   onSelectPlanAnswer: (msgId: string, qId: string, optId: string) => void;
   onSetPlanCustomAnswer: (msgId: string, qId: string, custom: string) => void;
@@ -47,6 +49,7 @@ export function ChatWorkspace({
   currentPlanCycle,
   sessionBusy,
   busy,
+  onSelectPlanMode,
   onSelectSlashCommand,
   onSelectPlanAnswer,
   onSetPlanCustomAnswer,
@@ -114,7 +117,11 @@ export function ChatWorkspace({
               접근 방식과 검증 범위를 정리하고 시작할 수 있습니다.
             </p>
             <div class="welcome-actions">
-              <button type="button" onClick={() => onSelectSlashCommand("/plan")}>
+              <button
+                type="button"
+                onClick={onSelectPlanMode}
+                disabled={sessionBusy || connection !== "connected"}
+              >
                 계획 세우기 <kbd>/plan</kbd>
               </button>
               <button type="button" onClick={() => onSelectSlashCommand("/help")}>
@@ -137,6 +144,16 @@ export function ChatWorkspace({
                       title={formatDate(message.createdAt)}
                     >
                       <p>{message.text}</p>
+                      {Boolean(message.attachments?.length) && (
+                        <div class="message-attachments" aria-label="보낸 첨부 파일">
+                          {message.attachments?.map((attachment) => (
+                            <span key={`${message.id}-${attachment.name}`}>
+                              <b aria-hidden="true">{attachment.kind === "image" ? "▧" : attachment.kind === "document" ? "▰" : "▤"}</b>
+                              {attachment.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </article>
@@ -253,7 +270,7 @@ export function ChatWorkspace({
                     <i />
                     <i />
                   </span>
-                  <span>{chatMode === "plan" ? "계획을 정리하는 중…" : "Codex가 답변을 생성하는 중…"}</span>
+                  <span>{CHAT_THINKING_LABEL}</span>
                 </div>
               </div>
             </article>

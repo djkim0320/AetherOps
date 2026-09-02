@@ -1488,7 +1488,10 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
         <KnowledgeMaterialsPanel
           materials={materials}
           materialFile={materialFile}
-          onMaterialFileChange={setMaterialFile}
+          onMaterialFileChange={(file) => {
+            setMaterialFile(file);
+            if (file && /\.(su2|cfg)$/i.test(file.name)) setMaterialGraphAdopt(false);
+          }}
           materialTitle={materialTitle}
           onMaterialTitleChange={setMaterialTitle}
           materialGraphAdopt={materialGraphAdopt}
@@ -1569,32 +1572,8 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
         </div>
       )}
 
-      {activeTab === "review" && (
-        <div class="knowledge-review-stack">
-          <section class="panel knowledge-review-intro">
-            <div>
-              <p class="eyebrow">Review Queue</p>
-              <h2>검토가 필요한 지식</h2>
-              <p>
-                서로 충돌하거나 자동으로 합칠 수 없는 지식을 확인합니다. 모든 변경은 근거와 함께
-                기록되며 원본 자료는 바뀌지 않습니다.
-              </p>
-            </div>
-            <div
-              class={`knowledge-review-summary ${
-                (number(status?.conflict_count) ?? 0) > 0 ? "attention" : "clear"
-              }`}
-            >
-              <strong>{number(status?.conflict_count) ?? 0}개 대기</strong>
-              <span>
-                {(number(status?.conflict_count) ?? 0) > 0
-                  ? "아래 도구에서 항목을 선택해 판단하세요."
-                  : "자동 감지된 충돌이 없습니다. 직접 수정 제안은 계속 만들 수 있습니다."}
-              </span>
-            </div>
-          </section>
-
-          <KnowledgeCurationStudio
+      {(activeTab === "review" || activeTab === "curation") && (
+        <KnowledgeCurationStudio
           mode={mode}
           editKind={editKind}
           onChooseEditKind={chooseEditKind}
@@ -1671,8 +1650,7 @@ export function KnowledgeView({ projectID, projectName = "", connected }: Knowle
           editEvidenceIDs={editEvidenceIDs}
           editMemo={editMemo}
           onEditMemoChange={setEditMemo}
-          />
-        </div>
+        />
       )}
 
       {activeTab === "ontology" && (

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +24,62 @@ import (
 	schedulepkg "github.com/djkim0320/AetherOps/internal/schedule"
 	"github.com/djkim0320/AetherOps/internal/store"
 )
+
+func TestValidatedChatAttachmentsAcceptsPDFAndRejectsSpoofedOffice(t *testing.T) {
+	pdf := []byte("%PDF-1.7\nexample")
+	attachments, err := validatedChatAttachments([]struct {
+		Name      string `json:"name"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+	}{{Name: "report.pdf", MediaType: "application/pdf", Data: base64.StdEncoding.EncodeToString(pdf)}})
+	if err != nil || len(attachments) != 1 || attachments[0].Kind != "document" {
+		t.Fatalf("validated PDF attachments=%+v err=%v", attachments, err)
+	}
+
+	var validDocx bytes.Buffer
+	validWriter := zip.NewWriter(&validDocx)
+	for _, name := range []string{"[Content_Types].xml", "word/document.xml"} {
+		entry, createErr := validWriter.Create(name)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, writeErr := entry.Write([]byte("document")); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	if err := validWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	attachments, err = validatedChatAttachments([]struct {
+		Name      string `json:"name"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+	}{{Name: "report.docx", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Data: base64.StdEncoding.EncodeToString(validDocx.Bytes())}})
+	if err != nil || len(attachments) != 1 || attachments[0].Kind != "document" {
+		t.Fatalf("validated DOCX attachments=%+v err=%v", attachments, err)
+	}
+
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	entry, err := writer.Create("word/not-the-document.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("spoof")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = validatedChatAttachments([]struct {
+		Name      string `json:"name"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+	}{{Name: "spoof.docx", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Data: base64.StdEncoding.EncodeToString(buffer.Bytes())}})
+	if err == nil {
+		t.Fatal("spoofed DOCX was accepted")
+	}
+}
 
 type modelCatalogFixture struct{}
 
@@ -132,6 +190,7 @@ func (fixture *chatHistoryFixture) ChatHistorySession(_ context.Context, session
 func (fixture *chatControllerFixture) ChatProject(
 	_ context.Context,
 	projectID, message string,
+	_ []core.ChatAttachment,
 	mode core.ChatMode,
 	_ string,
 	configuration core.RunConfiguration,
@@ -151,11 +210,12 @@ func (fixture *chatControllerFixture) ChatProject(
 func (fixture *chatControllerFixture) ChatSession(
 	ctx context.Context,
 	sessionID, message string,
+	attachments []core.ChatAttachment,
 	mode core.ChatMode,
 	planCycleID string,
 	configuration core.RunConfiguration,
 ) (core.ChatReply, error) {
-	return fixture.ChatProject(ctx, sessionID, message, mode, planCycleID, configuration)
+	return fixture.ChatProject(ctx, sessionID, message, attachments, mode, planCycleID, configuration)
 }
 
 func (fixture *runControllerFixture) SteerRun(_ context.Context, runID, message string) (core.Run, error) {

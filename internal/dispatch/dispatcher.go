@@ -19,7 +19,7 @@ type Executor interface {
 
 type MainThreadProtocol interface {
 	CreateMainThread(context.Context, string, core.RunConfiguration) (string, error)
-	Chat(context.Context, string, string, core.ChatMode, string, string, core.RunConfiguration) (core.ChatReply, error)
+	Chat(context.Context, string, string, []core.ChatAttachment, core.ChatMode, string, string, core.RunConfiguration) (core.ChatReply, error)
 	ChatHistory(context.Context, string) (core.ChatHistory, error)
 }
 
@@ -172,6 +172,7 @@ func (dispatcher *Dispatcher) startSessionRun(ctx context.Context, sessionID, qu
 func (dispatcher *Dispatcher) ChatProject(
 	ctx context.Context,
 	projectID, message string,
+	attachments []core.ChatAttachment,
 	mode core.ChatMode,
 	planCycleID string,
 	configuration core.RunConfiguration,
@@ -180,12 +181,13 @@ func (dispatcher *Dispatcher) ChatProject(
 	if err != nil {
 		return core.ChatReply{}, err
 	}
-	return dispatcher.ChatSession(ctx, session.ID, message, mode, planCycleID, configuration)
+	return dispatcher.ChatSession(ctx, session.ID, message, attachments, mode, planCycleID, configuration)
 }
 
 func (dispatcher *Dispatcher) ChatSession(
 	ctx context.Context,
 	sessionID, message string,
+	attachments []core.ChatAttachment,
 	mode core.ChatMode,
 	planCycleID string,
 	configuration core.RunConfiguration,
@@ -221,7 +223,7 @@ func (dispatcher *Dispatcher) ChatSession(
 		planObjective = cycle.Objective
 	}
 	reply, err := dispatcher.Threads.Chat(
-		ctx, session.CodexThreadID, strings.TrimSpace(message), mode, planCycleID, planObjective, configuration,
+		ctx, session.CodexThreadID, strings.TrimSpace(message), attachments, mode, planCycleID, planObjective, configuration,
 	)
 	if err != nil {
 		return core.ChatReply{}, err

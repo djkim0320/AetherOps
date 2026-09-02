@@ -272,9 +272,9 @@ func toolAnnotations(name string) map[string]any {
 		// These calls append run-scoped CAS/SQLite state. They do not delete or
 		// overwrite existing state, but repeating a call creates another record.
 		annotations = annotationSet{}
-	case "engineering_capabilities", "engineering_get":
+	case "engineering_capabilities", "engineering_inputs", "engineering_get":
 		annotations = annotationSet{readOnly: true, idempotent: true}
-	case "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_naca0012":
+	case "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_cfd":
 		// Solver jobs add artifacts without mutating their inputs. The store's
 		// stage-local (operation, normalized spec) key enforces at-most-once
 		// execution; a successful duplicate is read back and every other prior
@@ -597,6 +597,7 @@ func engineeringToolDefinitions(definition definitionBuilder) []map[string]any {
 	mesh["mesh_size_m"] = number(.001, 12.5)
 	return []map[string]any{
 		definition("engineering_capabilities", "Return verified bundled engineering executables and readiness.", nil),
+		definition("engineering_inputs", "List exact current-project mesh/config input candidates with immutable SHA-256 identities for su2_cfd.", nil),
 		definition("engineering_get", "Read one succeeded run-owned engineering job with compact scalar summary_metrics and copy-ready CAS-derived evidence_handles. Raw solver arrays remain in CAS.", map[string]any{
 			"job_id": map[string]any{"type": "string", "minLength": 1},
 		}, "job_id"),
@@ -662,10 +663,29 @@ func engineeringToolDefinitions(definition definitionBuilder) []map[string]any {
 				"description": "Required only for independent_verification and must name a succeeded screening XFOIL job from another collect attempt.",
 			},
 		}, "naca", "reynolds", "mach", "alpha_start_deg", "alpha_end_deg", "alpha_step_deg"),
-		definition("su2_naca0012", "Generate a fixed NACA0012 mesh with Gmsh and run SU2_CFD OpenMP.", map[string]any{
-			"mach": number(.05, .8), "alpha_deg": number(-10, 15),
-			"iterations": integer(20, 1000), "mesh_size_m": number(.01, .2),
-		}, "mach", "alpha_deg", "iterations", "mesh_size_m"),
+		definition("su2_cfd", "Run general direct single-zone SU2_CFD with an exact project-owned ASCII SU2 mesh and optional project-owned config. The core rewrites every file path, disables restart input, and applies the approved overrides; no built-in geometry or physics preset exists.", map[string]any{
+			"case_id":       map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
+			"mesh_source":   map[string]any{"type": "string", "enum": []string{"artifact", "material"}},
+			"mesh_id":       map[string]any{"type": "string", "minLength": 1},
+			"mesh_sha256":   map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"},
+			"config_source": map[string]any{"type": "string", "enum": []string{"", "artifact", "material"}},
+			"config_id":     map[string]any{"type": "string"},
+			"config_sha256": map[string]any{"type": "string", "pattern": "^(|[a-f0-9]{64})$"},
+			"solver": map[string]any{"type": "string", "enum": []string{
+				"EULER", "NAVIER_STOKES", "RANS", "INC_EULER", "INC_NAVIER_STOKES", "INC_RANS",
+			}},
+			"turbulence_model": map[string]any{"type": "string", "enum": []string{"NONE", "SA", "SST"}},
+			"config_overrides": map[string]any{
+				"type": "object", "maxProperties": 256,
+				"propertyNames":        map[string]any{"pattern": "^[A-Z][A-Z0-9_]{0,63}$"},
+				"additionalProperties": map[string]any{"type": "string", "maxLength": 4096},
+			},
+			"output_files": map[string]any{
+				"type": "array", "minItems": 1, "maxItems": 3,
+				"items": map[string]any{"type": "string", "enum": []string{"surface_csv", "volume_paraview_ascii", "restart_ascii"}},
+			},
+			"timeout_seconds": integer(60, 7200),
+		}, "case_id", "mesh_source", "mesh_id", "mesh_sha256", "config_source", "config_id", "config_sha256", "solver", "turbulence_model", "config_overrides", "output_files", "timeout_seconds"),
 	}
 }
 
@@ -675,6 +695,8 @@ func (server *Server) callEngineering(
 	switch name {
 	case "engineering_capabilities":
 		return server.Engineering.Capabilities(ctx, capability.RunID, capability.StageAttemptID)
+	case "engineering_inputs":
+		return server.Engineering.EngineeringInputs(ctx, capability.RunID, capability.StageAttemptID)
 	case "engineering_get":
 		var arguments struct {
 			capabilityArgs
@@ -708,12 +730,12 @@ func (server *Server) callEngineering(
 			return nil, errors.New("invalid XFOIL arguments")
 		}
 		return server.Engineering.XFOILPolar(ctx, spec)
-	case "su2_naca0012":
-		var spec engineering.SU2Spec
+	case "su2_cfd":
+		var spec engineering.SU2CFDSpec
 		if err := decodeEngineeringArgs(raw, &spec); err != nil {
 			return nil, errors.New("invalid SU2 arguments")
 		}
-		return server.Engineering.SU2NACA0012(ctx, spec)
+		return server.Engineering.SU2CFD(ctx, spec)
 	default:
 		return nil, fmt.Errorf("engineering tool %q is not available", name)
 	}
@@ -795,7 +817,7 @@ func toolResultFor(name string, value any) map[string]any {
 
 func isEngineeringSolverTool(name string) bool {
 	switch name {
-	case "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_naca0012":
+	case "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_cfd":
 		return true
 	default:
 		return false

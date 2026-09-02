@@ -39,6 +39,7 @@ func (fixture *chatProtocolFixture) CreateMainThread(_ context.Context, sessionI
 func (fixture *chatProtocolFixture) Chat(
 	_ context.Context,
 	threadID, message string,
+	_ []core.ChatAttachment,
 	mode core.ChatMode,
 	_, planObjective string,
 	configuration core.RunConfiguration,
@@ -419,7 +420,7 @@ func TestProjectChatUsesMainThreadWithoutCreatingResearchRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reply, err := dispatcher.ChatProject(ctx, project.ID, "scope the research", core.ChatModePlan, cycle.ID, configuration)
+	reply, err := dispatcher.ChatProject(ctx, project.ID, "scope the research", nil, core.ChatModePlan, cycle.ID, configuration)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -80,7 +80,7 @@ func TestSU2DeterministicAnalysis(t *testing.T) {
 		pointID++
 	}
 	writeTestFile(t, surfacePath, surface.String())
-	surfaceMetrics, err := parseSU2SurfaceMetrics(surfacePath, SU2Spec{Mach: .8})
+	surfaceMetrics, err := parseSU2SurfaceMetrics(surfacePath, .8)
 	if err != nil {
 		t.Fatal(err)
 	}

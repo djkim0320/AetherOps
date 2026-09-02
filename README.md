@@ -150,9 +150,10 @@ Engineering solvers are exposed to Codex only through the separate `aetherops-en
 - `openvsp_modify_wing` modifies a model artifact produced by the current run.
 - `gmsh_wing_mesh` creates and coherence-checks a wing-planform mesh.
 - `xfoil_polar` runs a viscous polar for a NACA four-digit airfoil.
-- `su2_naca0012` creates a fixed NACA 0012 far-field mesh with Gmsh and runs `SU2_CFD` with bounded OpenMP parallelism.
+- `engineering_inputs` lists exact project-owned mesh/config inputs and immutable SHA-256 identities.
+- `su2_cfd` runs direct single-zone compressible or incompressible Euler, laminar Navier-Stokes, or RANS (`SA`/`SST`) against a project-owned ASCII SU2 mesh. It has no built-in geometry or physics preset; the approved case binds the mesh/config hashes, explicit overrides, managed outputs, and timeout.
 
-The model cannot supply executable paths, raw command lines, scripts, or arbitrary filesystem destinations. Every solver call requires an exact user-approved argument hash, runs under a Windows Job Object in a project/run-specific workspace, and publishes verified results plus an execution receipt to the content-addressed store. Interrupted or ambiguous executions are marked uncertain and are never replayed automatically.
+ASCII `.su2` meshes and `.cfg` files up to 16 MiB can be pinned from Project Knowledge; solver inputs default to graph-adoption off. Larger inputs must already exist as an adopted same-project CAS artifact. The model cannot supply executable paths, raw command lines, scripts, or arbitrary filesystem destinations. For general SU2, config file paths, restart inputs, output names, and external config lists are stripped or rejected and rewritten to the isolated job workspace. Every solver call requires an exact user-approved argument hash, runs under a Windows Job Object in a project/run-specific workspace, and publishes verified results plus an execution receipt to the content-addressed store. Interrupted or ambiguous executions are marked uncertain and are never replayed automatically.
 
 ## Data
 

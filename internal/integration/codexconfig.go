@@ -83,9 +83,9 @@ func WriteCodexMCPConfig(config CodexMCPConfig) error {
 		// exact solver arguments to the user for a durable scoped decision.
 		"default_tools_approval_mode = \"prompt\"",
 		"enabled_tools = " + tomlStringArray([]string{
-			"engineering_capabilities", "engineering_get", "openvsp_wing_aero",
+			"engineering_capabilities", "engineering_inputs", "engineering_get", "openvsp_wing_aero",
 			"openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar",
-			"su2_naca0012",
+			"su2_cfd",
 		}),
 		"startup_timeout_sec = 15",
 		"tool_timeout_sec = 900",

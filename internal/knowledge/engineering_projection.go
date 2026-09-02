@@ -72,7 +72,7 @@ var engineeringMetricContracts = map[string]map[string]engineeringMetricContract
 		"nonconverged_point_count": {Kind: engineeringMetricInteger},
 		"missing_point_count":      {Kind: engineeringMetricInteger},
 	},
-	"su2_naca0012": core.SU2MetricContractsV1(),
+	"su2_cfd": core.SU2GeneralMetricContractsV1(),
 }
 
 type engineeringArtifactMetricKind string
@@ -91,6 +91,7 @@ var engineeringArtifactOnlyMetrics = map[string]map[string]engineeringArtifactMe
 		"optimization_dossier":      engineeringArtifactMetricObject,
 		"optimization_verification": engineeringArtifactMetricObject,
 	},
+	"su2_cfd": {"final_values": engineeringArtifactMetricObject},
 }
 
 // deterministicEngineeringProjection converts only verified scalar receipt

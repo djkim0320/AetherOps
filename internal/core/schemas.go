@@ -44,21 +44,28 @@ func PlanSchema() json.RawMessage {
         },"required":["id","reynolds","mach","ncrit","target_cl","minimum_cm"],"additionalProperties":false}}
       },"required":["naca","reynolds","mach","alpha_start_deg","alpha_end_deg","alpha_step_deg","flap_chord_ratio","flap_hinge_x_over_c","flap_hinge_y_over_c","candidate_flap_deflections_deg","ncrit","iterations","panel_count","optimization_objective","target_cl","minimum_cm","operating_points"],"additionalProperties":false}
     ]},
-    "su2_mesh_study":{"description":"Exact immutable contract for the bundled fixed-domain NACA0012 SU2 grid-sensitivity workflow; otherwise null.","anyOf":[
-      {"type":"null"},
-      {"type":"object","properties":{
-		"execution_mode":{"type":"string","enum":["execute","readback_existing"]},
-        "profile":{"type":"string","const":"su2_naca0012_grid_sensitivity/v1"},
-        "naca":{"type":"string","const":"0012"},
-        "mach":{"type":"number"},"alpha_deg":{"type":"number"},"iterations":{"type":"integer"},
-        "mesh_sizes_m":{"type":"array","minItems":3,"maxItems":8,"items":{"type":"number"}},
-        "domain_profile":{"type":"string","const":"rect_xm10_xp15_ym10_yp10/v1"},
-        "objective":{"type":"string","const":"assess_grid_sensitivity"},
-        "reference_comparison":{"type":"string","const":"qualitative_context"}
-      },"required":["execution_mode","profile","naca","mach","alpha_deg","iterations","mesh_sizes_m","domain_profile","objective","reference_comparison"],"additionalProperties":false}
-    ]}
+	"su2_cases":{"description":"Exact immutable case set for the general project-owned SU2_CFD adapter; otherwise null. No built-in geometry or solver preset exists.","anyOf":[
+	  {"type":"null"},
+	  {"type":"object","properties":{
+		"objective":{"type":"string","minLength":1},
+		"cases":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","properties":{
+		  "case_id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,31}$"},
+		  "mesh_source":{"type":"string","enum":["artifact","material"]},
+		  "mesh_id":{"type":"string","minLength":1},
+		  "mesh_sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},
+		  "config_source":{"type":"string","enum":["","artifact","material"]},
+		  "config_id":{"type":"string"},
+		  "config_sha256":{"type":"string","pattern":"^(|[a-f0-9]{64})$"},
+		  "solver":{"type":"string","enum":["EULER","NAVIER_STOKES","RANS","INC_EULER","INC_NAVIER_STOKES","INC_RANS"]},
+		  "turbulence_model":{"type":"string","enum":["NONE","SA","SST"]},
+		  "config_overrides":{"type":"object","maxProperties":256,"propertyNames":{"pattern":"^[A-Z][A-Z0-9_]{0,63}$"},"additionalProperties":{"type":"string","maxLength":4096}},
+		  "output_files":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"string","enum":["surface_csv","volume_paraview_ascii","restart_ascii"]}},
+		  "timeout_seconds":{"type":"integer","minimum":60,"maximum":7200}
+		},"required":["case_id","mesh_source","mesh_id","mesh_sha256","config_source","config_id","config_sha256","solver","turbulence_model","config_overrides","output_files","timeout_seconds"],"additionalProperties":false}}
+	  },"required":["objective","cases"],"additionalProperties":false}
+	]}
   },
-  "required":["question","mode","workstreams","source_requirements","acceptance_criteria","xfoil_screening","su2_mesh_study"],
+  "required":["question","mode","workstreams","source_requirements","acceptance_criteria","xfoil_screening","su2_cases"],
   "additionalProperties":false
 }`)
 }

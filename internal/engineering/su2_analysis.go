@@ -147,7 +147,7 @@ func parseSU2LogMetrics(path string) (map[string]any, error) {
 	return metrics, nil
 }
 
-func parseSU2SurfaceMetrics(path string, spec SU2Spec) (map[string]any, error) {
+func parseSU2SurfaceMetrics(path string, mach float64) (map[string]any, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("read SU2 surface: %w", err)
@@ -203,7 +203,7 @@ func parseSU2SurfaceMetrics(path string, spec SU2Spec) (map[string]any, error) {
 	}
 	const gamma = 1.4
 	const pressureInf = 101325.0
-	dynamicPressure := .5 * gamma * pressureInf * spec.Mach * spec.Mach
+	dynamicPressure := .5 * gamma * pressureInf * mach * mach
 	if !finite(dynamicPressure) || dynamicPressure <= 0 {
 		return nil, errors.New("SU2 surface dynamic pressure is invalid")
 	}

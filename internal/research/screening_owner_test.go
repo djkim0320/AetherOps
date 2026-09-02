@@ -14,7 +14,7 @@ func TestEngineeringScreeningPolicyHasOneOwnerAndKeepsOtherCollectorsPublicOnly(
 	if ownerRole != engineeringScreeningOwnerRole ||
 		!strings.Contains(ownerPolicy, "single deterministic owner") ||
 		!strings.Contains(ownerPolicy, "complete research plan") ||
-		!strings.Contains(ownerPolicy, "every requested su2_naca0012 mesh_size_m case") ||
+		!strings.Contains(ownerPolicy, "every exact su2_cases member through su2_cfd") ||
 		!strings.Contains(ownerPolicy, "every XFOIL execution_purpose=screening job") {
 		t.Fatalf("owner policy = role %q policy %q", ownerRole, ownerPolicy)
 	}
@@ -22,7 +22,7 @@ func TestEngineeringScreeningPolicyHasOneOwnerAndKeepsOtherCollectorsPublicOnly(
 		policy, role := engineeringPolicyForCollector(ordinal)
 		if role != engineeringScreeningReadRole ||
 			!strings.Contains(policy, "not the engineering solver owner") ||
-			!strings.Contains(policy, "Do not call su2_naca0012") ||
+			!strings.Contains(policy, "Do not call su2_cfd") ||
 			!strings.Contains(policy, "Continue the assigned public-source research in parallel") {
 			t.Fatalf("collector %d policy = role %q policy %q", ordinal, role, policy)
 		}

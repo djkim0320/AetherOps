@@ -27,7 +27,7 @@ func TestDedicatedCodexConfigPinsCredentialStoreAndMCPCommands(t *testing.T) {
 		"[features]", "code_mode_host = true",
 		"[mcp_servers.aetherops_internal]", "[mcp_servers.aetherops_engineering]", "[mcp_servers.chrome_devtools]",
 		`enabled_tools = ["memory_search", "memory_get", "scholarly_search", "evidence_capture", "artifact_publish_plan", "artifact_publish_evidence", "artifact_publish_report", "artifact_publish_review", "knowledge_sparql", "knowledge_get", "tool_package_propose", "tool_catalog", "tool_get", "tool_run"]`,
-		`enabled_tools = ["engineering_capabilities", "engineering_get", "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_naca0012"]`,
+		`enabled_tools = ["engineering_capabilities", "engineering_inputs", "engineering_get", "openvsp_wing_aero", "openvsp_modify_wing", "gmsh_wing_mesh", "xfoil_polar", "su2_cfd"]`,
 		`args = ["engineering-mcp"]`,
 		`args = ["chrome-mcp", "--browser-url=http://127.0.0.1:54321", "--no-usage-statistics"]`, "required = true",
 		"startup_timeout_sec = 30",

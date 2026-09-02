@@ -13,7 +13,7 @@ func TestReceiptThreadsMatchAdapterExecution(t *testing.T) {
 		{operation: "openvsp_wing_aero", want: 8},
 		{operation: "openvsp_modify_wing", want: 8},
 		{operation: "gmsh_wing_mesh", want: 8},
-		{operation: "su2_naca0012", want: 8},
+		{operation: "su2_cfd", want: 8},
 		{operation: "xfoil_polar", want: 1},
 	} {
 		t.Run(test.operation, func(t *testing.T) {
